@@ -19,7 +19,7 @@ Notes:
 
 ### Using Assetions for state relationships
 
-Code: [.smt2](recursion.smt2)
+Code: [assertstate.smt2](assertstate.smt2)
 
 ## References
 

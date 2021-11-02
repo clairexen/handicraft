@@ -8,10 +8,8 @@
 (declare-datatype fsm-time-sort ((t0) (t1) (t2)))
 
 (declare-fun fsm-time-input (fsm-time-sort) fsm-input-sort)
+(declare-fun fsm-time-state (fsm-time-sort) fsm-state-sort)
 (declare-fun fsm-init-state () fsm-state-sort)
-
-(define-fun fsm-time-precursor ((t fsm-time-sort)) fsm-time-sort
-  (match t ((t2 t1) (t1 t0) (t0 t0))))
 
 ; ---- example state machine ----
 
@@ -37,9 +35,9 @@
 
 ; ---- FSM evaluator ----
 
-(define-fun-rec fsm-time-state ((t fsm-time-sort)) fsm-state-sort
-  (let ((pre (fsm-time-precursor t))) (ite (= t pre) fsm-init-state
-    (fsm-next-fun (fsm-time-state pre) (fsm-time-input pre)))))
+(define-fun t2t ((A fsm-time-sort) (B fsm-time-sort)) Bool
+	(= (fsm-next-fun (fsm-time-state A) (fsm-time-input A)) (fsm-time-state B))
+)
 
 ; ---- query helpers ----
 
@@ -54,6 +52,10 @@
 
 (echo "")
 (echo "*** QUERY #1 ***")
+
+; create (t0 -> t1 -> t2) graph
+(assert (t2t t0 t1))
+(assert (t2t t1 t2))
 
 ; initial state is A at t0
 (assert (= (fsm-time-state t0) fsm-state-A))
