@@ -1,0 +1,23 @@
+[tasks]
+check
+bug1
+bug2
+
+[options]
+mode bmc
+depth 100
+check: expect pass
+bug1: expect fail
+bug2: expect fail
+
+[engines]
+smtbmc
+
+[script]
+bug1: read -define BUG1
+bug2: read -define BUG2
+read -formal demo.sv
+prep -top demo
+
+[files]
+demo.sv
