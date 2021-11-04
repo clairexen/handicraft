@@ -2,7 +2,7 @@
 
 ## Example FSM
 
-Th examples in this directory encode [the following FSM](https://docs.google.com/drawings/d/1QGgbEbWqsTUjZAK_6Z1cvZ7agTt5wBebzSxtO6gL6q0):
+The examples in this directory encode [the following FSM](https://docs.google.com/drawings/d/1QGgbEbWqsTUjZAK_6Z1cvZ7agTt5wBebzSxtO6gL6q0):
 
 ![FSM State Chart](example_fsm.svg)
 
@@ -26,4 +26,3 @@ Code: [assertstate.smt2](assertstate.smt2)
 - [SMT-LIB](http://smtlib.cs.uiowa.edu/)
 - [SMT-LIB v2.6 Language](http://smtlib.cs.uiowa.edu/papers/smt-lib-reference-v2.6-r2021-05-12.pdf)
 - [SMT-LIB v3 Language](http://smtlib.cs.uiowa.edu/version3.shtml)
-
