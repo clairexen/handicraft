@@ -132,34 +132,37 @@ def mkGate(name, cost, expr, max_load=9999, block_delay = 10, fanout_delay = 5):
 print("GATE ZERO 0 Y=CONST0;")
 print("GATE ONE 0 Y=CONST1;")
 
-mkGate("BUF", 10, A, 2)
-mkGate("NOT",  0, NOT(A), 1)
+mkGate("BUF", 5, A, 2)
+mkGate("NOT", 0, NOT(A), 1)
 
-mkGate("AND", 20, AND(A, B), 1)
-mkGate( "OR", 20,  OR(A, B), 1)
-mkGate("XOR", 20, XOR(A, B), 1)
-mkGate("MUX", 20, MUX(A, B, C), 1)
+mkGate("AND", 10, AND(A, B), 1)
+mkGate( "OR", 10,  OR(A, B), 1)
+mkGate("XOR", 10, XOR(A, B), 1)
 
-mkGate("AND3", 10, AND(AND(A, B), C), 1)
-mkGate(" OR3", 10,  OR( OR(A, B), C), 1)
-mkGate("XOR3", 10, XOR(XOR(A, B), C), 1)
-mkGate("AOI3", 10, NOT(OR(AND(A, B), C)), 1)
-mkGate("OAI3", 10, NOT(AND(OR(A, B), C)), 1)
-mkGate("AOI4", 10, NOT(OR(AND(A, B), AND(C, D))), 1)
-mkGate("OAI4", 10, NOT(AND(OR(A, B),  OR(C, D))), 1)
+mkGate("C3_AND3", 10, AND(AND(A, B), C))
+mkGate("C3_XOR3", 10, XOR(XOR(A, B), C))
+mkGate("C3_AOI3", 10, NOT(OR(AND(A, B), C)))
+mkGate("C3_OAI3", 10, NOT(AND(OR(A, B), C)))
+mkGate("C3_OR3",  10,  OR( OR(A, B), C))
+mkGate("C3_AX3",  10, XOR(AND(A, B), C))
+mkGate("C3_XA3",  10, AND(XOR(A, B), C))
+
+mkGate("C3_MX2",  10, MUX(A, B, C))
+mkGate("C4_AOI4", 10, NOT(OR(AND(A, B), AND(C, D))))
+mkGate("C4_OAI4", 10, NOT(AND(OR(A, B),  OR(C, D))))
 
 for name, expr in [
-    ["CC_AAA", AND(AND(A,B),AND(C,D))],
-    ["CC_AXA", AND(XOR(A,B),AND(C,D))],
-    ["CC_XAX", XOR(AND(A,B),XOR(C,D))],
-    ["CC_AAX", AND(AND(A,B),XOR(C,D))],
-    ["CC_AXX", XOR(AND(A,B),XOR(C,D))],
-    ["CC_XXX", XOR(XOR(A,B),XOR(C,D))],
-    ["CC_AAO", AND(AND(A,B), OR(C,D))],
-    ["CC_AOA", AND( OR(A,B),AND(C,D))],
-    ["CC_AOX", AND( OR(A,B),XOR(C,D))],
+    ["AAA", AND(AND(A,B),AND(C,D))],
+    ["AXA", AND(XOR(A,B),AND(C,D))],
+    ["XAX", XOR(AND(A,B),XOR(C,D))],
+    ["AAX", AND(AND(A,B),XOR(C,D))],
+    ["AXX", XOR(AND(A,B),XOR(C,D))],
+    ["XXX", XOR(XOR(A,B),XOR(C,D))],
+    ["AAO", AND(AND(A,B), OR(C,D))],
+    ["AOA", AND( OR(A,B),AND(C,D))],
+    ["AOX", AND( OR(A,B),XOR(C,D))],
 ]:
-    mkGate(name, 5, expr)
-    mkGate(name + "_A", 5, AND(expr, E))
-    mkGate(name + "_O", 5,  OR(expr, E))
-    mkGate(name + "_X", 5, XOR(expr, E))
+    mkGate("C4_" + name, 10, expr)
+    mkGate("C5_" + name + "_A", 10, AND(expr, E))
+    mkGate("C5_" + name + "_O", 10,  OR(expr, E))
+    mkGate("C5_" + name + "_X", 10, XOR(expr, E))
