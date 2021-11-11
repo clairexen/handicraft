@@ -119,6 +119,7 @@ def MUX(arg1, arg2, arg3): return FNode("MUX", arg1, arg2, arg3)
 #     <output> = <term with *(AND), +(OR), !(NOT)>
 
 def mkGate(name, cost, expr, max_load=9999, block_delay = 10, fanout_delay = 5):
+    name = name.replace(" ", "")
     expr = expr.map()
 
     phase = "UNKNOWN"
@@ -132,37 +133,62 @@ def mkGate(name, cost, expr, max_load=9999, block_delay = 10, fanout_delay = 5):
 print("GATE ZERO 0 Y=CONST0;")
 print("GATE ONE 0 Y=CONST1;")
 
-mkGate("BUF", 5, A, 2)
-mkGate("NOT", 0, NOT(A), 1)
+mkGate("CC_BUF", 5, A)
+mkGate("CC_NOT", 0, NOT(A))
+mkGate("CC_MUX", 5, MUX(A, B, C))
 
-mkGate("AND", 10, AND(A, B), 1)
-mkGate( "OR", 10,  OR(A, B), 1)
-mkGate("XOR", 10, XOR(A, B), 1)
+base_cells = [
+    ["CC2_A", AND(A, B)],
+    ["CC2_O",  OR(A, B)],
+    ["CC2_X", XOR(A, B)],
 
-mkGate("C3_AND3", 10, AND(AND(A, B), C))
-mkGate("C3_XOR3", 10, XOR(XOR(A, B), C))
-mkGate("C3_AOI3", 10, NOT(OR(AND(A, B), C)))
-mkGate("C3_OAI3", 10, NOT(AND(OR(A, B), C)))
-mkGate("C3_OR3",  10,  OR( OR(A, B), C))
-mkGate("C3_AX3",  10, XOR(AND(A, B), C))
-mkGate("C3_XA3",  10, AND(XOR(A, B), C))
+    ["CC3_AA", AND(AND(A, B), C)],
+    ["CC3_OO",  OR( OR(A, B), C)],
+    ["CC3_XX", XOR(XOR(A, B), C)],
+    ["CC3_AO",  OR(AND(A, B), C)],
+    ["CC3_OA", AND( OR(A, B), C)],
+    ["CC3_AX", XOR(AND(A, B), C)],
+    ["CC3_XA", AND(XOR(A, B), C)],
 
-mkGate("C3_MX2",  10, MUX(A, B, C))
-mkGate("C4_AOI4", 10, NOT(OR(AND(A, B), AND(C, D))))
-mkGate("C4_OAI4", 10, NOT(AND(OR(A, B),  OR(C, D))))
+#   ["CC3_AAA", AND(AND(A,B),AND(A,C))],
+#   ["CC3_AXA", XOR(AND(A,B),AND(A,C))],
+#   ["CC3_XAX", AND(XOR(A,B),XOR(A,C))],
+#   ["CC3_AAX", AND(AND(A,B),XOR(A,C))],
+#   ["CC3_AXX", XOR(AND(A,B),XOR(A,C))],
+#   ["CC3_XXX", XOR(XOR(A,B),XOR(A,C))],
+#   ["CC3_AAO", AND(AND(A,B), OR(A,C))],
+#   ["CC3_AOA",  OR(AND(A,B),AND(A,C))],
+#   ["CC3_AOX",  OR(AND(A,B),XOR(A,C))],
 
-for name, expr in [
-    ["AAA", AND(AND(A,B),AND(C,D))],
-    ["AXA", AND(XOR(A,B),AND(C,D))],
-    ["XAX", XOR(AND(A,B),XOR(C,D))],
-    ["AAX", AND(AND(A,B),XOR(C,D))],
-    ["AXX", XOR(AND(A,B),XOR(C,D))],
-    ["XXX", XOR(XOR(A,B),XOR(C,D))],
-    ["AAO", AND(AND(A,B), OR(C,D))],
-    ["AOA", AND( OR(A,B),AND(C,D))],
-    ["AOX", AND( OR(A,B),XOR(C,D))],
-]:
-    mkGate("C4_" + name, 10, expr)
-    mkGate("C5_" + name + "_A", 10, AND(expr, E))
-    mkGate("C5_" + name + "_O", 10,  OR(expr, E))
-    mkGate("C5_" + name + "_X", 10, XOR(expr, E))
+#   ["CC3_AAA_N", AND(AND(A,B),AND(NOT(A),C))],
+#   ["CC3_AXA_N", XOR(AND(A,B),AND(NOT(A),C))],
+#   ["CC3_XAX_N", AND(XOR(A,B),XOR(NOT(A),C))],
+#   ["CC3_AAX_N", AND(AND(A,B),XOR(NOT(A),C))],
+#   ["CC3_AXX_N", XOR(AND(A,B),XOR(NOT(A),C))],
+#   ["CC3_XXX_N", XOR(XOR(A,B),XOR(NOT(A),C))],
+#   ["CC3_AAO_N", AND(AND(A,B), OR(NOT(A),C))],
+#   ["CC3_AOA_N",  OR(AND(A,B),AND(NOT(A),C))],
+#   ["CC3_AOX_N",  OR(AND(A,B),XOR(NOT(A),C))],
+
+    ["CC4_AAA", AND(AND(A,B),AND(C,D))],
+    ["CC4_AXA", XOR(AND(A,B),AND(C,D))],
+    ["CC4_XAX", AND(XOR(A,B),XOR(C,D))],
+    ["CC4_AAX", AND(AND(A,B),XOR(C,D))],
+    ["CC4_AXX", XOR(AND(A,B),XOR(C,D))],
+    ["CC4_XXX", XOR(XOR(A,B),XOR(C,D))],
+    ["CC4_AAO", AND(AND(A,B), OR(C,D))],
+    ["CC4_AOA",  OR(AND(A,B),AND(C,D))],
+    ["CC4_AOX",  OR(AND(A,B),XOR(C,D))],
+]
+
+for name, expr in base_cells:
+    mkGate(name, 10, expr)
+
+    name = (name
+        .replace("CC4_", "CC5_")
+        .replace("CC3_", "CC4_")
+        .replace("CC2_", "CC3_"))
+
+    mkGate(name + "_A", 12, AND(expr, E))
+    mkGate(name + "_O", 12,  OR(expr, E))
+    mkGate(name + "_X", 12, XOR(expr, E))
