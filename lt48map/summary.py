@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 
-#for design in ["picorv32", "nerv", "test"]:
-for design in ["nerv", "test"]:
+for design in [
+    "picorv32",
+    "nerv",
+#   "test",
+]:
     luts = 0
 
     mux_cells = 0

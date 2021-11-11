@@ -1,5 +1,5 @@
 run: picorv32 nerv test
-	python3 summary.py
+	python3 summary.py | tee results.txt
 
 picorv32: picorv32_l4.stat picorv32_lt4.stat
 nerv: nerv_l4.stat nerv_lt4.stat
