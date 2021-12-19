@@ -1,3 +1,5 @@
+SHELL := bash
+
 run: picorv32 nerv test
 	python3 summary.py | tee results.txt
 
