@@ -2,7 +2,7 @@
 
 import random
 
-counter = 0
+counter = 1
 lower_bound = 1
 upper_bound = 99
 sekret = random.randint(lower_bound, upper_bound)
@@ -10,11 +10,14 @@ sekret = random.randint(lower_bound, upper_bound)
 print("I have a sekret! It's a number in the range %d-%d. "
       "Can you guess it?" % (lower_bound, upper_bound))
 
-while True:
+while counter <= 10:
     try:
-        guess = int(input("your %d%s guess: " % (counter+1,
-                "st" if counter == 1 else "nd" if counter == 2 else
-                "rd" if counter == 3 else "th")))
+        numsuffix = (
+            "st" if counter == 1 else
+            "nd" if counter == 2 else
+            "rd" if counter == 3 else "th"
+        )
+        guess = int(input(f"Your {counter}{numsuffix} guess: "))
     except ValueError:
         continue
 
@@ -36,4 +39,6 @@ while True:
 
     print("Wow! You have found out my sekret!")
     break
+else:
+    print(f"I don't have time for this! My sekret was {sekret}.")
 
