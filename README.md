@@ -1,5 +1,6 @@
 Various unsorted experiments. One branch per year:
 - [handicraft-2021](https://github.com/clairexen/handicraft/tree/handicraft-2021)
+- [handicraft-2022](https://github.com/clairexen/handicraft/tree/handicraft-2022)
 
 Checking out one year:
 ```sh
