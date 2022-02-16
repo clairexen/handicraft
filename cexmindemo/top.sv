@@ -1,13 +1,15 @@
 module top (
 	input clock,
-	input [11:0] ctrl
+	input [7:0] ctrl
 );
-	reg [3:0] state = 0;
+	reg init = 1;
+	reg [3:0] state;
 	always @(posedge clock) begin
-		if (ctrl[state[3:1]] == state[0])
-			state <= state + 1;
+		if ((ctrl & state) != state || init)
+			state <= 1;
 		else
-			state <= 0;
+			state <= state << 1;
+		init <= 0;
 	end
-	always_comb assert (state != 15);
+	always_comb assert (init || state != 4'b 1000);
 endmodule
