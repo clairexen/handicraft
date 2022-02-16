@@ -23,5 +23,5 @@ yosys-abc -c 'read_aiger aiger.aig; fold; strash; bmc3 -F 20 -v' \
     -c "$(for o in $cexoptions; do echo echo\; echo == trace_$o.aiw ==\; write_cex -$o trace_$o.aiw\;; done;) echo"
 
 paste trace_ac.aiw trace_amc.aiw trace_amuc.aiw trace_amec.aiw trace_amoc.aiw trace_amxc.aiw | expand -t20
-paste trace_anmc.aiw trace_anmxc.aiw | expand -t30
+paste aiger.aim trace_anmc.aiw trace_anmxc.aiw | expand -t30
 exit 0
