@@ -1,7 +1,6 @@
 #!/bin/bash
 set -x
 rm -f trace_*.aiw
-#sby -f abc_bmc3.sby
 
 yosys -p '
 read -sv top.sv
