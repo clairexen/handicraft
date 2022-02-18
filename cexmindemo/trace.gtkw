@@ -1,0 +1,40 @@
+[*]
+[*] GTKWave Analyzer v3.3.103 (w)1999-2019 BSI
+[*] Fri Feb 18 15:24:42 2022
+[*]
+[dumpfile] "/home/claire/Work/handicraft-2022/cexmindemo/trace.vcd"
+[dumpfile_mtime] "Fri Feb 18 15:22:12 2022"
+[dumpfile_size] 517
+[savefile] "/home/claire/Work/handicraft-2022/cexmindemo/trace.gtkw"
+[timestart] 0
+[size] 1144 644
+[pos] -1 -1
+*-4.254921 4 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
+[sst_width] 233
+[signals_width] 187
+[sst_expanded] 1
+[sst_vpaned_height] 159
+@28
+top.clock
+@200
+-
+-Control Inputs
+@28
+(3)top.ctrl[3:0]
+(2)top.ctrl[3:0]
+@29
+(1)top.ctrl[3:0]
+@28
+(0)top.ctrl[3:0]
+@200
+-
+-State
+@28
+top.init
+(4)top.state[4:0]
+(3)top.state[4:0]
+(2)top.state[4:0]
+(1)top.state[4:0]
+(0)top.state[4:0]
+[pattern_trace] 1
+[pattern_trace] 0

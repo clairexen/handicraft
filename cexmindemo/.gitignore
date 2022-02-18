@@ -1,5 +1,6 @@
-/abc_bmc3/
-/aiger.aig
-/aiger.aim
-/*.aiw
+/design.il
+/design.aig
+/design.aim
+/trace_*.aiw
+/trace.vcd
 /.*.swp

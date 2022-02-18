@@ -1,9 +1,9 @@
 module top (
 	input clock,
-	input [7:0] ctrl
+	input [3:0] ctrl
 );
 	reg init = 1;
-	reg [3:0] state;
+	reg [4:0] state;
 	always @(posedge clock) begin
 		if ((ctrl & state) != state || init)
 			state <= 1;
@@ -11,5 +11,5 @@ module top (
 			state <= state << 1;
 		init <= 0;
 	end
-	always_comb assert (init || state != 4'b 1000);
+	always_comb assert (init || state != 5'b 10000);
 endmodule
