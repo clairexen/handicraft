@@ -54,4 +54,7 @@ yosys -QTp '
 paste trace_ac.aiw trace_amc.aiw trace_amuc.aiw trace_amec.aiw trace_amoc.aiw trace_amxc.aiw | expand -t20
 paste design.aim trace_anmc.aiw trace_anmxc.aiw | expand -t30
 
+# show non-minimized and minimized trace
+#twinwave trace.vcd trace.gtkw + trace_min.vcd trace.gtkw
+
 exit 0
