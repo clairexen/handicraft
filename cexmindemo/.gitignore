@@ -1,6 +1,9 @@
-/design.il
+/design_rtl.il
+/design_aig.il
 /design.aig
 /design.aim
 /trace_*.aiw
 /trace.vcd
+/trace.fst
+/trace_min.vcd
 /.*.swp
