@@ -15,9 +15,9 @@ Printing ccache stats from latest (or current) build:
 bash ccachestat.sh
 ```
 
-Using ccache in the current interactive shell:
+Launching a shell with ccache set up:
 ```
-source ccachestat.sh
+. ccachestat.sh bash
 ccache -p
 ```
 
