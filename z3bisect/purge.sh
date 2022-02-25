@@ -1,3 +1,4 @@
 #!/bin/bash
 set -ex
-rm -rf ccachelog.txt ccachedata/ z3/
+rm -f ccachelog.txt .z3-trace
+rm -rf ccachedata/ usr/ z3/
