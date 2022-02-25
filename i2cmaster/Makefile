@@ -7,5 +7,7 @@ run_yosys.log: run_yosys.ys *.v
 clean:
 	rm -f run_yosys.log
 	rm -f yosys_*_*.txt
+	rm -f vivado*.jou
+	rm -f vivado*.log
 
 .PHONY: show clean

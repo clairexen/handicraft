@@ -1,2 +1,4 @@
 /yosys_*_*.txt
 /run_yosys.log
+/vivado*.jou
+/vivado*.log
