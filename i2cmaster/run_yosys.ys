@@ -1,0 +1,43 @@
+read -verific
+read -sv i2c_master.v i2c_master_bit_ctrl.v i2c_master_byte_ctrl.v
+hierarchy -top i2c_master
+flatten; proc; opt -sat
+
+design -save orig
+synth
+tee -o yosys_verific_generic.txt stat t:$_DFF*
+
+design -load orig
+synth_ecp5
+tee -o yosys_verific_ecp5.txt stat t:TRELLIS_FF
+
+design -load orig
+synth_ice40
+tee -o yosys_verific_ice40.txt stat t:SB_DFF*
+
+design -load orig
+synth_xilinx
+tee -o yosys_verific_xilinx.txt stat t:FD*
+
+design -reset
+
+read -noverific
+read -sv i2c_master.v i2c_master_bit_ctrl.v i2c_master_byte_ctrl.v
+hierarchy -top i2c_master
+flatten; proc; opt -sat
+
+design -save orig
+synth
+tee -o yosys_verilog_generic.txt stat t:$_DFF*
+
+design -load orig
+synth_ecp5
+tee -o yosys_verilog_ecp5.txt stat t:TRELLIS_FF
+
+design -load orig
+synth_ice40
+tee -o yosys_verilog_ice40.txt stat t:SB_DFF*
+
+design -load orig
+synth_xilinx
+tee -o yosys_verilog_xilinx.txt stat t:FD*
