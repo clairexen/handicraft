@@ -18,7 +18,7 @@ endef
 
 export YOSYS_SCRIPT
 
-all: trace.vcd trace_acm.vcd trace_acmx.vcd trace_init.vcd
+all: trace.vcd trace_acm.vcd trace_acmx.vcd trace_init.vcd trace_rerun.vcd
 
 design.aig: top.sv
 	set -x; yosys -Qp "$$YOSYS_SCRIPT"
@@ -26,6 +26,10 @@ design.aig: top.sv
 trace_%.aiw: design.aig
 	yosys-abc -c 'read_aiger design.aig; strash; bmc3 -F 20 -v' \
 	          -c 'write_cex -$(subst trace_,,$(subst .aiw,,$@)) $@'
+
+trace_rerun.aiw: design.aig trace_ac.aiw
+	yosys-abc -c 'read_aiger design.aig; read_cex trace_ac.aiw;' \
+	          -c 'write_cex -ac $@'
 
 trace.vcd: trace_ac.aiw
 	yosys -QTp 'read_rtlil design_rtl.il' \
@@ -44,11 +48,11 @@ trace_init.vcd: trace.fst
 	      -p 'sim -r trace.fst -scope top -w -vcd trace_init.vcd' \
 	      -p 'dump w:init w:state'
 
-print: trace_ac.aiw trace_acm.aiw trace_acmx.aiw trace_ancm.aiw trace_ancmx.aiw
+print: trace_ac.aiw trace_rerun.aiw trace_acm.aiw trace_acmx.aiw trace_ancm.aiw trace_ancmx.aiw
 	@echo ""
 	@echo "          ============================================================"
 	@echo ""
-	paste trace_ac.aiw trace_acm.aiw trace_acmx.aiw | expand -t20
+	paste trace_ac.aiw trace_rerun.aiw trace_acm.aiw trace_acmx.aiw | expand -t20
 	@echo ""
 	paste design.aim trace_ancm.aiw trace_ancmx.aiw | expand -t30
 	@echo ""
