@@ -20,3 +20,8 @@ Using ccache in the current interactive shell:
 source ccachestat.sh
 ccache -p
 ```
+
+Purge ccache data and z3 git working copy:
+```
+bash purge.sh
+```
