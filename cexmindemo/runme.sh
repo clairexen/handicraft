@@ -1,8 +1,8 @@
 #!/bin/bash
 set -x
-rm -f design.{il,aig,aim}
+rm -f design*.{il,aig,aim}
 rm -f trace_*.aiw
-rm -f trace.vcd
+rm -f trace*.vcd
 
 # Process Verilog design and convert to AIG
 yosys -Qp '
@@ -19,7 +19,8 @@ yosys -Qp '
 	opt_clean
 	stat
 	write_rtlil design_aig.il
-	write_aiger -I -B -map design.aim design.aig
+	# write_aiger -I -B -map design.aim design.aig
+	write_aiger -I -B -zinit -map design.aim design.aig
 '
 
 # Solve with ABC's "bmc3" and write CEX with various write_cex options
@@ -46,7 +47,7 @@ vcd2fst trace.vcd trace.fst
 yosys -QTp '
 	read_rtlil design_rtl.il
 	dump w:init w:state
-	sim -r trace.fst -scope top -w
+	sim -r trace.fst -scope top -w -vcd trace2.vcd
 	dump w:init w:state
 '
 
