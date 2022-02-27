@@ -2,3 +2,4 @@
 /run_yosys.log
 /vivado*.jou
 /vivado*.log
+/vivado.rpt
