@@ -33,7 +33,7 @@ trace_rerun.aiw: design.aig trace_ac.aiw
 
 trace.vcd: trace_ac.aiw
 	yosys -QTp 'read_rtlil design_rtl.il' \
-	      -p "sim -r $< -map design.aim -clock clock -vcd $@"
+	      -p "sim -r $< -map design.aim -clock clock -vcd $@ -aiw trace.aiw"
 
 trace_%.vcd: trace_%.aiw
 	yosys -QTp 'read_rtlil design_aig.il' \
