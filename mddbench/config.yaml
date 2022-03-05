@@ -1,0 +1,5 @@
+benchmarks:
+  ipcores-i2cmaster: ~
+flows:
+  - [ vivado-2021.2-kintex7+opt+physopt ]
+  - [ yosys-2ca69e1-xilinx+flatten, vivado-2021.2-kintex7+physopt ]
