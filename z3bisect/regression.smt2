@@ -3,8 +3,8 @@
 (set-option :verbose 255)
 (set-option :timeout 500)
 (set-option :opt.timeout 500)
-(set-option :dump_models true)
-(set-option :produce-models true)
+; (set-option :dump_models true)
+; (set-option :produce-models true)
 (set-logic ALL)
 
 
@@ -132,63 +132,63 @@
 )))
 
 
-; ---- example query #1 ----
-; create a trace of length 3 ending in state D, explicit, one-shot
-
-(push 1)
-(echo "")
-(echo "*** QUERY #1 ***")
-
-(declare-const i0 fsm-input)
-(declare-const i1 fsm-input)
-(declare-const i2 fsm-input)
-
-(define-fun t0 () fsm-time fsm-time-init)
-(define-fun t1 () fsm-time (fsm-time-next t0 i0))
-(define-fun t2 () fsm-time (fsm-time-next t1 i1))
-
-(assert (= (fsm-state-reg-state (fsm-get-state t2)) myfsm-state-D))
-
-(check-sat)
-; (get-model)
-
-(get-value ((fsm-info t0)))
-(get-value ((fsm-info t1)))
-(get-value ((fsm-info t2)))
-
-(pop 1)
-
-
-; ---- example query #2 ----
-; create a trace of length 3 ending in state D, explicit, incrementally
-
-(push 1)
-(echo "")
-(echo "*** QUERY #2 ***")
-
-(declare-const i0 fsm-input)
-(define-fun t0 () fsm-time fsm-time-init)
-(check-sat-assuming ((= (fsm-state-reg-state (fsm-get-state t0)) myfsm-state-D)))
-
-(declare-const i1 fsm-input)
-(define-fun t1 () fsm-time (fsm-time-next t0 i0))
-(check-sat-assuming ((= (fsm-state-reg-state (fsm-get-state t1)) myfsm-state-D)))
-
-(declare-const i2 fsm-input)
-(define-fun t2 () fsm-time (fsm-time-next t1 i1))
-(check-sat-assuming ((= (fsm-state-reg-state (fsm-get-state t2)) myfsm-state-D)))
-
-(get-value ((fsm-info t0)))
-(get-value ((fsm-info t1)))
-(get-value ((fsm-info t2)))
-
-(pop 1)
+; ; ---- example query #1 ----
+; ; create a trace of length 3 ending in state D, explicit, one-shot
+; 
+; (push 1)
+; (echo "")
+; (echo "*** QUERY #1 ***")
+; 
+; (declare-const i0 fsm-input)
+; (declare-const i1 fsm-input)
+; (declare-const i2 fsm-input)
+; 
+; (define-fun t0 () fsm-time fsm-time-init)
+; (define-fun t1 () fsm-time (fsm-time-next t0 i0))
+; (define-fun t2 () fsm-time (fsm-time-next t1 i1))
+; 
+; (assert (= (fsm-state-reg-state (fsm-get-state t2)) myfsm-state-D))
+; 
+; (check-sat)
+; ; (get-model)
+; 
+; (get-value ((fsm-info t0)))
+; (get-value ((fsm-info t1)))
+; (get-value ((fsm-info t2)))
+; 
+; (pop 1)
+; 
+; 
+; ; ---- example query #2 ----
+; ; create a trace of length 3 ending in state D, explicit, incrementally
+; 
+; (push 1)
+; (echo "")
+; (echo "*** QUERY #2 ***")
+; 
+; (declare-const i0 fsm-input)
+; (define-fun t0 () fsm-time fsm-time-init)
+; (check-sat-assuming ((= (fsm-state-reg-state (fsm-get-state t0)) myfsm-state-D)))
+; 
+; (declare-const i1 fsm-input)
+; (define-fun t1 () fsm-time (fsm-time-next t0 i0))
+; (check-sat-assuming ((= (fsm-state-reg-state (fsm-get-state t1)) myfsm-state-D)))
+; 
+; (declare-const i2 fsm-input)
+; (define-fun t2 () fsm-time (fsm-time-next t1 i1))
+; (check-sat-assuming ((= (fsm-state-reg-state (fsm-get-state t2)) myfsm-state-D)))
+; 
+; (get-value ((fsm-info t0)))
+; (get-value ((fsm-info t1)))
+; (get-value ((fsm-info t2)))
+; 
+; (pop 1)
 
 
 ; ---- example query #3 ----
 ; create a trace of length 3 ending in state D, implicitly
 
-(push 1)
+;(push 1)
 (echo "")
 (echo "*** QUERY #3 ***")
 
@@ -196,7 +196,7 @@
 (assert (= (fsm-get-depth t) 2))
 
 ; == uncommenting this line causes Z3 to segfault ==
-;(assert (fsm-no-loops t))
+(assert (fsm-no-loops t))
 
 (assert (fsm-input-sig-din (fsm-time-input (fsm-time-prev t))))
 (assert (fsm-input-sig-din (fsm-time-input t)))
@@ -220,4 +220,4 @@
 (get-value ((fsm-info (fsm-time-prev t))))
 (get-value ((fsm-info t)))
 
-(pop 1)
+;(pop 1)
