@@ -4,8 +4,8 @@ room_d=2500;
 wall=100;
 
 height=2000;
-width=3000;
-depth=2000;
+width=2600;
+depth=1800;
 
 xc=1300;
 yc=500;
