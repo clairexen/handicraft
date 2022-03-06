@@ -1,10 +1,11 @@
 from utils import *
 
 def getBenchmarks(name, options, args):
-    if args == "*":
+    if args == "*" and len(options) == 0:
         return [
-            Benchmark(name, options | set(["fullIP"])),
-            Benchmark(name, options | set(["bitCtrl"])),
-            Benchmark(name, options | set(["byteCtrl"]))
+            Benchmark(name, "fullIP"),
+            Benchmark(name, "bitCtrl"),
+            Benchmark(name, "byteCtrl")
         ]
+    assert args is None
     return [ Benchmark(name, options) ]

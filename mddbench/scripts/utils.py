@@ -1,8 +1,15 @@
 class Benchmark:
     def __init__(self, name, options):
+        if type(options) is str:
+            self.options = set(options.split("+"))
+        else:
+            self.options = set(options)
+
+        if "" in self.options:
+            self.options.remove("")
+
         self.name = name
-        self.options = options
-        self.fullName = "+".join([name] + sorted(options))
+        self.fullName = "+".join([name] + sorted(self.options))
 
     def getManifest(self, flows):
         manifest = dict()
@@ -19,7 +26,9 @@ class Benchmark:
         return { self.fullName: manifest };
 
 def getBenchmark(name):
-    return getBenchmarks(name, None)[0]
+    benchmarks = getBenchmarks(name, None)
+    assert len(benchmarks) == 1
+    return benchmarks[0]
 
 def getBenchmarks(name, args):
     nameParts = name.split("+")
