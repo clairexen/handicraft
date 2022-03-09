@@ -1,0 +1,72 @@
+[*]
+[*] GTKWave Analyzer v3.3.103 (w)1999-2019 BSI
+[*] Wed Mar  9 05:37:40 2022
+[*]
+[dumpfile] "/home/claire/Work/handicraft-2022/mddbench/benchmarks/ipcores/i2cmaster/trace.vcd"
+[dumpfile_mtime] "Wed Mar  9 05:15:09 2022"
+[dumpfile_size] 1024649
+[savefile] "/home/claire/Work/handicraft-2022/mddbench/benchmarks/ipcores/i2cmaster/trace.gtkw"
+[timestart] 50000
+[size] 1208 825
+[pos] -209 -1
+*-14.693178 75000 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
+[treeopen] tst_bench_top.
+[treeopen] tst_bench_top.i2c_top.
+[treeopen] tst_bench_top.i2c_top.byte_controller.
+[treeopen] tst_bench_top.i2c_top2.
+[treeopen] tst_bench_top.i2c_top2.byte_controller.
+[sst_width] 233
+[signals_width] 170
+[sst_expanded] 1
+[sst_vpaned_height] 394
+@200
+-top
+@29
+tst_bench_top.rst
+@28
+tst_bench_top.clk
+tst_bench_top.stb
+@800022
+#{tst_bench_top.adr[3:0]} (28)tst_bench_top.adr[31:0] (29)tst_bench_top.adr[31:0] (30)tst_bench_top.adr[31:0] (31)tst_bench_top.adr[31:0]
+@1001200
+-group_end
+@200
+-
+-i2c_top
+@28
+tst_bench_top.i2c_top.arst_i
+tst_bench_top.i2c_top.wb_clk_i
+tst_bench_top.i2c_top.wb_cyc_i
+tst_bench_top.i2c_top.wb_stb_i
+tst_bench_top.i2c_top.wb_we_i
+tst_bench_top.i2c_top.wb_adr_i[2:0]
+@22
+tst_bench_top.i2c_top.wb_dat_i[7:0]
+tst_bench_top.i2c_top.wb_dat_o[7:0]
+@200
+-
+@28
+tst_bench_top.i2c_top.wb_ack_i
+tst_bench_top.i2c_top.wb_ack_o
+tst_bench_top.i2c_top.wb_wacc
+@200
+-
+-i2c_top2
+@28
+tst_bench_top.i2c_top.arst_i
+tst_bench_top.i2c_top2.wb_clk_i
+tst_bench_top.i2c_top2.wb_cyc_i
+tst_bench_top.i2c_top2.wb_stb_i
+tst_bench_top.i2c_top2.wb_we_i
+tst_bench_top.i2c_top2.wb_adr_i[2:0]
+@22
+tst_bench_top.i2c_top2.wb_dat_i[7:0]
+tst_bench_top.i2c_top2.wb_dat_o[7:0]
+@200
+-
+@28
+tst_bench_top.i2c_top2.wb_ack_i
+tst_bench_top.i2c_top2.wb_ack_o
+tst_bench_top.i2c_top2.wb_wacc
+[pattern_trace] 1
+[pattern_trace] 0

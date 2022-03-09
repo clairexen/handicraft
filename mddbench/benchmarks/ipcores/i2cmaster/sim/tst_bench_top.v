@@ -74,7 +74,7 @@ module tst_bench_top();
 	// wires && regs
 	//
 	reg  clk;
-	reg  rstn;
+	reg  rst;
 
 	wire [31:0] adr;
 	wire [ 7:0] dat_i, dat_o, dat0_i, dat1_i;
@@ -114,7 +114,7 @@ module tst_bench_top();
 	// hookup wishbone master model
 	wb_master_model #(8, 32) u0 (
 		.clk(clk),
-		.rst(rstn),
+		.rst(rst),
 		.adr(adr),
 		.din(dat_i),
 		.dout(dat_o),
@@ -138,7 +138,7 @@ module tst_bench_top();
 		// wishbone interface
 		.wb_clk_i(clk),
 		.wb_rst_i(1'b0),
-		.arst_i(rstn),
+		.arst_i(rst),
 		.wb_adr_i(adr[2:0]),
 		.wb_dat_i(dat_o),
 		.wb_dat_o(dat0_i),
@@ -161,7 +161,7 @@ module tst_bench_top();
 		// wishbone interface
 		.wb_clk_i(clk),
 		.wb_rst_i(1'b0),
-		.arst_i(rstn),
+		.arst_i(rst),
 		.wb_adr_i(adr[2:0]),
 		.wb_dat_i(dat_o),
 		.wb_dat_o(dat1_i),
@@ -209,19 +209,16 @@ module tst_bench_top();
 
 	      $display("\nstatus: %t Testbench started\n\n", $time);
 
-//	      $dumpfile("bench.vcd");
-//	      $dumpvars(1, tst_bench_top);
-//	      $dumpvars(1, tst_bench_top.i2c_slave);
+	      $dumpfile("trace.vcd");
+	      $dumpvars(0, tst_bench_top);
 
 	      // initially values
 	      clk = 0;
 
 	      // reset system
-	      rstn = 1'b1; // negate reset
-	      #2;
-	      rstn = 1'b0; // assert reset
-	      repeat(1) @(posedge clk);
-	      rstn = 1'b1; // negate reset
+	      rst = 1'b1; // assert reset
+	      repeat(2) @(negedge clk);
+	      rst = 1'b0; // de-assert reset
 
 	      $display("status: %t done reset", $time);
 
@@ -447,7 +444,6 @@ release scl;
 	      $display("\n\nstatus: %t Testbench done", $time);
 	      $finish;
 	  end
-
 endmodule
 
 module delay (in, out);
