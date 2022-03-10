@@ -35,10 +35,6 @@
 ////                                                             ////
 /////////////////////////////////////////////////////////////////////
 
-// 1.12	2012-12-17 Tim Saxe
-//	Changed wb_ack_o to be derived from in internal version
-//	wb_ack_i
-
 //  CVS Log
 //
 //  $Id: i2c_master_top.v,v 1.12 2009-01-19 20:29:26 rherveille Exp $
@@ -74,18 +70,18 @@
 //
 
 // synopsys translate_off
+`include "timescale.v"
 // synopsys translate_on
-`timescale 1ns / 10ps
 
+`include "i2c_master_defines.v"
 
-module i2c_master (
+module i2c_master_top(
 	wb_clk_i, wb_rst_i, arst_i, wb_adr_i, wb_dat_i, wb_dat_o,
 	wb_we_i, wb_stb_i, wb_cyc_i, wb_ack_o, wb_inta_o,
-	scl_pad_i, scl_pad_o, scl_padoen_o, sda_pad_i, sda_pad_o, sda_padoen_o, tip_o, DrivingI2cBusOut,
-	TP1,
-	TP2);
+	scl_pad_i, scl_pad_o, scl_padoen_o, sda_pad_i, sda_pad_o, sda_padoen_o );
 
 	// parameters
+	parameter ARST_LVL = 1'b0; // asynchronous reset level
 
 	//
 	// inputs & outputs
@@ -101,16 +97,11 @@ module i2c_master (
 	input        wb_we_i;      // write enable input
 	input        wb_stb_i;     // stobe/core select signal
 	input        wb_cyc_i;     // valid bus cycle input
-	inout        wb_ack_o;     // bus cycle acknowledge output
-	output       wb_inta_o;   	// interrupt request signal output
-	
-	// control signals
-	output		tip_o;				// transfer in progress
-	output		DrivingI2cBusOut;	// master is driving i2c bus
+	output       wb_ack_o;     // bus cycle acknowledge output
+	output       wb_inta_o;    // interrupt request signal output
 
 	reg [7:0] wb_dat_o;
-	reg wb_ack_i;
-	wire wb_ack_o = wb_ack_i;
+	reg wb_ack_o;
 	reg wb_inta_o;
 
 	// I2C signals
@@ -123,10 +114,6 @@ module i2c_master (
 	input  sda_pad_i;       // SDA-line input
 	output sda_pad_o;       // SDA-line output (always 1'b0)
 	output sda_padoen_o;    // SDA-line output enable (active low)
-	
-	// test signal
-	output	TP1;
-	output	TP2;
 
 
 	//
@@ -161,17 +148,15 @@ module i2c_master (
 	// module body
 	//
 
-	assign tip_o = tip;
-	
 	// generate internal reset
-	wire rst_i = arst_i;
+	wire rst_i = arst_i ^ ARST_LVL;
 
 	// generate wishbone signals
-	wire wb_wacc = wb_we_i & wb_ack_i;
+	wire wb_wacc = wb_we_i & wb_ack_o;
 
 	// generate acknowledge output signal
 	always @(posedge wb_clk_i)
-	  wb_ack_i <= #1 wb_cyc_i & wb_stb_i & ~wb_ack_i; // because timing is always honored
+	  wb_ack_o <= #1 wb_cyc_i & wb_stb_i & ~wb_ack_o; // because timing is always honored
 
 	// assign DAT_O
 	always @(posedge wb_clk_i)
@@ -189,36 +174,32 @@ module i2c_master (
 	end
 
 	// generate registers
-	always @(posedge wb_clk_i or posedge rst_i)
-	  if (rst_i)
+	always @(posedge wb_clk_i or negedge rst_i)
+	  if (!rst_i)
 	    begin
-	        // prer <= #1 16'hffff;
-	        // ctr  <= #1  8'h0;
-			prer <= #1 16'h0000;
-	        ctr  <= #1  8'h80;
+	        prer <= #1 16'hffff;
+	        ctr  <= #1  8'h0;
 	        txr  <= #1  8'h0;
 	    end
 	  else if (wb_rst_i)
 	    begin
-	        // prer <= #1 16'hffff;
-	        // ctr  <= #1  8'h0;
-			prer <= #1 16'h0000;
-	        ctr  <= #1  8'h80;
+	        prer <= #1 16'hffff;
+	        ctr  <= #1  8'h0;
 	        txr  <= #1  8'h0;
 	    end
 	  else
-	   if (wb_wacc)
+	    if (wb_wacc)
 	      case (wb_adr_i) // synopsys parallel_case
-	        // 3'b000 : prer [ 7:0] <= #1 wb_dat_i;
-	        // 3'b001 : prer [15:8] <= #1 wb_dat_i;
-	        // 3'b010 : ctr         <= #1 wb_dat_i;
+	         3'b000 : prer [ 7:0] <= #1 wb_dat_i;
+	         3'b001 : prer [15:8] <= #1 wb_dat_i;
+	         3'b010 : ctr         <= #1 wb_dat_i;
 	         3'b011 : txr         <= #1 wb_dat_i;
 	         default: ;
 	      endcase
 
 	// generate command register (special case)
-	always @(posedge wb_clk_i or posedge rst_i)
-	  if (rst_i)
+	always @(posedge wb_clk_i or negedge rst_i)
+	  if (!rst_i)
 	    cr <= #1 8'h0;
 	  else if (wb_rst_i)
 	    cr <= #1 8'h0;
@@ -253,7 +234,7 @@ module i2c_master (
 	i2c_master_byte_ctrl byte_controller (
 		.clk      ( wb_clk_i     ),
 		.rst      ( wb_rst_i     ),
-		.Reset    ( rst_i        ),
+		.nReset   ( rst_i        ),
 		.ena      ( core_en      ),
 		.clk_cnt  ( prer         ),
 		.start    ( sta          ),
@@ -272,15 +253,12 @@ module i2c_master (
 		.scl_oen  ( scl_padoen_o ),
 		.sda_i    ( sda_pad_i    ),
 		.sda_o    ( sda_pad_o    ),
-		.sda_oen  ( sda_padoen_o ),
-		.DrivingI2cBusOut (DrivingI2cBusOut),
-		.TP1	  ( TP1 		 ),
-		.TP2	  ( TP2			 )
+		.sda_oen  ( sda_padoen_o )
 	);
 
 	// status register block + interrupt request signal
-	always @(posedge wb_clk_i or posedge rst_i)
-	  if (rst_i)
+	always @(posedge wb_clk_i or negedge rst_i)
+	  if (!rst_i)
 	    begin
 	        al       <= #1 1'b0;
 	        rxack    <= #1 1'b0;
@@ -303,8 +281,8 @@ module i2c_master (
 	    end
 
 	// generate interrupt request signals
-	always @(posedge wb_clk_i or posedge rst_i)
-	  if (rst_i)
+	always @(posedge wb_clk_i or negedge rst_i)
+	  if (!rst_i)
 	    wb_inta_o <= #1 1'b0;
 	  else if (wb_rst_i)
 	    wb_inta_o <= #1 1'b0;

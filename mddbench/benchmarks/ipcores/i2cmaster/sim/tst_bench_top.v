@@ -81,7 +81,7 @@ module tst_bench_top();
 	wire we;
 	wire stb;
 	wire cyc;
-	wire ack;
+	wire ack0, ack1;
 	wire inta;
 
 	reg [7:0] q, qq;
@@ -122,7 +122,7 @@ module tst_bench_top();
 		.stb(stb),
 		.we(we),
 		.sel(),
-		.ack(ack),
+		.ack(ack0 || ack1),
 		.err(1'b0),
 		.rty(1'b0)
 	);
@@ -133,7 +133,7 @@ module tst_bench_top();
 	assign dat_i = ({{8'd8}{stb0}} & dat0_i) | ({{8'd8}{stb1}} & dat1_i);
 
 	// hookup wishbone_i2c_master core
-	i2c_master i2c_top (
+	i2c_master_top i2c_top (
 
 		// wishbone interface
 		.wb_clk_i(clk),
@@ -145,7 +145,7 @@ module tst_bench_top();
 		.wb_we_i(we),
 		.wb_stb_i(stb0),
 		.wb_cyc_i(cyc),
-		.wb_ack_o(ack),
+		.wb_ack_o(ack0),
 		.wb_inta_o(inta),
 
 		// i2c signals
@@ -168,7 +168,7 @@ module tst_bench_top();
 		.wb_we_i(we),
 		.wb_stb_i(stb1),
 		.wb_cyc_i(cyc),
-		.wb_ack_o(ack),
+		.wb_ack_o(ack1),
 		.wb_inta_o(inta),
 
 		// i2c signals
@@ -216,9 +216,9 @@ module tst_bench_top();
 	      clk = 0;
 
 	      // reset system
-	      rst = 1'b1; // assert reset
+	      rst = 1'b0; // assert reset
 	      repeat(2) @(negedge clk);
-	      rst = 1'b0; // de-assert reset
+	      rst = 1'b1; // de-assert reset
 
 	      $display("status: %t done reset", $time);
 
