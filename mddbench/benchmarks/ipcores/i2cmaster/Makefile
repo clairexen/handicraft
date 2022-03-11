@@ -2,7 +2,7 @@ help:
 	@echo "This makefile is used to generate the static benchmark files"
 	@echo "that are checked into the mddbench source repository."
 
-static: trace.fst
+static: trace1.fst trace2.fst
 
 RTL_TOP := i2c_master_top
 SIM_TOP := tst_bench_top
