@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-from madcad import *
+import PyQt5
+import madcad as mc
+from madcad import vec3, normalize, length, distance
 
 class Rope:
     def __init__(self, points, meshOptions=None):
@@ -25,18 +27,18 @@ class Rope:
         return l
 
     def createScene(self):
-        self.wire = Interpolated([self.path[i] for i in self.pointIdx])
+        self.wire = mc.Interpolated([self.path[i] for i in self.pointIdx])
 
-        self.tubeCrosssection = Circle((self.path[0], normalize(self.path[1]-self.path[0])), 0.2)
-        self.tube = tube(self.tubeCrosssection, self.wire, True, True)
+        self.tubeCrosssection = mc.Circle((self.path[0], normalize(self.path[1]-self.path[0])), 0.2)
+        self.tube = mc.tube(self.tubeCrosssection, self.wire, True, True)
         self.tube.option(self.meshOptions)
 
-        self.sphereMesh = icosphere(vec3(0, 0, 0), 0.2)
+        self.sphereMesh = mc.icosphere(vec3(0, 0, 0), 0.2)
         self.sphereMesh.option(self.meshOptions)
 
         self.solids = list()
         for p in self.path:
-            s = Solid(content=self.sphereMesh)
+            s = mc.Solid(content=self.sphereMesh)
             s.itransform(p)
             self.solids.append(s)
 
@@ -46,7 +48,7 @@ class Rope:
         for i in range(len(self.solids)-1):
             a, b = self.solids[i:i+2]
             d = self.path[i+1] - self.path[i];
-            self.csts.append(Ball(a, b, 0.5*d, -0.5*d))
+            self.csts.append(mc.Ball(a, b, 0.5*d, -0.5*d))
 
 
 #     -3 -2 -1  0  1  2  3
@@ -131,6 +133,7 @@ def tighten(ropes, nrounds=1000):
 
         damping *= 0.995
 
+
 rope1 = rope(True, [])
 rope2 = rope(False, [])
 
@@ -141,13 +144,42 @@ tighten([rope1, rope2])
 rope1.createScene();
 rope2.createScene();
 
-show([rope1.tube, rope2.tube])
-#show([rope1.solids, rope2.solids])
 
 if False:
-    kin = Kinematic(
+    scene = mc.Scene({
+        "r1t": rope1.tube,
+        "r2t": rope2.tube
+    })
+
+if True:
+    scene = mc.Scene({
+        "r1s": rope1.solids,
+        "r2s": rope2.solids
+    })
+
+if False:
+    kin = mc.Kinematic(
         rope1.csts + rope2.csts,
         fixed = rope1.fixed + rope2.fixed,
         solids = rope1.solids + rope2.solids)
-    show([kin])
+    scene = mc.Scene({"kin": kin})
 
+
+app = PyQt5.QtWidgets.QApplication([])
+
+# build the view widget
+view = mc.rendering.View(scene)
+view.show()
+
+def myCallback():
+    print("MyCallBack")
+    scene.sync({
+        "r1t": rope1.tube,
+        "r1s": rope2.solids
+    })
+    view.update()
+    
+PyQt5.QtCore.QTimer.singleShot(10000, myCallback)
+
+# run the event loop
+app.exec()
