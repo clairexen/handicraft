@@ -105,15 +105,13 @@ class Rope:
         return ret
 
     def renderSpheres(self, ctrlOnly=False):
-        if self.sphereMesh is None and not ctrlOnly:
+        if not ctrlOnly and self.sphereMesh is None:
             self.sphereMesh = mc.icosphere(vec3(0, 0, 0), 0.2)
             self.sphereMesh.option(self.meshOptions)
 
-        self.objs = []
+        self.objs.clear()
         for p in self.path:
-            mesh = self.sphereMesh
-            if ctrlOnly:
-                mesh = None
+            mesh = None if ctrlOnly else self.sphereMesh
             if p.isCtrl:
                 mesh = self.ctrlSphereMesh
             if p.isFixed:
@@ -136,7 +134,8 @@ class Rope:
             self.renderSpheres(ctrlOnly=True)
             self.objs.append(tube)
         else:
-            self.objs = [ tube ]
+            self.objs.clear()
+            self.objs.append(tube)
 
         return self.objs
 
@@ -198,7 +197,7 @@ def rope(levo, knotnum):
         return Rope([D, G, J, M, Q, L, H, E, B, F, J*vec3(1,1,-1), N, S], {"color": vec3(0.1, 0.2, 0.4)})
 
 
-knotnum = 0
+knotnum = 2
 rope1 = rope(True, knotnum)    # Left (green) rope
 rope2 = rope(False, knotnum)   # Right (blue) rope
 
@@ -206,6 +205,8 @@ rope2 = rope(False, knotnum)   # Right (blue) rope
 #%% Engine
 
 engineCallback = lambda: None
+
+
 
 def tighten(ropes, nrounds=30):
     if verbose: print(f"Tighten {nrounds} rounds:")
@@ -264,9 +265,10 @@ def tighten(ropes, nrounds=30):
                     for k in range(len(r.path)):
                         for l in range(k+1, len(r.path)):
                             d = r.path[l].pos - r.path[k].pos
-                            if length(d) < (0.15 if l == k+1 else 0.30 if l == k+2 else 0.35):
-                                push_forces[j][k] -= normalize(d)
-                                push_forces[j][l] += normalize(d)
+                            x = 0.15 if l == k+1 else 0.30 if l == k+2 else 0.35
+                            if length(d) < x:
+                                push_forces[j][k] -= 0.5 * (x-length(d)) * normalize(d)
+                                push_forces[j][l] += 0.5 * (x-length(d)) * normalize(d)
 
                 # prevent intersecting other ropes
                 for j, r in enumerate(ropes):
@@ -275,9 +277,10 @@ def tighten(ropes, nrounds=30):
                         for k in range(len(r.path)):
                             for l in range(len(s.path)):
                                 d = s.path[l].pos - r.path[k].pos
-                                if length(d) < 0.35:
-                                    push_forces[j][k] -= normalize(d)
-                                    push_forces[g][l] += normalize(d)
+                                x = 0.35
+                                if length(d) < x:
+                                    push_forces[j][k] -= 0.5 * (x-length(d)) * normalize(d)
+                                    push_forces[g][l] += 0.5 * (x-length(d)) * normalize(d)
 
                 if not applyForces(push_forces, 0.005):
                     break
@@ -330,25 +333,37 @@ frameCount = 0
 def theEngineCallback():
     global frameCount, knotnum, rope1, rope2
 
-    if frameCount == 0:
-        print(f"Testing knot #{knotnum}")
+    if False:
+        if frameCount == 0:
+            print(f"Testing knot #{knotnum}")
 
-    if frameCount == 30:
-        knotnum += 1
-        rope1 = rope(True, knotnum)
-        rope2 = rope(False, knotnum)
-        frameCount = 0
-    else:
-        frameCount += 1
+        if frameCount == 30:
+            knotnum += 1
+            rope1 = rope(True, knotnum)
+            rope2 = rope(False, knotnum)
+            frameCount = 0
+        else:
+            frameCount += 1
 
     tighten([rope1, rope2])
 
-    scene.sync({
-        #"rope_1": rope1.renderSpheres(),
-        #"rope_2": rope2.renderSpheres(),
-        "rope_1": rope1.renderTube(),
-        "rope_2": rope2.renderTube(),
-    })
+    if False:
+        scene.sync([])  # hotfix for madcad bug
+        scene.sync({
+            "rope_1": rope1.renderSpheres(),
+            "rope_2": rope2.renderSpheres(),
+        })
+    elif False:
+        scene.sync([])  # hotfix for madcad bug
+        scene.sync({
+            "rope_1": rope1.renderTube(True),
+            "rope_2": rope2.renderTube(True),
+        })
+    else:
+        scene.sync({
+            "rope_1": rope1.renderTube(),
+            "rope_2": rope2.renderTube(),
+        })
 
     view.update()
 
