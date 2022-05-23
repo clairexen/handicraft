@@ -1,11 +1,36 @@
 #!/usr/bin/env python3
+
 import PyQt5
 import madcad as mc
-from madcad import vec3, normalize, length, distance
+from madcad import fvec3, vec3, normalize, length, distance
+
+scene = mc.Scene()
+engineCallback = None
+
+app = PyQt5.QtWidgets.QApplication([])
+if mc.settings.display['system_theme']:
+    mc.settings.use_qt_colors()
+
+view = mc.rendering.View(scene)
+view.setMinimumSize(PyQt5.QtCore.QSize(600, 400))
+view.setWindowTitle("Knots 3D")
+view.center(fvec3(-0.5, 3, 5))
+view.look(fvec3(0, 0, 0))
+view.adjust(mc.Box(fvec3(-1.5, -1.5, -0.5), fvec3(1.5, 1.5, 0.5)))
+view.show()
+
+timer = PyQt5.QtCore.QTimer()
+timer.setInterval(100)
+timer.timeout.connect(lambda: None if engineCallback is None else engineCallback())
+timer.start()
+
+
+#%% Setup
 
 class Rope:
     def __init__(self, points, meshOptions=None):
         self.path = list()
+        self.objs = list()
         self.pointIdx = list()
         for p in points:
             if len(self.path):
@@ -19,6 +44,7 @@ class Rope:
             self.path.append(p)
 
         self.meshOptions = meshOptions
+        self.sphereMesh = None
 
     def getLength(self):
         l = 0
@@ -26,29 +52,50 @@ class Rope:
             l += distance(self.path[i], self.path[i+1])
         return l
 
-    def createScene(self):
-        self.wire = mc.Interpolated([self.path[i] for i in self.pointIdx])
+    def renderTube(self):
+        wire = mc.Interpolated([self.path[i] for i in self.pointIdx])
 
-        self.tubeCrosssection = mc.Circle((self.path[0], normalize(self.path[1]-self.path[0])), 0.2)
-        self.tube = mc.tube(self.tubeCrosssection, self.wire, True, True)
-        self.tube.option(self.meshOptions)
+        tubeCrosssection = mc.Circle((self.path[0], normalize(self.path[1]-self.path[0])), 0.2)
+        tube = mc.tube(tubeCrosssection, wire, True, True)
+        tube.option(self.meshOptions)
 
-        self.sphereMesh = mc.icosphere(vec3(0, 0, 0), 0.2)
-        self.sphereMesh.option(self.meshOptions)
+        self.objs = [ tube ]
+        return self.objs
 
-        self.solids = list()
+    def renderSpheres(self):
+        if self.sphereMesh is None:
+            sphereMesh = mc.icosphere(vec3(0, 0, 0), 0.2)
+            sphereMesh.option(self.meshOptions)
+
+        self.objs = []
         for p in self.path:
-            s = mc.Solid(content=self.sphereMesh)
+            s = mc.Solid(content=sphereMesh)
             s.itransform(p)
-            self.solids.append(s)
+            self.objs.append(s)
 
-        self.fixed = [self.solids[0], self.solids[-1]]
+        return self.objs
 
-        self.csts = list()
-        for i in range(len(self.solids)-1):
-            a, b = self.solids[i:i+2]
+    # unused
+    def getKinematic(self):
+        solids = self.renderSpheres()
+        fixed = [solids[0], solids[-1]]
+
+        csts = list()
+        for i in range(len(solids)-1):
+            a, b = solids[i:i+2]
             d = self.path[i+1] - self.path[i];
-            self.csts.append(mc.Ball(a, b, 0.5*d, -0.5*d))
+            csts.append(mc.Ball(a, b, 0.5*d, -0.5*d))
+
+        return csts, fixed, solids
+
+
+# unused
+def createRopesKinematic(ropes):
+    kins = [r.getKinematic() for r in ropes]
+    csts, fixed, solids = [sum(x, []) for x in zip(kins)]
+    kin = mc.Kinematic(csts, fixed, solids)
+    # scene.sync({"kin": kin})
+    return kin
 
 
 #     -3 -2 -1  0  1  2  3
@@ -84,15 +131,28 @@ def rope(levo, ctrls):
     else:
         return Rope([D, G, J, M, Q, L, H, E, B, F, J*vec3(1,1,-1), N, S], {"color": vec3(0.1, 0.2, 0.4)})
 
-def tighten(ropes, nrounds=1000):
-    damping = 0.1
+rope1 = rope(True, [])
+rope2 = rope(False, [])
+
+
+#%% Engine
+
+engineCallback = lambda: None
+
+damping = 0.1
+
+def tighten(ropes, nrounds=10):
+    global damping
+
+    print(f"Tighten {nrounds} rounds (damping={damping:.7f}):")
+
+    oldLengths = [r.getLength() for r in ropes]
+
     for i in range(nrounds):
-        print(f"Round #{i} (damping={damping}):")
         forces = list()
 
         # chaining of solids along a rope
         for j, r in enumerate(ropes):
-            print(f"  rope #{j} length: {r.getLength()}")
             f = list([vec3(0, 0, 0) for p in r.path])
             for k in range(len(r.path)-1):
                 d = r.path[k+1] - r.path[k]
@@ -133,53 +193,25 @@ def tighten(ropes, nrounds=1000):
 
         damping *= 0.995
 
-
-rope1 = rope(True, [])
-rope2 = rope(False, [])
-
-print(f"Number of objects: {len(rope1.path)+len(rope2.path)}")
-
-tighten([rope1, rope2])
-
-rope1.createScene();
-rope2.createScene();
+    for j, r in enumerate(ropes):
+        print(f"  rope #{j} length: {oldLengths[j]:.5f} => {r.getLength():.5f} ({r.getLength()-oldLengths[j]:+.5f})")
 
 
-if False:
-    scene = mc.Scene({
-        "r1t": rope1.tube,
-        "r2t": rope2.tube
-    })
+def theEngineCallback():
+    tighten([rope1, rope2])
 
-if True:
-    scene = mc.Scene({
-        "r1s": rope1.solids,
-        "r2s": rope2.solids
-    })
-
-if False:
-    kin = mc.Kinematic(
-        rope1.csts + rope2.csts,
-        fixed = rope1.fixed + rope2.fixed,
-        solids = rope1.solids + rope2.solids)
-    scene = mc.Scene({"kin": kin})
-
-
-app = PyQt5.QtWidgets.QApplication([])
-
-# build the view widget
-view = mc.rendering.View(scene)
-view.show()
-
-def myCallback():
-    print("MyCallBack")
     scene.sync({
-        "r1t": rope1.tube,
-        "r1s": rope2.solids
+        #"rope_1": rope1.renderSpheres(),
+        #"rope_2": rope2.renderSpheres(),
+        "rope_1": rope1.renderTube(),
+        "rope_2": rope2.renderTube(),
     })
-    view.update()
-    
-PyQt5.QtCore.QTimer.singleShot(10000, myCallback)
 
-# run the event loop
+    view.update()
+
+engineCallback = theEngineCallback
+
+
+#%% Qt Event Loop
+
 app.exec()
