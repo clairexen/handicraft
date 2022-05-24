@@ -36,10 +36,10 @@ class Point:
         self.isCompr = True
 
 class Rope:
-    ctrlSphereMesh = mc.icosphere(vec3(0, 0, 0), 0.2)
+    ctrlSphereMesh = mc.icosphere(vec3(0, 0, 0), 0.25)
     ctrlSphereMesh.option({"color": vec3(0.4, 0.4, 0.2)})
 
-    fixedSphereMesh = mc.icosphere(vec3(0, 0, 0), 0.25)
+    fixedSphereMesh = mc.icosphere(vec3(0, 0, 0), 0.30)
     fixedSphereMesh.option({"color": vec3(0.8, 0.2, 0.2)})
 
     def __init__(self, points, meshOptions=None):
@@ -87,8 +87,10 @@ class Rope:
                 compress = p0.isCtrl or p2.isCtrl
 
             if compress:
-                compress = distance(p0.pos, p1.pos) < 0.17 and \
-                           distance(p1.pos, p2.pos) < 0.17
+                d01 = distance(p0.pos, p1.pos)
+                d02 = distance(p0.pos, p2.pos)
+                d12 = distance(p1.pos, p2.pos)
+                compress = d01 < 0.17 and d12 < 0.17 and d02 > 0.9*(d01+d12)
 
             newPath.append(p0)
             i += 1 + compress
@@ -106,7 +108,7 @@ class Rope:
 
     def renderSpheres(self, ctrlOnly=False):
         if not ctrlOnly and self.sphereMesh is None:
-            self.sphereMesh = mc.icosphere(vec3(0, 0, 0), 0.2)
+            self.sphereMesh = mc.icosphere(vec3(0, 0, 0), 0.25)
             self.sphereMesh.option(self.meshOptions)
 
         self.objs.clear()
@@ -124,9 +126,13 @@ class Rope:
         return self.objs
 
     def renderTube(self, withCtrl=False):
-        wire = mc.Interpolated([self.path[i].pos for i in range(len(self.path)) if self.path[i].isCtrl])
+        self.path[0].isCtrl = True
+        self.path[-1].isCtrl = True
 
-        tubeCrosssection = mc.Circle((self.path[0].pos, normalize(self.path[1].pos-self.path[0].pos)), 0.15)
+        points = [p.pos for p in self.path if p.isCtrl or len(self.path) < 5]
+        wire = mc.Interpolated(points) if len(points) > 2 else mc.Segment(*points)
+
+        tubeCrosssection = mc.Circle((self.path[0].pos, normalize(self.path[1].pos-self.path[0].pos)), 0.20)
         tube = mc.tube(tubeCrosssection, wire, True, True)
         tube.option(self.meshOptions)
 
@@ -162,21 +168,27 @@ def createRopesKinematic(ropes):
     return kin
 
 
-#      3  2  1  0 -1 -2 -3
+#      3  2  1  0 -1 -2 -3         Knotnum bits (1=LSB, 8=MSB)
 #
-#  -2  A     B     C     D
-#       \   / \   / \   /
-#        \ /   \ /   \ /
-#  -1     E     F     G
-#        / \   / \   / \
-#       /   \ /   \ /   \
-#   0  H     I     J     K
-#       \   / \   / \   /
-#        \ /   \ /   \ /
-#   1     L     M     N
-#        / \   / \   / \
-#       /   \ /   \ /   \
-#   2  P     Q     R     S
+#  -2  A     B     C     D         X     _     _     Y
+#       \   / \   / \   /           \   / \   / \   /
+#        \ /   \ /   \ /             \ /   \ /   \ /
+#  -1     E     F     G              (1)   (4)   (6)
+#        / \   / \   / \             / \   / \   / \
+#       /   \ /   \ /   \           /   \ /   \ /   \
+#   0  H     I     J     K         |    (2)   (7)    |
+#       \   / \   / \   /           \   / \   / \   /
+#        \ /   \ /   \ /             \ /   \ /   \ /
+#   1     L     M     N              (3)   (5)   (8)
+#        / \   / \   / \             / \   / \   / \
+#       /   \ /   \ /   \           /   \_/   \_/   \
+#   2  P     Q     R     S         Z                 W
+#
+#
+#                                          |8 7 6|5 4|3 2 1|
+#   Left-Right-Mirror: Swap T and V        +-----+---+-----+
+#   Up-Down-Mirror: Bit-Reflect T, U, V    |  T  | U |  V  |
+#                                          +-----+---+-----+
 
 def pointsColumn(levo, knotnum, x, Y, Z):
     mapz = lambda n: 0 if n==0 else ((2*sum([levo, n>0, (knotnum >> (abs(n)-1)) & 1]))&2)-1
@@ -184,12 +196,18 @@ def pointsColumn(levo, knotnum, x, Y, Z):
 
 def rope(levo, knotnum):
     A, H, P = pointsColumn(levo, knotnum,  3, [-2, 0, 2], [0, 0, 0])
-    E, L    = pointsColumn(levo, knotnum,  2, [-1, 1   ], [-1, +2])
-    B, I, Q = pointsColumn(levo, knotnum,  1, [-2, 0, 2], [0, +3, 0])
+    E, L    = pointsColumn(levo, knotnum,  2, [-1, 1   ], [-1, +3])
+    B, I, Q = pointsColumn(levo, knotnum,  1, [-2, 0, 2], [0, +2, 0])
     F, M    = pointsColumn(levo, knotnum,  0, [-1, 1   ], [+4, -5])
-    C, J, R = pointsColumn(levo, knotnum, -1, [-2, 0, 2], [0, +6, 0])
-    G, N    = pointsColumn(levo, knotnum, -2, [-1, 1   ], [-7, +8])
+    C, J, R = pointsColumn(levo, knotnum, -1, [-2, 0, 2], [0, +7, 0])
+    G, N    = pointsColumn(levo, knotnum, -2, [-1, 1   ], [-6, +8])
     D, K, S = pointsColumn(levo, knotnum, -3, [-2, 0, 2], [0, 0, 0])
+
+    A += vec3(0.7, 0, 0)
+    P += vec3(0.7, 0, 0)
+
+    D -= vec3(0.7, 0, 0)
+    S -= vec3(0.7, 0, 0)
 
     if levo:
         return Rope([A, E, I, M, R, N, K, G, C, F, I*vec3(1,1,-1), L, P], {"color": vec3(0.1, 0.4, 0.2)})
@@ -197,7 +215,7 @@ def rope(levo, knotnum):
         return Rope([D, G, J, M, Q, L, H, E, B, F, J*vec3(1,1,-1), N, S], {"color": vec3(0.1, 0.2, 0.4)})
 
 
-knotnum = 2
+knotnum = 0
 rope1 = rope(True, knotnum)    # Left (green) rope
 rope2 = rope(False, knotnum)   # Right (blue) rope
 
@@ -237,15 +255,16 @@ def tighten(ropes, nrounds=30):
         return True
 
     for i in range(nrounds):
-        # Step 1: Contract rope by chaining solids
+        # Step 1: Contract rope at "compressible" regions
 
         pull_forces = [[vec3(0, 0, 0) for p in r.path] for r in ropes]
 
         for j, r in enumerate(ropes):
             for k in range(len(r.path)-1):
                 d = r.path[k+1].pos - r.path[k].pos
-                pull_forces[j][k] += 0.5 * d
-                pull_forces[j][k+1] -= 0.5 * d
+                if r.path[k].isCompr or r.path[k+1].isCompr or length(d) > 0.20:
+                    pull_forces[j][k] += 0.5 * d
+                    pull_forces[j][k+1] -= 0.5 * d
 
         if not applyForces(pull_forces):
             break
@@ -265,7 +284,7 @@ def tighten(ropes, nrounds=30):
                     for k in range(len(r.path)):
                         for l in range(k+1, len(r.path)):
                             d = r.path[l].pos - r.path[k].pos
-                            x = 0.15 if l == k+1 else 0.30 if l == k+2 else 0.35
+                            x = 0.05 if l == k+1 else 0.20 if l == k+2 else 0.40
                             if length(d) < x:
                                 push_forces[j][k] -= 0.5 * (x-length(d)) * normalize(d)
                                 push_forces[j][l] += 0.5 * (x-length(d)) * normalize(d)
@@ -277,10 +296,9 @@ def tighten(ropes, nrounds=30):
                         for k in range(len(r.path)):
                             for l in range(len(s.path)):
                                 d = s.path[l].pos - r.path[k].pos
-                                x = 0.35
-                                if length(d) < x:
-                                    push_forces[j][k] -= 0.5 * (x-length(d)) * normalize(d)
-                                    push_forces[g][l] += 0.5 * (x-length(d)) * normalize(d)
+                                if length(d) < 0.40:
+                                    push_forces[j][k] -= 0.5 * (0.40-length(d)) * normalize(d)
+                                    push_forces[g][l] += 0.5 * (0.40-length(d)) * normalize(d)
 
                 if not applyForces(push_forces, 0.005):
                     break
@@ -332,18 +350,27 @@ frameCount = 0
 
 def theEngineCallback():
     global frameCount, knotnum, rope1, rope2
+    frameCount += 1
 
-    if False:
-        if frameCount == 0:
+    if True:
+        if frameCount == 1:
             print(f"Testing knot #{knotnum}")
 
-        if frameCount == 30:
+        if frameCount == 20:
+            print(f"  releasing 'Z' end of left rope")
+            rope1.path[0].isFixed = False
+            for p in rope1.path[0:-1]: p.isCompr = False
+            for p in rope2.path[1:-1]: p.isCompr = False
+
+        if frameCount == 80:
+            if len(rope1.path) < 10 or len(rope2.path) < 10:
+                print(f"  computer says \"No!\"")
+            else:
+                print(f"  looking good so far..")
             knotnum += 1
             rope1 = rope(True, knotnum)
             rope2 = rope(False, knotnum)
             frameCount = 0
-        else:
-            frameCount += 1
 
     tighten([rope1, rope2])
 
