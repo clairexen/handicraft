@@ -403,8 +403,8 @@ for word in words:
         else:
             for c in includes:
                 if c in word:
-                    i = word.index(c)
-                    word = word[:i] + c.upper() + word[i+1:]
+                    word = word[:(i := word.index(c))] + \
+                           c.upper() + word[i+1:]
                 else:
                     break
             else:
