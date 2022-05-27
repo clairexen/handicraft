@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 
-import sys
+import random
 import re
+import sys
 
 if len(sys.argv) != 4:
     print("Usage: python3 worldle.py regex include-chars exclude-chars")
-    print("Examle: python3 wordle.py 's.[^a]..' stas hour")
+    print("Examle: python3 wordle.py '.[^ta][^t]..' 'at' 'sonedumpxhc'")
     sys.exit(1)
 
 regex, includes, excludes = sys.argv[1:]
@@ -396,11 +397,11 @@ yells yelps yeses yield yocks yodel yogin yogis yoked yokel yokes yolks
 young yours youth yowls yucca yucks yucky yummy yuppy zebra zebus zeros
 zests zilch zincs zings zippy zombi zonal zoned zones zooms""".split()
 
-for word in words:
-    if regex.fullmatch(word):
-        for c in excludes:
-            if c in word: break
-        else:
+def findGuesses(samples=10):
+    matches = list()
+
+    for word in words:
+        if regex.fullmatch(word):
             for c in includes:
                 if c in word:
                     word = word[:(i := word.index(c))] + \
@@ -408,4 +409,42 @@ for word in words:
                 else:
                     break
             else:
-                print(word)
+                for c in excludes:
+                    if c in word: break
+                else:
+                    matches.append(word)
+
+    n = min(len(matches), samples)
+    print(f"-- {n} of {len(matches)} guesses --")
+    for m in sorted(random.sample(matches, n)):
+        print(f" {m.lower()}   [{m}]")
+    print()
+
+def findProbes(levels=2, samples=10):
+    covered = set(includes + excludes)
+
+    bestScore = [-1 for i in range(levels)]
+    matches = [None for i in range(levels)]
+
+    for word in words:
+        score = len(set(word) - covered)
+        for lvl in range(levels):
+            if score > bestScore[lvl]:
+                bestScore = bestScore[0:lvl] + [score] + bestScore[lvl:-1]
+                matches = matches[0:lvl] + [[word]] + matches[lvl:-1]
+                break
+            if score == bestScore[lvl]:
+                matches[lvl].append(word)
+                break
+
+    for lvl in range(levels):
+        n = min(len(matches[lvl]), samples)
+        print(f"-- {n} of {len(matches[lvl])} probes with score {bestScore[lvl]} --")
+        for m in sorted(random.sample(matches[lvl], n)):
+            k = "".join([c.upper() if c in covered else c for c in m])
+            print(f" {m}   [{k}]")
+        print()
+
+if __name__ == "__main__":
+    findGuesses()
+    findProbes()
