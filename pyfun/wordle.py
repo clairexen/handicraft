@@ -4,15 +4,8 @@ import random
 import re
 import sys
 
-if len(sys.argv) != 4:
-    print("Usage: python3 worldle.py regex include-chars exclude-chars")
-    print("Examle: python3 wordle.py '.[^ta][^t]..' 'at' 'sonedumpxhc'")
-    sys.exit(1)
-
-regex, includes, excludes = sys.argv[1:]
-regex = re.compile(regex)
-
-words="""
+class Wordle:
+    words="""
 abaci aback abaft abase abash abate abbey abbot abeam abets abhor abide
 abler abode abort about above abuse abuts abuzz abyss ached aches achoo
 acids acing acmes acorn acres acrid acted actor acute adage adapt added
@@ -397,54 +390,104 @@ yells yelps yeses yield yocks yodel yogin yogis yoked yokel yokes yolks
 young yours youth yowls yucca yucks yucky yummy yuppy zebra zebus zeros
 zests zilch zincs zings zippy zombi zonal zoned zones zooms""".split()
 
-def findGuesses(samples=10):
-    matches = list()
+    def __init__(self, regex, includes, excludes):
+        self.regex = re.compile(regex)
+        self.includes = list(sorted(includes))
+        self.excludes = list(sorted(excludes))
 
-    for word in words:
-        if regex.fullmatch(word):
-            for c in includes:
-                if c in word:
-                    word = word[:(i := word.index(c))] + \
-                           c.upper() + word[i+1:]
+    def findGuesses(self, samples=10):
+        self.matches = list()
+
+        for word in self.words:
+            if self.regex.fullmatch(word):
+                for c in self.includes:
+                    if c in word:
+                        word = word[:(i := word.index(c))] + \
+                               c.upper() + word[i+1:]
+                    else:
+                        break
                 else:
-                    break
-            else:
-                for c in excludes:
-                    if c in word: break
-                else:
-                    matches.append(word)
+                    for c in self.excludes:
+                        if c in word: break
+                    else:
+                        self.matches.append(word)
 
-    n = min(len(matches), samples)
-    print(f"-- {n} of {len(matches)} guesses --")
-    for m in sorted(random.sample(matches, n)):
-        print(f" {m.lower()}   [{m}]")
-    print()
-
-def findProbes(levels=2, samples=10):
-    covered = set(includes + excludes)
-
-    bestScore = [-1 for i in range(levels)]
-    matches = [None for i in range(levels)]
-
-    for word in words:
-        score = len(set(word) - covered)
-        for lvl in range(levels):
-            if score > bestScore[lvl]:
-                bestScore = bestScore[0:lvl] + [score] + bestScore[lvl:-1]
-                matches = matches[0:lvl] + [[word]] + matches[lvl:-1]
-                break
-            if score == bestScore[lvl]:
-                matches[lvl].append(word)
-                break
-
-    for lvl in range(levels):
-        n = min(len(matches[lvl]), samples)
-        print(f"-- {n} of {len(matches[lvl])} probes with score {bestScore[lvl]} --")
-        for m in sorted(random.sample(matches[lvl], n)):
-            k = "".join([c.upper() if c in covered else c for c in m])
-            print(f" {m}   [{k}]")
+        n = min(len(self.matches), samples)
+        print(f"-- {n} of {len(self.matches)} guesses --")
+        for m in sorted(random.sample(self.matches, n)):
+            print(f" {m.lower()}   [{m}]")
         print()
 
+    def findProbes(self, useMatches=False, levels=2, samples=10):
+        covered = set(self.includes + self.excludes)
+
+        bestScore = [-1 for i in range(levels)]
+        matches = [None for i in range(levels)]
+
+        words = self.words
+        if useMatches:
+            words = list([m.lower() for m in self.matches])
+
+        for word in words:
+            score = len(set(word) - covered)
+            for lvl in range(levels):
+                if score > bestScore[lvl]:
+                    bestScore = bestScore[0:lvl] + [score] + bestScore[lvl:-1]
+                    matches = matches[0:lvl] + [[word]] + matches[lvl:-1]
+                    break
+                if score == bestScore[lvl]:
+                    matches[lvl].append(word)
+                    break
+
+        for lvl in range(levels):
+            if matches[lvl] is None:
+                continue
+            n = min(len(matches[lvl]), samples)
+            print(f"-- {n} of {len(matches[lvl])} {'matching ' if useMatches else ''}probes with score {bestScore[lvl]} --")
+            for m in sorted(random.sample(matches[lvl], n)):
+                k = "".join([c.upper() if c in covered else c for c in m])
+                print(f" {m}   [{k}]")
+            print()
+
+    def findFirst():
+        data = [{} for i in range(5)]
+        gdata = {}
+
+        for word in Wordle.words:
+            for i, c in enumerate(word):
+                if c not in data[i]:
+                    data[i][c] = 0
+                data[i][c] += 1
+                if c not in gdata:
+                    gdata[c] = 0
+                gdata[c] += 1
+
+        maxScore = 0
+        results = []
+
+        for word in Wordle.words:
+            score = 0
+            for i, c in enumerate(word):
+                score += data[i][c]
+                score += 7 * gdata[c]
+            score *= len(set(word))
+            if score > maxScore:
+                maxScore = score
+                results = []
+            results.append(word)
+
+        print(f"{len(Wordle.words)=} {len(results)=} {maxScore=}")
+        print(f"Good words to start with: {', '.join(sorted(random.sample(results, 10)))}")
+
 if __name__ == "__main__":
-    findGuesses()
-    findProbes()
+    if len(sys.argv) != 4:
+        print("Usage: python3 worldle.py regex include-chars exclude-chars")
+        print("Examle: python3 wordle.py '.[^ta][^t]..' 'at' 'sonedumpxhc'")
+        print()
+        Wordle.findFirst()
+        sys.exit(1)
+
+    wordle = Wordle(*sys.argv[1:])
+    wordle.findGuesses()
+    wordle.findProbes(True)
+    wordle.findProbes()
