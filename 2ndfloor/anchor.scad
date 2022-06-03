@@ -16,15 +16,17 @@
 //      2x   40x40x40 slat (45/ 0)
 //      1x   40x40x40 slat (-45/-45)
 //      1x  120x40x40 slat (-45/-45)
+//      1x   80x40x40 slat (45/45/90)
+//      1x   80x40x40 slat (45/45/-90)
 //
-//  Total 21 slats with a combined length of 9702 mm.
+//  Total 23 slats with a combined length of 9862 mm.
 
 
-module slat(length=500, angle1=0, angle2=0, depth=40, height=40)
+module slat(length=500, angle1=0, angle2=0, angle3=0, depth=40, height=40)
 {
 	ext1 = angle1 < 0 ? depth/cos(-angle1) : 0;
 	ext2 = angle2 < 0 ? depth/cos(-angle2) : 0;
-	echo(str(round(length), "x", height, "x", depth, " slat (", angle1, "/", angle2, ")"));
+	echo(str(round(length), "x", height, "x", depth, " slat (", angle1, "/", angle2, "/", angle3, ")"));
 	render() difference() {
 		translate([-ext1, -depth, 0])
 			cube([length+ext1+ext2, depth, height]);
@@ -33,7 +35,11 @@ module slat(length=500, angle1=0, angle2=0, depth=40, height=40)
 			translate([-depth, -depth*(0.5 + 1/cos(angle1)), -0.5*height])
 			cube([depth, depth*(1 + 1/cos(angle1)), 2*height]);
 
-		translate([length, 0, 0]) rotate([0, 0, -angle2])
+		translate([length, 0, 0])
+			translate([0, -depth/2, height/2])
+			rotate([angle3, 0, 0])
+			translate([0, depth/2, -height/2])
+			rotate([0, 0, -angle2])
 			translate([0, -depth*(0.5 + 1/cos(angle1)), -0.5*height])
 			cube([depth, depth*(1 + 1/cos(angle1)), 2*height]);
 	}
@@ -120,6 +126,15 @@ color([0.8,0.2,0.2])
 	translate([-60, 0, 0])
 	rotate([0, 0, 90])
 	slat(40, 45, 0);
+
+color([0.6,0.2,0.6])
+	translate([-20+600*sin(45), 0, 0])
+	rotate([180, 0, 180])
+	slat(80, 45, 45, 90);
+
+color([0.6,0.2,0.6])
+	translate([20-600*sin(45), 0, -40])
+	slat(80, 45, 45, -90);
 
 k = 600 - 80/sin(45);
 
