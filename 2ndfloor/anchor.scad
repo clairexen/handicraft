@@ -1,26 +1,27 @@
 // Part List:
 //
-//      2x  113x40x40 slat (45/45)
-//      1x  153x40x40 slat ( 0/ 0)
-//      2x  260x40x40 slat (45/ 0)
-//      2x  487x40x40 slat (45/45)
-//      1x  509x40x40 slat ( 0/45)
-//      2x  600x40x40 slat (45/45)
-//      1x  662x40x40 slat ( 0/45)
-//      1x  800x40x40 slat (45/45)
-//      1x  860x40x40 slat ( 0/ 0)
-//      1x  880x40x40 slat (45/45)
-//      2x  889x40x40 slat (45/45)
-//      1x  900x40x40 slat ( 0/ 0)
+//     A   2x  113x40x40 slat (45/45)
+//     B   1x  153x40x40 slat ( 0/ 0)
+//     C   2x  260x40x40 slat (45/ 0)
+//     D   2x  487x40x40 slat (45/45)
+//     E   1x  509x40x40 slat ( 0/45)
+//     F   2x  600x40x40 slat (45/45)
+//     G   1x  662x40x40 slat ( 0/45)
+//     H   1x  800x40x40 slat (45/45)
+//     K   1x  860x40x40 slat ( 0/ 0)
+//     L   1x  880x40x40 slat (45/45)
+//     M   2x  889x40x40 slat (45/45)
+//     N   1x  900x40x40 slat ( 0/ 0)
 //
-//      2x   40x40x40 slat (45/ 0)
-//      1x   40x40x40 slat (-45/-45)
-//      1x  120x40x40 slat (-45/-45)
-//      1x   80x40x40 slat (45/45/90)
-//      1x   80x40x40 slat (45/45/-90)
+//     P   2x   40x40x40 slat (45/ 0)
+//     Q   1x   40x40x40 slat (-45/-45)
+//     R   1x  120x40x40 slat (-45/-45)
+//     S   1x   80x40x40 slat (45/45/90)
+//     T   1x   80x40x40 slat (45/45/-90)
 //
 //  Total 23 slats with a combined length of 9862 mm.
 
+explode = 50;
 
 module slat(length=500, angle1=0, angle2=0, angle3=0, depth=40, height=40)
 {
@@ -46,7 +47,7 @@ module slat(length=500, angle1=0, angle2=0, angle3=0, depth=40, height=40)
 }
 
 color([0.2,0.2,0.8])
-	translate([-20-600*sin(45), 40, -40])
+	translate([-20-600*sin(45), 40+explode, -40-explode])
 	slat(40+1200*sin(45), 45, 45);
 
 color([0.2,0.8,0.2])
@@ -55,47 +56,47 @@ color([0.2,0.8,0.2])
 	slat(900);
 
 color([0.6,0.2,0.6])
-	translate([20, 0, 40])
+	translate([20, 0, 40+explode])
 	rotate([0, 0, -90])
 	slat(900-40);
 
 color([0.6,0.2,0.6])
-	translate([20, -40, 0])
+	translate([20, -40-explode, -explode])
 	rotate([90, 0, -90])
 	slat(800*sin(45)-40/sin(45), 0, 45);
 
 color([0.8,0.2,0.2])
-	translate([-20, 0, 0])
+	translate([-20, 0, -explode])
 	rotate([0, 90, 0])
 	slat(800*sin(45)+40/sin(45)+40, 0, 45);
 
 color([0.2,0.2,0.8])
-	translate([-20, 40, 40/sin(45)-800*sin(45)])
+	translate([-20, 40+explode, 40/sin(45)-800*sin(45)-explode])
 	rotate([0, 90, 0])
 	slat(40 + 80/sin(45));
 
 color([0.2,0.2,0.8])
-	translate([-20, -40, -800*sin(45)])
+	translate([-20, -40-2*explode, -800*sin(45)-explode])
 	rotate([90, -135, 90])
 	slat(800, 45, 45);
 
 color([0.6,0.2,0.6])
-	translate([-20, -40, -40/sin(45)-800*sin(45)])
+	translate([-20, -40-3*explode, -40/sin(45)-800*sin(45)-explode])
 	rotate([90, -135, 90])
 	slat(800+80, 45, 45);
 
 color([0.8,0.2,0.2])
-	translate([20 + 600*sin(45), 40, 0])
+	translate([20+600*sin(45)+explode, 40-explode, 0])
 	rotate([0, 0, -135])
 	slat(600, 45, 45);
 
 color([0.8,0.2,0.2])
-	translate([-20, 40 - 600*sin(45), 0])
+	translate([-20-explode, 40-600*sin(45)-explode, 0])
 	rotate([0, 0, 135])
 	slat(600, 45, 45);
 
 color([0.2,0.2,0.8])
-	translate([-20-600*sin(45), 40, 40])
+	translate([-20-600*sin(45), 40+explode, 40+explode])
 	slat(40+1200*sin(45), 45, 45);
 
 color([0.6,0.2,0.6])
@@ -109,51 +110,51 @@ color([0.6,0.2,0.6])
 	slat(80/sin(45), 45, 45);
 
 color([0.6,0.2,0.6])
-	translate([20, 40, 0])
+	translate([20+explode, 40, 0])
 	rotate([0, 0, -45])
 	slat(300-40, 45, 0);
 
 color([0.6,0.2,0.6])
-	translate([-20, 40,40])
+	translate([-20-explode, 40,40])
 	rotate([180, 0, -135])
 	slat(300-40, 45, 0);
 
 color([0.8,0.2,0.2])
-	translate([20, 40, 0])
+	translate([20+explode, 40+explode, 0])
 	slat(40, 45, 0);
 
 color([0.8,0.2,0.2])
-	translate([-60, 0, 0])
+	translate([-60-explode, explode, 0])
 	rotate([0, 0, 90])
 	slat(40, 45, 0);
 
 color([0.6,0.2,0.6])
-	translate([-20+600*sin(45), 0, 0])
+	translate([-20+600*sin(45)+explode, 0, -2*explode])
 	rotate([180, 0, 180])
 	slat(80, 45, 45, 90);
 
 color([0.6,0.2,0.6])
-	translate([20-600*sin(45), 0, -40])
+	translate([20-600*sin(45)-explode, 0, -40-2*explode])
 	slat(80, 45, 45, -90);
 
 k = 600 - 80/sin(45);
 
 color([0.2,0.8,0.2])
-	translate([-20, 0, -k*sin(45)])
+	translate([-20-explode, 0, -k*sin(45)-explode])
 	rotate([90, -135, 0])
 	slat(k, 45, 45);
 
 color([0.2,0.8,0.2])
-	translate([20 + k*sin(45), 0, 0])
+	translate([20+k*sin(45)+explode, 0, -explode])
 	rotate([90, 135, 0])
 	slat(k, 45, 45);
 
 color([0.2,0.2,0.8])
-	translate([-20, 0, -k*sin(45)])
+	translate([-20, explode, -k*sin(45)-explode])
 	rotate([-90, 0, 0])
 	slat(40, -45, -45);
 
 color([0.6,0.2,0.6])
-	translate([-60, 0, 40-k*sin(45)])
+	translate([-60, explode, 40-k*sin(45)])
 	rotate([-90, 0, 0])
 	slat(120, -45, -45);
