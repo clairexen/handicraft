@@ -1,33 +1,34 @@
 // Part List:
 //
-//     A   2x  113x40x40 slat (45/45)
-//     B   1x  153x40x40 slat ( 0/ 0)
-//     C   2x  260x40x40 slat (45/ 0)
-//     D   2x  487x40x40 slat (45/45)
-//     E   1x  509x40x40 slat ( 0/45)
-//     F   2x  600x40x40 slat (45/45)
-//     G   1x  662x40x40 slat ( 0/45)
-//     H   1x  800x40x40 slat (45/45)
-//     K   1x  860x40x40 slat ( 0/ 0)
-//     L   1x  880x40x40 slat (45/45)
-//     M   2x  889x40x40 slat (45/45)
-//     N   1x  900x40x40 slat ( 0/ 0)
+//     A1  A2   2x  113x40x40 slat (45/45)
+//     B1       1x  153x40x40 slat ( 0/ 0)
+//     C1  C2   2x  260x40x40 slat (45/ 0)
+//     D1  D2   2x  487x40x40 slat (45/45)
+//     E1       1x  509x40x40 slat ( 0/45)
+//     F1  F2   2x  600x40x40 slat (45/45)
+//     G1       1x  662x40x40 slat ( 0/45)
+//     H1       1x  800x40x40 slat (45/45)
+//     K1       1x  860x40x40 slat ( 0/ 0)
+//     L1       1x  880x40x40 slat (45/45)
+//     M1  M2   2x  889x40x40 slat (45/45)
+//     N1       1x  900x40x40 slat ( 0/ 0)
 //
-//     P   2x   40x40x40 slat (45/ 0)
-//     Q   1x   40x40x40 slat (-45/-45)
-//     R   1x  120x40x40 slat (-45/-45)
-//     S   1x   80x40x40 slat (45/45/90)
-//     T   1x   80x40x40 slat (45/45/-90)
+//     P1  P2   2x   40x40x40 slat (45/ 0)
+//     Q1       1x   40x40x40 slat (-45/-45)
+//     R1       1x  120x40x40 slat (-45/-45)
+//     S1       1x   80x40x40 slat (45/45/90)
+//     T1       1x   80x40x40 slat (45/45/-90)
 //
 //  Total 23 slats with a combined length of 9862 mm.
 
-explode = 50;
+explode = 0;
 
 module slat(length=500, angle1=0, angle2=0, angle3=0, depth=40, height=40)
 {
 	ext1 = angle1 < 0 ? depth/cos(-angle1) : 0;
 	ext2 = angle2 < 0 ? depth/cos(-angle2) : 0;
-	echo(str(round(length), "x", height, "x", depth, " slat (", angle1, "/", angle2, "/", angle3, ")"));
+	echo(str(round(length), "x", height, "x", depth,
+			" slat (", angle1, "/", angle2, "/", angle3, ")"));
 	render() difference() {
 		translate([-ext1, -depth, 0])
 			cube([length+ext1+ext2, depth, height]);
