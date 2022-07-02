@@ -1,0 +1,8 @@
+{
+    "parameterSets": {
+        "exploded": {
+            "explode": "50"
+        }
+    },
+    "fileFormatVersion": "1"
+}

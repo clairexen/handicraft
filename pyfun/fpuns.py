@@ -5,92 +5,125 @@
 #   - Posits (aka type-III Unums, as proposed by John L. Gustafson)
 #   - IEEE floating point numbers
 
+import math
+import numpy as np
 
-class GenericFloat:
-    '''
-    A generic arbitrary precision floating point object
+def bvNeg(a):
+    a = ~np.array(a, np.bool_)
+    for i in range(len(a)):
+        a[i] = not a[i]
+        if a[i]: break
+    return a
 
-    Attributes
-    ----------
-    exponent : int
-        The exponent. Set to 0 for zero and to 1 for inf/nan.
-    mantissa : int
-        The (signed) mantissa, including the leading 1-bit.
-        Set to 0 for zero and inf/nan.
-    '''
-
-    def __init__(self, exponent, mantissa):
-        self.exponent = exponent
-        self.mantissa = mantissa
-
-    def __str__(self):
-        if self.mantissa == 0:
-            return "0" if self.exponent == 0 else "NaN"
-        return bin(self.mantissa).replace("0b1", "0b1.") + f"e{exponent}"
+def bvAbs(a):
+    if a[-1]:
+        return bvNeg(a)
+    return a
 
 class Fpun:
-    '''
-    A representation of an arbitrary precision Fpun
-
-    From MSB to LSB bit:
-    - Quadrant
-      - sign-bit: 0 = positive, 1 = negative
-      - supu-bit: 0 = magnitude smaller than one, 1 = magnitude bigger or equal one
-      the supu bit is stored inverted when the sign bit is set (number is negative), and all
-      futher bits are stored inverted if sign == supu.
-    - Exponent 
-      - 0b0                ( 1 bit) => 0
-      - 0b10               ( 2 bit) => 1
-      - 0b110a             ( 4 bit) => 0b1a
-      - 0b1110ab           ( 6 bit) => 0b1ab
-          ...
-      - 0b111111110abcdefg (16 bit) => 0b1abcdefg
-      i.e. the unary (zero-terminated) length L, followed by L-1 data bits if L>1. The decoded
-      exponent is then either 0 for L=0, or an implicit 1-bit followed by the L-1 data bits.
-    - Mantissa
-      All remaining bits are mantissa bits (with the implicit leading 1-bit not stored in the encoded
-      Fpun).
-
-    Example Numbers:
-     0b 00_000..000   Zero (exponent truncated -> round to zero)
-     0b 00_000..001   For a 32-bit number we get L=29, so that's around 1.0e-160000000
-     0b 01_000..000   One
-     0b 01_111..111   For a 32-bit number we get L=29, so that's around 1.0e+160000000
-     0b 10_000..000   Not-A-Number encoding
-     0b 10_000..001   For a 32-bit number we get L=29, so that's around -1.0e+160000000
-     0b 11_000..000   Negative One
-     0b 11_111..111   For a 32-bit number we get L=29, so that's around -1.0e-160000000
-    '''
-    def __init__(self, value=None : GenericFloat):
-        if value is None:
-            self.sign = False
-            self.supo = False
-            self.expo = 0
-            self.mant = 0
+    def __init__(self, bits, size=None):
+        if size is None:
+            self.data = np.array(bits, np.bool_)
         else:
-            if value.mantissa = 0:
-                self.sign = value.exponent != 0
-                self.supo = 0
-                self.expo = 0
-                self.mant = 0
+            self.data = np.array([((bits>>i)&1) == 1 for i in range(size)], np.bool_)
+
+        negative = self.data[-1]
+        superNormal = self.data[-2] != self.data[-1]
+        bits = bvAbs(self.data)
+
+        exponent = 0
+        cursor = 3
+        ebits = 0
+        overflow = 0
+
+        while cursor <= len(bits):
+            if bits[-cursor] != bits[-2]:
+                cursor += 1
+                break
+            ebits += exponent
+            exponent = 1
+            cursor += 1
+        else:
+            if not bits[-2]:
+                self.nonzero = False
+                self.value = None if self.data[-1] else 0
                 return
 
-            if value.mantissa < 0:
-                self.sign = True
-                self.mant = -value.mantissa
+        for i in range(ebits):
+            exponent <<= 1
+            if cursor <= len(bits):
+                if bits[-cursor] == superNormal:
+                    exponent |= 1
+                cursor += 1
             else:
-                self.sign = False
-                self.mant = value.mantissa
+                if not superNormal:
+                    exponent |= 1
+                overflow += 1
 
-            if value.exponent < 0:
-                self.supu = False
-                self.expo = ~self.exponent
-            else
-                self.supu = True
-                self.expo = self.exponent
+        if not superNormal:
+            exponent = -1-exponent
 
-            #FIXME
-            pass
+        mantissa = 1
+        while cursor <= len(bits):
+            mantissa <<= 1
+            if bits[-cursor]:
+                mantissa |= 1
+            cursor += 1
 
-    def trunc(self, nbits):
-        pass
+        if negative:
+            mantissa = -mantissa
+
+        self.exponent = exponent
+        self.mantissa = mantissa
+        self.expbits = ebits - overflow
+        self.overflow = overflow
+        self.mantbits = mantissa.bit_length()-1
+
+        self.nonzero = True
+        self.value = None if abs(exponent) > 100 else \
+                math.pow(2, exponent) * mantissa / (1 << (mantissa.bit_length()-1))
+
+    def describe(self):
+        s = []
+        bits = list(["1" if bit else "0" for bit in bvAbs(self.data)])
+
+        if not self.nonzero:
+            bits = ["="] + bits + ["="]
+        else:
+            bits.insert(self.mantbits + self.expbits, ":")
+            bits.insert(self.mantbits, ">" if self.overflow else "|")
+
+        s.append("".join(reversed(bits)) + "  =>  ")
+
+        if not self.nonzero:
+            if self.value is None:
+                s.append("NaN")
+            else:
+                s.append("Zero")
+        else:
+            s.append("-" if self.mantissa < 0 else "+")
+            s.append(f"exp2({self.exponent:+3d}) * ")
+            s.append(bin(abs(self.mantissa)).replace("0b1", "1.").ljust(7, "_") + " (bin)")
+
+            if abs(self.value) > 256:
+                s.append(f" = {int(self.value):12d}")
+            else:
+                s.append(f" = {self.value:12.5f}")
+
+            if abs(1/self.value) > 256:
+                s.append(f"  (= {int(1/self.value):12d} ^-1)")
+            else:
+                s.append(f"  (= {1/self.value:12.3f} ^-1)")
+
+        return "".join(s)
+
+def genPositiveValues(nbits=8):
+    return list([val for val in [
+        Fpun(i, nbits).value for i in range(1, 1 << (nbits-1))
+    ] if val is not None])
+
+if __name__ == "__main__":
+    for i in range(-128, 128):
+        p = Fpun(i, 8)
+        print(f"{i:4d} {i&255:08b}:  {p.describe()}")
+    print(genFpunValues())
