@@ -125,11 +125,14 @@ module foundation(O) {
 		h = height + 2*W;
 		p1 =  O + 1.5*W*(R+B);
 		p2 = p1 + (depth-3*W)*B;
-		p3 = p2 + (width-3*W)*R;
+		p3 = p2 + (width-2*W)*R;
 		p4 = p3 + (depth-3*W-indent)*F;
 
-		for (p = [p2, p3, p4])
+		for (p = [p2])
 			color(c3) bar(W, p, p + h*U, [], [], "LEG");
+
+		for (p = [p3, p4])
+			color(c3) bar(W, p, p + 2400*U, [], [], "LEG");
 
 		// bottom struts
 		p5 = p3 + W/2*(B+L+U) + W*U;
@@ -137,6 +140,15 @@ module foundation(O) {
 		color(c2) bar(W, p3 + W/2*(R+U) + W*(B+U), p2 + W/2*(L+U) + W*(B+U), [], [], "BOTTOM");
 		color(c4) bar(W, p5 + strutSpan*F, p5 + strutSpan*L, [R], [B], "BOT_STRUT");
 
+		// top frame
+		p6 = p4 + 2400*U + W/2*(F+D) + W*L + 1.94*W*F;
+		p7 = p3 + 2400*U + W/2*(B+D) + W*L + W*B;
+		color(c1) bar(W, p6, p7, [0.56*F+U], [], "TOP_FRAME");
+		
+		// top strut
+		p8 = p4 + 2400*U + W/2*F;
+		p9 = O + width*R + height*U + W/2*L + W*U;
+		bar(W, p8, p9, [B,U], [D, F], "TOP_FRAME");
 	}
 
 	module frame() {
@@ -152,23 +164,26 @@ module foundation(O) {
 		p3 = p1 + W*U + W/2*(F+R);
 		p4 = p3 + depth*B;
 
-		p3t = p3 + (width-W)*R;
-		p4t = p4 + (width-W)*R;
+		p3t = p3 + (width-2*W)*R;
+		p4t = p4 + (width-2*W)*R;
 
 		color(c1) bar(W, p3, p4, [], [], "FRAME");
 		color(c1) bar(W, p3t, p4t, [], [], "FRAME");
 
+		for (k = [0.25, 0.5, 0.75])
+			color(c1) bar(W, k*p3 + (1-k)*p3t, k*p4 + (1-k)*p4t, [], [], "FRAME");
+
 		// horizontal struts
 		color(c4) bar(W, p1 + strutSpan*B, p3 + strutSpan*R + W*(B+D), [L], [F], "HORIZ_STRUT");
 		color(c4) bar(W, p1t + strutSpan*F, p4 + strutSpan*R + W*(F+D), [L], [B], "HORIZ_STRUT");
-		color(c4) bar(W, p2 + strutSpan*B, p3t + strutSpan*L + W*(B+D), [R], [F], "HORIZ_STRUT");
-		color(c4) bar(W, p2t + strutSpan*F, p4t + strutSpan*L + W*(F+D), [R], [B], "HORIZ_STRUT");
+		color(c4) bar(W, p2 + strutSpan*B + W*L, p3t + strutSpan*L + W*(B+D), [R], [F], "HORIZ_STRUT");
+		color(c4) bar(W, p2t + strutSpan*F + W*L, p4t + strutSpan*L + W*(F+D), [R], [B], "HORIZ_STRUT");
 
 		// vertical struts left and right
 		p5 = p3 + W/2*D;
 		p6 = p4 + W/2*D + W*F;
-		p7 = p5 + (width-W)*R + (indent+W)*B;
-		p8 = p6 + (width-W)*R;
+		p7 = p5 + (width-W)*R + (indent+W)*B + W*L;
+		p8 = p6 + (width-W)*R + W*L;
 
 		color(c4) bar(W, p5 + 1.5*strutSpan*D, p5 + 1.5*strutSpan*B, [F], [U], "VERT_STRUT");
 		color(c4) bar(W, p6 + 1.5*strutSpan*D, p6 + 1.5*strutSpan*F, [B], [U], "VERT_STRUT");
