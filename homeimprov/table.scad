@@ -59,7 +59,14 @@ module Leg() {
 	
 }
 
-module TopFrame() {
+module Legs() {
+	Leg();
+	mirror([1, 0, 0]) Leg();
+	mirror([0, 1, 0]) Leg();
+	rotate([0, 0, 180]) Leg();
+}
+
+module TopFrame_Variant1() {
 	color([0.3, 1.0, 0.4])
 		translate([-width/2+W, gap/2, height-W])
 		Part(width-2*W);
@@ -84,10 +91,57 @@ module TopFrame() {
 		Part(gap);
 }
 
+module TopFrameHalve() {
+	color([0.3, 1.0, 0.4])
+		translate([-width/2+W, gap/2, height-W])
+		Part(width-2*W);
+	module S() {
+		color([0.3, 0.4, 1.0])
+			translate([-width/2+W, gap/2, height - strut*sin(45)-W])
+			rotate([0, -45, 0])
+			Part(strut, 45, 45);
+	}
+	S();
+	mirror([1, 0, 0]) S();
+
+	color([0.3, 0.4, 1.0])
+		let(len = gap - 2*W*(1-cos(ang)) + 2*W*tan(ang))
+		translate([-width/2, -len/2, height-W])
+		rotate([0, 0, 90])
+		Part(len, ang, ang);
+
+	color([0.3, 1.0, 0.4])
+		translate([-width/2+W, -gap/2, height-W])
+		rotate([0, 0, 90])
+		Part(gap);
+}
+
+module TopFrame() {
+	TopFrameHalve();
+	rotate([0, 0, 180]) TopFrameHalve();
+}
+
+module TableTop() {
+	for (a = [0, 180]) rotate([0, 0, a]) {
+		color([0.3, 1.0, 0.4])
+			translate([-width/2 - 2*W, depth/2, height - W])
+			rotate([0, 0, -90])
+			Part(depth);
+
+		color([0.3, 0.4, 1.0])
+			translate([-width/2 + W, gap/2-W, height - W])
+			Part(width - 2*W);
+	}
+
+	for (i = [-2, -1, 0, 1, 2]) {
+		color([0.5, 0.6, 0.8])
+			translate([-width/2 - 2*W, -depth/10 + i*(depth/5) + 2, height])
+			cube([width + 4*W, depth/5 - 4, 10]);
+	}
+}
+
 BottomFrame();
-Leg();
-mirror([1, 0, 0]) Leg();
-mirror([0, 1, 0]) Leg();
-rotate([0, 0, 180]) Leg();
+Legs();
 TopFrame();
-rotate([0, 0, 180]) TopFrame();
+
+translate([0, 0, 4*W]) TableTop();
