@@ -1,9 +1,9 @@
 
 W=44;
-gap=150;
-ang=15;
-width=800;
-depth=700;
+gap=143;
+ang=10;
+width=700;
+depth=600;
 height=600;
 strut=300;
 
