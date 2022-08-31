@@ -128,9 +128,9 @@ module TableTop() {
 			rotate([0, 0, -90])
 			Part(depth);
 
-		color([0.3, 0.4, 1.0])
-			translate([-width/2 + W, gap/2-W, height - W])
-			Part(width - 2*W);
+		// color([0.3, 0.4, 1.0])
+		// 	translate([-width/2 + W, gap/2-W, height - W])
+		// 	Part(width - 2*W);
 	}
 
 	for (i = [-2, -1, 0, 1, 2]) {
