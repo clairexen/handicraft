@@ -1,1 +1,1 @@
-# Another Sheep-And-Goats (SAG) Verilog Core
+# Yet Another Sheep-And-Goats (SAG) Verilog Core
