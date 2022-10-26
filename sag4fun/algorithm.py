@@ -19,8 +19,7 @@ class BitMaskSet:
                     else:
                         self[i,j] = value[index]
                     index += 1
-                if i != 0:
-                    assert value[index] == " "
+                if i != 0 and value[index] == " ":
                     index += 1
             assert index == len(value)
             return
@@ -31,8 +30,7 @@ class BitMaskSet:
         for i in reversed(range(self.numRows)):
             for j in reversed(range(self.numCols)):
                 s.append(str(self[i,j]))
-            if i != 0:
-                s.append(" ")
+            # if i != 0: s.append(" ")
         return "".join(s)
 
     def __getitem__(self, key):
@@ -50,23 +48,26 @@ class BitMaskSet:
                 result[i,j] = carry
         return result
 
-    def split(self, mask, hi=False):
+    def split(self, mask=None, hi=False):
         result = BitMaskSet(self.N, self.depth+1)
         for i in range(self.numRows):
             for j in range(0, self.numCols, 2):
                 pair = self[i,j], self[i,j+1]
-                if mask[i, j+1 if hi else j]:
+                if mask is not None and mask[i, j+1 if hi else j]:
                     pair = pair[1], pair[0]
                 result[2*i,j>>1] = pair[0]
                 result[2*i+1,j>>1] = pair[1]
         return result
 
-    def merge(self):
+    def merge(self, mask=None, hi=False):
         result = BitMaskSet(self.N, self.depth-1)
         for i in range(0, self.numRows, 2):
             for j in range(self.numCols):
-                result[i>>1,2*j] = self[i,j]
-                result[i>>1,2*j+1] = self[i+1,j]
+                pair = self[i,j], self[i+1,j]
+                if mask is not None and mask[i>>1, 2*j+1 if hi else 2*j]:
+                    pair = pair[1], pair[0]
+                result[i>>1,2*j] = pair[0]
+                result[i>>1,2*j+1] = pair[1]
         return result
 
     def mask(self, other, default=0):
@@ -87,7 +88,8 @@ class SAG4Fun:
     def __init__(self, N):
         self.N = N
         self.xcfg = [BitMaskSet(N, i) for i in range((N-1).bit_length())]
-        self.mask = BitMaskSet(N, 0)
+        self.extMask = BitMaskSet(N, 0)
+        self.depMask = BitMaskSet(N, 0)
 
     def printState(self):
         for i in range((self.N-1).bit_length()):
@@ -95,30 +97,56 @@ class SAG4Fun:
 
     def loadMask(self, value):
         M = BitMaskSet(self.N, 0, value)
-        self.mask = M
+        self.extMask = M
 
         for i in range((self.N-1).bit_length()):
             self.xcfg[i] = M.xorsum(1)
+            print(f"-x{i}", self.xcfg[i])
             M = M.split(self.xcfg[i])
 
+        for i in range((self.N-1).bit_length()):
+            M = M.merge()
+        self.depMask = M
+
     def bitExtract(self, value):
-        D = BitMaskSet(self.N, 0, "deABfCgh")
-        D = self.mask.mask(D, "_")
+        D = BitMaskSet(self.N, 0, value)
+        D = self.extMask.mask(D, "_")
+
         for i in range((self.N-1).bit_length()):
             D = D.split(self.xcfg[i])
+            print(f"-d{i}", D)
+
         for i in range((self.N-1).bit_length()):
             D = D.merge()
+
         return D
 
     def bitDeposit(self, value):
-        pass  # TBD
+        D = BitMaskSet(self.N, 0, value)
+        D = self.depMask.mask(D, "_")
+
+        for i in range((self.N-1).bit_length()):
+            D = D.split()
+
+        for i in reversed(range((self.N-1).bit_length())):
+            print(f"-d{i}", D)
+            D = D.merge(self.xcfg[i])
+
+        return D
 
 def main():
-    print(D := "deABfCgh")
-    print(M := "00110100")
     sag = SAG4Fun(8)
+
+    print("M: ", M := "00110100")
     sag.loadMask(M)
     # sag.printState()
-    print(sag.bitExtract(D))
+
+    print()
+    print("D: ", D := "xxABxCxx")
+    print("ext", sag.bitExtract(D))
+
+    print()
+    print("D: ", D := "xxxxxABC")
+    print("dep", sag.bitDeposit(D))
 
 main()
