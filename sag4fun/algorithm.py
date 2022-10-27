@@ -156,7 +156,10 @@ class SAG4Fun:
                 M = BitMaskSet(self.N, 0, M)
         self.depMask = M
 
-    def SAG(self, value):
+    def SAG(self, value, mask=None):
+        if mask is not None:
+            self.loadMask(mask)
+
         D = BitMaskSet(self.N, 0, value)
 
         for i in range((self.N-1).bit_length()):
@@ -172,7 +175,10 @@ class SAG4Fun:
 
         return D
 
-    def ISG(self, value):
+    def ISG(self, value, mask=None):
+        if mask is not None:
+            self.loadMask(mask)
+
         if not config.enableRowShuffle:
             D = BitMaskSet(self.N, 0, value)
             for i in range((self.N-1).bit_length()):
@@ -187,12 +193,16 @@ class SAG4Fun:
 
         return D
 
-    def EXT(self, value):
+    def EXT(self, value, mask=None):
+        if mask is not None:
+            self.loadMask(mask)
         D = BitMaskSet(self.N, 0, value)
         D = self.extMask.mask(D, "_")
         return self.SAG(D)
 
-    def DEP(self, value):
+    def DEP(self, value, mask=None):
+        if mask is not None:
+            self.loadMask(mask)
         D = BitMaskSet(self.N, 0, value)
         D = self.depMask.mask(D, "_")
         return self.ISG(D)
@@ -334,6 +344,13 @@ def checks(N):
         D = D.merge()
         Q = BitMaskSet(N, 1, Q).merge()
         print(f"M{i}", D, Q, ("EQ" if Q==D else "ne") + ("ID" if Q==symbols else ""))
+
+    print()
+    print("D:", D := bin(0x1b3389e39)[3:] if N == 32 else bin(0x135af3cf8a0e5e582)[3:])
+    print("M:", M := bin(0x1690aea75)[3:] if N == 32 else bin(0x1642c00be348a9690)[3:])
+
+    sag = SAG4Fun(N)
+    print("S:", sag.SAG(D, M))
 
     print()
     print("=" * 50)

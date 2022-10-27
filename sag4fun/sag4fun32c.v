@@ -106,7 +106,7 @@ module SAG4FunCell (
 
 	output out_swap,
 	output out_carry,
-	input [1:0] out_data
+	output [1:0] out_data
 );
 	assign out_swap = in_carry ^ in_data[0];
 	assign out_carry = out_swap ^ in_data[1];
