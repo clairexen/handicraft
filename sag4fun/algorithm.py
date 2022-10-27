@@ -2,11 +2,16 @@
 
 import random
 import sys
+import textwrap
+import types
 
-enableDebug = True
+config = types.SimpleNamespace(
+    enableDebug=True,
+    enableRowShuffle=True,
+)
 
 def debug(*args):
-    if enableDebug: print(*args)
+    if config.enableDebug: print(*args)
 
 class BitMaskSet:
     def __init__(self, N, depth, value=None, default=0):
@@ -47,6 +52,12 @@ class BitMaskSet:
             # if i != 0: s.append(" ")
         return "".join(s)
 
+    def __eq__(self, other):
+        return str(self) == str(other)
+
+    def __ne__(self, other):
+        return str(self) != str(other)
+
     def __getitem__(self, key):
         if type(key) is tuple:
             return self.data[key[0]][key[1]]
@@ -68,26 +79,43 @@ class BitMaskSet:
                 carry = carry ^ self[i,2*j+1]
         return result
 
-    def split(self, mask=None):
-        result = BitMaskSet(self.N, self.depth+1)
-        for i in range(self.numRows):
-            for j in range(self.numCols>>1):
-                pair = self[i,2*j], self[i,2*j+1]
-                if mask is not None and mask[i,j]:
-                    pair = pair[1], pair[0]
-                result[2*i,j] = pair[0]
-                result[2*i+1,j] = pair[1]
+    def swap(self, mask):
+        result = BitMaskSet(self.N, self.depth)
+        if False:
+            for i in range(self.numRows):
+                for j in range(self.numCols>>1):
+                    a, b = self[i,2*j], self[i,2*j+1]
+                    if mask[i,j]: a, b = b, a
+                    result[i,2*j], result[i,2*j+1] = a, b
+        else:
+            for i in range(self.N>>1):
+                a, b = self[2*i], self[2*i+1]
+                if mask[i]: a, b = b, a
+                result[2*i], result[2*i+1] = a, b
         return result
 
-    def merge(self, mask=None):
+    def split(self):
+        assert self.numCols > 1
+        result = BitMaskSet(self.N, self.depth+1)
+        if config.enableRowShuffle and self.depth != 0:
+            temp = BitMaskSet(self.N, 0, self)
+            result.set(temp.split())
+        else:
+            for i in range(self.numRows):
+                for j in range(self.numCols>>1):
+                    result[2*i,j], result[2*i+1,j] = self[i,2*j], self[i,2*j+1]
+        return result
+
+    def merge(self):
+        assert self.numRows > 1
         result = BitMaskSet(self.N, self.depth-1)
-        for i in range(self.numRows>>1):
-            for j in range(self.numCols):
-                pair = self[2*i,j], self[2*i+1,j]
-                if mask is not None and mask[i,j]:
-                    pair = pair[1], pair[0]
-                result[i,2*j] = pair[0]
-                result[i,2*j+1] = pair[1]
+        if config.enableRowShuffle and self.depth != 1:
+            temp = BitMaskSet(self.N, 1, self)
+            result.set(temp.merge())
+        else:
+            for i in range(self.numRows>>1):
+                for j in range(self.numCols):
+                    result[i,2*j], result[i,2*j+1] = self[2*i,j], self[2*i+1,j]
         return result
 
     def mask(self, other, default=0):
@@ -118,33 +146,44 @@ class SAG4Fun:
         for i in range((self.N-1).bit_length()):
             self.xcfg[i] = M.xorsum(1)
             debug(f"-x{i}", self.xcfg[i])
-            M = M.split(self.xcfg[i])
+            M = M.swap(self.xcfg[i])
+            M = M.split()
 
-        for i in range((self.N-1).bit_length()):
-            M = M.merge()
+        if not config.enableRowShuffle:
+            for i in range((self.N-1).bit_length()):
+                M = M.merge()
+        else:
+                M = BitMaskSet(self.N, 0, M)
         self.depMask = M
 
     def SAG(self, value):
         D = BitMaskSet(self.N, 0, value)
 
         for i in range((self.N-1).bit_length()):
-            D = D.split(self.xcfg[i])
+            D = D.swap(self.xcfg[i])
+            D = D.split()
             debug(f"-d{i}", D)
 
-        for i in range((self.N-1).bit_length()):
-            D = D.merge()
+        if not config.enableRowShuffle:
+            for i in range((self.N-1).bit_length()):
+                D = D.merge()
+        else:
+                D = BitMaskSet(self.N, 0, D)
 
         return D
 
-    def GAS(self, value):
-        D = BitMaskSet(self.N, 0, value)
-
-        for i in range((self.N-1).bit_length()):
-            D = D.split()
+    def ISG(self, value):
+        if not config.enableRowShuffle:
+            D = BitMaskSet(self.N, 0, value)
+            for i in range((self.N-1).bit_length()):
+                D = D.split()
+        else:
+            D = BitMaskSet(self.N, (self.N-1).bit_length(), value)
 
         for i in reversed(range((self.N-1).bit_length())):
             debug(f"-d{i}", D)
-            D = D.merge(self.xcfg[i])
+            D = D.merge()
+            D = D.swap(self.xcfg[i])
 
         return D
 
@@ -156,11 +195,10 @@ class SAG4Fun:
     def DEP(self, value):
         D = BitMaskSet(self.N, 0, value)
         D = self.depMask.mask(D, "_")
-        return self.GAS(D)
+        return self.ISG(D)
 
 def demo():
-    global enableDebug
-    enableDebug = True
+    config.enableDebug = True
 
     letters = "abcdefgh"
     numbers = "12345678"
@@ -197,7 +235,7 @@ def demo():
         print("--")
         print("dep", sag.DEP(D))
         print("--")
-        print("gas", D := sag.GAS(D))
+        print("gas", D := sag.ISG(D))
 
         assert str(I) == str(D)
         print()
@@ -205,10 +243,9 @@ def demo():
         print()
 
 def tests(N):
-    global enableDebug
-    enableDebug = False
+    config.enableDebug = False
 
-    symbols = "#+0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+    symbols = "+0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz~"
     assert N <= len(symbols)
     symbols = symbols[0:N]
 
@@ -231,7 +268,7 @@ def tests(N):
         assert l == "" and r == ""
 
         D = sag.SAG(I)
-        O = sag.GAS(D)
+        O = sag.ISG(D)
 
         sep = " " if N<=32 else "\n\t"
         print(f"M={M} I={I}{sep}D={D} O={O}")
@@ -243,13 +280,40 @@ def tests(N):
     print("=" * 50)
     print()
 
-def checks(N):
-    global enableDebug
-    enableDebug = False
+def snippets():
+    config.enableDebug = False
 
-    symbols = "#+0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+    I32 = BitMaskSet(32, 0, str32 := "+0123456789ABCDEFGHIJKLMNOPQRST~")
+    I64 = BitMaskSet(64, 0, str64 := "+0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz~")
+    assert len(str32) == 32 and len(str64) == 64
+
+    sag32 = SAG4Fun(32)
+    sag64 = SAG4Fun(64)
+
+    def makePerm(name, val32, val64):
+        expr32 = "{" + ", ".join([f"in[{str32.find(c)}]" for c in str(val32)]) + "}"
+        expr64 = "{" + ", ".join([f"in[{str64.find(c)}]" for c in str(val64)]) + "}"
+        print()
+        print(f"function [XLEN-1:0] {name};")
+        print(f"  input [XLEN-1:0] in;")
+        for stmt in [f"  if (XLEN == 32) {name} = {expr32};", f"  else {name} = {expr64};"]:
+            for line in textwrap.wrap(stmt, initial_indent="  ", subsequent_indent="      "):
+                print(line)
+        print(f"endfunction")
+
+    makePerm(f"split", I32.split(), I64.split())
+    makePerm(f"merge", BitMaskSet(32, 1, I32).merge(), BitMaskSet(64, 1, I64).merge())
+
+    print()
+    print("=" * 50)
+    print()
+
+def checks(N):
+    config.enableDebug = False
+
+    symbols = "+0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz~"
     assert N <= len(symbols)
-    symbols = symbols[0:N]
+    symbols = symbols[0:N-1] + "~"
     
     sag = SAG4Fun(N)
     log2N = (N-1).bit_length()
@@ -257,29 +321,19 @@ def checks(N):
     print()
     print("I ", symbols)
 
-    D = BitMaskSet(N, 0, symbols)
+    print()
+    D = (Q := BitMaskSet(N, 0, symbols))
     for i in range(log2N):
         D = D.split()
-        if i == 0: print(f"S{i}", S := D)
-    print(f"S{i}", D)
+        Q = BitMaskSet(N, 0, Q.split())
+        print(f"S{i}", D, Q, ("EQ" if Q==D else "ne") + ("ID" if Q==symbols else ""))
 
-    D = BitMaskSet(N, log2N, symbols)
+    print()
+    D = (Q := BitMaskSet(N, log2N, symbols))
     for i in range(log2N):
         D = D.merge()
-        if i == 0: print(f"M{i}", M := D)
-    print(f"M{i}", D)
-
-    def makeFun(name, value):
-        expr = ", ".join([f"in[{symbols.find(c)}]" for c in value])
-        print()
-        print(f"function [{N-1}:0] {name};")
-        print(f"  input [{N-1}:0] in;")
-        print(f"  bitrev{N} = {{{expr}}};")
-        print(f"endfunction")
-
-    makeFun(f"split{N}", str(S))
-    makeFun(f"merge{N}", str(M))
-    makeFun(f"bitrev{N}", str(D))
+        Q = BitMaskSet(N, 1, Q).merge()
+        print(f"M{i}", D, Q, ("EQ" if Q==D else "ne") + ("ID" if Q==symbols else ""))
 
     print()
     print("=" * 50)
@@ -289,6 +343,7 @@ if __name__ == "__main__":
     demo()
     tests(32)
     tests(64)
+    snippets()
     checks(32)
     checks(64)
     print("ALL TESTS PASSED")
