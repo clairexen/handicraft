@@ -69,14 +69,13 @@ class BitMaskSet:
         else:
             self.data[key // self.numCols][key % self.numCols] = value
 
-    def xorsum(self, cin=0):
+    def xorsum(self):
         result = BitMaskSet(self.N>>1, self.depth)
         for i in range(self.numRows):
-            carry = cin
+            carry = 1
             for j in range(self.numCols>>1):
-                carry = carry ^ self[i,2*j]
-                result[i,j] = carry
-                carry = carry ^ self[i,2*j+1]
+                result[i,j] = carry ^ self[i,2*j]
+                carry = result[i,j] ^ self[i,2*j+1]
         return result
 
     def swap(self, mask):
@@ -144,7 +143,7 @@ class SAG4Fun:
         self.extMask = M
 
         for i in range((self.N-1).bit_length()):
-            self.xcfg[i] = M.xorsum(1)
+            self.xcfg[i] = M.xorsum()
             debug(f"-x{i}", self.xcfg[i])
             M = M.swap(self.xcfg[i])
             M = M.split()
@@ -301,8 +300,8 @@ def snippets():
     sag64 = SAG4Fun(64)
 
     def makePerm(name, val32, val64):
-        expr32 = "{" + ", ".join([f"in[{str32.find(c)}]" for c in str(val32)]) + "}"
-        expr64 = "{" + ", ".join([f"in[{str64.find(c)}]" for c in str(val64)]) + "}"
+        expr32 = "{" + ", ".join([f"in[{str32.find(c)}]" for c in reversed(str(val32))]) + "}"
+        expr64 = "{" + ", ".join([f"in[{str64.find(c)}]" for c in reversed(str(val64))]) + "}"
         print()
         print(f"function [XLEN-1:0] {name};")
         print(f"  input [XLEN-1:0] in;")
@@ -345,12 +344,18 @@ def checks(N):
         Q = BitMaskSet(N, 1, Q).merge()
         print(f"M{i}", D, Q, ("EQ" if Q==D else "ne") + ("ID" if Q==symbols else ""))
 
+    D = bin(0x1b3389e39)[3:] if N == 32 else bin(0x135af3cf8a0e5e582)[3:]
+    M = bin(0x1690aea75)[3:] if N == 32 else bin(0x1642c00be348a9690)[3:]
+
     print()
-    print("D:", D := bin(0x1b3389e39)[3:] if N == 32 else bin(0x135af3cf8a0e5e582)[3:])
-    print("M:", M := bin(0x1690aea75)[3:] if N == 32 else bin(0x1642c00be348a9690)[3:])
+    print(f"localparam [{N-1}:0] test_din = {N}'b {D};")
+    print(f"localparam [{N-1}:0] test_msk = {N}'b {M};")
 
     sag = SAG4Fun(N)
-    print("S:", sag.SAG(D, M))
+    sag.loadMask(M);
+
+    print(f"localparam [{N-1}:0] test_sag = {N}'b {sag.SAG(D)};")
+    print(f"localparam [{N-1}:0] test_isg = {N}'b {sag.ISG(D)};")
 
     print()
     print("=" * 50)
