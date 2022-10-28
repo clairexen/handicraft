@@ -1,5 +1,9 @@
 /sag4fun32c
 /sag4fun32s
+/sag4fun64c
+/sag4fun64s
 /cmos32c.txt
 /cmos32s.txt
+/cmos64c.txt
+/cmos64s.txt
 /testbench.vcd

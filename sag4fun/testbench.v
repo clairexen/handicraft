@@ -1,11 +1,25 @@
 module testbench;
-	localparam [31:0] test_din = 32'b 10110011001110001001111000111001;
-	localparam [31:0] test_msk = 32'b 01101001000010101110101001110101;
-	localparam [31:0] test_sag = 32'b 01001100110010110101101001101101;
-	localparam [31:0] test_isg = 32'b 01000011110011111000001111100011;
+`ifdef TYPE_32
+	localparam integer N = 32;
+	`define TYPE_C_MODULE SAG4Fun32C
+	`define TYPE_S_MODULE SAG4Fun32S
+	localparam [N-1:0] test_din = 32'b 10110011001110001001111000111001;
+	localparam [N-1:0] test_msk = 32'b 01101001000010101110101001110101;
+	localparam [N-1:0] test_sag = 32'b 01001100110010110101101001101101;
+	localparam [N-1:0] test_isg = 32'b 01000011110011111000001111100011;
+`else
+	localparam integer N = 64;
+	`define TYPE_C_MODULE SAG4Fun64C
+	`define TYPE_S_MODULE SAG4Fun64S
+	localparam [N-1:0] test_din = 64'b 0011010110101111001111001111100010100000111001011110010110000010;
+	localparam [N-1:0] test_msk = 64'b 0110010000101100000000001011111000110100100010101001011010010000;
+	localparam [N-1:0] test_sag = 64'b 0100001011110110000101001111001100110010011111111100100100101010;
+	localparam [N-1:0] test_isg = 64'b 0110010010010100011111000111110111010001111110010010100011001100;
+`endif
 
 	reg  clock;
 	reg  reset;
+	reg  error = 0;
 
 	reg  ctrl_inv;
 	reg  ctrl_msk;
@@ -14,23 +28,24 @@ module testbench;
 	reg  ctrl_start;
 	wire ctrl_ready;
 
-	reg  [31:0] in_data;
-	reg  [31:0] in_mask;
-	wire [31:0] out_data;
+	reg  [N-1:0] in_data;
+	reg  [N-1:0] in_mask;
+	wire [N-1:0] out_data;
 
-`ifdef TYPE_32
+	wire test_sag_ok = out_data === test_sag;
+	wire test_isg_ok = out_data === test_isg;
+
 `ifdef TYPE_C
 	assign ctrl_ready = 1;
-	SAG4Fun32C uut (
+	`TYPE_C_MODULE uut (
 		.ctrl_inv (ctrl_inv),
 		.ctrl_msk (ctrl_msk),
 		.in_data  (in_data ),
 		.in_mask  (in_mask ),
 		.out_data (out_data)
 	);
-`endif
-`ifdef TYPE_S
-	SAG4Fun32S uut (
+`else
+	`TYPE_S_MODULE uut (
 		.clock (clock),
 		.reset (reset),
 
@@ -44,7 +59,6 @@ module testbench;
 		.in_data  (in_data ),
 		.out_data (out_data)
 	);
-`endif
 `endif
 
 	initial begin
@@ -62,13 +76,13 @@ module testbench;
 		$display("in_data  = %b", test_din);
 		$display("in_mask  = %b", test_msk);
 
+`ifdef TYPE_S
 		reset <= 1;
 		ctrl_inv <= 0;
 		ctrl_msk <= 0;
 		ctrl_ldm <= 1;
 		ctrl_start <= 0;
 		in_data <= test_msk;
-		in_mask <= test_msk;
 		@(posedge clock);
 
 		reset <= 0;
@@ -76,16 +90,17 @@ module testbench;
 		@(posedge clock);
 
 		ctrl_start <= 0;
-`ifdef TYPE_S
 		ctrl_inv <= 'bx;
 		ctrl_msk <= 'bx;
 		ctrl_ldm <= 'bx;
 		in_data <= 'bx;
+		@(posedge clock);
+		@(posedge clock);
+		@(posedge clock);
+		@(posedge clock);
+`ifdef TYPE_64
+		@(posedge clock);
 `endif
-		@(posedge clock);
-		@(posedge clock);
-		@(posedge clock);
-		@(posedge clock);
 
 		ctrl_inv <= 0;
 		ctrl_msk <= 0;
@@ -95,46 +110,61 @@ module testbench;
 		@(posedge clock);
 
 		ctrl_start <= 0;
-`ifdef TYPE_S
 		ctrl_inv <= 'bx;
 		ctrl_msk <= 'bx;
 		ctrl_ldm <= 'bx;
 		in_data <= 'bx;
+		@(posedge clock);
+		@(posedge clock);
+		@(posedge clock);
+		@(posedge clock);
+`ifdef TYPE_64
+		@(posedge clock);
 `endif
-		@(posedge clock);
-		@(posedge clock);
-		@(posedge clock);
-		@(posedge clock);
 
 		ctrl_inv <= 1;
 		ctrl_msk <= 0;
 		ctrl_ldm <= 0;
 		ctrl_start <= 1;
 		in_data <= test_din;
+`else
+		ctrl_inv <= 0;
+		ctrl_msk <= 0;
+		in_data <= test_din;
+		in_mask <= test_msk;
+`endif
 
 		#1 $display("SAG:");
 		$display("expected = %b", test_sag);
-		$display("out_data = %b %s", out_data, out_data === test_sag ? "OK" : "ERROR");
+		$display("out_data = %b %s", out_data, test_sag_ok ? "OK" : "ERROR");
+		error = error || !test_sag_ok;
 		@(posedge clock);
 
-		ctrl_start <= 0;
 `ifdef TYPE_S
+		ctrl_start <= 0;
 		ctrl_inv <= 'bx;
 		ctrl_msk <= 'bx;
 		ctrl_ldm <= 'bx;
 		in_data <= 'bx;
+		@(posedge clock);
+		@(posedge clock);
+		@(posedge clock);
+		@(posedge clock);
+`ifdef TYPE_64
+		@(posedge clock);
 `endif
-		@(posedge clock);
-		@(posedge clock);
-		@(posedge clock);
-		@(posedge clock);
+`else
+		ctrl_inv <= 1;
+`endif
 
 		#1 $display("ISG:");
 		$display("expected = %b", test_isg);
-		$display("out_data = %b %s", out_data, out_data === test_isg ? "OK" : "ERROR");
+		$display("out_data = %b %s", out_data, test_isg_ok ? "OK" : "ERROR");
+		error = error || !test_isg_ok;
 		@(posedge clock);
 
-		@(negedge clock);
-		#2 $finish;
+		#2 if (!error) $finish;
+		$display("TESTBENCH FAILED WITH ERROR!");
+		$stop;
 	end
 endmodule

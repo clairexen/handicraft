@@ -17,22 +17,62 @@ module SAG4Fun32C (
 	assign r0_din = in_data & (in_mask | {32{ctrl_inv | !ctrl_msk}});
 	assign out_data = r4_dout & (in_mask | {32{!ctrl_inv | !ctrl_msk}});
 
-	SAG4FunRow #(32) r0 (ctrl_inv, ctrl_inv ? m4_sout : m0_sout, 16'bx, r0_din,,,  r0_dout);
-	SAG4FunRow #(32) r1 (ctrl_inv, ctrl_inv ? m3_sout : m1_sout, 16'bx, r0_dout,,, r1_dout);
-	SAG4FunRow #(32) r2 (ctrl_inv, ctrl_inv ? m2_sout : m2_sout, 16'bx, r1_dout,,, r2_dout);
-	SAG4FunRow #(32) r3 (ctrl_inv, ctrl_inv ? m1_sout : m3_sout, 16'bx, r2_dout,,, r3_dout);
-	SAG4FunRow #(32) r4 (ctrl_inv, ctrl_inv ? m0_sout : m4_sout, 16'bx, r3_dout,,, r4_dout);
+	SAG4FunRow #(32, 4'b1011) r0 (ctrl_inv, ctrl_inv ? m4_sout : m0_sout, 16'bx, r0_din,,,  r0_dout);
+	SAG4FunRow #(32, 4'b0011) r1 (ctrl_inv, ctrl_inv ? m3_sout : m1_sout, 16'bx, r0_dout,,, r1_dout);
+	SAG4FunRow #(32, 4'b0011) r2 (ctrl_inv, ctrl_inv ? m2_sout : m2_sout, 16'bx, r1_dout,,, r2_dout);
+	SAG4FunRow #(32, 4'b0011) r3 (ctrl_inv, ctrl_inv ? m1_sout : m3_sout, 16'bx, r2_dout,,, r3_dout);
+	SAG4FunRow #(32, 4'b0001) r4 (ctrl_inv, ctrl_inv ? m0_sout : m4_sout, 16'bx, r3_dout,,, r4_dout);
 
 	assign m0_cin = 16'b 0000_0000_0000_0001 | (m0_cout << 1);
 	assign m1_cin = 16'b 0000_0001_0000_0001 | (m1_cout << 1);
 	assign m2_cin = 16'b 0001_0001_0001_0001 | (m2_cout << 1);
 	assign m3_cin = 16'b 0101_0101_0101_0101 | (m3_cout << 1);
 
-	SAG4FunRow #(32) m0 (1'b0, m0_sout, m0_cin, in_mask, m0_sout, m0_cout, m0_dout);
-	SAG4FunRow #(32) m1 (1'b0, m1_sout, m1_cin, m0_dout, m1_sout, m1_cout, m1_dout);
-	SAG4FunRow #(32) m2 (1'b0, m2_sout, m2_cin, m1_dout, m2_sout, m2_cout, m2_dout);
-	SAG4FunRow #(32) m3 (1'b0, m3_sout, m3_cin, m2_dout, m3_sout, m3_cout, m3_dout);
-	SAG4FunRow #(32) m4 (1'b0, m4_sout, 16'h FFFF, m3_dout, m4_sout,,);
+	SAG4FunRow #(32, 4'b0001) m0 (1'b0, m0_sout, m0_cin, in_mask, m0_sout, m0_cout, m0_dout);
+	SAG4FunRow #(32, 4'b0001) m1 (1'b0, m1_sout, m1_cin, m0_dout, m1_sout, m1_cout, m1_dout);
+	SAG4FunRow #(32, 4'b0001) m2 (1'b0, m2_sout, m2_cin, m1_dout, m2_sout, m2_cout, m2_dout);
+	SAG4FunRow #(32, 4'b0001) m3 (1'b0, m3_sout, m3_cin, m2_dout, m3_sout, m3_cout, m3_dout);
+	SAG4FunRow #(32, 4'b0000) m4 (1'b0, m4_sout, 16'h FFFF, m3_dout, m4_sout,,);
+endmodule
+
+module SAG4Fun64C (
+	input ctrl_inv,
+	input ctrl_msk,
+
+	input [63:0] in_data,
+	input [63:0] in_mask,
+
+	output [63:0] out_data
+);
+	wire [63:0] r0_din, r0_dout, r1_dout, r2_dout, r3_dout, r4_dout, r5_dout;
+
+	wire [31:0] m0_cin, m1_cin, m2_cin, m3_cin, m4_cin;
+	wire [31:0] m0_cout, m1_cout, m2_cout, m3_cout, m4_cout;
+	wire [31:0] m0_sout, m1_sout, m2_sout, m3_sout, m4_sout, m5_sout;
+	wire [63:0] m0_dout, m1_dout, m2_dout, m3_dout, m4_dout;
+
+	assign r0_din = in_data & (in_mask | {64{ctrl_inv | !ctrl_msk}});
+	assign out_data = r5_dout & (in_mask | {64{!ctrl_inv | !ctrl_msk}});
+
+	SAG4FunRow #(64, 4'b1011) r0 (ctrl_inv, ctrl_inv ? m5_sout : m0_sout, 32'bx, r0_din,,,  r0_dout);
+	SAG4FunRow #(64, 4'b0011) r1 (ctrl_inv, ctrl_inv ? m4_sout : m1_sout, 32'bx, r0_dout,,, r1_dout);
+	SAG4FunRow #(64, 4'b0011) r2 (ctrl_inv, ctrl_inv ? m3_sout : m2_sout, 32'bx, r1_dout,,, r2_dout);
+	SAG4FunRow #(64, 4'b0011) r3 (ctrl_inv, ctrl_inv ? m2_sout : m3_sout, 32'bx, r2_dout,,, r3_dout);
+	SAG4FunRow #(64, 4'b0011) r4 (ctrl_inv, ctrl_inv ? m1_sout : m4_sout, 32'bx, r3_dout,,, r4_dout);
+	SAG4FunRow #(64, 4'b0001) r5 (ctrl_inv, ctrl_inv ? m0_sout : m5_sout, 32'bx, r4_dout,,, r5_dout);
+
+	assign m0_cin = 32'b 0000_0000_0000_0000_0000_0000_0000_0001 | (m0_cout << 1);
+	assign m1_cin = 32'b 0000_0000_0000_0001_0000_0000_0000_0001 | (m1_cout << 1);
+	assign m2_cin = 32'b 0000_0001_0000_0001_0000_0001_0000_0001 | (m2_cout << 1);
+	assign m3_cin = 32'b 0001_0001_0001_0001_0001_0001_0001_0001 | (m3_cout << 1);
+	assign m4_cin = 32'b 0101_0101_0101_0101_0101_0101_0101_0101 | (m4_cout << 1);
+
+	SAG4FunRow #(64, 4'b0001) m0 (1'b0, m0_sout, m0_cin, in_mask, m0_sout, m0_cout, m0_dout);
+	SAG4FunRow #(64, 4'b0001) m1 (1'b0, m1_sout, m1_cin, m0_dout, m1_sout, m1_cout, m1_dout);
+	SAG4FunRow #(64, 4'b0001) m2 (1'b0, m2_sout, m2_cin, m1_dout, m2_sout, m2_cout, m2_dout);
+	SAG4FunRow #(64, 4'b0001) m3 (1'b0, m3_sout, m3_cin, m2_dout, m3_sout, m3_cout, m3_dout);
+	SAG4FunRow #(64, 4'b0001) m4 (1'b0, m4_sout, m4_cin, m3_dout, m4_sout, m4_cout, m4_dout);
+	SAG4FunRow #(64, 4'b0000) m5 (1'b0, m5_sout, 32'h FFFF_FFFF, m4_dout, m5_sout,,);
 endmodule
 
 module SAG4Fun32S (
@@ -71,7 +111,7 @@ module SAG4Fun32S (
 			state == 3 ? 16'b 0101_0101_0101_0101 :
 			16'h FFFF;
 
-	wire [2:0] index = (ctrl_start ? 0 : state);
+	wire [2:0] index = (ctrl_start || state == 5) ? 0 : state;
 	wire [2:0] swapcfgidx = cfg_inv ? 4-index : index;
 
 	assign row_sin = cfg_ldm ? row_sout : swapcfg[swapcfgidx];
@@ -100,8 +140,75 @@ module SAG4Fun32S (
 	assign out_data = ctrl_ready ? data : 'bx;
 endmodule
 
+module SAG4Fun64S (
+	input clock,
+	input reset,
+
+	input  ctrl_inv,
+	input  ctrl_msk,
+	input  ctrl_ldm,
+	input  ctrl_start,
+	output ctrl_ready,
+
+	input  [63:0] in_data,
+	output [63:0] out_data
+);
+	reg saved_inv, saved_msk, saved_ldm;
+
+	wire cfg_inv = ctrl_start ? ctrl_inv : saved_inv;
+	wire cfg_msk = ctrl_start ? ctrl_msk : saved_msk;
+	wire cfg_ldm = ctrl_start ? ctrl_ldm : saved_ldm;
+
+	wire  [31:0] row_sin, row_sout;
+	wire  [31:0] row_cin, row_cout;
+	wire  [63:0] row_din, row_dout;
+
+	SAG4FunRow #(64) row (cfg_inv, row_sin, row_cin, row_din, row_sout, row_cout, row_dout);
+
+	reg [31:0] swapcfg [0:5];
+	reg [63:0] data;
+	reg [2:0] state;
+
+	wire [31:0] carry_mask = ctrl_start ||
+			state == 0 ? 32'b 0000_0000_0000_0000_0000_0000_0000_0001 :
+			state == 1 ? 32'b 0000_0000_0000_0001_0000_0000_0000_0001 :
+			state == 2 ? 32'b 0000_0001_0000_0001_0000_0001_0000_0001 :
+			state == 3 ? 32'b 0001_0001_0001_0001_0001_0001_0001_0001 :
+			state == 4 ? 32'b 0101_0101_0101_0101_0101_0101_0101_0101 :
+			32'h FFFF_FFFF;
+
+	wire [2:0] index = (ctrl_start || state == 6) ? 0 : state;
+	wire [2:0] swapcfgidx = cfg_inv ? 5-index : index;
+
+	assign row_sin = cfg_ldm ? row_sout : swapcfg[swapcfgidx];
+	assign row_cin = carry_mask | (row_cout << 1);
+	assign row_din = index == 0 ? in_data : data;
+
+	always @(posedge clock) begin
+		if (state != 0 && state != 6)
+			state <= state + 1;
+		if (state == 6)
+			state <= 0;
+		if (ctrl_start) begin
+			state <= 1;
+			saved_inv <= ctrl_inv;
+			saved_msk <= ctrl_msk;
+			saved_ldm <= ctrl_ldm;
+		end
+		if (reset)
+			state <= 0;
+		if (cfg_ldm)
+			swapcfg[ctrl_start ? 0 : state] <= row_sout;
+		data <= row_dout;
+	end
+
+	assign ctrl_ready = state == 6;
+	assign out_data = ctrl_ready ? data : 'bx;
+endmodule
+
 module SAG4FunRow #(
-	parameter integer XLEN = 32
+	parameter integer XLEN = 32,
+	parameter [3:0] SHFLPOS = 4'b1001
 ) (
 	input  ctrl_unshuffle,
 
@@ -152,8 +259,8 @@ module SAG4FunRow #(
 			in[32], in[0]};
 	endfunction
 
-	assign cells_in = ctrl_unshuffle ? merge(in_data) : in_data;
-	assign out_data = ctrl_unshuffle ? cells_out : split(cells_out);
+	assign cells_in = ctrl_unshuffle ? (SHFLPOS[3] ? merge(in_data) : in_data) : (SHFLPOS[2] ? split(in_data) : in_data);
+	assign out_data = ctrl_unshuffle ? (SHFLPOS[1] ? merge(cells_out) : cells_out) : (SHFLPOS[0] ? split(cells_out) : cells_out);
 
 	SAG4FunCell cells [XLEN/2-1:0] (
 		.in_swap   (in_swap  ),
