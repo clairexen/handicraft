@@ -2,7 +2,7 @@
 #
 # SAG4Fun
 #
-# Copyright (C) 2022 Claire Wolf <claire@symbioticeda.com>
+# Copyright (C) 2022 Claire Wolf <claire@clairexen.net>
 #
 # Permission to use, copy, modify, and/or distribute this software for any
 # purpose with or without fee is hereby granted, provided that the above

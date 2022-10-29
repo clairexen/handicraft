@@ -1,11 +1,11 @@
-all: cmos32c.txt cmos32s.txt cmos64c.txt cmos64s.txt # cmos64f.txt run
+all: cmos32c.txt cmos32s.txt cmos64c.txt cmos64s.txt cmos64f.txt run
 
-run: sag4fun32c sag4fun32s sag4fun64c sag4fun64s # sag4fun64f
+run: sag4fun32c sag4fun32s sag4fun64c sag4fun64s sag4fun64f
 	vvp -N ./sag4fun32c
 	vvp -N ./sag4fun32s
 	vvp -N ./sag4fun64c
 	vvp -N ./sag4fun64s
-	# vvp -N ./sag4fun64f
+	vvp -N ./sag4fun64f
 
 sag4fun32c: testbench.v sag4fun.v
 	iverilog -D TYPE_32 -D TYPE_C -o $@ $^

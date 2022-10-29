@@ -1,7 +1,7 @@
 //
 // SAG4Fun
 //
-// Copyright (C) 2022 Claire Wolf <claire@symbioticeda.com>
+// Copyright (C) 2022 Claire Wolf <claire@clairexen.net>
 //
 // Permission to use, copy, modify, and/or distribute this software for any
 // purpose with or without fee is hereby granted, provided that the above
@@ -221,6 +221,73 @@ module SAG4Fun64S (
 	end
 
 	assign ctrl_ready = state == 6;
+	assign out_data = ctrl_ready ? data : 'bx;
+endmodule
+
+module SAG4Fun64F (
+	input clock,
+	input reset,
+
+	input  ctrl_inv,
+	input  ctrl_msk,
+	input  ctrl_ldm,
+	input  ctrl_start,
+	output ctrl_ready,
+
+	input  [63:0] in_data,
+	output [63:0] out_data
+);
+	reg saved_inv, saved_msk, saved_ldm;
+
+	wire cfg_inv = ctrl_start ? ctrl_inv : saved_inv;
+	wire cfg_msk = ctrl_start ? ctrl_msk : saved_msk;
+	wire cfg_ldm = ctrl_start ? ctrl_ldm : saved_ldm;
+
+	wire  [31:0] r1_sin, r1_sout, r2_sin, r2_sout;
+	wire  [31:0] r1_cin, r1_cout, r2_cin, r2_cout;
+	wire  [63:0] r1_din, r1_dout, r2_dout;
+
+	SAG4FunRow #(64) r1 (cfg_inv, r1_sin, r1_cin, r1_din, r1_sout, r1_cout, r1_dout);
+	SAG4FunRow #(64) r2 (cfg_inv, r2_sin, r2_cin, r1_dout, r2_sout, r2_cout, r2_dout);
+
+	reg [63:0] swapcfg [0:5];
+	reg [63:0] data;
+	reg [1:0] state;
+
+	wire [63:0] carry_mask = ctrl_start ||
+			state == 0 ?  {32'b 0000_0000_0000_0001_0000_0000_0000_0001, 32'b 0000_0000_0000_0000_0000_0000_0000_0001} :
+			state == 1 ?  {32'b 0001_0001_0001_0001_0001_0001_0001_0001, 32'b 0000_0001_0000_0001_0000_0001_0000_0001} :
+			{32'h FFFF_FFFF, 32'b 0101_0101_0101_0101_0101_0101_0101_0101};
+
+	wire [2:0] index = (ctrl_start || state == 3) ? 0 : state;
+	wire [2:0] swapcfgidx = cfg_inv ? 2-index : index;
+	wire [63:0] swapcfg_out = swapcfg[swapcfgidx];
+
+	assign r1_sin = cfg_ldm ? r1_sout : (cfg_inv ? swapcfg_out[63:32] : swapcfg_out[31:0]);
+	assign r2_sin = cfg_ldm ? r2_sout : (cfg_inv ? swapcfg_out[31:0] : swapcfg_out[63:32]);
+	assign r1_cin = (cfg_inv ? carry_mask[63:32] : carry_mask[31:0]) | (r1_cout << 1);
+	assign r2_cin = (cfg_inv ? carry_mask[31:0] : carry_mask[63:32]) | (r2_cout << 1);
+	assign r1_din = index == 0 ? in_data : data;
+
+	always @(posedge clock) begin
+		if (state != 0 && state != 3)
+			state <= state + 1;
+		if (state == 3)
+			state <= 0;
+		if (ctrl_start) begin
+			state <= 1;
+			saved_inv <= ctrl_inv;
+			saved_msk <= ctrl_msk;
+			saved_ldm <= ctrl_ldm;
+		end
+		if (reset)
+			state <= 0;
+		if (cfg_ldm)
+			swapcfg[ctrl_start ? 0 : state] <= {r2_sout, r1_sout};
+		data <= r2_dout;
+	end
+
+	assign ctrl_ready = state == 3;
 	assign out_data = ctrl_ready ? data : 'bx;
 endmodule
 

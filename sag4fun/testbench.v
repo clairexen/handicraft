@@ -1,7 +1,7 @@
 //
 // SAG4Fun
 //
-// Copyright (C) 2022 Claire Wolf <claire@symbioticeda.com>
+// Copyright (C) 2022 Claire Wolf <claire@clairexen.net>
 //
 // Permission to use, copy, modify, and/or distribute this software for any
 // purpose with or without fee is hereby granted, provided that the above
@@ -29,6 +29,7 @@ module testbench;
 	localparam integer N = 64;
 	`define TYPE_C_MODULE SAG4Fun64C
 	`define TYPE_S_MODULE SAG4Fun64S
+	`define TYPE_F_MODULE SAG4Fun64F
 	localparam [N-1:0] test_din = 64'b 0011010110101111001111001111100010100000111001011110010110000010;
 	localparam [N-1:0] test_msk = 64'b 0110010000101100000000001011111000110100100010101001011010010000;
 	localparam [N-1:0] test_sag = 64'b 0100001011110110000101001111001100110010011111111100100100101010;
@@ -63,7 +64,11 @@ module testbench;
 		.out_data (out_data)
 	);
 `else
+`ifdef TYPE_S
 	`TYPE_S_MODULE uut (
+`else
+	`TYPE_F_MODULE uut (
+`endif
 		.clock (clock),
 		.reset (reset),
 
@@ -94,7 +99,12 @@ module testbench;
 		$display("in_data  = %b", test_din);
 		$display("in_mask  = %b", test_msk);
 
-`ifdef TYPE_S
+`ifdef TYPE_C
+		ctrl_inv <= 0;
+		ctrl_msk <= 0;
+		in_data <= test_din;
+		in_mask <= test_msk;
+`else
 		reset <= 1;
 		ctrl_inv <= 0;
 		ctrl_msk <= 0;
@@ -113,9 +123,11 @@ module testbench;
 		ctrl_ldm <= 'bx;
 		in_data <= 'bx;
 		@(posedge clock);
+`ifdef TYPE_S
 		@(posedge clock);
 		@(posedge clock);
 		@(posedge clock);
+`endif
 `ifdef TYPE_64
 		@(posedge clock);
 `endif
@@ -133,9 +145,11 @@ module testbench;
 		ctrl_ldm <= 'bx;
 		in_data <= 'bx;
 		@(posedge clock);
+`ifdef TYPE_S
 		@(posedge clock);
 		@(posedge clock);
 		@(posedge clock);
+`endif
 `ifdef TYPE_64
 		@(posedge clock);
 `endif
@@ -145,11 +159,6 @@ module testbench;
 		ctrl_ldm <= 0;
 		ctrl_start <= 1;
 		in_data <= test_din;
-`else
-		ctrl_inv <= 0;
-		ctrl_msk <= 0;
-		in_data <= test_din;
-		in_mask <= test_msk;
 `endif
 
 		#1 $display("SAG:");
@@ -158,21 +167,23 @@ module testbench;
 		error = error || !test_sag_ok;
 		@(posedge clock);
 
-`ifdef TYPE_S
+`ifdef TYPE_C
+		ctrl_inv <= 1;
+`else
 		ctrl_start <= 0;
 		ctrl_inv <= 'bx;
 		ctrl_msk <= 'bx;
 		ctrl_ldm <= 'bx;
 		in_data <= 'bx;
 		@(posedge clock);
+`ifdef TYPE_S
 		@(posedge clock);
 		@(posedge clock);
 		@(posedge clock);
+`endif
 `ifdef TYPE_64
 		@(posedge clock);
 `endif
-`else
-		ctrl_inv <= 1;
 `endif
 
 		#1 $display("ISG:");
