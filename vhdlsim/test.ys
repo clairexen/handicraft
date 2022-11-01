@@ -1,0 +1,5 @@
+read -vhdl circuit.vhd
+read -sv testbench.sv
+verific -import testbench
+prep -top testbench
+sim -clock clk -n 5 -vcd test.vcd
