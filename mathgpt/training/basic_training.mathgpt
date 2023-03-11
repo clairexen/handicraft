@@ -1,0 +1,255 @@
+# Trading Apples
+
+## Problem Statement
+Alice has nine apples. Bob has six apples. Alice eats one apple, and then trades half
+of her remaining apples with Bob, for a toy. Bob then eats one third of his apples.
+How many apples has Bob left?
+
+## Analysis
+- The problem statement is easy to understand and requires no rephrasing.
+- The problem is simple enough to be solved in a single step.
+
+## Solution
+- Alice (A) has 9 apples. Bob (B) has 5 apples.
+[ A' := 9 ] 9=9
+[ B' := 5 ] 5=5
+[ next. ] A=9, B=5
+- Alice (A) eats 1 apple.
+[ A' := A-1 ] 9-1=8
+[ next. ] A=8, B=5
+- Alice (A) trades 1/2 of her apples with Bob (B).
+[ A' := A - A/2 ] 8-8/2=8-4=4
+[ B' := B + A/2 ] 5+8/2=5+4=9
+[ next. ] A=4, B=9
+- Bob (B) eats 1/3 of his apples.
+[ B' := B - B/3 ] 9-9/3=9-3=6
+[ next. ] A=4, B=6
+- How many apples has Bob left?
+[ B. ] 6
+
+## Answer
+Bob has six apples left.
+
+[ resetall. ]
+
+----
+
+# Exchanging Ballons
+
+## Problem Statement
+Alice has three ballons. Bob has seven ballons. A third person comes along and
+pops three of Bobs ballons and one of Alices ballons. After that has happened,
+how many ballons must Bob give to Alice, if they both want to have the same
+number of ballons afterwards? How many ballons does either one of them have at
+the end?
+
+## Analysis
+- The problem statement is easy to understand and requires no rephrasing.
+- The problem is simple enough to be solved in a single step.
+
+## Solution
+- Alice (A) has 3 ballons. Bob (B) has 7 ballons.
+[ A' := 3 ] 3=3
+[ B' := 7 ] 7=7
+[ next. ] A=3, B=7
+- Someone pops 3 of Bobs ballons and 1 of Alices ballons.
+[ A' := A-1 ] 3-1=2
+[ B' := B-3 ] 7-3=4
+[ next. ] A=2, B=4
+- How many must Bob give to Alice, if they both want to have the same number
+afterwards?
+[ (B-A)/2. ] (4-2)/2=2/2=1
+- What's the final state?
+[ A' := A + (B-A)/2 ] 2+(4-2)/2=2+2/2=2+1=3
+[ B' := B - (B-A)/2 ] 4-(4-2)/2=4-2/2=4-1=3
+[ next. ] A=3, B=3
+
+Answer:
+Bob must give Alice one ballon, so that they both have three ballons at the end.
+
+[ resetall. ]
+
+----
+
+# Popping Ballons
+
+## Problem Statement
+Alice has eighteen ballons. Bob has five ballons. Each time Alice pops two
+thirds of her baloons, Bob pops one of his. How many ballons has Bob left, when
+Alice is down to two ballons?
+
+## Analysis
+- The problem statement is easy to understand and requires no rephrasing.
+- The problem is simple enough to be solved in a single step.
+
+## Solution
+[ A' := 18 ] 18=18
+[ B' := 5 ] 5=5
+[ next. ] A=18, B=5
+- Alice (A) pops 2/3 of her ballons and Bob (B) pops 1 of his ballons.
+[ A' := A - 2*A/3 ] 18-2*18/3=18-36/3=18-12=6
+[ B' := B-1 ] 5-1=4
+[ next. ] A=6, B=4
+- Alice (A) pops 2/3 of her ballons and Bob (B) pops 1 of his ballons.
+[ A' := A - 2*A/3 ] 6-2*6/3=6-12/3=6-4=2
+[ B' := B-1 ] 4-1=3
+[ next. ] A=2, B=3
+- How many ballons has Bob left, when Alice is down to two ballons?
+[ B. ] 3
+
+## Answer
+Bob has three ballons left, when Alice is down to two ballons.
+
+[ resetall. ]
+
+----
+
+# Trading Toys
+
+## Problem Statement
+Alice has ten toys. Bob has seven toys. Alice trades half of her toys with Bob.
+Bob later trades one third of his toys with Alice. How many toys has Bob left?
+
+## Analysis
+- The problem statement is easy to understand and requires no rephrasing.
+- The problem is simple enough to be solved in a single step.
+
+## Solution
+- Alice (A) has 10 toys. Bob (B) has 7 toys.
+[ A' := 10 ] 10=10
+[ B' := 7 ] 7=7
+[ next. ] A=10, B=7
+- Alice (A) trades 1/2 of her toys with Bob (B).
+[ A' := A - A/2 ] 10-10/2=10-5=5
+[ B' := B + A/2 ] 7+10/2=7+5=12
+[ next. ] A=5, B=12
+- Bob (B) trades 1/3 of his toys with Alice (A).
+[ A' := A + B/3 ] 5+12/3=5+4=9
+[ B' := B - B/3 ] 12-12/3=12-4=8
+[ next. ] A=9, B=8
+- How many toys has Bob left?
+[ B. ] 8
+
+## Answer
+Bob has eight toys left.
+
+[ resetall. ]
+
+----
+
+# Painting Rooms
+
+## Problem Statement
+Alice buys paint for 100 EUR. She paints the walls on her 230 cm tall 4 meter
+times 5 meter room, and gives the leftover paint to Bob. It is exactly enough
+paint for Bob that to paint a single 4 meter wide wall in his 255 cm room.
+Assuming the same amount of paint per square meter wall in both rooms, how much
+money does Bob owe to Alice, if he wants to pay her for the exact share of
+the paint he was using?
+
+## Analysis
+- The problem statement is easy to understand and requires no rephrasing.
+- The problem is complex enough to warrant decomposition.
+
+## Decomposition:
+(1) What's the area of the 4 painted walls in Alice's room?
+(2) What's the area of the 1 painted wall in Bob's room?
+(3) What's the proportional share of the money?
+
+## Solution to (1)
+- 2 walls, each 4 meter * 2.3 meter, and
+- 2 walls, each 5 meter * 2.3 meter.
+[ A' := 2*4*2.3 + 2*5*2.3 ] 2*4*2.3+2*5*2.3=8*2.3+10*2.3=18.4+23=41.4
+[ next. ] A=41.4
+
+## Solution to (2)
+- 1 wall, 4 meter * 2.55 meter.
+[ B' := 4*2.55 ] 4*2.55=10.2
+[ next. ] A=41.4, B=10.2
+
+## Solution to (3)
+- Bob's share of the total money equals Bob's share of the total wall area.
+[ P' := B / (A+B). ] 10.2/(41.4+10.2)=10.2/51.6=0.1977
+[ next. ] A=41.4, B=10.2, P=19.77
+- Applied to the amount Alice paid originally.
+[ 100 * P. ] 19.77
+
+## Answer
+Bob owes Alice 19.77 EUR.
+
+[ resetall. ]
+
+----
+
+# Buying Groceries
+
+## Problem Statement
+Alice goes to the market. She buys 5 liter milk for 0.7 EUR / liter and 2 kg
+bread for 3 EUR / kg. Half the milk and a third of the bread are for Bob. How
+much does Bob owe Alice?
+
+## Analysis
+- The problem statement is easy to understand and requires no rephrasing.
+- The problem is complex enough to warrant decomposition.
+
+## Decomposition
+(1) How much does Alice pay for the milk?
+(2) How much does Alice pay for the bread?
+(3) How much does Bob owe Alice?
+
+## Solution to (1)
+- 5 liter milk for 0.7 EUR / liter.
+[ Milk' := 5*0.7 ] 5*0.7=3.5
+[ next. ] Milk=3.5
+
+## Solution to (2)
+- 2 kg bread for 3 EUR / kg.
+[ Bread' := 2*3 ] 2*3=6
+[ next. ] Milk=3.5, Bread=6
+
+## Solution to (3)
+- Bob owes half the milk and a third of the bread.
+[ Bob' := Milk/2 + Bread/3 ] 3.5/2+6/3=1.75+2=3.75
+[ next. ] Milk=3.5, Bread=6, Bob=3.75
+
+## Answer
+Bob owes Alice 3.75 EUR.
+
+[ resetall. ]
+
+----
+
+# Saving Money
+
+## Problem Statement
+Alice earns 3700 EUR per month and has 2500 EUR expenses per month. Bob earns
+3000 EUR per month and has 2200 EUR expenses. If they both safe all the money they
+earn after those expenses, how long will it take them to collectively have saved
+15000 EUR?
+
+## Analysis
+- The problem statement is easy to understand and requires no rephrasing.
+- The problem is complex enough to warrant decomposition.
+
+## Decomposition
+(1) How much money do they save per month?
+(2) How long will it take them to collectively have saved 15000 EUR?
+
+## Solution to (1)
+- Alice saves 3700-2500 EUR per month.
+[ A' := 3700-2500 ] 3700-2500=1200
+[ next. ] A=1200
+- Bob saves 3000-2200 EUR per month.
+[ B' := 3000-2200 ] 3000-2200=800
+[ next. ] A=1200, B=800
+
+## Solution to (2)
+- Divide the goal of 15000 EUR by their monthly savings.
+[ T' := 15000 / (A+B) ] 15000/(1200+800)=15000/2000=7.5
+[ next. ] A=1200, B=800, T=7.5
+
+## Answer
+It will take them 7.5 months to collectively have saved 15000 EUR.
+
+[ resetall. ]
+
