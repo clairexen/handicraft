@@ -4,9 +4,29 @@ import openai, os
 openai.api_key = os.getenv("OPENAI_API_KEY")
 tuned_model = "davinci:ft-personal-2023-03-11-12-12-19"
 
-import textwrap, click, json, re
+import textwrap, hashlib, click, json, re
 from click import echo, style
 from pprint import pp
+
+
+def complete(*args, **kwargs):
+    cacheDir = os.path.expanduser("~/.MathGPT/cache")
+    os.makedirs(cacheDir, exist_ok=True)
+
+    key_string = json.dumps((args, kwargs), sort_keys=True)
+    key_hash = hashlib.blake2b(key_string.encode()).hexdigest()
+
+    cacheFile = f"{cacheDir}/{key_hash}.json"
+    if not os.access(cacheFile, os.R_OK):
+        response = openai.Completion.create(*args, **kwargs)
+        with open(cacheFile, "w") as f:
+            json.dump([args, kwargs, response.to_dict_recursive()], f, sort_keys=True)
+
+    with open(cacheFile) as f:
+        data = json.load(f)
+
+    # pp(data)
+    return data[2]["choices"][0]["text"]
 
 
 class MathGPT:
@@ -146,21 +166,15 @@ Problem Statement:
 One-Line Summary:
 """
 
-    response = openai.Completion.create(model="text-davinci-003",
-            prompt=txt, temperature=0, max_tokens=20, stop="\n")
-    #pp(response)
-
-    title = response.choices[0].text
+    title = complete(model="text-davinci-003", prompt=txt, temperature=0, max_tokens=20, stop="\n")
 
     txt = f"""# {title}\n\n## Problem Statement\n{prompt}\n\n## Analysis\n"""
     echo(styleMathGPT(txt), nl=False)
 
     while True:
-        response = openai.Completion.create(model=tuned_model,
-                prompt=txt, temperature=0, max_tokens=200, stop=(" ]\n", " ] "))
-        #pp(response)
+        response = complete(model=tuned_model, prompt=txt, temperature=0, max_tokens=200, stop=(" ]\n", " ] "))
 
-        completion = response.choices[0].text + " ]"
+        completion = response + " ]"
         echo(styleMathGPT(completion))
 
         txt += f"{completion}\n"
