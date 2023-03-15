@@ -1,5 +1,5 @@
 mathgpt-tunedata.json: mathgpt.py training/*.mathgpt
-	python3 mathgpt.py tunedata training/*.mathgpt > mathgpt-tunedata.json.new
+	python3 mathgpt.py tunedata mathgpt-tunedata.json.new training/*.mathgpt
 	mv mathgpt-tunedata.json.new mathgpt-tunedata.json
 
 fine-tune: mathgpt-tunedata.json

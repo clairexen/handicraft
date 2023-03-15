@@ -159,18 +159,15 @@ the paint he was using?
 ## Solution to (1)
 - 2 walls, each 4 meter * 2.3 meter, and
 - 2 walls, each 5 meter * 2.3 meter.
-[ A' := 2*4*2.3 + 2*5*2.3 ] 2*4*2.3+2*5*2.3=8*2.3+10*2.3=18.4+23=41.4
-[ next. ] A=41.4
+[ A := 2*4*2.3 + 2*5*2.3 ] 2*4*2.3+2*5*2.3=8*2.3+10*2.3=18.4+23=41.4
 
 ## Solution to (2)
 - 1 wall, 4 meter * 2.55 meter.
-[ B' := 4*2.55 ] 4*2.55=10.2
-[ next. ] A=41.4, B=10.2
+[ B := 4*2.55 ] 4*2.55=10.2
 
 ## Solution to (3)
 - Bob's share of the total money equals Bob's share of the total wall area.
-[ P' := B / (A+B). ] 10.2/(41.4+10.2)=10.2/51.6=0.1977
-[ next. ] A=41.4, B=10.2, P=19.77
+[ P := B / (A+B) ] 10.2/(41.4+10.2)=10.2/51.6=0.1977
 - Applied to the amount Alice paid originally.
 [ 100 * P. ] 19.77
 
@@ -253,3 +250,73 @@ It will take them 7.5 months to collectively have saved 15000 EUR.
 
 [ resetall. ]
 
+----
+
+# Saving Money
+
+## Problem Statement
+Alice, Bob, and Charlie have 300 EUR, 500 EUR, and 400 EUR extra funds available per month, respectively.
+They pay 20%, 50%, and 75% respectively into a shared account. How much are they saving in half a year.
+
+## Analysis
+- The problem statement is hard to understand and requires rephrasing.
+
+## Rephrased Problem Statement
+- Alice has 300 EUR/month, and she saves 20% of that amount.
+- Bob has 400 EUR/month, and he saves 50% of that amount.
+- Charlie has 500 EUR/month, and they save 75% of that amount.
+- How much are they saving collectively in 6 months?
+
+## Analysis
+- The rephrased problem statement is easy to understand and requires no further rephrasing.
+- The problem is simple enough to be solved in a single step.
+
+## Solution
+- Alice (A) saves 20% of 300 EUR/month
+[ A := 300 * 0.2 ] 300*0.2=60
+- Bob (B) saves 50% of 500 EUR/month
+[ B := 500 * 0.5 ] 500*0.5=250
+- Charlie (C) saves 75% of 500 EUR/month
+[ C := 500 * 0.75 ] 500*0.75=375
+- How much are they saving collectively in one month?
+[ sum := A + B + C ] 60+250+375=310
+- How much are they saving in 6 months?
+[ 6 * sum. ] 6*310=1860
+
+## Answer
+Collectively Alice, Bob, and Charlie are saving 1860 EUR in 6 months.
+
+[ resetall. ]
+
+----
+
+# Calculating Discounted Milk Price
+
+## Problem Statement
+What's the prize of 20 liters milk, if the price for 1 liter is 2 EUR
+and there's a 10% discount on the fraction of the volume in excess of
+5 liters?
+
+## Analysis
+- The problem statement is easy to understand and requires no rephrasing.
+- The problem is simple enough to be solved in a single step.
+
+## Solution
+- The total volume is 20 liters milk.
+[ V := 20 ] 20
+- The regular price is applied to the first 5 liters.
+[ R := 5 ] 5
+- The discount is applied to the excess above 5 liters.
+[ D := V-R ] 20-5=15
+- The regular price is 2 EUR.
+[ RP := 2 ] 2
+- The discount price is 10% off.
+[ DP := RP - RP*0.1 ] 1.8
+- The total price of R liters at RP and D liters at DP.
+[ R*RP + D*DP. ] 5*2+15*1.8=10+27=37
+
+# Answer
+37 EUR for 20 liters milk, if the price for 1 liter is 2 EUR and there's a 10%
+discount on the fraction of the volume in excess of 5 liters.
+
+[ resetall. ]

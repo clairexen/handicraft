@@ -20,13 +20,15 @@
 import openai, os
 openai.api_key = os.getenv("OPENAI_API_KEY")
 tuned_model = "davinci:ft-personal-2023-03-11-12-12-19"
+model_temperature = 0.0
+max_tokens = 200
 
 import textwrap, hashlib, click, json, re
 from click import echo, style
 from pprint import pp
 
 
-def complete(*args, **kwargs):
+def gpt(*args, **kwargs):
     cacheDir = os.path.expanduser("~/.MathGPT/cache")
     os.makedirs(cacheDir, exist_ok=True)
 
@@ -44,6 +46,7 @@ def complete(*args, **kwargs):
 
     # pp(data)
     return data[2]["choices"][0]["text"]
+
 
 def evalExprStep(expr):
     def getNumber(token):
@@ -73,24 +76,33 @@ def evalExprStep(expr):
                 newExpr.append(func(*values))
                 cursor += len(pattern)
                 foundMatch = True
+        while foundMatch and cursor < len(expr):
+            newExpr.append(expr[cursor])
+            cursor += 1
         if foundMatch:
             return newExpr
         return None
 
     if newExpr := update([getNumber, getOperator("*/"), getNumber], lambda a,b,c: a*c if b == "*" else a/c):
-        return newExpr
+        expr = newExpr
 
-    if newExpr := update([getNumber, getOperator("+-"), getNumber], lambda a,b,c: a+c if b == "+" else a-c):
-        return newExpr
+    elif newExpr := update([getNumber, getOperator("+-"), getNumber], lambda a,b,c: a+c if b == "+" else a-c):
+        expr = newExpr
+
+    while newExpr := update([getOperator("("), getNumber, getOperator(")")], lambda a,b,c: b):
+        expr = newExpr
 
     return expr
 
+
 class MathGPT:
-    def __init__(self, text):
-        self.text = text
+    def __init__(self, text="", verbose=True):
+        self.verbose = verbose
+        self.text = ""
         self.state = dict()
         self.nextState = dict()
         self.varNames = list()
+        self.appendText(text)
 
     def getTrainingJSONL(self):
         data = list()
@@ -121,13 +133,23 @@ class MathGPT:
 
     def appendText(self, text):
         self.text += text
-        return text
+        parts = re.split(r"(?<= \])(?: [^\n]+)?(?:\n|$)", text)
 
-    def appendOutput(self):
+        for part in parts:
+            if self.verbose:
+                echo(styleMathGPT(part), nl=False)
+            self.text += part
+            output = self.evalCommand()
+            if output is not None:
+                if self.verbose:
+                    echo(styleMathGPT(output), nl=False)
+                self.text += output
+
+    def evalCommand(self):
         command = self.text.rsplit("\n", 1)[-1]
-        text = ""
         if command.startswith("[") and command.endswith("]"):
             command = command[1:-1].strip()
+            text = ""
 
             if command == "next.":
                 for k, v in self.nextState.items():
@@ -145,8 +167,8 @@ class MathGPT:
                 self.nextState = dict()
                 self.varNames = list()
 
-            elif m := re.match(r"(\w+)' *:= *(.*)", command):
-                newVar, expr = m[1], m[2]
+            elif m := re.match(r"(\w+)('?) *:= *(.*)", command):
+                newVar, tick, expr = m[1], m[2], m[3]
                 expr = expr.replace(" ", "")
                 expr = re.findall(r"(?:\.?[0-9]+(?:\.[0-9]+)?(?:e[-+]?[0-9]+)?|[a-zA-Z_]+|.)", expr)
                 expr = [self.state.get(t, t) for t in expr if t is not None and t != ""]
@@ -154,10 +176,15 @@ class MathGPT:
                 while expr != (newExpr := evalExprStep(expr)):
                     expr = newExpr
                     text += f"={''.join([f'{v:g}' if type(v) is float else v for v in expr]).replace(' ','')}"
-                if newVar not in self.state and newVar not in self.nextState:
-                    self.varNames.append(newVar)
                 assert len(expr) == 1
-                self.nextState[newVar] = expr[0]
+                if tick == "'":
+                    if newVar not in self.state and newVar not in self.nextState:
+                        self.varNames.append(newVar)
+                    self.nextState[newVar] = expr[0]
+                else:
+                    assert newVar not in self.state and newVar not in self.nextState
+                    self.varNames.append(newVar)
+                    self.state[newVar] = expr[0]
 
             elif m := re.match(r"(.*)\.$", command):
                 expr = m[1].replace(" ", "")
@@ -170,11 +197,17 @@ class MathGPT:
 
             else:
                 text = " ???"
-            text += "\n"
-        return self.appendText(text)
+            return text + "\n"
+        return None
+
+    def run(self):
+        while not self.text.endswith(" resetall. ]"):
+            completion = gpt(model=tuned_model, prompt=self.text,
+                    temperature=model_temperature, max_tokens=max_tokens, stop=(" ]\n", " ] "))
+            self.appendText(completion + " ]")
 
     def __repr__(self):
-        return styleMathGPT(f"--MathGPT-BEGIN--\n{lines}\n--MathGPT-END--")
+        return styleMathGPT(f"--MathGPT-BEGIN--\n{self.text}\n--MathGPT-END--")
 
 
 def styleMathGPT(text):
@@ -202,21 +235,29 @@ def styleMathGPT(text):
     return "\n".join(lines)
 
 
-def readMathGptFile(filename):
+def readMathGptFile(filename, verbose=False):
     instances, text = list(), list()
+    if verbose:
+        echo()
     with open(filename) as f:
         for line in f:
             line = line.strip()
             if line == "----":
                 text = "\n".join(text).strip()
                 if text != "":
-                    instances.append(MathGPT(text))
+                    instances.append(MathGPT(text, verbose))
+                if verbose:
+                    echo()
+                    echo("----")
+                    echo()
                 text = list()
             else:
                 text.append(line)
-        text = "\n".join(text).strip()
-        if text != "":
-            instances.append(MathGPT(text))
+    text = "\n".join(text).strip()
+    if text != "":
+        instances.append(MathGPT(text, verbose))
+    if verbose:
+        echo()
     return instances
 
 
@@ -228,9 +269,11 @@ def cli():
     python3 mathgpt.py query "Alice has ten apples. Bob has seven apples. Alice trades half of her apples with Bob. Bob later eats a third of his apples. How many apples has Bob left?"
     """
 
+
 @cli.command()
+@click.argument('outfile')
 @click.argument('files', nargs=-1)
-def tunedata(files):
+def tunedata(outfile, files):
     """Generate fine-tune JSONL data file
 
     This command reads all fine-tune/training files and produces
@@ -243,9 +286,10 @@ def tunedata(files):
     the math code output.
     """
 
-    for filename in files:
-        for instance in readMathGptFile(filename):
-            print(instance.getTrainingJSONL())
+    with open(outfile, "w") as f:
+        for filename in files:
+            for instance in readMathGptFile(filename):
+                print(instance.getTrainingJSONL(), file=f)
 
 
 @cli.command()
@@ -258,7 +302,7 @@ def query(prompt):
 
     txt = f"""
 A list of math problems and puzzle questions, and one-line summaries that can
-be used as problem titles. Note that such summaries must not give away the
+be used as problem titles. Note that such summaries must never give away the
 solution of the problem or puzzle! One-line summaries should use title case and
 should not end with a period.
 
@@ -278,27 +322,44 @@ Calculating Paint Costs for Two Different Rooms
 ----
 
 Problem Statement:
+Alice goes to the market. She buys 5 liter milk for 0.7 EUR / liter and 2 kg
+bread for 3 EUR / kg. Half the milk and a third of the bread are for Bob. How
+much does Bob owe Alice?
+
+One-Line Summary:
+Buying Groceries
+
+----
+
+Problem Statement:
 {prompt}
 
 One-Line Summary:
 """
 
-    title = complete(model="text-davinci-003", prompt=txt, temperature=0, max_tokens=20, stop="\n")
-
+    title = gpt(model="text-davinci-003", prompt=txt, temperature=0.3, max_tokens=100, stop="\n")
     instance = MathGPT(f"""# {title}\n\n## Problem Statement\n{prompt}\n\n## Analysis\n""")
-    echo(styleMathGPT(instance.text), nl=False)
-
-    while True:
-        response = complete(model=tuned_model, prompt=instance.text, temperature=0, max_tokens=200, stop=(" ]\n", " ] "))
-
-        completion = response + " ]"
-        instance.appendText(completion)
-        echo(styleMathGPT(completion), nl=False)
-        echo(styleMathGPT(instance.appendOutput()), nl=False)
-
-        if completion.endswith("[ resetall. ]"): break
-
+    instance.run()
     echo()
+
+
+@cli.command()
+@click.argument('filename')
+def complete(filename):
+    """Complete a MathGPT query from an arbitrary point"""
+
+    with open(filename) as f:
+        instance = MathGPT(f.read())
+    instance.run()
+    echo()
+
+
+@cli.command()
+@click.argument('filename')
+def check(filename):
+    """Re-run all code in a MathGPT file"""
+    readMathGptFile(filename, True)
+
 
 if __name__ == "__main__":
     cli()
