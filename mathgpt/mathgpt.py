@@ -19,16 +19,24 @@
 
 import openai, os
 openai.api_key = os.getenv("OPENAI_API_KEY")
-tuned_model = "davinci:ft-personal-2023-03-11-12-12-19"
-model_temperature = 0.0
-max_tokens = 200
 
 import textwrap, hashlib, click, json, re
+from types import SimpleNamespace
 from click import echo, style
 from pprint import pp
 
+config = SimpleNamespace()
+config.max_queries = -1
+config.print_cache_info = False
+config.tuned_model = "davinci:ft-personal-2023-03-11-12-12-19"
+config.model_temperature = 0.0
+config.max_tokens = 300
 
 def gpt(*args, **kwargs):
+    if config.max_queries >= 0:
+        assert config.max_queries
+        config.max_queries -= 1
+
     cacheDir = os.path.expanduser("~/.MathGPT/cache")
     os.makedirs(cacheDir, exist_ok=True)
 
@@ -37,15 +45,22 @@ def gpt(*args, **kwargs):
 
     cacheFile = f"{cacheDir}/{key_hash}.json"
     if not os.access(cacheFile, os.R_OK):
+        if config.print_cache_info:
+            echo(f"<cold:{key_hash}>", nl=False)
         response = openai.Completion.create(*args, **kwargs)
         with open(cacheFile, "w") as f:
-            json.dump([args, kwargs, response.to_dict_recursive()], f, sort_keys=True)
+            json.dump({"args": args, "kwargs": kwargs, "response": response.to_dict_recursive()},
+                    f, sort_keys=True, indent=4)
+            print(file=f)
+    else:
+        if config.print_cache_info:
+            echo(f"<hot:{key_hash}>", nl=False)
 
     with open(cacheFile) as f:
         data = json.load(f)
 
     # pp(data)
-    return data[2]["choices"][0]["text"]
+    return SimpleNamespace(**data["response"]["choices"][0])
 
 
 def evalExprStep(expr):
@@ -132,15 +147,13 @@ class MathGPT:
         return "\n".join([f'{{ "prompt": {json.dumps(p)}, "completion": {json.dumps(c)} }}' for p, c in data])
 
     def appendText(self, text):
-        self.text += text
         parts = re.split(r"(?<= \])(?: [^\n]+)?(?:\n|$)", text)
 
         for part in parts:
             if self.verbose:
                 echo(styleMathGPT(part), nl=False)
             self.text += part
-            output = self.evalCommand()
-            if output is not None:
+            if (output := self.evalCommand()) is not None:
                 if self.verbose:
                     echo(styleMathGPT(output), nl=False)
                 self.text += output
@@ -201,10 +214,13 @@ class MathGPT:
         return None
 
     def run(self):
-        while not self.text.endswith(" resetall. ]"):
-            completion = gpt(model=tuned_model, prompt=self.text,
-                    temperature=model_temperature, max_tokens=max_tokens, stop=(" ]\n", " ] "))
-            self.appendText(completion + " ]")
+        while not self.text.endswith(" resetall. ]\n"):
+            completion = gpt(model=config.tuned_model, prompt=self.text,
+                    temperature=config.model_temperature, max_tokens=config.max_tokens, stop=(" ]\n", " ] "))
+            if completion.finish_reason == "length":
+                self.appendText(completion.text)
+            else:
+                self.appendText(completion.text + " ]")
 
     def __repr__(self):
         return styleMathGPT(f"--MathGPT-BEGIN--\n{self.text}\n--MathGPT-END--")
@@ -337,7 +353,7 @@ Problem Statement:
 One-Line Summary:
 """
 
-    title = gpt(model="text-davinci-003", prompt=txt, temperature=0.3, max_tokens=100, stop="\n")
+    title = gpt(model="text-davinci-003", prompt=txt, temperature=0.3, max_tokens=100, stop="\n").text
     instance = MathGPT(f"""# {title}\n\n## Problem Statement\n{prompt}\n\n## Analysis\n""")
     instance.run()
     echo()
