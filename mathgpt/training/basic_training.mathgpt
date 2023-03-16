@@ -1,3 +1,4 @@
+
 # Trading Apples
 
 ## Problem Statement
@@ -11,8 +12,8 @@ How many apples has Bob left?
 
 ## Solution
 - Alice (A) has 9 apples. Bob (B) has 5 apples.
-[ A' := 9 ] 9=9
-[ B' := 5 ] 5=5
+[ A' := 9 ] 9
+[ B' := 5 ] 5
 [ next. ] A=9, B=5
 - Alice (A) eats 1 apple.
 [ A' := A-1 ] 9-1=8
@@ -49,8 +50,8 @@ the end?
 
 ## Solution
 - Alice (A) has 3 ballons. Bob (B) has 7 ballons.
-[ A' := 3 ] 3=3
-[ B' := 7 ] 7=7
+[ A' := 3 ] 3
+[ B' := 7 ] 7
 [ next. ] A=3, B=7
 - Someone pops 3 of Bobs ballons and 1 of Alices ballons.
 [ A' := A-1 ] 3-1=2
@@ -83,8 +84,8 @@ Alice is down to two ballons?
 - The problem is simple enough to be solved in a single step.
 
 ## Solution
-[ A' := 18 ] 18=18
-[ B' := 5 ] 5=5
+[ A' := 18 ] 18
+[ B' := 5 ] 5
 [ next. ] A=18, B=5
 - Alice (A) pops 2/3 of her ballons and Bob (B) pops 1 of his ballons.
 [ A' := A - 2*A/3 ] 18-2*18/3=18-36/3=18-12=6
@@ -116,8 +117,8 @@ Bob later trades one third of his toys with Alice. How many toys has Bob left?
 
 ## Solution
 - Alice (A) has 10 toys. Bob (B) has 7 toys.
-[ A' := 10 ] 10=10
-[ B' := 7 ] 7=7
+[ A' := 10 ] 10
+[ B' := 7 ] 7
 [ next. ] A=10, B=7
 - Alice (A) trades 1/2 of her toys with Bob (B).
 [ A' := A - A/2 ] 10-10/2=10-5=5
@@ -167,9 +168,9 @@ the paint he was using?
 
 ## Solution to (3)
 - Bob's share of the total money equals Bob's share of the total wall area.
-[ P := B / (A+B) ] 10.2/(41.4+10.2)=10.2/51.6=0.1977
+[ P := B / (A+B) ] 10.2/(41.4+10.2)=10.2/51.6=0.197674
 - Applied to the amount Alice paid originally.
-[ 100 * P. ] 19.77
+[ 100 * P. ] 100*0.197674=19.7674
 
 ## Answer
 Bob owes Alice 19.77 EUR.
@@ -279,9 +280,9 @@ They pay 20%, 50%, and 75% respectively into a shared account. How much are they
 - Charlie (C) saves 75% of 500 EUR/month
 [ C := 500 * 0.75 ] 500*0.75=375
 - How much are they saving collectively in one month?
-[ sum := A + B + C ] 60+250+375=310
+[ sum := A + B + C ] 60+250+375=310+375=685
 - How much are they saving in 6 months?
-[ 6 * sum. ] 6*310=1860
+[ 6 * sum. ] 6*685=4110
 
 ## Answer
 Collectively Alice, Bob, and Charlie are saving 1860 EUR in 6 months.
@@ -311,7 +312,7 @@ and there's a 10% discount on the fraction of the volume in excess of
 - The regular price is 2 EUR.
 [ RP := 2 ] 2
 - The discount price is 10% off.
-[ DP := RP - RP*0.1 ] 1.8
+[ DP := RP - RP*0.1 ] 2-2*0.1=2-0.2=1.8
 - The total price of R liters at RP and D liters at DP.
 [ R*RP + D*DP. ] 5*2+15*1.8=10+27=37
 
@@ -320,3 +321,4 @@ and there's a 10% discount on the fraction of the volume in excess of
 discount on the fraction of the volume in excess of 5 liters.
 
 [ resetall. ]
+
