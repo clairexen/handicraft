@@ -27,8 +27,10 @@ from pprint import pp
 
 config = SimpleNamespace()
 config.max_queries = -1
+config.short_queries = False
 config.print_cache_info = False
 config.tuned_model = "davinci:ft-personal-2023-03-11-12-12-19"
+#config.tuned_model = "davinci:ft-personal-2023-03-16-15-57-17"
 config.model_temperature = 0.0
 config.max_tokens = 300
 
@@ -127,6 +129,10 @@ class MathGPT:
         # find end of problem statement
         while not txt[:cursor].endswith("## Analysis\n") and cursor < len(txt): cursor += 1
 
+        if not config.short_queries:
+            p, c = txt[:cursor], txt[cursor:]
+            return f'{{ "prompt": {json.dumps(p)}, "completion": {json.dumps(c)} }}'
+
         while cursor < len(txt):
             clen = 0
             parcnt = 0
@@ -216,11 +222,15 @@ class MathGPT:
     def run(self):
         while not self.text.endswith(" resetall. ]\n"):
             completion = gpt(model=config.tuned_model, prompt=self.text,
-                    temperature=config.model_temperature, max_tokens=config.max_tokens, stop=(" ]\n", " ] "))
+                    temperature=config.model_temperature, max_tokens=config.max_tokens,
+                    stop=(" ]\n", " ] ") if config.short_queries else ("[ resetall. ]",))
             if completion.finish_reason == "length":
                 self.appendText(completion.text)
             else:
-                self.appendText(completion.text + " ]")
+                if config.short_queries:
+                    self.appendText(completion.text + " ]")
+                else:
+                    self.appendText(completion.text + "[ resetall. ]")
 
     def __repr__(self):
         return styleMathGPT(f"--MathGPT-BEGIN--\n{self.text}\n--MathGPT-END--")
