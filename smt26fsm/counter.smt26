@@ -1,0 +1,70 @@
+(set-logic ALL)
+
+(declare-datatype |counter-init| ((|counter-mk-init|
+  (|counter-init-count| (_ BitVec 8))
+)))
+
+(declare-datatype |counter-input| ((|counter-mk-input|
+  (|counter-input-reset| Bool)
+  (|counter-input-up| Bool)
+)))
+
+(declare-datatype |counter-state| ((|counter-mk-state|
+  (|counter-state-count| (_ BitVec 8))
+)))
+
+(declare-datatype |counter-values| ((|counter-mk-values|
+  (|counter-values-reset| Bool)
+  (|counter-values-up| Bool)
+  (|counter-values-count| (_ BitVec 8))
+  (|counter-values-t1| (_ BitVec 8))
+  (|counter-values-t2| (_ BitVec 8))
+  (|counter-values-t3| (_ BitVec 8))
+)))
+
+(define-fun |counter-first| ((init |counter-init|)) counter-state (|counter-mk-state|
+  (|counter-init-count| init)
+))
+
+(define-fun |counter-next| ((values |counter-values|)) counter-state (|counter-mk-state|
+  (|counter-values-t3| values) ; count
+))
+
+(define-fun |counter-eval| ((input |counter-input|) (state |counter-state|)) counter-values
+  (let (
+    (|net-reset| (|counter-input-reset| input))
+    (|net-up| (|counter-input-up| input))
+    (|net-count| (|counter-state-count| state))
+  ) (let (
+    (|net-t1| (bvadd |net-count| #b00000001))
+  ) (let (
+    (|net-t2| (ite |net-up| |net-t1| |net-count|))
+  ) (let (
+    (|net-t3| (ite |net-reset| #b00000000 |net-t2|))
+  ) (|counter-mk-values|
+    |net-reset|
+    |net-up|
+    |net-count|
+    |net-t1|
+    |net-t2|
+    |net-t3|
+))))))
+
+(declare-const i0 |counter-init|)
+(declare-const i1 |counter-input|)
+(declare-const i2 |counter-input|)
+(declare-const i3 |counter-input|)
+(declare-const i4 |counter-input|)
+(declare-const i5 |counter-input|)
+
+(define-fun v1 () |counter-values| (|counter-eval| i1 (! (|counter-first| i0) :named s0)))
+(define-fun v2 () |counter-values| (|counter-eval| i2 (! (|counter-next| v1) :named s1)))
+(define-fun v3 () |counter-values| (|counter-eval| i3 (! (|counter-next| v2) :named s2)))
+(define-fun v4 () |counter-values| (|counter-eval| i4 (! (|counter-next| v3) :named s3)))
+(define-fun v5 () |counter-values| (|counter-eval| i5 (! (|counter-next| v4) :named s4)))
+
+(assert (= (|counter-values-count| v1) #b00000111))
+(assert (= (|counter-values-count| v5) #b00000010))
+
+(check-sat)
+(get-model)
