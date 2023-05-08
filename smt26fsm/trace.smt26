@@ -58,16 +58,78 @@
   )
 ))
 
-(define-fun-rec |couter-trace-eval| ((trace |counter-trace|)) |counter-values|
+(define-fun-rec |counter-trace-eval| ((trace |counter-trace|)) |counter-values|
   (match trace (
     ((|counter-trace-first| input init) (|counter-eval| input (|counter-first| init)))
-    ((|counter-trace-next| input prev) (|counter-eval| input (|counter-next| (|couter-trace-eval| prev))))
+    ((|counter-trace-next| input prev) (|counter-eval| input (|counter-next| (|counter-trace-eval| prev))))
+  ))
+)
+
+(define-fun-rec |counter-trace-depth| ((trace |counter-trace|)) Int
+  (match trace (
+    ((|counter-trace-first| input init) 1)
+    ((|counter-trace-next| input prev) (+ 1 (|counter-trace-depth| prev)))
+  ))
+)
+
+(define-fun-rec |counter-trace-at| ((trace |counter-trace|) (time-from-end-of-trace Int)) |counter-trace|
+  (match trace (
+    ((|counter-trace-first| input init) trace)
+    ((|counter-trace-next| input prev) (ite (= time-from-end-of-trace 0) trace
+        (|counter-trace-at| prev (- time-from-end-of-trace 1))))
   ))
 )
 
 (declare-const trace |counter-trace|)
 
-(assert (= (|counter-values-count| (|couter-trace-eval| trace)) #b00000111))
+(assert (= (|counter-values-count| (|counter-trace-eval| trace)) #b00000111))
+
+; without this Z3 (version 4.8.7) returns a trace that is 10 cycles deep,
+; instead of the shortes solution of depth 9
+;(assert (= (|counter-trace-depth| trace) 9))
 
 (check-sat)
 (get-model)
+
+(get-value (
+  (|counter-trace-depth| trace)
+))
+
+(get-value (
+  (|counter-values-count| (|counter-trace-eval| (|counter-trace-at| trace 9)))
+  (|counter-values-count| (|counter-trace-eval| (|counter-trace-at| trace 8)))
+  (|counter-values-count| (|counter-trace-eval| (|counter-trace-at| trace 7)))
+  (|counter-values-count| (|counter-trace-eval| (|counter-trace-at| trace 6)))
+  (|counter-values-count| (|counter-trace-eval| (|counter-trace-at| trace 5)))
+  (|counter-values-count| (|counter-trace-eval| (|counter-trace-at| trace 4)))
+  (|counter-values-count| (|counter-trace-eval| (|counter-trace-at| trace 3)))
+  (|counter-values-count| (|counter-trace-eval| (|counter-trace-at| trace 2)))
+  (|counter-values-count| (|counter-trace-eval| (|counter-trace-at| trace 1)))
+  (|counter-values-count| (|counter-trace-eval| (|counter-trace-at| trace 0)))
+))
+
+(get-value (
+  (|counter-values-reset| (|counter-trace-eval| (|counter-trace-at| trace 9)))
+  (|counter-values-reset| (|counter-trace-eval| (|counter-trace-at| trace 8)))
+  (|counter-values-reset| (|counter-trace-eval| (|counter-trace-at| trace 7)))
+  (|counter-values-reset| (|counter-trace-eval| (|counter-trace-at| trace 6)))
+  (|counter-values-reset| (|counter-trace-eval| (|counter-trace-at| trace 5)))
+  (|counter-values-reset| (|counter-trace-eval| (|counter-trace-at| trace 4)))
+  (|counter-values-reset| (|counter-trace-eval| (|counter-trace-at| trace 3)))
+  (|counter-values-reset| (|counter-trace-eval| (|counter-trace-at| trace 2)))
+  (|counter-values-reset| (|counter-trace-eval| (|counter-trace-at| trace 1)))
+  (|counter-values-reset| (|counter-trace-eval| (|counter-trace-at| trace 0)))
+))
+
+(get-value (
+  (|counter-values-up| (|counter-trace-eval| (|counter-trace-at| trace 9)))
+  (|counter-values-up| (|counter-trace-eval| (|counter-trace-at| trace 8)))
+  (|counter-values-up| (|counter-trace-eval| (|counter-trace-at| trace 7)))
+  (|counter-values-up| (|counter-trace-eval| (|counter-trace-at| trace 6)))
+  (|counter-values-up| (|counter-trace-eval| (|counter-trace-at| trace 5)))
+  (|counter-values-up| (|counter-trace-eval| (|counter-trace-at| trace 4)))
+  (|counter-values-up| (|counter-trace-eval| (|counter-trace-at| trace 3)))
+  (|counter-values-up| (|counter-trace-eval| (|counter-trace-at| trace 2)))
+  (|counter-values-up| (|counter-trace-eval| (|counter-trace-at| trace 1)))
+  (|counter-values-up| (|counter-trace-eval| (|counter-trace-at| trace 0)))
+))

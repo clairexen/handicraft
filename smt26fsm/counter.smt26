@@ -30,6 +30,10 @@
   (|counter-values-t3| values) ; count
 ))
 
+; note the use of cascaded let statement here, because the SMT-LIB (let ...) statement works
+; in a "parallel" fashion and does not support "sequential let". Alternatively we might want
+; to define inidividual |counter-eval-net-...| functions above and just call then all here
+; directly in |counter-mk-values| without the need for a local let binder in this function
 (define-fun |counter-eval| ((input |counter-input|) (state |counter-state|)) counter-values
   (let (
     (|net-reset| (|counter-input-reset| input))
@@ -50,21 +54,45 @@
     |net-t3|
 ))))))
 
-(declare-const i0 |counter-init|)
-(declare-const i1 |counter-input|)
-(declare-const i2 |counter-input|)
-(declare-const i3 |counter-input|)
-(declare-const i4 |counter-input|)
-(declare-const i5 |counter-input|)
+(declare-const init |counter-init|)
+(declare-const input_0 |counter-input|)
+(declare-const input_1 |counter-input|)
+(declare-const input_2 |counter-input|)
+(declare-const input_3 |counter-input|)
+(declare-const input_4 |counter-input|)
 
-(define-fun v1 () |counter-values| (|counter-eval| i1 (! (|counter-first| i0) :named s0)))
-(define-fun v2 () |counter-values| (|counter-eval| i2 (! (|counter-next| v1) :named s1)))
-(define-fun v3 () |counter-values| (|counter-eval| i3 (! (|counter-next| v2) :named s2)))
-(define-fun v4 () |counter-values| (|counter-eval| i4 (! (|counter-next| v3) :named s3)))
-(define-fun v5 () |counter-values| (|counter-eval| i5 (! (|counter-next| v4) :named s4)))
+(define-fun values_0 () |counter-values| (|counter-eval| input_0 (! (|counter-first| init) :named state_0)))
+(define-fun values_1 () |counter-values| (|counter-eval| input_1 (! (|counter-next| values_0) :named state_1)))
+(define-fun values_2 () |counter-values| (|counter-eval| input_2 (! (|counter-next| values_1) :named state_2)))
+(define-fun values_3 () |counter-values| (|counter-eval| input_3 (! (|counter-next| values_2) :named state_3)))
+(define-fun values_4 () |counter-values| (|counter-eval| input_4 (! (|counter-next| values_3) :named state_4)))
 
-(assert (= (|counter-values-count| v1) #b00000111))
-(assert (= (|counter-values-count| v5) #b00000010))
+(assert (= (|counter-values-count| values_0) #b00000111))
+(assert (= (|counter-values-count| values_4) #b00000010))
 
 (check-sat)
 (get-model)
+
+(get-value (
+  (|counter-values-count| values_0)
+  (|counter-values-count| values_1)
+  (|counter-values-count| values_2)
+  (|counter-values-count| values_3)
+  (|counter-values-count| values_4)
+))
+
+(get-value (
+  (|counter-values-reset| values_0)
+  (|counter-values-reset| values_1)
+  (|counter-values-reset| values_2)
+  (|counter-values-reset| values_3)
+  (|counter-values-reset| values_4)
+))
+
+(get-value (
+  (|counter-values-up| values_0)
+  (|counter-values-up| values_1)
+  (|counter-values-up| values_2)
+  (|counter-values-up| values_3)
+  (|counter-values-up| values_4)
+))
