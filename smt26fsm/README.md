@@ -27,7 +27,7 @@ Additional functions for checkign formal properties (not included in this exampl
 (design-covers design-values)	⟶	bitmask
 ```
 
-Addition recursive functions and data types for representing entire traces:
+Additional recursive data types and recursive functions for representing entire traces:
 
 ```
 Constructors:
