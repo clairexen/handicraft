@@ -11,7 +11,11 @@ bg = rgb(255,255,255)
 grey= rgb(100, 100, 100)
 black = rgb(0, 0, 0)
 red = rgb(200, 50, 50)
-blue = rgb(50, 50, 2000)
+green = rgb(50, 200, 50)
+blue = rgb(50, 50, 200)
+light_red = rgb(250, 200, 200)
+light_green = rgb(200, 250, 200)
+light_blue = rgb(200, 200, 250)
 
 class Map:
     def __init__(self, W=1000, H=1000*(2**0.5), N=200, delta=50):
@@ -20,8 +24,10 @@ class Map:
 
     def generate(self):
         self.seeds = np.random.uniform(0, 1, (self.N,2))
-        self.seeds[:,0] *= self.W
-        self.seeds[:,1] *= self.H
+        self.seeds[:,0] *= self.W-2*self.delta
+        self.seeds[:,1] *= self.H-2*self.delta
+        self.seeds[:,0] += self.delta
+        self.seeds[:,1] += self.delta
 
         V = scipy.spatial.Voronoi(self.seeds)
         self.points = list(V.vertices)
@@ -103,7 +109,7 @@ class Map:
         def f(x):
             y = list()
             for a, b in zip(x, x0):
-                y.append((a-b)/100)
+                y.append((a-b)/10000)
             for r in self.regions:
                 for i in range(1, len(r)-1):
                     edges = [
@@ -111,11 +117,11 @@ class Map:
                                 for a, b in zip(r, r[i:] + r[:i])
                     ]
                     for p, q in zip(edges, edges[1:] + edges[:1]):
-                        y.append(p - q)
+                        y.append(((p - q) / (p + q))**2 / len(r)**2)
             return y
 
         print("Solving least-squares fit..")
-        x, cov_x, info, msg, ier = scipy.optimize.leastsq(f, x0, epsfcn=0.1, full_output=True)
+        x, cov_x, info, msg, ier = scipy.optimize.leastsq(f, x0, epsfcn=1.0, full_output=True)
         print(f"{msg=} {ier=}")
 
         min_x, max_x = min(x[0::2]), max(x[0::2])
@@ -126,19 +132,40 @@ class Map:
             self.points[i][0] = self.delta + (self.W-2*self.delta) * (x[2*i  ]-min_x) / (max_x-min_x)
             self.points[i][1] = self.delta + (self.H-2*self.delta) * (x[2*i+1]-min_y) / (max_y-min_y)
 
-    def writesvg(self, filename):
+    def writesvg(self, filename, stones=False):
         print(f"Writing SVG file '{filename}'..")
 
         dwg = svgwrite.Drawing(filename, size=(self.W, self.H), profile='tiny')
         dwg.add(dwg.rect((0, 0), (self.W, self.H), fill=bg))
 
-        pp = set()
+        if stones:
+            V = scipy.spatial.Voronoi(self.points)
+            p = list(np.random.choice(len(self.points), [30]))
+            players = list(zip(
+                [red, blue, green],
+                [light_red, light_blue, light_green],
+                [p[0:10], p[10:20], p[20:30]]
+            ))
+
+            for color, lcolor, points in players:
+                for p in points:
+                    r = V.point_region[p]
+                    if r < 0: continue
+                    k = [q for q in V.regions[r] if q >= 0]
+                    if len(k) >= 3:
+                        dwg.add(dwg.polygon([V.vertices[q] for q in k], fill=lcolor))
+
         for r in self.regions:
             for a, b in zip(r, r[1:] + r[:1]):
-                pp.add(tuple(self.points[a]))
                 dwg.add(dwg.line(self.points[a], self.points[b], stroke=grey))
-        for p in pp:
+
+        for p in self.points:
             dwg.add(dwg.circle(p, 4, fill=black))
+
+        if stones:
+            for color, lcolor, points in players:
+                for p in points:
+                    dwg.add(dwg.circle(self.points[p], self.delta/2, fill=color))
 
         dwg.save()
 
@@ -151,15 +178,10 @@ mymap.writesvg("map1.svg")
 mymap.balance()
 mymap.writesvg("map2.svg")
 
-mymap.eliminate()
-mymap.writesvg("map3.svg")
+for i in range(3,6):
+    mymap.eliminate()
+    mymap.balance()
+    mymap.writesvg(f"map{i}.svg")
 
-mymap.balance()
-mymap.writesvg("map4.svg")
-
-mymap.eliminate()
-mymap.writesvg("map5.svg")
-
-mymap.balance()
-mymap.writesvg("map6.svg")
-
+mymap.writesvg("map6.svg", True)
+print("DONE.")
