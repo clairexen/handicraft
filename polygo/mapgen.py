@@ -2,18 +2,8 @@ import svgwrite
 from svgwrite import rgb
 
 import numpy as np
+from types import SimpleNamespace
 import scipy.spatial
-
-W = 1000
-H = W * 2**0.5
-
-points = np.random.uniform(0, 1, (400,2))
-points[:,0] *= W
-points[:,1] *= H
-
-V = scipy.spatial.Voronoi(points)
-vertices = V.vertices
-regions = V.regions
 
 bg = rgb(255,255,255)
 grey= rgb(100, 100, 100)
@@ -21,77 +11,91 @@ black = rgb(0, 0, 0)
 red = rgb(200, 50, 50)
 blue = rgb(50, 50, 2000)
 
-dwg = svgwrite.Drawing('map.svg', size=(W, H), profile='tiny')
-dwg.add(dwg.rect((0, 0), (W, H), fill=bg))
+class Map:
+    def __init__(self, W=1000, H=1000*(2**0.5), N=200, delta=50):
+        self.W, self.H, self.N = W, H, N
+        self.delta = delta
 
-if False:
-    for p in points:
-        dwg.add(dwg.circle(p, 3, fill=black))
-    
-    for v in vertices:
-        dwg.add(dwg.circle(v, 2, fill=grey))
+    def generate(self):
+        self.seeds = np.random.uniform(0, 1, (self.N,2))
+        self.seeds[:,0] *= self.W
+        self.seeds[:,1] *= self.H
+
+        V = scipy.spatial.Voronoi(self.seeds)
+        self.points = list(V.vertices)
+        self.regions = list(V.regions)
+
+        def check_point(p):
+            if p[0] < 5 or p[0] > self.W-5: return False
+            if p[1] < 5 or p[1] > self.H-5: return False
+            return True
+
+        def cleanup_region(index):
+            r = self.regions[index]
+            r = [i for i in r if i >= 0 and check_point(self.points[i])]
+            if len(r) < 3:
+                del self.regions[index]
+                return None
+            self.regions[index] = r
+            return r
+
+        def cleanup(a=None, b=None):
+            for i in range(len(self.regions)-1, -1, -1):
+                if a is not None and a in (r := self.regions[i]):
+                    if b is None or b in r:
+                        r.remove(a)
+                    else:
+                        r[r.index(a)] = b
+                cleanup_region(i)
+            if a is not None and b is not None:
+                self.points[a], self.points[b] = None, (self.points[a] + self.points[b]) / 2
+
+        print(f"{len(self.points)} points and {len(self.regions)} regions before elimination.")
+
+        count = 0
+        while True:
+            shortest = SimpleNamespace(a=None, b=None, d=self.W+self.H)
+
+            for r in self.regions:
+                for a, b in zip(r, r[1:] + r[:1]):
+                    d = np.linalg.norm(self.points[a] - self.points[b])
+                    if shortest.d > d:
+                        shortest.a = a
+                        shortest.b = b
+                        shortest.d = d
+
+            if shortest.d > self.delta: break
+            a, b, d = shortest.a, shortest.b, shortest.d
         
-    for r in regions:
-        rr = [idx for idx in r if idx >= 0]
-        for a, b in zip(rr, rr[1:] + rr[:1]):
-            dwg.add(dwg.line(V.vertices[a], V.vertices[b], stroke=grey))
+            count += 1
+            #print(f"{count}/{self.N} merging verices {a} and {b}, norm {d}.")
+            cleanup(a, b)
 
-regions = [r for r in regions
-           if len(r) >= 3 and min(r) >= 0 and 
-           min([vertices[i][0] for i in r]) > 5 and
-           min([vertices[i][1] for i in r]) > 5 and
-           max([vertices[i][0] for i in r]) < W-5 and
-           max([vertices[i][1] for i in r]) < H-5
-]
+        s, pi = 0, list()
+        for p in self.points:
+            pi.append(s)
+            if p is not None: s += 1
 
-def eliminate(epsilon):
-    count = 0
-    while True:
-        shortest_a, shortest_b = None, None
-        shortest_distance = W+H
-        
-        for r in regions:
-            if len(r) < 3: continue
-            rr = [idx for idx in r if idx >= 0]
-            for a, b in zip(rr, rr[1:] + rr[:1]):
-                A,B = vertices[a], vertices[b]
-                d = np.linalg.norm(A-B)
-                if d < 0.1:
-                    continue
-                if shortest_distance > d:
-                    shortest_a = a
-                    shortest_b = b
-                    shortest_distance = d
+        self.points = [p for p in self.points if p is not None]
+        self.regions = [[pi[i] for i in r] for r in self.regions]
 
-        if shortest_distance > epsilon: break
-        a, b, d = shortest_a, shortest_b, shortest_distance
-    
-        count += 1
-        print(f"{count} merging verices {a} and {b}, norm {d}.")
+        print(f"{len(self.points)} points and {len(self.regions)} regions after elimination.")
 
-        for r in regions:
-            if len(r) < 3: continue
-            if a in r:
-                if b in r:
-                    r.remove(a)
-                    if len(r) < 3: r[:] = []
-                else:
-                    r[r.index(a)] = b
-        
-        ab = (vertices[a] + vertices[b]) / 2
-        vertices[a] = None
-        vertices[b] = ab
+    def writesvg(self, filename):
+        dwg = svgwrite.Drawing(filename, size=(self.W, self.H), profile='tiny')
+        dwg.add(dwg.rect((0, 0), (self.W, self.H), fill=bg))
 
-eliminate(30)
+        pp = set()
+        for r in self.regions:
+            for a, b in zip(r, r[1:] + r[:1]):
+                pp.add(tuple(self.points[a]))
+                dwg.add(dwg.line(self.points[a], self.points[b], stroke=grey))
+        for p in pp:
+            dwg.add(dwg.circle(p, 4, fill=black))
 
-if True:
-    points = set()
-    for r in regions:
-        rr = [idx for idx in r if idx >= 0]
-        for a, b in zip(rr, rr[1:] + rr[:1]):
-            points.add(tuple(vertices[a]))
-            dwg.add(dwg.line(vertices[a], vertices[b], stroke=grey))
-    for p in points:
-        dwg.add(dwg.circle(p, 4, fill=black))
+        dwg.save()
 
-dwg.save()
+mymap = Map()
+mymap.generate()
+mymap.writesvg("map.svg")
+
