@@ -5,6 +5,7 @@ import numpy as np
 from types import SimpleNamespace
 import scipy.spatial
 import scipy.optimize
+import scipy.special
 
 bg = rgb(255,255,255)
 grey= rgb(100, 100, 100)
@@ -26,6 +27,7 @@ class Map:
         self.points = list(V.vertices)
         self.regions = list(V.regions)
 
+    def eliminate(self):
         def check_point(p):
             if p[0] < 5 or p[0] > self.W-5: return False
             if p[1] < 5 or p[1] > self.H-5: return False
@@ -40,7 +42,7 @@ class Map:
             self.regions[index] = r
             return r
 
-        def cleanup(a=None, b=None):
+        def remove_point_or_edge(a=None, b=None):
             for i in range(len(self.regions)-1, -1, -1):
                 if a is not None and a in (r := self.regions[i]):
                     if b is None or b in r:
@@ -70,12 +72,21 @@ class Map:
         
             count += 1
             #print(f"{count}/{self.N} merging verices {a} and {b}, norm {d}.")
-            cleanup(a, b)
+            remove_point_or_edge(a, b)
+
+        used_points = set()
+        for r in self.regions:
+            used_points |= set(r)
 
         s, pi = 0, list()
-        for p in self.points:
-            pi.append(s)
-            if p is not None: s += 1
+        for i in range(len(self.points)):
+            if i not in used_points:
+                self.points[i] = None
+            if self.points[i] is None:
+                pi.append(None)
+            else:
+                pi.append(s)
+                s += 1
 
         self.points = [p for p in self.points if p is not None]
         self.regions = [[pi[i] for i in r] for r in self.regions]
@@ -92,26 +103,32 @@ class Map:
         def f(x):
             y = list()
             for a, b in zip(x, x0):
-                y.append((a-b)/10)
+                y.append((a-b)/100)
             for r in self.regions:
                 for i in range(1, len(r)-1):
-                    edges = list()
-                    for a, b in zip(r, r[i:] + r[:i]):
-                        edges.append(((x[2*a]-x[2*b])**2 + (x[2*a+1]-x[2*b+1])**2)**0.5)
+                    edges = [
+                        ((x[2*a]-x[2*b])**2 + (x[2*a+1]-x[2*b+1])**2)**0.5
+                                for a, b in zip(r, r[i:] + r[:i])
+                    ]
                     for p, q in zip(edges, edges[1:] + edges[:1]):
                         y.append(p - q)
             return y
 
-        x, *info = scipy.optimize.leastsq(f, x0, epsfcn=0.1)
-        print(x)
-        print(*info)
+        print("Solving least-squares fit..")
+        x, cov_x, info, msg, ier = scipy.optimize.leastsq(f, x0, epsfcn=0.1, full_output=True)
+        print(f"{msg=} {ier=}")
+
+        min_x, max_x = min(x[0::2]), max(x[0::2])
+        min_y, max_y = min(x[1::2]), max(x[1::2])
+        #print(f"{min_x=}, {max_x=}, {min_y=}, {max_y=}")
 
         for i in range(len(self.points)):
-            print(self.points[i][0], self.points[i][1], x[2*i], x[2*i+1])
-            self.points[i][0] = x[2*i]
-            self.points[i][1] = x[2*i+1]
+            self.points[i][0] = self.delta + (self.W-2*self.delta) * (x[2*i  ]-min_x) / (max_x-min_x)
+            self.points[i][1] = self.delta + (self.H-2*self.delta) * (x[2*i+1]-min_y) / (max_y-min_y)
 
     def writesvg(self, filename):
+        print(f"Writing SVG file '{filename}'..")
+
         dwg = svgwrite.Drawing(filename, size=(self.W, self.H), profile='tiny')
         dwg.add(dwg.rect((0, 0), (self.W, self.H), fill=bg))
 
@@ -128,7 +145,21 @@ class Map:
 mymap = Map()
 
 mymap.generate()
-mymap.writesvg("map.svg")
+mymap.eliminate()
+mymap.writesvg("map1.svg")
 
-# mymap.balance()
-# mymap.writesvg("map.svg")
+mymap.balance()
+mymap.writesvg("map2.svg")
+
+mymap.eliminate()
+mymap.writesvg("map3.svg")
+
+mymap.balance()
+mymap.writesvg("map4.svg")
+
+mymap.eliminate()
+mymap.writesvg("map5.svg")
+
+mymap.balance()
+mymap.writesvg("map6.svg")
+
