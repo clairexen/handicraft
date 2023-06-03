@@ -4,6 +4,7 @@ from svgwrite import rgb
 import numpy as np
 from types import SimpleNamespace
 import scipy.spatial
+import scipy.optimize
 
 bg = rgb(255,255,255)
 grey= rgb(100, 100, 100)
@@ -81,6 +82,35 @@ class Map:
 
         print(f"{len(self.points)} points and {len(self.regions)} regions after elimination.")
 
+    def balance(self):
+        x0 = list()
+
+        for p in self.points:
+            x0.append(p[0])
+            x0.append(p[1])
+
+        def f(x):
+            y = list()
+            for a, b in zip(x, x0):
+                y.append((a-b)/10)
+            for r in self.regions:
+                for i in range(1, len(r)-1):
+                    edges = list()
+                    for a, b in zip(r, r[i:] + r[:i]):
+                        edges.append(((x[2*a]-x[2*b])**2 + (x[2*a+1]-x[2*b+1])**2)**0.5)
+                    for p, q in zip(edges, edges[1:] + edges[:1]):
+                        y.append(p - q)
+            return y
+
+        x, *info = scipy.optimize.leastsq(f, x0, epsfcn=0.1)
+        print(x)
+        print(*info)
+
+        for i in range(len(self.points)):
+            print(self.points[i][0], self.points[i][1], x[2*i], x[2*i+1])
+            self.points[i][0] = x[2*i]
+            self.points[i][1] = x[2*i+1]
+
     def writesvg(self, filename):
         dwg = svgwrite.Drawing(filename, size=(self.W, self.H), profile='tiny')
         dwg.add(dwg.rect((0, 0), (self.W, self.H), fill=bg))
@@ -96,6 +126,9 @@ class Map:
         dwg.save()
 
 mymap = Map()
+
 mymap.generate()
 mymap.writesvg("map.svg")
 
+# mymap.balance()
+# mymap.writesvg("map.svg")
