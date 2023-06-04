@@ -1,3 +1,8 @@
+#!/usr/bin/env python3
+
+import click
+from click import echo
+
 import svgwrite
 from svgwrite import rgb
 
@@ -16,6 +21,15 @@ blue = rgb(50, 50, 200)
 light_red = rgb(250, 200, 200)
 light_green = rgb(200, 250, 200)
 light_blue = rgb(200, 200, 250)
+
+def fixpoint(p):
+    r = np.array([
+        min(+10000, max(-10000, p[0])),
+        min(+10000, max(-10000, p[1]))
+    ])
+    if (r != p).any():
+        echo(f"{p} -> {r}")
+    return r
 
 class Map:
     def __init__(self, W=1000, H=1000*(2**0.5), N=200, delta=50):
@@ -59,7 +73,7 @@ class Map:
             if a is not None and b is not None:
                 self.points[a], self.points[b] = None, (self.points[a] + self.points[b]) / 2
 
-        print(f"{len(self.points)} points and {len(self.regions)} regions before elimination.")
+        echo(f"{len(self.points)} points and {len(self.regions)} regions before elimination.")
 
         count = 0
         while True:
@@ -77,7 +91,7 @@ class Map:
             a, b, d = shortest.a, shortest.b, shortest.d
         
             count += 1
-            #print(f"{count}/{self.N} merging verices {a} and {b}, norm {d}.")
+            #echo(f"{count}/{self.N} merging verices {a} and {b}, norm {d}.")
             remove_point_or_edge(a, b)
 
         used_points = set()
@@ -97,7 +111,7 @@ class Map:
         self.points = [p for p in self.points if p is not None]
         self.regions = [[pi[i] for i in r] for r in self.regions]
 
-        print(f"{len(self.points)} points and {len(self.regions)} regions after {count} elimination steps.")
+        echo(f"{len(self.points)} points and {len(self.regions)} regions after {count} elimination steps.")
         return count
 
     def balance(self):
@@ -127,20 +141,20 @@ class Map:
                     y.append(1.0 / (1.0 - p.dot(q)))
             return y
 
-        print("Solving least-squares fit..")
+        echo("Solving least-squares fit..")
         x, cov_x, info, msg, ier = scipy.optimize.leastsq(f, x0, epsfcn=1.0, full_output=True)
-        print(f"{msg=} {ier=}")
+        echo(f"{msg=} {ier=}")
 
         min_x, max_x = min(x[0::2]), max(x[0::2])
         min_y, max_y = min(x[1::2]), max(x[1::2])
-        #print(f"{min_x=}, {max_x=}, {min_y=}, {max_y=}")
+        #echo(f"{min_x=}, {max_x=}, {min_y=}, {max_y=}")
 
         for i in range(len(self.points)):
             self.points[i][0] = self.delta + (self.W-2*self.delta) * (x[2*i  ]-min_x) / (max_x-min_x)
             self.points[i][1] = self.delta + (self.H-2*self.delta) * (x[2*i+1]-min_y) / (max_y-min_y)
 
     def writesvg(self, filename, stones=False):
-        print(f"Writing SVG file '{filename}'..")
+        echo(f"Writing SVG file '{filename}'..")
 
         dwg = svgwrite.Drawing(filename, size=(self.W, self.H), profile='tiny')
         dwg.add(dwg.rect((0, 0), (self.W, self.H), fill=bg))
@@ -160,10 +174,10 @@ class Map:
 
         for r in self.regions:
             for a, b in zip(r, r[1:] + r[:1]):
-                dwg.add(dwg.line(self.points[a], self.points[b], stroke=grey))
+                dwg.add(dwg.line(fixpoint(self.points[a]), fixpoint(self.points[b]), stroke=grey))
 
         for p in self.points:
-            dwg.add(dwg.circle(p, 4, fill=black))
+            dwg.add(dwg.circle(fixpoint(p), 4, fill=black))
 
         if stones:
             for color, lcolor, points in players:
@@ -172,19 +186,39 @@ class Map:
 
         dwg.save()
 
-mymap = Map()
+@click.command("mapgen")
+@click.option("--maxiter", default=4, help="maximum number of loop iterations")
+@click.option("--seed", type=int, help="RNG Seed Value")
+@click.argument("prefix", default="map")
+def main(maxiter, seed, prefix):
+    """
+        Generate a PolyGO map and store it in a SVG file.
+    """
 
-index = 0
-keep_running = True
-mymap.generate()
+    if seed is not None:
+        np.random.seed(seed)
 
-while keep_running:
-    mymap.writesvg(f"map{index}.svg")
-    keep_running = mymap.eliminate()
-    mymap.writesvg(f"map{index+1}.svg")
-    mymap.balance()
-    index += 1
+    mymap = Map()
 
-mymap.writesvg(f"map{index}.svg")
-mymap.writesvg(f"map{index+1}.svg", True)
-print("DONE.")
+    index = 0
+    keep_running = True
+    mymap.generate()
+
+    while keep_running and index < maxiter:
+        echo()
+        echo(f"Main loop iteration {index}:")
+        mymap.writesvg(f"{prefix}{2*index}.svg")
+        keep_running = mymap.eliminate()
+        mymap.writesvg(f"{prefix}{2*index+1}.svg")
+        mymap.balance()
+        index += 1
+
+    echo()
+    echo(f"Final version if the map:")
+    mymap.writesvg(f"{prefix}{2*index}.svg")
+    mymap.writesvg(f"{prefix}{2*index+1}.svg", True)
+    echo("DONE.")
+
+if __name__ == '__main__':
+    main()
+
