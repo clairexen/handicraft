@@ -97,7 +97,8 @@ class Map:
         self.points = [p for p in self.points if p is not None]
         self.regions = [[pi[i] for i in r] for r in self.regions]
 
-        print(f"{len(self.points)} points and {len(self.regions)} regions after elimination.")
+        print(f"{len(self.points)} points and {len(self.regions)} regions after {count} elimination steps.")
+        return count
 
     def balance(self):
         x0 = list()
@@ -118,6 +119,12 @@ class Map:
                     ]
                     for p, q in zip(edges, edges[1:] + edges[:1]):
                         y.append(((p - q) / (p + q))**2 / len(r)**2)
+                directions = [
+                        (v := np.array([x[2*a]-x[2*b], x[2*a+1]-x[2*b+1]])) / np.linalg.norm(v)
+                                for a, b in zip(r, r[i:] + r[:i])
+                ]
+                for p, q in zip(directions, directions[1:] + directions[:1]):
+                    y.append(1.0 / (1.0 - p.dot(q)))
             return y
 
         print("Solving least-squares fit..")
@@ -140,12 +147,8 @@ class Map:
 
         if stones:
             V = scipy.spatial.Voronoi(self.points)
-            p = list(np.random.choice(len(self.points), [30]))
-            players = list(zip(
-                [red, blue, green],
-                [light_red, light_blue, light_green],
-                [p[0:10], p[10:20], p[20:30]]
-            ))
+            p = list(np.random.choice(len(self.points), [50]))
+            players = list(zip([red, blue], [light_red, light_blue], [p[:25], p[25:]]))
 
             for color, lcolor, points in players:
                 for p in points:
@@ -171,17 +174,17 @@ class Map:
 
 mymap = Map()
 
+index = 0
+keep_running = True
 mymap.generate()
-mymap.eliminate()
-mymap.writesvg("map1.svg")
 
-mymap.balance()
-mymap.writesvg("map2.svg")
-
-for i in range(3,6):
-    mymap.eliminate()
+while keep_running:
+    mymap.writesvg(f"map{index}.svg")
+    keep_running = mymap.eliminate()
+    mymap.writesvg(f"map{index+1}.svg")
     mymap.balance()
-    mymap.writesvg(f"map{i}.svg")
+    index += 1
 
-mymap.writesvg("map6.svg", True)
+mymap.writesvg(f"map{index}.svg")
+mymap.writesvg(f"map{index+1}.svg", True)
 print("DONE.")
