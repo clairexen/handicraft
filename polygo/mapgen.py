@@ -8,6 +8,7 @@ from svgwrite import rgb
 
 import numpy as np
 from types import SimpleNamespace
+from collections import defaultdict
 import scipy.spatial
 import scipy.optimize
 import scipy.special
@@ -114,36 +115,49 @@ class Map:
         echo(f"{len(self.points)} points and {len(self.regions)} regions after {count} elimination steps.")
         return count
 
-    def balance(self):
+    def balance(self, weight_keep=1.0, weight_sides=1.0, weight_angles=1.0):
         x0 = list()
 
         for p in self.points:
             x0.append(p[0])
             x0.append(p[1])
 
-        def f(x):
+        def f(x, verbose=False):
+            if verbose:
+                dbg = defaultdict(list)
             y = list()
+
             for a, b in zip(x, x0):
-                y.append((a-b)/10000)
-            for r in self.regions:
+                y.append(weight_keep * (a-b) / max(self.W, self.H))
+                if verbose: dbg[f"keep:"].append(y[-1])
+
+            for idx, r in enumerate(self.regions):
                 for i in range(1, len(r)-1):
                     edges = [
                         ((x[2*a]-x[2*b])**2 + (x[2*a+1]-x[2*b+1])**2)**0.5
                                 for a, b in zip(r, r[i:] + r[:i])
                     ]
                     for p, q in zip(edges, edges[1:] + edges[:1]):
-                        y.append(((p - q) / (p + q))**2 / len(r)**2)
+                        y.append(weight_sides * ((p - q) / (p + q))**2 / len(r)**2)
+                        if verbose: dbg[f"region {idx:3d} {i}-steps:"].append(y[-1])
+
                 directions = [
                         (v := np.array([x[2*a]-x[2*b], x[2*a+1]-x[2*b+1]])) / np.linalg.norm(v)
                                 for a, b in zip(r, r[i:] + r[:i])
                 ]
                 for p, q in zip(directions, directions[1:] + directions[:1]):
-                    y.append(1.0 / (1.0 - p.dot(q)))
+                    y.append(weight_angles / (1.0 - p.dot(q)))
+                    if verbose: dbg[f"region {idx:3d} angles:"].append(y[-1])
+
+            if verbose:
+                for key, data in sorted(dbg.items()):
+                    echo(f"{len(data):5d}x {key:20s} mean={np.mean(data):6.04}, std={np.std(data):6.04}, min={np.min(data):6.04}, max={np.max(data):6.04}")
             return y
 
         echo("Solving least-squares fit..")
         x, cov_x, info, msg, ier = scipy.optimize.leastsq(f, x0, epsfcn=1.0, full_output=True)
         echo(f"{msg=} {ier=}")
+        # f(x, True)
 
         min_x, max_x = min(x[0::2]), max(x[0::2])
         min_y, max_y = min(x[1::2]), max(x[1::2])
