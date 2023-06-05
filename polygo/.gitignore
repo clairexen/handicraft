@@ -1,2 +1,4 @@
-/map[0-9].svg
-/map[0-9][0-9].svg
+/map_step[0-9].svg
+/map_step[0-9][0-9].svg
+/map_final.svg
+/map_mockup.svg
