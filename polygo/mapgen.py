@@ -246,6 +246,15 @@ function clickArea(idx) {
         e.setAttribute("opacity", 1.0);
         e.setAttribute("cx", p.getAttribute("cx"));
         e.setAttribute("cy", p.getAttribute("cy"));
+    } else
+    if (new_state == 0) {
+        e = document.getElementById("last_move");
+        e_cx = e.getAttribute("cx");
+        e_cy = e.getAttribute("cy");
+        p_cx = p.getAttribute("cx");
+        p_cy = p.getAttribute("cy");
+        if (e_cx == p_cx && e_cy == p_cy)
+            e.setAttribute("opacity", 0.0);
     }
 
     for (i in edges[idx]) {
