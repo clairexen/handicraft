@@ -34,7 +34,7 @@ def fixpoint(p):
     return r
 
 class Map:
-    def __init__(self, W=1000, H=1000*(2**0.5), N=200, delta=50):
+    def __init__(self, W=1850, H=975, N=200, delta=80):
         self.W, self.H, self.N = W, H, N
         self.delta = delta
 
@@ -196,6 +196,7 @@ class Map:
         echo(f"Writing SVG file '{filename}'..")
 
         dwg = svgwrite.Drawing(filename, size=(self.W, self.H), profile='full' if final else 'tiny')
+        dwg.set_desc("PolyGO -- Play GO on arbitrary graphs")
         dwg.add(dwg.rect((0, 0), (self.W, self.H), fill=bg))
 
         edges = set([(min(a,b),max(a,b)) for r in self.regions for a, b in zip(r, r[1:] + r[:1]) if a >= 0 and b >= 0])
@@ -269,12 +270,12 @@ function clickArea(idx) {
                 e.setAttribute("stroke", "rgb(0,0,0)");
                 e.setAttribute("stroke-dasharray", "2,10");
             } else {
-                e.setAttribute("stroke-width", 1.0);
+                e.setAttribute("stroke-width", 3.0);
                 e.setAttribute("stroke", "rgb(100,100,100)");
                 e.setAttribute("stroke-dasharray", "");
             }
         } else {
-            e.setAttribute("stroke-width", 5.0);
+            e.setAttribute("stroke-width", 10.0);
             e.setAttribute("stroke", new_state == 1 ? "rgb(200,50,50)" : "rgb(50,50,200)");
             e.setAttribute("stroke-dasharray", "");
         }
@@ -312,14 +313,14 @@ function clickArea(idx) {
                     dwg.add(dwg.polygon([V.vertices[q] for q in k], id=f"area_{p}", onclick=f"clickArea({p})", fill=black, opacity=0.0))
 
         for a, b in sorted(edges):
-                dwg.add(dwg.line(fixpoint(self.points[a]), fixpoint(self.points[b]), id=f"edge_{a}_{b}", stroke=grey))
+                dwg.add(dwg.line(fixpoint(self.points[a]), fixpoint(self.points[b]), id=f"edge_{a}_{b}", stroke_width=3.0, stroke=grey))
 
         for i, p in enumerate(self.points):
             if final:
-                dwg.add(dwg.circle(fixpoint(p), 4, id=f"point_{i}", onclick=f"clickArea({i})", fill=black))
+                dwg.add(dwg.circle(fixpoint(p), 6, id=f"point_{i}", onclick=f"clickArea({i})", fill=black))
                 dwg.add(dwg.circle(fixpoint(p), 20, onclick=f"clickArea({i})", fill=black, opacity=0.0))
             else:
-                dwg.add(dwg.circle(fixpoint(p), 4, id=f"point_{i}", fill=black))
+                dwg.add(dwg.circle(fixpoint(p), 6, id=f"point_{i}", fill=black))
 
         if mockup:
             for color, lcolor, points in players:
