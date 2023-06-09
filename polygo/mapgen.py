@@ -204,6 +204,7 @@ class Map:
         if final:
             script = """
 states = {}
+ecount = {}
 edges = {}
 red_move = true
 function clickArea(idx) {
@@ -225,7 +226,7 @@ function clickArea(idx) {
         a.setAttribute("fill", "rgb(0,0,0)");
         a.setAttribute("opacity", 0.0);
         p.setAttribute("fill", "rgb(0,0,0)");
-        p.setAttribute("r", 4);
+        p.setAttribute("r", ecount[idx] ? 10 : 6);
     }
 
     if (new_state == 1) {
@@ -262,6 +263,14 @@ function clickArea(idx) {
         other = edges[idx][i];
         other_state = states[other];
 
+        if (new_state && !old_state) ecount[other]++;
+        if (!new_state && old_state) ecount[other]--;
+
+        if (!other_state) {
+            o = document.getElementById("point_" + other);
+            o.setAttribute("r", ecount[other] ? 10 : 6);
+        }
+
         e = document.getElementById("edge_" + Math.min(idx, other) + "_" + Math.max(idx, other));
 
         if (!other_state || !new_state || other_state != new_state) {
@@ -270,8 +279,16 @@ function clickArea(idx) {
                 e.setAttribute("stroke", "rgb(0,0,0)");
                 e.setAttribute("stroke-dasharray", "2,10");
             } else {
-                e.setAttribute("stroke-width", 3.0);
-                e.setAttribute("stroke", "rgb(100,100,100)");
+                if (other_state == 1 || new_state == 1) {
+                    e.setAttribute("stroke-width", 5.0);
+                    e.setAttribute("stroke", "rgb(200,50,50)");
+                } else if (other_state == 2 || new_state == 2) {
+                    e.setAttribute("stroke-width", 5.0);
+                    e.setAttribute("stroke", "rgb(50,50,200)");
+                } else {
+                    e.setAttribute("stroke-width", 3.0);
+                    e.setAttribute("stroke", "rgb(100,100,100)");
+                }
                 e.setAttribute("stroke-dasharray", "");
             }
         } else {
@@ -283,10 +300,9 @@ function clickArea(idx) {
 }
 """
             for a in sorted(set([a for a, b in edges] + [b for a, b in edges])):
-                script += f"edges[{a}] = []; states[{a}] = 0;\n"
+                script += f"edges[{a}] = []; states[{a}] = 0; ecount[{a}] = 0;\n"
             for a, b in sorted(edges):
-                script += f"edges[{a}].push({b});\n"
-                script += f"edges[{b}].push({a});\n"
+                script += f"edges[{a}].push({b}); edges[{b}].push({a});\n"
             dwg.defs.add(dwg.script(content=script))
 
         if mockup or final:
