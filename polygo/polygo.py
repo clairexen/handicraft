@@ -20,9 +20,14 @@ white = rgb(255, 255, 255)
 red = rgb(200, 50, 50)
 green = rgb(50, 200, 50)
 blue = rgb(50, 50, 200)
+magenta = rgb(200, 50, 200)
+
+light_grey = rgb(200, 200, 200)
 light_red = rgb(250, 200, 200)
 light_green = rgb(200, 250, 200)
 light_blue = rgb(200, 200, 250)
+light_magenta = rgb(250, 200, 250)
+
 
 def fixpoint(p):
     r = np.array([
@@ -33,7 +38,7 @@ def fixpoint(p):
         echo(f"{p} -> {r}")
     return r
 
-class Map:
+class PolyGoMapGenerator:
     def __init__(self, W=1850, H=975, N=200, delta=80):
         self.W, self.H, self.N = W, H, N
         self.delta = delta
@@ -192,17 +197,137 @@ class Map:
             self.points[i][0] = np.round(self.delta + (self.W-2*self.delta) * (x[2*i  ]-min_x) / (max_x-min_x))
             self.points[i][1] = np.round(self.delta + (self.H-2*self.delta) * (x[2*i+1]-min_y) / (max_y-min_y))
 
-    def writesvg(self, filename, mockup=False, final=False):
+    def writesvg(self, filename):
         echo(f"Writing SVG file '{filename}'..")
 
-        dwg = svgwrite.Drawing(filename, size=(self.W, self.H), profile='full' if final else 'tiny')
+        dwg = svgwrite.Drawing(filename, size=(self.W, self.H), profile='tiny')
         dwg.set_desc("PolyGO -- Play GO on arbitrary graphs")
         dwg.add(dwg.rect((0, 0), (self.W, self.H), fill=bg))
 
         edges = set([(min(a,b),max(a,b)) for r in self.regions for a, b in zip(r, r[1:] + r[:1]) if a >= 0 and b >= 0])
 
-        if final:
-            script = """
+        V = scipy.spatial.Voronoi(self.points)
+
+        for p in range(len(self.points)):
+            r = V.point_region[p]
+            if r < 0: continue
+            k = [q for q in V.regions[r] if q >= 0]
+            if len(k) >= 3:
+                fill_color = np.random.choice([light_grey, light_red, light_green, light_blue, light_magenta])
+                dwg.add(dwg.polygon([V.vertices[q] for q in k], fill=fill_color, stroke=grey))
+
+        for a, b in sorted(edges):
+                dwg.add(dwg.line(fixpoint(self.points[a]), fixpoint(self.points[b]), stroke_width=3, stroke=black))
+
+        for i, p in enumerate(self.points):
+            dwg.add(dwg.circle(fixpoint(p), 6, fill=black))
+
+        dwg.save(True)
+
+    def writemap(self, filename):
+        echo(f"Writing MAP file '{filename}'..")
+        with open(filename, "w") as f:
+            print(f"# PolyGo MAP File", file=f)
+            print(f"s {int(self.W)} {int(self.H)}", file=f)
+
+            for i, p in enumerate(self.points):
+                if i % 10 == 0:
+                    print(f"\np{i}" if i else f"p{i}", file=f, end="")
+                print(f" {int(p[0])} {int(p[1])}", file=f, end="")
+            print(file=f)
+
+            V = scipy.spatial.Voronoi(self.points)
+            V.vertices = np.round(V.vertices)
+
+            for i in range(len(self.points)):
+                r = V.point_region[i]
+                if r < 0: continue
+                path = [V.vertices[q] for q in V.regions[r] if q >= 0]
+                if len(path) >= 3:
+                    area = 1.0
+                    print(f"r{i} {int(area)}", file=f, end="")
+                    for pt in path:
+                        print(f" {int(pt[0])} {int(pt[1])}", file=f, end="")
+                    print(file=f)
+
+            edges = set([(min(a,b),max(a,b)) for r in self.regions for a, b in zip(r, r[1:] + r[:1]) if a >= 0 and b >= 0])
+            for i, (a, b) in enumerate(sorted(edges)):
+                if i % 15 == 0:
+                    print("\ne" if i else "e", file=f, end="")
+                print(f" {a} {b}", file=f, end="")
+            print(file=f)
+
+            # End of File Marker. (GAME files have a "z" line after the "e" section, followed
+            # by "m1" and "m2" commands for player 1 and player 2 moves, terminated by the "x"
+            # line. I.e. the difference between a MAP file and a GAME file at the first move are
+            # the additional "z" line, and that it says GAME instead of MAP in the first line.)
+            print("x", file=f)
+
+
+class PolyGoSVGpGenerator:
+    def __init__(self, mapfilename):
+        echo(f"Reading MAP file '{mapfilename}'..")
+
+        self.W = None
+        self.H = None
+        self.points = []
+        self.regions = []
+        self.areas = []
+        self.edges = []
+
+        with open(mapfilename) as f:
+            for line in f:
+                # echo(f"==> {line.strip()}")
+
+                line = line.split()
+                if not len(line) or line[0].startswith("#"):
+                    continue
+
+                if line[0].startswith("s"):
+                    self.W = int(line[1])
+                    self.H = int(line[2])
+                    continue
+
+                if line[0].startswith("p"):
+                    i = int(line[0][1:])
+                    for x, y in zip(line[1::2], line[2::2]):
+                        x, y = int(x), int(y)
+                        assert len(self.points) == i
+                        self.points.append((x,y))
+                        i += 1
+                    continue
+
+                if line[0].startswith("r"):
+                    i = int(line[0][1:])
+                    while len(self.regions) < i:
+                        self.regions.append([])
+                    assert len(self.regions) == i
+                    self.areas.append(int(line[1]))
+                    self.regions.append([(int(x),int(y))
+                            for x, y in zip(line[2::2], line[3::2])])
+                    continue
+
+                if line[0] == "e":
+                    for x, y in zip(line[1::2], line[2::2]):
+                        self.edges.append((int(x),int(y)))
+                    continue
+
+                if line[0].startswith("x"):
+                    break
+
+                assert False
+
+            else:
+                assert False
+
+    def writesvg(self, svgfilename):
+        echo(f"Writing SVG file '{svgfilename}'..")
+
+        dwg = svgwrite.Drawing(svgfilename, size=(self.W, self.H), profile='full')
+        dwg.set_desc("PolyGO -- Play GO on arbitrary graphs")
+        dwg.add(dwg.rect((0, 0), (self.W, self.H), fill=bg))
+
+        script = """
 states = {}
 ecount = {}
 edges = {}
@@ -299,69 +424,49 @@ function clickArea(idx) {
     }
 }
 """
-            for a in sorted(set([a for a, b in edges] + [b for a, b in edges])):
-                script += f"edges[{a}] = []; states[{a}] = 0; ecount[{a}] = 0;\n"
-            for a, b in sorted(edges):
-                script += f"edges[{a}].push({b}); edges[{b}].push({a});\n"
-            dwg.defs.add(dwg.script(content=script))
 
-        if mockup or final:
-            V = scipy.spatial.Voronoi(self.points)
+        for i in range(len(self.points)):
+            script += f"edges[{i}] = []; states[{i}] = 0; ecount[{i}] = 0;\n"
+        for a, b in sorted(self.edges):
+            script += f"edges[{a}].push({b}); edges[{b}].push({a});\n"
+        dwg.defs.add(dwg.script(content=script))
 
-        if mockup:
-            p = list(np.random.choice(len(self.points), [50]))
-            players = list(zip([red, blue], [light_red, light_blue], [p[:25], p[25:]]))
+        for i, r in enumerate(self.regions):
+            if len(r) < 3: continue
+            dwg.add(dwg.polygon(r, id=f"area_{i}", onclick=f"clickArea({i})", fill=black, opacity=0.0))
 
-            for color, lcolor, points in players:
-                for p in points:
-                    r = V.point_region[p]
-                    if r < 0: continue
-                    k = [q for q in V.regions[r] if q >= 0]
-                    if len(k) >= 3:
-                        dwg.add(dwg.polygon([V.vertices[q] for q in k], fill=lcolor))
-
-        elif final:
-            for p in range(len(self.points)):
-                r = V.point_region[p]
-                if r < 0: continue
-                k = [q for q in V.regions[r] if q >= 0]
-                if len(k) >= 3:
-                    dwg.add(dwg.polygon([V.vertices[q] for q in k], id=f"area_{p}", onclick=f"clickArea({p})", fill=black, opacity=0.0))
-
-        for a, b in sorted(edges):
-                dwg.add(dwg.line(fixpoint(self.points[a]), fixpoint(self.points[b]), id=f"edge_{a}_{b}", stroke_width=3.0, stroke=grey))
+        for a, b in sorted(self.edges):
+                dwg.add(dwg.line(self.points[a], self.points[b], id=f"edge_{a}_{b}", stroke_width=3.0, stroke=grey))
 
         for i, p in enumerate(self.points):
-            if final:
-                dwg.add(dwg.circle(fixpoint(p), 6, id=f"point_{i}", onclick=f"clickArea({i})", fill=black))
-                dwg.add(dwg.circle(fixpoint(p), 20, onclick=f"clickArea({i})", fill=black, opacity=0.0))
-            else:
-                dwg.add(dwg.circle(fixpoint(p), 6, id=f"point_{i}", fill=black))
+            dwg.add(dwg.circle(p, 6, id=f"point_{i}", onclick=f"clickArea({i})", fill=black))
+            dwg.add(dwg.circle(p, 20, onclick=f"clickArea({i})", fill=black, opacity=0.0))
 
-        if mockup:
-            for color, lcolor, points in players:
-                for p in points:
-                    dwg.add(dwg.circle(self.points[p], self.delta/2, fill=color))
-
-        if final:
-            dwg.add(dwg.circle(fixpoint(p), 15, id=f"last_move", opacity=0.0, fill="none", stroke=white, stroke_width=5))
-            
-
+        dwg.add(dwg.circle(p, 15, id=f"last_move", opacity=0.0, fill="none", stroke=white, stroke_width=5))
         dwg.save(True)
 
-@click.command("mapgen")
+
+@click.group()
+def cli():
+    pass
+
+@cli.command("mkmap")
+@click.option("--svg/--no-svg", default=False, help="generate debug SVG files")
 @click.option("--maxiter", default=4, help="maximum number of loop iterations")
 @click.option("--seed", type=int, help="RNG Seed Value")
-@click.argument("prefix", default="map")
-def main(maxiter, seed, prefix):
+@click.argument("prefix", default="UntitledMap")
+def mapgen(maxiter, seed, prefix, svg):
     """
-        Generate a PolyGO map and store it in a SVG file.
+        Generate a PolyGO map and store it in a .map file.
     """
 
-    if seed is not None:
-        np.random.seed(seed)
+    if seed is None:
+        seed = np.random.randint(100000, 1000000)
 
-    mymap = Map()
+    echo(f"Setting RNG seed to {seed}.")
+    np.random.seed(seed)
+
+    mymap = PolyGoMapGenerator()
 
     index = 0
     keep_running = True
@@ -370,19 +475,41 @@ def main(maxiter, seed, prefix):
     while keep_running and index < maxiter:
         echo()
         echo(f"Main loop iteration {index}:")
-        mymap.writesvg(f"{prefix}_step{2*index}.svg")
+
+        if svg:
+            mymap.writesvg(f"{prefix}_step{2*index}.svg")
+
         keep_running = mymap.eliminate()
-        mymap.writesvg(f"{prefix}_step{2*index+1}.svg")
+
+        if svg:
+            mymap.writesvg(f"{prefix}_step{2*index+1}.svg")
+
         mymap.balance()
         index += 1
-    mymap.writesvg(f"{prefix}_step{2*index}.svg")
+
+    if svg:
+        mymap.writesvg(f"{prefix}_step{2*index}.svg")
 
     echo()
     echo(f"Final version if the map:")
-    mymap.writesvg(f"{prefix}_final.svg", final=True)
-    mymap.writesvg(f"{prefix}_mockup.svg", mockup=True)
+    mymap.writemap(f"{prefix}.map")
+
+    if svg:
+        gen = PolyGoSVGpGenerator(f"{prefix}.map")
+        gen.writesvg(f"{prefix}.svg")
+
     echo("DONE.")
 
+@cli.command("mksvg")
+@click.argument("mapfilename", metavar="input.map", default="UntitledMap.map", type=click.Path())
+@click.argument("svgfilename", metavar="output.svg", default="UntitledMap.svg", type=click.Path())
+def mapgen(mapfilename, svgfilename):
+    """
+        Generate a SVG file from a PolyGO .map file.
+    """
+    gen = PolyGoSVGpGenerator(mapfilename)
+    gen.writesvg(svgfilename)
+
 if __name__ == '__main__':
-    main()
+    cli()
 
