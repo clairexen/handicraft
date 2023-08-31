@@ -14,8 +14,8 @@ from numpy.random import randint
 @click.option('-C', 'C', default=16, help="number of global control bits")   # increase for more complex routing
 @click.option('-W', 'W', default=16, help="width of tile grid")              # increase for larger designs
 @click.option('-H', 'H', default=16, help="height of tile grid")             # increase for larger designs
-@click.option('-F', 'F', default=8, help="number of block inputs")           # increase for larger designs with more complex routing
-@click.option('-N', 'N', default=6, help="number of block outputs")          # increase for larger designs with simpler routing
+@click.option('-F', 'F', default=8, help="number of tile input bits")        # increase for larger designs with more complex routing
+@click.option('-N', 'N', default=6, help="number of tile output bits")       # increase for larger designs with simpler routing
 @click.option('-D', 'D', default=4, help="max distance")                     # increase for more complex routing
 def xorgrid(I, O, C, W, H, F, N, D):
     print(f"""
