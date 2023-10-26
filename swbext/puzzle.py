@@ -1,17 +1,36 @@
 #!/usr/bin/env python
 
 W = 13
-wmsk = (1 << W)-1
+rounds = 1
+apos = [0]
+bpos = [8]
+cpos = [16]
 
 print(f"""
 (set-logic ALL)
 
+(declare-fun apos () (_ BitVec 32))
+(declare-fun bpos () (_ BitVec 32))
+(declare-fun cpos () (_ BitVec 32))
 (declare-fun magic ((_ BitVec {W})) (_ BitVec 8))
 
-(define-fun f ((a (_ BitVec {W})) (b (_ BitVec {W})) (c (_ BitVec {W})) (z (_ BitVec 8))) (_ BitVec 8)
-    (bvand (bvxor (magic a) (magic b) (magic c)) z)
+(assert (bvult apos bpos))
+(assert (bvult bpos cpos))
+
+(define-fun f ((h (_ BitVec 32)) (z (_ BitVec 8))) (_ BitVec 8)
+    (bvand (bvxor
+        (magic ((_ extract {W-1} 0) (bvlshr h apos)))
+        (magic ((_ extract {W-1} 0) (bvlshr h bpos)))
+        (magic ((_ extract {W-1} 0) (bvlshr h cpos)))
+    ) z)
 )
 """)
+
+for n, v in [("apos", apos), ("bpos", bpos), ("cpos", cpos)]:
+    print(f"(assert (or")
+    for i in v:
+        print(f"  (= {n} #x{i:08x})")
+    print(f"))")
 
 def bext(value, mask):
     v, m = bin(value)[2:], bin(mask)[2:]
@@ -31,13 +50,11 @@ for v in range(256):
         y = bext(v, m)
         z = bext(m, m)
 
-        x = (v << 8) | m
-        x = xorshift32(x)
-        a = (x >>  0) & wmsk
-        b = (x >>  8) & wmsk
-        c = (x >> 16) & wmsk
+        h = (v << 8) | m
+        for i in range(rounds):
+            h = xorshift32(h)
 
-        print(f"(assert (= (f #b{a:0{W}b} #b{b:0{W}b} #b{c:0{W}b} #x{z:02x}) #x{y:02x})) ;  rule {index:4}:  {v:08b} {m:08b} -> {y:08b}")
+        print(f"(assert (= (f #b{h:032b} #x{z:02x}) #x{y:02x})) ;  rule {index:4}:  {v:08b} {m:08b} -> {y:08b}")
 
 print("(check-sat)")
 print("(get-value (")
