@@ -13,7 +13,7 @@
 # Outputs:
 #   q  ...  rate of mask bits still set to 0 and the end
 #   e  ...  mean collision rate for the n elements so far
-#   E  ...  mean collision rate on the next instert
+#   E  ...  mean collision rate on the next insert
 #
 # E is also the expected false positive rate when testing
 # membership of out-of-set elements.
@@ -23,7 +23,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 if True:
-    Ks = (2, )
+    Ks = (2, 3, 4)
     Ms = (64, 128, 256)
     Ns = tuple(range(0, 50))
     
@@ -34,8 +34,8 @@ if True:
     enable_plot_e_for_multiple_m = True
     enable_plot_q_for_multiple_m = True
     
-    X = 200
-    Y = 200
+    X = 20
+    Y = 20
 
 else:
     Ks = (2, )
