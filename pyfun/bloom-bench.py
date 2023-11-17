@@ -4,8 +4,7 @@
 # (relatively small) bloom filters
 #
 # Parameters:
-#   X  ...  number of samples for measuring c and q
-#   Y  ...  number of samples for measuring C
+#   X  ...  number of samples for measuring q and e
 # Inputs:
 #   k  ...  number of hash functions
 #   m  ...  number of bits (or buckets)
@@ -13,7 +12,7 @@
 # Outputs:
 #   q  ...  rate of mask bits still set to 0 and the end
 #   e  ...  mean collision rate for the n elements so far
-#   E  ...  mean collision rate on the next insert
+#   E  ...  mean collision rate on next insert (1/q)^k
 #
 # E is also the expected false positive rate when testing
 # membership of out-of-set elements.
@@ -23,35 +22,33 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 if True:
+    X = 10
     Ks = (2, 3, 4)
     Ms = (64, 128, 256)
     Ns = tuple(range(0, 50))
-    
+
     enable_plot_E_for_multiple_k = True
     enable_plot_e_for_multiple_k = True
     enable_plot_q_for_multiple_k = True
+
     enable_plot_E_for_multiple_m = True
     enable_plot_e_for_multiple_m = True
     enable_plot_q_for_multiple_m = True
-    
-    X = 20
-    Y = 20
 
 else:
+    X = 50
     Ks = (2, )
     Ms = (64, 128, 256, 512)
     Ns = tuple(range(0, 150, 5))
-    
+
     enable_plot_E_for_multiple_k = False
     enable_plot_e_for_multiple_k = False
     enable_plot_q_for_multiple_k = False
     enable_plot_E_for_multiple_m = True
     enable_plot_e_for_multiple_m = True
     enable_plot_q_for_multiple_m = True
-    
-    X = 50
-    Y = 50
-    
+
+
 #%%
 
 def test_filter(m, n, k):
@@ -71,17 +68,7 @@ def test_filter(m, n, k):
     q = f"{bitmask:0{m}b}".count("0") / m
     #print(f"{bitmask=:0{m}b} {m=} {q=} {type(bitmask)}")
     assert bitmask >= 0
-    
-    E = 0
-    for i in range(Y):
-        bits = [int(v) for v in np.random.randint(m, size=k)]
-        for idx in bits:
-            if ((bitmask >> idx) & 1) == 0:
-                break
-        else:
-            E += 1 / Y
-    
-    return q, e, E
+    return q, e, (1-q)**k
 
 def test_filter_x(m, n, k, x = X):
     eValues = [test_filter(m,n,k) for i in range(x)]
