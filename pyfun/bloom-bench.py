@@ -12,7 +12,7 @@
 # Outputs:
 #   q  ...  rate of mask bits still set to 0 and the end
 #   e  ...  mean collision rate for the n elements so far
-#   E  ...  mean collision rate on next insert (1/q)^k
+#   E  ...  expected collision rate on next insert (1/q)^k
 #
 # E is also the expected false positive rate when testing
 # membership of out-of-set elements.
@@ -22,8 +22,7 @@ import matplotlib.pyplot as plt
 import random
 
 if True:
-    X = 10
-    plot_ES = True
+    X = 200
     Ks = (2, 3, 4)
     Ms = (64, 128, 256)
     Ns = tuple(range(0, 50))
@@ -38,7 +37,6 @@ if True:
 
 else:
     X = 50
-    plot_ES = True
     Ks = (2, )
     Ms = (64, 128, 256, 512)
     Ns = tuple(range(0, 150, 5))
@@ -72,16 +70,7 @@ def test_filter(m, n, k):
     #print(f"{bitmask=:0{m}b} {m=} {q=} {type(bitmask)}")
     assert bitmask >= 0
 
-    if plot_ES:
-        ES = 0
-        for i in range(500):
-            bits = sum(random.sample(all_bits, k))
-            if (bitmask | bits) == bitmask:
-                ES += 1 / 500
-    else:
-        ES = E
-
-    return q, e, E, ES
+    return q, e, E
 
 def test_filter_x(m, n, k, x = X):
     vals = [test_filter(m,n,k) for i in range(x)]
@@ -95,15 +84,14 @@ for k in Ks:
     for m in Ms:
         trace_name = f"k{k}m{m}"
         print(f"[{trace_name}] Testing {X} iterations of all Ns..", end="", flush=True)
-        trace = SimpleNamespace(q=[], e=[], E=[], ES=[], n=Ns)
+        trace = SimpleNamespace(q=[], e=[], E=[], n=Ns)
         setattr(traces, trace_name, trace)
         for n in Ns:
             print(".", end="", flush=True)
-            qq, ee, EE, ES = test_filter_x(m, n, k)
+            qq, ee, EE = test_filter_x(m, n, k)
             trace.q.append(qq)
             trace.e.append(ee)
             trace.E.append(EE)
-            trace.ES.append(ES)
         print("", flush=True)
 
 #%%
@@ -115,9 +103,6 @@ def plot_Eeq_for_multiple_k(item, kk=Ks, m=64):
     plt.legend(loc="upper left")
     plt.xlabel("n = number of inserted items")
     if item == "E":
-        if plot_ES:
-            for k in kk:
-                plt.plot(Ns, getattr(traces, f"k{k}m{m}").ES, label=f"ES_k={k}")
         plt.ylabel("E = probability of collision on next insert\n" + \
                    "= probability of false positive after n inserts")
     elif item == "e":
@@ -135,9 +120,6 @@ def plot_Eeq_for_multiple_m(item, k=2, mm=Ms):
     plt.legend(loc="upper left")
     plt.xlabel("n = number of inserted items")
     if item == "E":
-        if plot_ES:
-            for m in mm:
-                plt.plot(Ns, getattr(traces, f"k{k}m{m}").ES, label=f"ES_m={m}")
         plt.ylabel("E = probability of collision on next insert\n" + \
                    "= probability of false positive after n inserts")
     elif item == "e":
