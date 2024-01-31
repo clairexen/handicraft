@@ -1,0 +1,51 @@
+PATTERN: addiadd with length 6 at 3 with value 896
+PATTERN: addiadd with length 6 at 3 with value 630
+PATTERN: addiadd with length 6 at 3 with value 1776
+PATTERN: addiadd with length 6 at 3 with value 1032
+PATTERN: addiadd with length 6 at 31 with value -1758
+PATTERN: addiadd with length 6 at 3 with value 816
+PATTERN: addiadd with length 6 at 3 with value -1668
+PATTERN: addiadd with length 8 at 4 with value 4
+PATTERN: addiadd with length 6 at 3 with value 4
+PATTERN: addiadd with length 6 at 3 with value -1340
+PATTERN: addiadd with length 8 at 4 with value 0
+PATTERN: addiadd with length 8 at 7 with value 4
+PATTERN: addiadd with length 8 at 7 with value 4
+PATTERN: addiadd with length 6 at 3 with value -1044
+PATTERN: addiadd with length 6 at 3 with value 1656
+PATTERN: addiadd with length 6 at 4 with value 16
+PATTERN: addiadd with length 6 at 6 with value 16
+PATTERN: addiadd with length 8 at 3 with value 32
+PATTERN: addiadd with length 6 at 2 with value 194
+PATTERN: addiadd with length 6 at 2 with value -1
+PATTERN: addiadd with length 6 at 6 with value -244
+PATTERN: addiadd with length 6 at 3 with value 1218
+PATTERN: addiadd with length 6 at 3 with value -402
+PATTERN: addiadd with length 6 at 3 with value -628
+
+Instruction count: 38654 (115866 bytes, avg 3.00 bytes/insn)
+
+             addiadd       24 12bit=0.0621% 9bit=0.0233% avgbytes=6.42
+
+Values for addiadd patterns:
+                   4        4
+                  16        2
+                1776        1
+                1656        1
+                1218        1
+                1032        1
+                 896        1
+                 816        1
+                 630        1
+                 194        1
+                  32        1
+                   0        1
+                  -1        1
+                -244        1
+                -402        1
+                -628        1
+               -1044        1
+               -1340        1
+               -1668        1
+               -1758        1
+

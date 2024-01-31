@@ -1,0 +1,95 @@
+PATTERN: muli with length 8 at 3278 with value 336
+PATTERN: muliadd with length 10 at 3826 with value 336
+PATTERN: addiadd with length 6 at 6 with value 16
+PATTERN: addiadd with length 6 at 9 with value 4
+PATTERN: addiadd with length 6 at 9 with value 4
+PATTERN: muliadd with length 10 at 4360 with value 52
+PATTERN: muliadd with length 10 at 46f0 with value 52
+PATTERN: muli with length 8 at 535e with value 336
+PATTERN: muli with length 8 at 538c with value 336
+PATTERN: muliadd with length 10 at 5390 with value 336
+PATTERN: addiadd with length 6 at 8 with value -336
+PATTERN: muli with length 8 at 53d0 with value 336
+PATTERN: muli with length 8 at 53e4 with value 336
+PATTERN: addiadd with length 6 at 8 with value -336
+PATTERN: addiadd with length 6 at 6 with value 8
+PATTERN: muliadd with length 10 at 57f6 with value 336
+PATTERN: addiadd with length 6 at 5 with value 8
+PATTERN: addiadd with length 6 at 9 with value 12
+PATTERN: addiadd with length 6 at 17 with value 88
+PATTERN: addiadd with length 6 at 3 with value 96
+PATTERN: addiadd with length 6 at 4 with value -8
+PATTERN: addiadd with length 6 at 1 with value 96
+PATTERN: addiadd with length 8 at 3 with value -88
+PATTERN: addiadd with length 6 at 1 with value 96
+PATTERN: addiadd with length 6 at 1 with value 96
+PATTERN: addiadd with length 6 at 3 with value -8
+PATTERN: addiadd with length 6 at 3 with value 96
+PATTERN: addiadd with length 6 at 7 with value 96
+PATTERN: addiadd with length 6 at 9 with value -92
+PATTERN: addiadd with length 6 at 2 with value 88
+PATTERN: addiadd with length 6 at 6 with value 8
+PATTERN: addiadd with length 6 at 3 with value -948
+PATTERN: addiadd with length 6 at 12 with value 36
+PATTERN: muliadd with length 10 at 7538 with value 76
+PATTERN: addiadd with length 6 at 11 with value 32
+PATTERN: muli with length 8 at 7602 with value 76
+PATTERN: addiadd with length 6 at 12 with value 44
+PATTERN: addiadd with length 6 at 7 with value -646
+PATTERN: muli with length 8 at 7a28 with value 76
+PATTERN: muliadd with length 12 at 7a60 with value 76
+PATTERN: muli with length 8 at 7b3a with value 52
+PATTERN: muliadd with length 10 at 7b6e with value 52
+PATTERN: muliadd with length 10 at 7e4a with value 76
+PATTERN: addiadd with length 6 at 11 with value 36
+PATTERN: muli with length 8 at 7f2c with value 76
+PATTERN: addiadd with length 6 at 12 with value 48
+PATTERN: addiadd with length 6 at 12 with value 32
+PATTERN: muliadd with length 10 at 88bc with value 52
+PATTERN: muliadd with length 10 at 8990 with value 52
+PATTERN: addiadd with length 6 at 11 with value 56
+PATTERN: muliadd with length 10 at 8af6 with value 52
+PATTERN: addiadd with length 6 at 11 with value 60
+PATTERN: muli with length 8 at 9186 with value 76
+PATTERN: muli with length 8 at 91f8 with value 52
+PATTERN: addiadd with length 6 at 5 with value 1
+PATTERN: muli with length 8 at 9646 with value 336
+PATTERN: muli with length 8 at 964a with value 336
+
+Instruction count: 9492 (30332 bytes, avg 3.20 bytes/insn)
+
+             addiadd       32 12bit=0.3371% 9bit=0.2950% avgbytes=6.06
+                muli       13 12bit=0.1370% 9bit=0.0632% avgbytes=8.00
+             muliadd       12 12bit=0.1264% 9bit=0.0948% avgbytes=10.17
+
+Values for addiadd patterns:
+                  96        6
+                   8        3
+                  88        2
+                  36        2
+                  32        2
+                   4        2
+                  -8        2
+                -336        2
+                  60        1
+                  56        1
+                  48        1
+                  44        1
+                  16        1
+                  12        1
+                   1        1
+                 -88        1
+                 -92        1
+                -646        1
+                -948        1
+
+Values for muli patterns:
+                 336        7
+                  76        4
+                  52        2
+
+Values for muliadd patterns:
+                  52        6
+                 336        3
+                  76        3
+

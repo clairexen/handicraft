@@ -1,0 +1,30 @@
+PATTERN: muliadd with length 10 at 2b56 with value 500
+PATTERN: muliadd with length 10 at 2b84 with value 1000
+PATTERN: muliadd with length 10 at 310c with value 50
+PATTERN: muliadd with length 10 at 3162 with value 500
+PATTERN: muliadd with length 10 at 31ce with value 50
+PATTERN: muliadd with length 10 at 3206 with value 500
+PATTERN: muliadd with length 10 at 3240 with value 500
+PATTERN: muliadd with length 10 at 3408 with value 50
+PATTERN: muliadd with length 10 at 34ba with value 50
+PATTERN: muliadd with length 10 at 356c with value 50
+PATTERN: muliadd with length 10 at 363a with value 50
+PATTERN: muliadd with length 10 at 367a with value 50
+PATTERN: muliadd with length 10 at 36fe with value 50
+PATTERN: muliadd with length 10 at 373e with value 50
+PATTERN: muliadd with length 10 at 377e with value 50
+PATTERN: muliadd with length 10 at 37be with value 50
+PATTERN: muliadd with length 10 at 37fe with value 50
+PATTERN: muliadd with length 10 at 383e with value 50
+PATTERN: muliadd with length 10 at 39ae with value 500
+PATTERN: muliadd with length 10 at 3a94 with value 50
+
+Instruction count: 3340 (10828 bytes, avg 3.24 bytes/insn)
+
+             muliadd       20 12bit=0.5988% 9bit=0.4192% avgbytes=10.00
+
+Values for muliadd patterns:
+                  50       14
+                 500        5
+                1000        1
+

@@ -1,0 +1,58 @@
+PATTERN: addiadd with length 6 at 4 with value -1054
+PATTERN: muliadd with length 8 at 24de with value 24
+PATTERN: addiadd with length 6 at 7 with value 2020
+PATTERN: addiadd with length 6 at 4 with value 1992
+PATTERN: muli with length 8 at 28ee with value 136
+PATTERN: muliadd with length 10 at 29bc with value 136
+PATTERN: addiadd with length 6 at 10 with value 1408
+PATTERN: addiadd with length 6 at 9 with value 1408
+PATTERN: muli with length 8 at 2f40 with value 1000
+PATTERN: addiadd with length 6 at 5 with value 64
+PATTERN: muliadd with length 10 at 313a with value 136
+PATTERN: addiadd with length 6 at 6 with value 1408
+PATTERN: muliadd with length 10 at 3378 with value 136
+PATTERN: addiadd with length 6 at 4 with value -1788
+PATTERN: addiadd with length 6 at 3 with value -1536
+PATTERN: addiadd with length 6 at 2 with value 1408
+PATTERN: addiadd with length 6 at 2 with value 1408
+PATTERN: addiadd with length 6 at 4 with value 128
+PATTERN: addiadd with length 6 at 4 with value -824
+PATTERN: addiadd with length 6 at 4 with value -940
+PATTERN: addiadd with length 6 at 4 with value -1132
+PATTERN: addiadd with length 6 at 4 with value -1972
+PATTERN: addiadd with length 6 at 13 with value 80
+PATTERN: addiadd with length 6 at 3 with value -2030
+PATTERN: addiadd with length 6 at 4 with value 1924
+PATTERN: addiadd with length 6 at 5 with value 64
+
+Instruction count: 5219 (15958 bytes, avg 3.06 bytes/insn)
+
+             addiadd       20 12bit=0.3832% 9bit=0.0575% avgbytes=6.00
+             muliadd        4 12bit=0.0766% 9bit=0.0192% avgbytes=9.50
+                muli        2 12bit=0.0383% 9bit=0.0000% avgbytes=8.00
+
+Values for addiadd patterns:
+                1408        5
+                  64        2
+                2020        1
+                1992        1
+                1924        1
+                 128        1
+                  80        1
+                -824        1
+                -940        1
+               -1054        1
+               -1132        1
+               -1536        1
+               -1788        1
+               -1972        1
+               -2030        1
+
+Values for muliadd patterns:
+                 136        3
+                  24        1
+
+Values for muli patterns:
+                1000        1
+                 136        1
+

@@ -1,0 +1,17 @@
+[options]
+mode bmc
+
+[engines]
+# btor btormc
+# smtbmc yices
+smtbmc boolector
+
+[script]
+read -noverific
+read -sv picorv32.v
+read -sv prv32fmcmp.v
+prep -top prv32fmcmp
+
+[files]
+picorv32.v
+prv32fmcmp.v

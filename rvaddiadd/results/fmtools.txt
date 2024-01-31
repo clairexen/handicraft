@@ -1,0 +1,18 @@
+PATTERN: muli with length 8 at 171e with value 1000
+PATTERN: muli with length 8 at 1732 with value 1000
+PATTERN: muli with length 8 at 17be with value 1000
+PATTERN: muli with length 8 at 17c6 with value 1000
+PATTERN: muli with length 8 at 15f6 with value 60
+PATTERN: muli with length 8 at 1d8e with value 1000
+PATTERN: muli with length 8 at 1da2 with value 1000
+PATTERN: muli with length 8 at 1e2e with value 1000
+PATTERN: muli with length 8 at 1e36 with value 1000
+
+Instruction count: 2498 (7804 bytes, avg 3.12 bytes/insn)
+
+                muli        9 12bit=0.3603% 9bit=0.0400% avgbytes=8.00
+
+Values for muli patterns:
+                1000        8
+                  60        1
+

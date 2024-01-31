@@ -1,0 +1,51 @@
+PATTERN: addiadd with length 6 at 5 with value -1654
+PATTERN: addiadd with length 6 at 4 with value 1568
+PATTERN: addiadd with length 6 at 4 with value -1616
+PATTERN: muli with length 8 at bbe4 with value 1000
+PATTERN: muli with length 8 at bc0e with value 1000
+PATTERN: muli with length 8 at bc8c with value 100
+PATTERN: addiadd with length 6 at 3 with value 1
+PATTERN: addiadd with length 6 at 3 with value 1
+PATTERN: addiadd with length 6 at 2 with value 2
+PATTERN: addiadd with length 8 at 3 with value 1
+PATTERN: addiadd with length 8 at 11 with value 2
+PATTERN: addiadd with length 6 at 14 with value 3
+PATTERN: addiadd with length 6 at 7 with value 2
+PATTERN: addiadd with length 6 at 3 with value -340
+PATTERN: addiadd with length 6 at 1 with value -1
+PATTERN: addiadd with length 8 at 1 with value -1
+PATTERN: addiadd with length 6 at 2 with value -2
+PATTERN: addiadd with length 6 at 5 with value 614
+PATTERN: addiadd with length 6 at 24 with value 32
+PATTERN: addiadd with length 6 at 27 with value -8
+PATTERN: addiadd with length 6 at 31 with value 24
+PATTERN: addiadd with length 6 at 2 with value 32
+PATTERN: addiadd with length 6 at 4 with value 32
+PATTERN: addiadd with length 6 at 1 with value 2
+PATTERN: addiadd with length 6 at 1 with value 6
+
+Instruction count: 17983 (50348 bytes, avg 2.80 bytes/insn)
+
+             addiadd       22 12bit=0.1223% 9bit=0.0945% avgbytes=6.27
+                muli        3 12bit=0.0167% 9bit=0.0056% avgbytes=8.00
+
+Values for addiadd patterns:
+                   2        4
+                  32        3
+                   1        3
+                  -1        2
+                1568        1
+                 614        1
+                  24        1
+                   6        1
+                   3        1
+                  -2        1
+                  -8        1
+                -340        1
+               -1616        1
+               -1654        1
+
+Values for muli patterns:
+                1000        2
+                 100        1
+

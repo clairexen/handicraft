@@ -1,0 +1,62 @@
+PATTERN: addiadd with length 6 at 3 with value -1390
+PATTERN: muli with length 8 at 2960 with value 1000
+PATTERN: muli with length 8 at 29c4 with value 1000
+PATTERN: muli with length 8 at 2a1c with value 1000
+PATTERN: muli with length 8 at 2a50 with value 1000
+PATTERN: muli with length 8 at 2a8a with value 1000
+PATTERN: muli with length 8 at 2aa4 with value 1000
+PATTERN: muli with length 8 at 2ad8 with value 1000
+PATTERN: muli with length 8 at 2b00 with value 1000
+PATTERN: muli with length 8 at 2b3c with value 1000
+PATTERN: addiadd with length 6 at 4 with value -1384
+PATTERN: addiadd with length 6 at 5 with value 1836
+PATTERN: addiadd with length 6 at 3 with value 1708
+PATTERN: addiadd with length 6 at 5 with value 1714
+PATTERN: addiadd with length 6 at 4 with value 1016
+PATTERN: addiadd with length 6 at 24 with value 160
+PATTERN: addiadd with length 6 at 27 with value -152
+PATTERN: addiadd with length 6 at 31 with value 152
+PATTERN: addiadd with length 6 at 4 with value 160
+PATTERN: addiadd with length 6 at 7 with value -8
+PATTERN: addiadd with length 6 at 9 with value 160
+PATTERN: addiadd with length 6 at 13 with value -136
+PATTERN: addiadd with length 6 at 15 with value 160
+PATTERN: addiadd with length 6 at 18 with value -144
+PATTERN: addiadd with length 6 at 3 with value 160
+PATTERN: addiadd with length 6 at 3 with value 160
+PATTERN: addiadd with length 6 at 4 with value 160
+PATTERN: addiadd with length 6 at 3 with value 152
+PATTERN: addiadd with length 6 at 3 with value 160
+PATTERN: addiadd with length 6 at 5 with value 260
+PATTERN: addiadd with length 6 at 1 with value 5
+PATTERN: addiadd with length 6 at 3 with value -874
+PATTERN: addiadd with length 6 at 5 with value -878
+PATTERN: addiadd with length 6 at 5 with value -918
+
+Instruction count: 34761 (107040 bytes, avg 3.08 bytes/insn)
+
+             addiadd       25 12bit=0.0719% 9bit=0.0058% avgbytes=6.00
+                muli        9 12bit=0.0259% 9bit=0.0000% avgbytes=8.00
+
+Values for addiadd patterns:
+                 160        8
+                 152        2
+                1836        1
+                1714        1
+                1708        1
+                1016        1
+                 260        1
+                   5        1
+                  -8        1
+                -136        1
+                -144        1
+                -152        1
+                -874        1
+                -878        1
+                -918        1
+               -1384        1
+               -1390        1
+
+Values for muli patterns:
+                1000        9
+

@@ -1,0 +1,53 @@
+PATTERN: addiadd with length 6 at 1 with value -3
+PATTERN: addiadd with length 6 at 16 with value 1974
+PATTERN: addiadd with length 6 at 26 with value 1930
+PATTERN: muli with length 8 at 301e with value 149
+PATTERN: addiadd with length 6 at 8 with value -1940
+PATTERN: addiadd with length 6 at 5 with value 8
+PATTERN: addiadd with length 6 at 1 with value -3
+PATTERN: addiadd with length 6 at 16 with value -596
+PATTERN: addiadd with length 6 at 8 with value 24
+PATTERN: muliadd with length 10 at 4fd0 with value 1192
+PATTERN: addiadd with length 6 at 5 with value -1366
+PATTERN: muliadd with length 12 at 500c with value 1192
+PATTERN: muli with length 8 at 50bc with value 1192
+PATTERN: addiadd with length 6 at 5 with value -1184
+PATTERN: addiadd with length 6 at 5 with value -1616
+PATTERN: muliadd with length 10 at 50f0 with value 1192
+PATTERN: addiadd with length 6 at 6 with value -1
+PATTERN: muliadd with length 10 at 54d0 with value 1192
+PATTERN: addiadd with length 6 at 9 with value -1428
+PATTERN: muli with length 8 at 5680 with value 1192
+PATTERN: muliadd with length 12 at 56d2 with value 1192
+PATTERN: muliadd with length 10 at 597c with value 1192
+PATTERN: muliadd with length 10 at 59d4 with value 1192
+PATTERN: addiadd with length 6 at 12 with value -1346
+
+Instruction count: 5056 (15776 bytes, avg 3.12 bytes/insn)
+
+             addiadd       14 12bit=0.2769% 9bit=0.0989% avgbytes=6.00
+             muliadd        7 12bit=0.1384% 9bit=0.0000% avgbytes=10.57
+                muli        3 12bit=0.0593% 9bit=0.0000% avgbytes=8.00
+
+Values for addiadd patterns:
+                  -3        2
+                1974        1
+                1930        1
+                  24        1
+                   8        1
+                  -1        1
+                -596        1
+               -1184        1
+               -1346        1
+               -1366        1
+               -1428        1
+               -1616        1
+               -1940        1
+
+Values for muliadd patterns:
+                1192        7
+
+Values for muli patterns:
+                1192        2
+                 149        1
+

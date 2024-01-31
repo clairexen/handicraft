@@ -1,0 +1,48 @@
+PATTERN: addiadd with length 6 at 3 with value 392
+PATTERN: addiadd with length 6 at 3 with value 32
+PATTERN: addiadd with length 6 at 19 with value 152
+PATTERN: addiadd with length 6 at 3 with value 160
+PATTERN: addiadd with length 6 at 13 with value 160
+PATTERN: addiadd with length 6 at 2 with value 152
+PATTERN: addiadd with length 6 at 4 with value 160
+PATTERN: addiadd with length 6 at 6 with value -136
+PATTERN: addiadd with length 6 at 1 with value 160
+PATTERN: addiadd with length 6 at 6 with value 1
+PATTERN: addiadd with length 6 at 11 with value 2
+PATTERN: addiadd with length 6 at 16 with value 3
+PATTERN: addiadd with length 6 at 6 with value 1
+PATTERN: addiadd with length 6 at 11 with value 2
+PATTERN: addiadd with length 6 at 16 with value 3
+PATTERN: addiadd with length 6 at 6 with value 1
+PATTERN: addiadd with length 6 at 11 with value 2
+PATTERN: addiadd with length 6 at 16 with value 3
+PATTERN: addiadd with length 6 at 12 with value 1
+PATTERN: addiadd with length 6 at 12 with value 1
+PATTERN: addiadd with length 6 at 12 with value 1
+PATTERN: addiadd with length 6 at 6 with value 1
+PATTERN: addiadd with length 6 at 11 with value 2
+PATTERN: addiadd with length 6 at 16 with value 3
+PATTERN: addiadd with length 6 at 6 with value 1
+PATTERN: addiadd with length 6 at 11 with value 2
+PATTERN: addiadd with length 6 at 16 with value 3
+PATTERN: addiadd with length 6 at 6 with value 1
+PATTERN: addiadd with length 6 at 11 with value 2
+PATTERN: addiadd with length 6 at 16 with value 3
+PATTERN: addiadd with length 6 at 12 with value 1
+PATTERN: addiadd with length 6 at 12 with value 1
+PATTERN: addiadd with length 6 at 12 with value 1
+
+Instruction count: 6002 (17650 bytes, avg 2.94 bytes/insn)
+
+             addiadd       33 12bit=0.5498% 9bit=0.4165% avgbytes=6.00
+
+Values for addiadd patterns:
+                   1       12
+                   3        6
+                   2        6
+                 160        4
+                 152        2
+                 392        1
+                  32        1
+                -136        1
+

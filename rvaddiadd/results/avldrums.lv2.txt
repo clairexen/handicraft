@@ -1,0 +1,146 @@
+PATTERN: addiadd with length 8 at 17 with value 8
+PATTERN: addiadd with length 8 at 10 with value 8
+PATTERN: addiadd with length 6 at 3 with value -96
+PATTERN: addiadd with length 6 at 3 with value -96
+PATTERN: addiadd with length 6 at 9 with value -906
+PATTERN: addiadd with length 6 at 9 with value -1036
+PATTERN: addiadd with length 6 at 5 with value -342
+PATTERN: addiadd with length 6 at 5 with value -634
+PATTERN: addiadd with length 6 at 5 with value -898
+PATTERN: addiadd with length 6 at 5 with value 1264
+PATTERN: addiadd with length 6 at 5 with value 1202
+PATTERN: addiadd with length 6 at 8 with value -2024
+PATTERN: addiadd with length 6 at 4 with value -2032
+PATTERN: addiadd with length 6 at 3 with value -400
+PATTERN: addiadd with length 6 at 3 with value -456
+PATTERN: addiadd with length 6 at 5 with value 8
+PATTERN: addiadd with length 6 at 5 with value 8
+PATTERN: addiadd with length 6 at 3 with value -602
+PATTERN: addiadd with length 6 at 3 with value -936
+PATTERN: addiadd with length 6 at 3 with value -1006
+PATTERN: addiadd with length 8 at 1 with value 1
+PATTERN: addiadd with length 6 at 12 with value 8
+PATTERN: addiadd with length 6 at 5 with value 40
+PATTERN: addiadd with length 8 at 2 with value 80
+PATTERN: addiadd with length 8 at 7 with value 40
+PATTERN: addiadd with length 6 at 5 with value 80
+PATTERN: addiadd with length 8 at 2 with value 120
+PATTERN: addiadd with length 8 at 7 with value 40
+PATTERN: addiadd with length 6 at 5 with value 80
+PATTERN: addiadd with length 8 at 2 with value 120
+PATTERN: addiadd with length 8 at 7 with value 40
+PATTERN: addiadd with length 8 at 5 with value 80
+PATTERN: addiadd with length 8 at 2 with value 40
+PATTERN: addiadd with length 8 at 7 with value 40
+PATTERN: addiadd with length 6 at 5 with value 80
+PATTERN: addiadd with length 8 at 2 with value 120
+PATTERN: addiadd with length 8 at 7 with value 40
+PATTERN: addiadd with length 6 at 5 with value 16
+PATTERN: addiadd with length 6 at 5 with value 8
+PATTERN: addiadd with length 6 at 11 with value 1152
+PATTERN: addiadd with length 6 at 4 with value 8
+PATTERN: addiadd with length 6 at 4 with value 8
+PATTERN: addiadd with length 6 at 5 with value 8
+PATTERN: addiadd with length 6 at 5 with value 4
+PATTERN: addiadd with length 6 at 4 with value 1
+PATTERN: addiadd with length 6 at 13 with value 8
+PATTERN: addiadd with length 6 at 13 with value 4
+PATTERN: addiadd with length 6 at 9 with value 4
+PATTERN: addiadd with length 6 at 5 with value 8
+PATTERN: addiadd with length 6 at 9 with value 8
+PATTERN: addiadd with length 6 at 7 with value -702
+PATTERN: addiadd with length 6 at 1 with value 8
+PATTERN: addiadd with length 6 at 1 with value 8
+PATTERN: addiadd with length 6 at 4 with value 4
+PATTERN: addiadd with length 6 at 3 with value -1364
+PATTERN: addiadd with length 8 at 9 with value 16
+PATTERN: addiadd with length 6 at 4 with value -1762
+PATTERN: addiadd with length 6 at 3 with value 1808
+PATTERN: addiadd with length 6 at 5 with value 1302
+PATTERN: addiadd with length 6 at 3 with value 1584
+PATTERN: addiadd with length 6 at 5 with value 1584
+PATTERN: addiadd with length 8 at 20 with value 0
+PATTERN: addiadd with length 8 at 20 with value 0
+PATTERN: addiadd with length 6 at 10 with value 8
+PATTERN: addiadd with length 6 at 8 with value 8
+PATTERN: addiadd with length 6 at 5 with value -1150
+PATTERN: addiadd with length 6 at 6 with value -862
+PATTERN: addiadd with length 6 at 3 with value -1260
+PATTERN: addiadd with length 6 at 2 with value -1012
+PATTERN: muli with length 8 at 1b7d2 with value 1000
+PATTERN: addiadd with length 8 at 9 with value 48
+PATTERN: addiadd with length 6 at 12 with value 56
+PATTERN: addiadd with length 6 at 18 with value 64
+PATTERN: addiadd with length 6 at 21 with value 72
+PATTERN: addiadd with length 6 at 24 with value 80
+PATTERN: addiadd with length 6 at 31 with value 16
+PATTERN: addiadd with length 6 at 32 with value 16
+PATTERN: addiadd with length 6 at 33 with value 88
+PATTERN: addiadd with length 6 at 35 with value -8
+PATTERN: addiadd with length 6 at 41 with value 8
+PATTERN: addiadd with length 6 at 3 with value 472
+PATTERN: addiadd with length 6 at 11 with value 48
+PATTERN: addiadd with length 6 at 8 with value 1
+PATTERN: addiadd with length 6 at 16 with value 1
+PATTERN: addiadd with length 6 at 11 with value 2
+PATTERN: addiadd with length 6 at 3 with value 8
+PATTERN: addiadd with length 6 at 4 with value 2
+PATTERN: addiadd with length 6 at 14 with value 56
+PATTERN: addiadd with length 6 at 19 with value -1190
+PATTERN: addiadd with length 6 at 12 with value 2
+PATTERN: addiadd with length 6 at 1 with value 0
+PATTERN: addiadd with length 6 at 1 with value 0
+
+Instruction count: 47745 (138168 bytes, avg 2.89 bytes/insn)
+
+             addiadd       91 12bit=0.1906% 9bit=0.1320% avgbytes=6.40
+                muli        1 12bit=0.0021% 9bit=0.0000% avgbytes=8.00
+
+Values for addiadd patterns:
+                   8       18
+                  40        7
+                  80        6
+                  16        4
+                   4        4
+                   1        4
+                   0        4
+                 120        3
+                   2        3
+                1584        2
+                  56        2
+                  48        2
+                 -96        2
+                1808        1
+                1302        1
+                1264        1
+                1202        1
+                1152        1
+                 472        1
+                  88        1
+                  72        1
+                  64        1
+                  -8        1
+                -342        1
+                -400        1
+                -456        1
+                -602        1
+                -634        1
+                -702        1
+                -862        1
+                -898        1
+                -906        1
+                -936        1
+               -1006        1
+               -1012        1
+               -1036        1
+               -1150        1
+               -1190        1
+               -1260        1
+               -1364        1
+               -1762        1
+               -2024        1
+               -2032        1
+
+Values for muli patterns:
+                1000        1
+

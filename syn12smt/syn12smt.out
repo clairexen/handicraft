@@ -1,0 +1,711 @@
+sat
+(model
+  (define-fun f0a () (_ BitVec 13) #b0000001010101)
+  (define-fun f0b () (_ BitVec 13) #b0000010101010)
+  (define-fun f1a (
+   (f1a_x0 (_ BitVec 1))
+   (f1a_x1 (_ BitVec 1))) (_ BitVec 13)
+    (ite 
+      (and
+        (= f1a_x0 #b0) 
+        (= f1a_x1 #b1))
+       #b0000010100001
+    (ite 
+      (and
+        (= f1a_x0 #b1) 
+        (= f1a_x1 #b0))
+       #b0000010100001
+    (ite 
+      (and
+        (= f1a_x0 #b0) 
+        (= f1a_x1 #b0))
+       #b0001010000000
+      #b0000000000000))))
+  (define-fun f1b (
+   (f1b_x0 (_ BitVec 1))
+   (f1b_x1 (_ BitVec 1))) (_ BitVec 13)
+    (ite 
+      (and
+        (= f1b_x0 #b0) 
+        (= f1b_x1 #b1))
+       #b0100001000010
+    (ite 
+      (and
+        (= f1b_x0 #b1) 
+        (= f1b_x1 #b0))
+       #b0100001000010
+    (ite 
+      (and
+        (= f1b_x0 #b0) 
+        (= f1b_x1 #b0))
+       #b0010100000000
+      #b0000000000000))))
+  (define-fun f2a (
+   (f2a_x0 (_ BitVec 1))
+   (f2a_x1 (_ BitVec 1))
+   (f2a_x2 (_ BitVec 1))
+   (f2a_x3 (_ BitVec 1))) (_ BitVec 13)
+    (ite 
+      (and
+        (= f2a_x0 #b0) 
+        (= f2a_x1 #b1) 
+        (= f2a_x2 #b0) 
+        (= f2a_x3 #b1))
+       #b0000000000010
+    (ite 
+      (and
+        (= f2a_x0 #b1) 
+        (= f2a_x1 #b0) 
+        (= f2a_x2 #b1) 
+        (= f2a_x3 #b0))
+       #b0000000000010
+    (ite 
+      (and
+        (= f2a_x0 #b0) 
+        (= f2a_x1 #b1) 
+        (= f2a_x2 #b0) 
+        (= f2a_x3 #b0))
+       #b0000000000100
+    (ite 
+      (and
+        (= f2a_x0 #b1) 
+        (= f2a_x1 #b0) 
+        (= f2a_x2 #b0) 
+        (= f2a_x3 #b0))
+       #b0000000000100
+    (ite 
+      (and
+        (= f2a_x0 #b0) 
+        (= f2a_x1 #b1) 
+        (= f2a_x2 #b1) 
+        (= f2a_x3 #b0))
+       #b0000010000000
+    (ite 
+      (and
+        (= f2a_x0 #b1) 
+        (= f2a_x1 #b0) 
+        (= f2a_x2 #b0) 
+        (= f2a_x3 #b1))
+       #b0000010000000
+    (ite 
+      (and
+        (= f2a_x0 #b0) 
+        (= f2a_x1 #b0) 
+        (= f2a_x2 #b0) 
+        (= f2a_x3 #b1))
+       #b0010000000000
+    (ite 
+      (and
+        (= f2a_x0 #b0) 
+        (= f2a_x1 #b0) 
+        (= f2a_x2 #b1) 
+        (= f2a_x3 #b0))
+       #b0010000000000
+    (ite 
+      (and
+        (= f2a_x0 #b0) 
+        (= f2a_x1 #b0) 
+        (= f2a_x2 #b0) 
+        (= f2a_x3 #b0))
+       #b0010000000000
+      #b0000000000000))))))))))
+  (define-fun f2b (
+   (f2b_x0 (_ BitVec 1))
+   (f2b_x1 (_ BitVec 1))
+   (f2b_x2 (_ BitVec 1))
+   (f2b_x3 (_ BitVec 1))) (_ BitVec 13)
+    (ite 
+      (and
+        (= f2b_x0 #b0) 
+        (= f2b_x1 #b1) 
+        (= f2b_x2 #b0) 
+        (= f2b_x3 #b1))
+       #b0000000100000
+    (ite 
+      (and
+        (= f2b_x0 #b1) 
+        (= f2b_x1 #b0) 
+        (= f2b_x2 #b1) 
+        (= f2b_x3 #b0))
+       #b0000000100000
+    (ite 
+      (and
+        (= f2b_x0 #b0) 
+        (= f2b_x1 #b1) 
+        (= f2b_x2 #b0) 
+        (= f2b_x3 #b0))
+       #b0000000010000
+    (ite 
+      (and
+        (= f2b_x0 #b1) 
+        (= f2b_x1 #b0) 
+        (= f2b_x2 #b0) 
+        (= f2b_x3 #b0))
+       #b0000000010000
+    (ite 
+      (and
+        (= f2b_x0 #b0) 
+        (= f2b_x1 #b1) 
+        (= f2b_x2 #b1) 
+        (= f2b_x3 #b0))
+       #b0000000100000
+    (ite 
+      (and
+        (= f2b_x0 #b1) 
+        (= f2b_x1 #b0) 
+        (= f2b_x2 #b0) 
+        (= f2b_x3 #b1))
+       #b0000000100000
+    (ite 
+      (and
+        (= f2b_x0 #b0) 
+        (= f2b_x1 #b0) 
+        (= f2b_x2 #b0) 
+        (= f2b_x3 #b1))
+       #b0000100000000
+    (ite 
+      (and
+        (= f2b_x0 #b0) 
+        (= f2b_x1 #b0) 
+        (= f2b_x2 #b1) 
+        (= f2b_x3 #b0))
+       #b0000100000000
+    (ite 
+      (and
+        (= f2b_x0 #b0) 
+        (= f2b_x1 #b0) 
+        (= f2b_x2 #b0) 
+        (= f2b_x3 #b0))
+       #b0100000000000
+      #b0000000000000))))))))))
+  (define-fun f3a (
+   (f3a_x0 (_ BitVec 1))
+   (f3a_x1 (_ BitVec 1))
+   (f3a_x2 (_ BitVec 1))
+   (f3a_x3 (_ BitVec 1))
+   (f3a_x4 (_ BitVec 1))
+   (f3a_x5 (_ BitVec 1))) (_ BitVec 13)
+    (ite 
+      (and
+        (= f3a_x0 #b1) 
+        (= f3a_x1 #b0) 
+        (= f3a_x2 #b1) 
+        (= f3a_x3 #b0) 
+        (= f3a_x4 #b1) 
+        (= f3a_x5 #b0))
+       #b0000000000000
+    (ite 
+      (and
+        (= f3a_x0 #b1) 
+        (= f3a_x1 #b0) 
+        (= f3a_x2 #b1) 
+        (= f3a_x3 #b0) 
+        (= f3a_x4 #b0) 
+        (= f3a_x5 #b0))
+       #b0000000000001
+    (ite 
+      (and
+        (= f3a_x0 #b0) 
+        (= f3a_x1 #b1) 
+        (= f3a_x2 #b0) 
+        (= f3a_x3 #b1) 
+        (= f3a_x4 #b0) 
+        (= f3a_x5 #b1))
+       #b0000000000000
+    (ite 
+      (and
+        (= f3a_x0 #b1) 
+        (= f3a_x1 #b0) 
+        (= f3a_x2 #b1) 
+        (= f3a_x3 #b0) 
+        (= f3a_x4 #b0) 
+        (= f3a_x5 #b1))
+       #b0000000000010
+    (ite 
+      (and
+        (= f3a_x0 #b0) 
+        (= f3a_x1 #b1) 
+        (= f3a_x2 #b0) 
+        (= f3a_x3 #b1) 
+        (= f3a_x4 #b0) 
+        (= f3a_x5 #b0))
+       #b0000000000001
+    (ite 
+      (and
+        (= f3a_x0 #b1) 
+        (= f3a_x1 #b0) 
+        (= f3a_x2 #b0) 
+        (= f3a_x3 #b0) 
+        (= f3a_x4 #b1) 
+        (= f3a_x5 #b0))
+       #b0000000000100
+    (ite 
+      (and
+        (= f3a_x0 #b0) 
+        (= f3a_x1 #b1) 
+        (= f3a_x2 #b0) 
+        (= f3a_x3 #b1) 
+        (= f3a_x4 #b1) 
+        (= f3a_x5 #b0))
+       #b0000000000010
+    (ite 
+      (and
+        (= f3a_x0 #b1) 
+        (= f3a_x1 #b0) 
+        (= f3a_x2 #b0) 
+        (= f3a_x3 #b0) 
+        (= f3a_x4 #b0) 
+        (= f3a_x5 #b0))
+       #b0000000001000
+    (ite 
+      (and
+        (= f3a_x0 #b0) 
+        (= f3a_x1 #b1) 
+        (= f3a_x2 #b0) 
+        (= f3a_x3 #b0) 
+        (= f3a_x4 #b0) 
+        (= f3a_x5 #b1))
+       #b0000000000100
+    (ite 
+      (and
+        (= f3a_x0 #b1) 
+        (= f3a_x1 #b0) 
+        (= f3a_x2 #b0) 
+        (= f3a_x3 #b0) 
+        (= f3a_x4 #b0) 
+        (= f3a_x5 #b1))
+       #b0000000010000
+    (ite 
+      (and
+        (= f3a_x0 #b0) 
+        (= f3a_x1 #b1) 
+        (= f3a_x2 #b0) 
+        (= f3a_x3 #b0) 
+        (= f3a_x4 #b0) 
+        (= f3a_x5 #b0))
+       #b0000000001000
+    (ite 
+      (and
+        (= f3a_x0 #b1) 
+        (= f3a_x1 #b0) 
+        (= f3a_x2 #b0) 
+        (= f3a_x3 #b1) 
+        (= f3a_x4 #b1) 
+        (= f3a_x5 #b0))
+       #b0000000100000
+    (ite 
+      (and
+        (= f3a_x0 #b0) 
+        (= f3a_x1 #b1) 
+        (= f3a_x2 #b0) 
+        (= f3a_x3 #b0) 
+        (= f3a_x4 #b1) 
+        (= f3a_x5 #b0))
+       #b0000000010000
+    (ite 
+      (and
+        (= f3a_x0 #b1) 
+        (= f3a_x1 #b0) 
+        (= f3a_x2 #b0) 
+        (= f3a_x3 #b1) 
+        (= f3a_x4 #b0) 
+        (= f3a_x5 #b0))
+       #b0000001000000
+    (ite 
+      (and
+        (= f3a_x0 #b0) 
+        (= f3a_x1 #b1) 
+        (= f3a_x2 #b1) 
+        (= f3a_x3 #b0) 
+        (= f3a_x4 #b0) 
+        (= f3a_x5 #b1))
+       #b0000000100000
+    (ite 
+      (and
+        (= f3a_x0 #b1) 
+        (= f3a_x1 #b0) 
+        (= f3a_x2 #b0) 
+        (= f3a_x3 #b1) 
+        (= f3a_x4 #b0) 
+        (= f3a_x5 #b1))
+       #b0000010000000
+    (ite 
+      (and
+        (= f3a_x0 #b0) 
+        (= f3a_x1 #b1) 
+        (= f3a_x2 #b1) 
+        (= f3a_x3 #b0) 
+        (= f3a_x4 #b0) 
+        (= f3a_x5 #b0))
+       #b0000001000000
+    (ite 
+      (and
+        (= f3a_x0 #b0) 
+        (= f3a_x1 #b0) 
+        (= f3a_x2 #b1) 
+        (= f3a_x3 #b0) 
+        (= f3a_x4 #b1) 
+        (= f3a_x5 #b0))
+       #b0000100000000
+    (ite 
+      (and
+        (= f3a_x0 #b0) 
+        (= f3a_x1 #b1) 
+        (= f3a_x2 #b1) 
+        (= f3a_x3 #b0) 
+        (= f3a_x4 #b1) 
+        (= f3a_x5 #b0))
+       #b0000010000000
+    (ite 
+      (and
+        (= f3a_x0 #b0) 
+        (= f3a_x1 #b0) 
+        (= f3a_x2 #b1) 
+        (= f3a_x3 #b0) 
+        (= f3a_x4 #b0) 
+        (= f3a_x5 #b0))
+       #b0001000000000
+    (ite 
+      (and
+        (= f3a_x0 #b0) 
+        (= f3a_x1 #b0) 
+        (= f3a_x2 #b0) 
+        (= f3a_x3 #b1) 
+        (= f3a_x4 #b0) 
+        (= f3a_x5 #b1))
+       #b0000100000000
+    (ite 
+      (and
+        (= f3a_x0 #b0) 
+        (= f3a_x1 #b0) 
+        (= f3a_x2 #b1) 
+        (= f3a_x3 #b0) 
+        (= f3a_x4 #b0) 
+        (= f3a_x5 #b1))
+       #b0010000000000
+    (ite 
+      (and
+        (= f3a_x0 #b0) 
+        (= f3a_x1 #b0) 
+        (= f3a_x2 #b0) 
+        (= f3a_x3 #b1) 
+        (= f3a_x4 #b0) 
+        (= f3a_x5 #b0))
+       #b0001000000000
+    (ite 
+      (and
+        (= f3a_x0 #b0) 
+        (= f3a_x1 #b0) 
+        (= f3a_x2 #b0) 
+        (= f3a_x3 #b0) 
+        (= f3a_x4 #b1) 
+        (= f3a_x5 #b0))
+       #b0100000000000
+    (ite 
+      (and
+        (= f3a_x0 #b0) 
+        (= f3a_x1 #b0) 
+        (= f3a_x2 #b0) 
+        (= f3a_x3 #b1) 
+        (= f3a_x4 #b1) 
+        (= f3a_x5 #b0))
+       #b0010000000000
+    (ite 
+      (and
+        (= f3a_x0 #b0) 
+        (= f3a_x1 #b0) 
+        (= f3a_x2 #b0) 
+        (= f3a_x3 #b0) 
+        (= f3a_x4 #b0) 
+        (= f3a_x5 #b0))
+       #b1000000000000
+    (ite 
+      (and
+        (= f3a_x0 #b0) 
+        (= f3a_x1 #b0) 
+        (= f3a_x2 #b0) 
+        (= f3a_x3 #b0) 
+        (= f3a_x4 #b0) 
+        (= f3a_x5 #b1))
+       #b0100000000000
+      #b0000000000000))))))))))))))))))))))))))))
+  (define-fun f3b (
+   (f3b_x0 (_ BitVec 1))
+   (f3b_x1 (_ BitVec 1))
+   (f3b_x2 (_ BitVec 1))
+   (f3b_x3 (_ BitVec 1))
+   (f3b_x4 (_ BitVec 1))
+   (f3b_x5 (_ BitVec 1))) (_ BitVec 1)
+    (ite 
+      (and
+        (= f3b_x0 #b0) 
+        (= f3b_x1 #b0) 
+        (= f3b_x2 #b0) 
+        (= f3b_x3 #b0) 
+        (= f3b_x4 #b1) 
+        (= f3b_x5 #b0))
+       #b1
+    (ite 
+      (and
+        (= f3b_x0 #b0) 
+        (= f3b_x1 #b0) 
+        (= f3b_x2 #b0) 
+        (= f3b_x3 #b0) 
+        (= f3b_x4 #b0) 
+        (= f3b_x5 #b1))
+       #b0
+    (ite 
+      (and
+        (= f3b_x0 #b0) 
+        (= f3b_x1 #b0) 
+        (= f3b_x2 #b1) 
+        (= f3b_x3 #b0) 
+        (= f3b_x4 #b0) 
+        (= f3b_x5 #b1))
+       #b1
+    (ite 
+      (and
+        (= f3b_x0 #b0) 
+        (= f3b_x1 #b0) 
+        (= f3b_x2 #b0) 
+        (= f3b_x3 #b1) 
+        (= f3b_x4 #b1) 
+        (= f3b_x5 #b0))
+       #b0
+    (ite 
+      (and
+        (= f3b_x0 #b0) 
+        (= f3b_x1 #b0) 
+        (= f3b_x2 #b0) 
+        (= f3b_x3 #b1) 
+        (= f3b_x4 #b0) 
+        (= f3b_x5 #b0))
+       #b1
+    (ite 
+      (and
+        (= f3b_x0 #b0) 
+        (= f3b_x1 #b0) 
+        (= f3b_x2 #b1) 
+        (= f3b_x3 #b0) 
+        (= f3b_x4 #b0) 
+        (= f3b_x5 #b0))
+       #b0
+    (ite 
+      (and
+        (= f3b_x0 #b0) 
+        (= f3b_x1 #b0) 
+        (= f3b_x2 #b1) 
+        (= f3b_x3 #b0) 
+        (= f3b_x4 #b1) 
+        (= f3b_x5 #b0))
+       #b1
+    (ite 
+      (and
+        (= f3b_x0 #b0) 
+        (= f3b_x1 #b0) 
+        (= f3b_x2 #b0) 
+        (= f3b_x3 #b1) 
+        (= f3b_x4 #b0) 
+        (= f3b_x5 #b1))
+       #b0
+    (ite 
+      (and
+        (= f3b_x0 #b1) 
+        (= f3b_x1 #b0) 
+        (= f3b_x2 #b0) 
+        (= f3b_x3 #b1) 
+        (= f3b_x4 #b0) 
+        (= f3b_x5 #b1))
+       #b1
+    (ite 
+      (and
+        (= f3b_x0 #b0) 
+        (= f3b_x1 #b1) 
+        (= f3b_x2 #b1) 
+        (= f3b_x3 #b0) 
+        (= f3b_x4 #b1) 
+        (= f3b_x5 #b0))
+       #b0
+    (ite 
+      (and
+        (= f3b_x0 #b0) 
+        (= f3b_x1 #b1) 
+        (= f3b_x2 #b1) 
+        (= f3b_x3 #b0) 
+        (= f3b_x4 #b0) 
+        (= f3b_x5 #b0))
+       #b1
+    (ite 
+      (and
+        (= f3b_x0 #b1) 
+        (= f3b_x1 #b0) 
+        (= f3b_x2 #b0) 
+        (= f3b_x3 #b1) 
+        (= f3b_x4 #b0) 
+        (= f3b_x5 #b0))
+       #b0
+    (ite 
+      (and
+        (= f3b_x0 #b1) 
+        (= f3b_x1 #b0) 
+        (= f3b_x2 #b0) 
+        (= f3b_x3 #b1) 
+        (= f3b_x4 #b1) 
+        (= f3b_x5 #b0))
+       #b1
+    (ite 
+      (and
+        (= f3b_x0 #b0) 
+        (= f3b_x1 #b1) 
+        (= f3b_x2 #b1) 
+        (= f3b_x3 #b0) 
+        (= f3b_x4 #b0) 
+        (= f3b_x5 #b1))
+       #b0
+    (ite 
+      (and
+        (= f3b_x0 #b0) 
+        (= f3b_x1 #b1) 
+        (= f3b_x2 #b0) 
+        (= f3b_x3 #b0) 
+        (= f3b_x4 #b1) 
+        (= f3b_x5 #b0))
+       #b1
+    (ite 
+      (and
+        (= f3b_x0 #b1) 
+        (= f3b_x1 #b0) 
+        (= f3b_x2 #b0) 
+        (= f3b_x3 #b0) 
+        (= f3b_x4 #b0) 
+        (= f3b_x5 #b1))
+       #b0
+    (ite 
+      (and
+        (= f3b_x0 #b1) 
+        (= f3b_x1 #b0) 
+        (= f3b_x2 #b0) 
+        (= f3b_x3 #b0) 
+        (= f3b_x4 #b0) 
+        (= f3b_x5 #b0))
+       #b1
+    (ite 
+      (and
+        (= f3b_x0 #b0) 
+        (= f3b_x1 #b1) 
+        (= f3b_x2 #b0) 
+        (= f3b_x3 #b0) 
+        (= f3b_x4 #b0) 
+        (= f3b_x5 #b0))
+       #b0
+    (ite 
+      (and
+        (= f3b_x0 #b0) 
+        (= f3b_x1 #b1) 
+        (= f3b_x2 #b0) 
+        (= f3b_x3 #b0) 
+        (= f3b_x4 #b0) 
+        (= f3b_x5 #b1))
+       #b1
+    (ite 
+      (and
+        (= f3b_x0 #b1) 
+        (= f3b_x1 #b0) 
+        (= f3b_x2 #b0) 
+        (= f3b_x3 #b0) 
+        (= f3b_x4 #b1) 
+        (= f3b_x5 #b0))
+       #b0
+    (ite 
+      (and
+        (= f3b_x0 #b1) 
+        (= f3b_x1 #b0) 
+        (= f3b_x2 #b1) 
+        (= f3b_x3 #b0) 
+        (= f3b_x4 #b0) 
+        (= f3b_x5 #b1))
+       #b1
+    (ite 
+      (and
+        (= f3b_x0 #b0) 
+        (= f3b_x1 #b1) 
+        (= f3b_x2 #b0) 
+        (= f3b_x3 #b1) 
+        (= f3b_x4 #b1) 
+        (= f3b_x5 #b0))
+       #b0
+    (ite 
+      (and
+        (= f3b_x0 #b0) 
+        (= f3b_x1 #b1) 
+        (= f3b_x2 #b0) 
+        (= f3b_x3 #b1) 
+        (= f3b_x4 #b0) 
+        (= f3b_x5 #b0))
+       #b1
+    (ite 
+      (and
+        (= f3b_x0 #b1) 
+        (= f3b_x1 #b0) 
+        (= f3b_x2 #b1) 
+        (= f3b_x3 #b0) 
+        (= f3b_x4 #b0) 
+        (= f3b_x5 #b0))
+       #b0
+      #b0)))))))))))))))))))))))))
+)
+(
+ ((f0a) #b0000001010101)
+ ((f0b) #b0000010101010)
+ ((f1a F F) #b0001010000000)
+ ((f1b F F) #b0010100000000)
+ ((f2a F F F F) #b0010000000000)
+ ((f2b F F F F) #b0100000000000)
+ ((f3a F F F F F F) #b1000000000000)
+ ((f3a F F F F F T) #b0100000000000)
+ ((f3a F F F F T F) #b0100000000000)
+ ((f2a F F F T) #b0010000000000)
+ ((f2b F F F T) #b0000100000000)
+ ((f3a F F F T F F) #b0001000000000)
+ ((f3a F F F T F T) #b0000100000000)
+ ((f3a F F F T T F) #b0010000000000)
+ ((f2a F F T F) #b0010000000000)
+ ((f2b F F T F) #b0000100000000)
+ ((f3a F F T F F F) #b0001000000000)
+ ((f3a F F T F F T) #b0010000000000)
+ ((f3a F F T F T F) #b0000100000000)
+ ((f1a F T) #b0000010100001)
+ ((f1b F T) #b0100001000010)
+ ((f2a F T F F) #b0000000000100)
+ ((f2b F T F F) #b0000000010000)
+ ((f3a F T F F F F) #b0000000001000)
+ ((f3a F T F F F T) #b0000000000100)
+ ((f3a F T F F T F) #b0000000010000)
+ ((f2a F T F T) #b0000000000010)
+ ((f2b F T F T) #b0000000100000)
+ ((f3a F T F T F F) #b0000000000001)
+ ((f3a F T F T F T) #b0000000000000)
+ ((f3a F T F T T F) #b0000000000010)
+ ((f2a F T T F) #b0000010000000)
+ ((f2b F T T F) #b0000000100000)
+ ((f3a F T T F F F) #b0000001000000)
+ ((f3a F T T F F T) #b0000000100000)
+ ((f3a F T T F T F) #b0000010000000)
+ ((f1a T F) #b0000010100001)
+ ((f1b T F) #b0100001000010)
+ ((f2a T F F F) #b0000000000100)
+ ((f2b T F F F) #b0000000010000)
+ ((f3a T F F F F F) #b0000000001000)
+ ((f3a T F F F F T) #b0000000010000)
+ ((f3a T F F F T F) #b0000000000100)
+ ((f2a T F F T) #b0000010000000)
+ ((f2b T F F T) #b0000000100000)
+ ((f3a T F F T F F) #b0000001000000)
+ ((f3a T F F T F T) #b0000010000000)
+ ((f3a T F F T T F) #b0000000100000)
+ ((f2a T F T F) #b0000000000010)
+ ((f2b T F T F) #b0000000100000)
+ ((f3a T F T F F F) #b0000000000001)
+ ((f3a T F T F F T) #b0000000000010)
+ ((f3a T F T F T F) #b0000000000000)
+)

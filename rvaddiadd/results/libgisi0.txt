@@ -1,0 +1,51 @@
+PATTERN: addiadd with length 6 at 1 with value 1120
+PATTERN: addiadd with length 6 at 2 with value 1120
+PATTERN: addiadd with length 6 at 4 with value 1382
+PATTERN: addiadd with length 6 at 4 with value 1170
+PATTERN: addiadd with length 6 at 4 with value -1950
+PATTERN: addiadd with length 6 at 4 with value 1900
+PATTERN: addiadd with length 6 at 4 with value 1474
+PATTERN: addiadd with length 6 at 3 with value -16
+PATTERN: addiadd with length 6 at 4 with value 350
+PATTERN: addiadd with length 6 at 19 with value 96
+PATTERN: addiadd with length 6 at 22 with value -24
+PATTERN: addiadd with length 6 at 27 with value 96
+PATTERN: addiadd with length 6 at 29 with value 96
+PATTERN: addiadd with length 6 at 31 with value -96
+PATTERN: addiadd with length 6 at 34 with value 88
+PATTERN: addiadd with length 6 at 2 with value 88
+PATTERN: addiadd with length 6 at 2 with value 96
+PATTERN: addiadd with length 6 at 4 with value -80
+PATTERN: addiadd with length 6 at 10 with value 96
+PATTERN: addiadd with length 6 at 18 with value 96
+PATTERN: addiadd with length 6 at 20 with value -24
+PATTERN: addiadd with length 6 at 25 with value 96
+PATTERN: addiadd with length 6 at 26 with value 88
+PATTERN: addiadd with length 6 at 27 with value -96
+PATTERN: addiadd with length 6 at 28 with value 96
+PATTERN: addiadd with length 6 at 35 with value -80
+PATTERN: addiadd with length 6 at 2 with value 88
+PATTERN: addiadd with length 6 at 3 with value -1892
+PATTERN: addiadd with length 6 at 3 with value 1576
+
+Instruction count: 5217 (14586 bytes, avg 2.80 bytes/insn)
+
+             addiadd       29 12bit=0.5559% 9bit=0.3642% avgbytes=6.00
+
+Values for addiadd patterns:
+                  96        8
+                  88        4
+                1120        2
+                 -24        2
+                 -80        2
+                 -96        2
+                1900        1
+                1576        1
+                1474        1
+                1382        1
+                1170        1
+                 350        1
+                 -16        1
+               -1892        1
+               -1950        1
+

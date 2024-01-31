@@ -1,0 +1,57 @@
+PATTERN: addiadd with length 6 at 5 with value 1
+PATTERN: addiadd with length 6 at 5 with value 8
+PATTERN: addiadd with length 6 at 5 with value 8
+PATTERN: addiadd with length 6 at 5 with value 8
+PATTERN: addiadd with length 6 at 19 with value 1968
+PATTERN: addiadd with length 6 at 23 with value -1992
+PATTERN: addiadd with length 6 at 4 with value -1984
+PATTERN: addiadd with length 6 at 6 with value 1992
+PATTERN: addiadd with length 6 at 3 with value -1984
+PATTERN: addiadd with length 6 at 7 with value -1072
+PATTERN: addiadd with length 6 at 2 with value -1984
+PATTERN: addiadd with length 6 at 4 with value -40
+PATTERN: addiadd with length 6 at 2 with value -1984
+PATTERN: addiadd with length 6 at 4 with value 2024
+PATTERN: addiadd with length 6 at 2 with value -1984
+PATTERN: addiadd with length 8 at 3 with value 1072
+PATTERN: addiadd with length 6 at 2 with value 1072
+PATTERN: addiadd with length 6 at 3 with value -1984
+PATTERN: addiadd with length 6 at 5 with value -1
+PATTERN: addiadd with length 6 at 3 with value -1984
+PATTERN: addiadd with length 6 at 4 with value -1984
+PATTERN: addiadd with length 6 at 7 with value 992
+PATTERN: addiadd with length 6 at 8 with value -1984
+PATTERN: addiadd with length 6 at 10 with value -1072
+PATTERN: addiadd with length 6 at 3 with value -1992
+PATTERN: addiadd with length 6 at 2 with value -1968
+PATTERN: addiadd with length 6 at 4 with value -1984
+PATTERN: addiadd with length 6 at 5 with value -1072
+PATTERN: addiadd with length 6 at 3 with value -100
+PATTERN: muli with length 8 at 4462 with value 48
+PATTERN: addiadd with length 6 at 3 with value -48
+
+Instruction count: 3449 (9942 bytes, avg 2.88 bytes/insn)
+
+             addiadd       30 12bit=0.8698% 9bit=0.2320% avgbytes=6.07
+                muli        1 12bit=0.0290% 9bit=0.0290% avgbytes=8.00
+
+Values for addiadd patterns:
+               -1984       10
+                   8        3
+               -1072        3
+                1072        2
+               -1992        2
+                2024        1
+                1992        1
+                1968        1
+                 992        1
+                   1        1
+                  -1        1
+                 -40        1
+                 -48        1
+                -100        1
+               -1968        1
+
+Values for muli patterns:
+                  48        1
+

@@ -1,0 +1,144 @@
+PATTERN: addiadd with length 6 at 3 with value -1782
+PATTERN: muli with length 8 at ee1c with value 100
+PATTERN: addiadd with length 6 at 3 with value -2
+PATTERN: addiadd with length 6 at 3 with value -28
+PATTERN: addiadd with length 6 at 3 with value -56
+PATTERN: addiadd with length 6 at 4 with value -1404
+PATTERN: addiadd with length 6 at 3 with value -82
+PATTERN: addiadd with length 8 at 3 with value 4
+PATTERN: addiadd with length 6 at 4 with value -384
+PATTERN: addiadd with length 6 at 7 with value -384
+PATTERN: addiadd with length 6 at 3 with value -96
+PATTERN: addiadd with length 6 at 7 with value 8
+PATTERN: addiadd with length 6 at 13 with value 2
+PATTERN: addiadd with length 6 at 1 with value 5
+PATTERN: addiadd with length 6 at 2 with value 2
+PATTERN: addiadd with length 8 at 2 with value 0
+PATTERN: addiadd with length 8 at 4 with value 0
+PATTERN: addiadd with length 8 at 3 with value 0
+PATTERN: addiadd with length 8 at 3 with value 0
+PATTERN: addiadd with length 8 at 3 with value 0
+PATTERN: addiadd with length 8 at 4 with value 0
+PATTERN: addiadd with length 6 at 3 with value 1142
+PATTERN: addiadd with length 8 at 6 with value 13
+PATTERN: addiadd with length 8 at 4 with value 184
+PATTERN: addiadd with length 6 at 3 with value 772
+PATTERN: muli with length 8 at 124cc with value 100
+PATTERN: addiadd with length 8 at 3 with value 184
+PATTERN: addiadd with length 8 at 3 with value 184
+PATTERN: addiadd with length 6 at 2 with value 1
+PATTERN: addiadd with length 6 at 3 with value -644
+PATTERN: addiadd with length 6 at 5 with value 0
+PATTERN: addiadd with length 6 at 11 with value 0
+PATTERN: addiadd with length 6 at 4 with value 26
+PATTERN: addiadd with length 6 at 3 with value -1770
+PATTERN: muli with length 8 at 1346a with value 100
+PATTERN: addiadd with length 6 at 3 with value 1428
+PATTERN: addiadd with length 6 at 6 with value 0
+PATTERN: addiadd with length 6 at 6 with value 0
+PATTERN: addiadd with length 6 at 2 with value 9
+PATTERN: addiadd with length 6 at 3 with value -1116
+PATTERN: addiadd with length 6 at 3 with value -1070
+PATTERN: addiadd with length 6 at 3 with value -936
+PATTERN: muli with length 8 at 13dfc with value 1000
+PATTERN: addiadd with length 6 at 3 with value -1622
+PATTERN: addiadd with length 6 at 3 with value -1576
+PATTERN: addiadd with length 6 at 3 with value -1442
+PATTERN: muli with length 8 at 142ca with value 1000
+PATTERN: addiadd with length 6 at 2 with value -1
+PATTERN: addiadd with length 6 at 2 with value 1
+PATTERN: addiadd with length 6 at 3 with value -68
+PATTERN: addiadd with length 6 at 3 with value -470
+PATTERN: addiadd with length 6 at 3 with value -630
+PATTERN: addiadd with length 6 at 3 with value 1138
+PATTERN: addiadd with length 6 at 3 with value 1094
+PATTERN: addiadd with length 6 at 3 with value 860
+PATTERN: addiadd with length 6 at 3 with value 602
+PATTERN: addiadd with length 6 at 3 with value 316
+PATTERN: addiadd with length 6 at 3 with value -1376
+PATTERN: addiadd with length 6 at 2 with value 19
+PATTERN: addiadd with length 6 at 10 with value 4
+PATTERN: addiadd with length 6 at 16 with value 4
+PATTERN: addiadd with length 6 at 11 with value 4
+PATTERN: addiadd with length 6 at 13 with value 4
+PATTERN: addiadd with length 6 at 2 with value 8
+PATTERN: addiadd with length 6 at 1 with value 2
+PATTERN: addiadd with length 6 at 8 with value 528
+PATTERN: muli with length 8 at 1d160 with value 1000
+PATTERN: muli with length 8 at 1d284 with value 1000
+PATTERN: addiadd with length 6 at 3 with value -100
+PATTERN: addiadd with length 6 at 3 with value -170
+PATTERN: addiadd with length 6 at 3 with value -568
+PATTERN: addiadd with length 6 at 3 with value -628
+PATTERN: muli with length 8 at 1e4ce with value 1000
+PATTERN: addiadd with length 6 at 2 with value 5
+PATTERN: addiadd with length 6 at 3 with value -984
+PATTERN: muli with length 8 at 1f124 with value 1000
+PATTERN: addiadd with length 6 at 3 with value -1740
+PATTERN: muli with length 8 at 1f258 with value 1000
+PATTERN: addiadd with length 6 at 3 with value 1380
+PATTERN: addiadd with length 6 at 3 with value 882
+PATTERN: addiadd with length 8 at 15 with value 2
+PATTERN: addiadd with length 6 at 2 with value 6
+
+Instruction count: 24303 (73238 bytes, avg 3.01 bytes/insn)
+
+             addiadd       72 12bit=0.2963% 9bit=0.1564% avgbytes=6.33
+                muli       10 12bit=0.0411% 9bit=0.0123% avgbytes=8.00
+
+Values for addiadd patterns:
+                   0       10
+                   4        5
+                   2        4
+                 184        3
+                   8        2
+                   5        2
+                   1        2
+                -384        2
+                1428        1
+                1380        1
+                1142        1
+                1138        1
+                1094        1
+                 882        1
+                 860        1
+                 772        1
+                 602        1
+                 528        1
+                 316        1
+                  26        1
+                  19        1
+                  13        1
+                   9        1
+                   6        1
+                  -1        1
+                  -2        1
+                 -28        1
+                 -56        1
+                 -68        1
+                 -82        1
+                 -96        1
+                -100        1
+                -170        1
+                -470        1
+                -568        1
+                -628        1
+                -630        1
+                -644        1
+                -936        1
+                -984        1
+               -1070        1
+               -1116        1
+               -1376        1
+               -1404        1
+               -1442        1
+               -1576        1
+               -1622        1
+               -1740        1
+               -1770        1
+               -1782        1
+
+Values for muli patterns:
+                1000        7
+                 100        3
+

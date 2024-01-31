@@ -1,0 +1,94 @@
+PATTERN: addiadd with length 6 at 5 with value 16
+PATTERN: addiadd with length 6 at 22 with value 8
+PATTERN: addiadd with length 6 at 27 with value -8
+PATTERN: addiadd with length 6 at 1 with value 8
+PATTERN: addiadd with length 6 at 14 with value 48
+PATTERN: addiadd with length 6 at 18 with value -8
+PATTERN: addiadd with length 6 at 24 with value 40
+PATTERN: addiadd with length 6 at 1 with value 48
+PATTERN: addiadd with length 6 at 4 with value 48
+PATTERN: addiadd with length 6 at 5 with value -8
+PATTERN: addiadd with length 6 at 7 with value 48
+PATTERN: addiadd with length 6 at 3 with value 48
+PATTERN: addiadd with length 6 at 2 with value 40
+PATTERN: addiadd with length 6 at 2 with value 48
+PATTERN: addiadd with length 6 at 5 with value 48
+PATTERN: addiadd with length 6 at 7 with value -16
+PATTERN: addiadd with length 6 at 8 with value 8
+PATTERN: addiadd with length 6 at 2 with value 48
+PATTERN: addiadd with length 6 at 3 with value 48
+PATTERN: addiadd with length 6 at 3 with value 48
+PATTERN: addiadd with length 6 at 9 with value 48
+PATTERN: addiadd with length 6 at 2 with value 48
+PATTERN: addiadd with length 6 at 6 with value 48
+PATTERN: addiadd with length 6 at 2 with value 1
+PATTERN: addiadd with length 6 at 15 with value 48
+PATTERN: addiadd with length 6 at 19 with value -8
+PATTERN: addiadd with length 6 at 25 with value 40
+PATTERN: addiadd with length 6 at 1 with value 48
+PATTERN: addiadd with length 6 at 4 with value 48
+PATTERN: addiadd with length 6 at 5 with value -8
+PATTERN: addiadd with length 6 at 7 with value 48
+PATTERN: addiadd with length 6 at 3 with value 48
+PATTERN: addiadd with length 6 at 2 with value 40
+PATTERN: addiadd with length 6 at 2 with value 48
+PATTERN: addiadd with length 6 at 3 with value 48
+PATTERN: addiadd with length 6 at 6 with value -16
+PATTERN: addiadd with length 6 at 7 with value 8
+PATTERN: addiadd with length 6 at 2 with value 48
+PATTERN: addiadd with length 6 at 3 with value 48
+PATTERN: addiadd with length 6 at 3 with value 48
+PATTERN: addiadd with length 6 at 8 with value 48
+PATTERN: addiadd with length 6 at 2 with value 48
+PATTERN: addiadd with length 6 at 20 with value 64
+PATTERN: addiadd with length 6 at 23 with value -8
+PATTERN: addiadd with length 6 at 28 with value 64
+PATTERN: addiadd with length 6 at 34 with value 56
+PATTERN: addiadd with length 6 at 34 with value 16
+PATTERN: addiadd with length 6 at 4 with value 64
+PATTERN: addiadd with length 6 at 8 with value -16
+PATTERN: addiadd with length 6 at 9 with value 8
+PATTERN: addiadd with length 6 at 3 with value 64
+PATTERN: addiadd with length 6 at 4 with value 64
+PATTERN: addiadd with length 6 at 4 with value 64
+PATTERN: addiadd with length 6 at 9 with value 64
+PATTERN: addiadd with length 6 at 11 with value -6
+PATTERN: addiadd with length 6 at 4 with value 64
+PATTERN: addiadd with length 6 at 6 with value 64
+PATTERN: addiadd with length 6 at 5 with value 64
+PATTERN: addiadd with length 6 at 7 with value -16
+PATTERN: addiadd with length 6 at 8 with value 8
+PATTERN: addiadd with length 6 at 3 with value 64
+PATTERN: addiadd with length 6 at 3 with value 56
+PATTERN: addiadd with length 6 at 25 with value 56
+PATTERN: addiadd with length 6 at 2 with value 64
+PATTERN: addiadd with length 6 at 3 with value 64
+PATTERN: addiadd with length 8 at 4 with value -8
+PATTERN: addiadd with length 6 at 7 with value 64
+PATTERN: addiadd with length 6 at 13 with value -64
+PATTERN: addiadd with length 6 at 2 with value 64
+PATTERN: addiadd with length 6 at 6 with value 8
+PATTERN: addiadd with length 6 at 3 with value 64
+PATTERN: addiadd with length 6 at 2 with value 56
+PATTERN: addiadd with length 6 at 3 with value 64
+PATTERN: addiadd with length 6 at 2 with value 64
+PATTERN: addiadd with length 8 at 3 with value -64
+PATTERN: addiadd with length 6 at 5 with value 1
+
+Instruction count: 4104 (12496 bytes, avg 3.04 bytes/insn)
+
+             addiadd       76 12bit=1.8519% 9bit=1.8519% avgbytes=6.05
+
+Values for addiadd patterns:
+                  48       25
+                  64       18
+                   8        7
+                  -8        7
+                  56        4
+                  40        4
+                 -16        4
+                  16        2
+                   1        2
+                 -64        2
+                  -6        1
+

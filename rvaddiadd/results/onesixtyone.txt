@@ -1,0 +1,53 @@
+PATTERN: addiadd with length 8 at 1 with value 0
+PATTERN: addiadd with length 6 at 2 with value 7
+PATTERN: addiadd with length 6 at 6 with value 8
+PATTERN: addiadd with length 6 at 10 with value 9
+PATTERN: addiadd with length 6 at 13 with value 10
+PATTERN: addiadd with length 6 at 16 with value 11
+PATTERN: addiadd with length 6 at 19 with value 12
+PATTERN: addiadd with length 6 at 22 with value 13
+PATTERN: addiadd with length 6 at 25 with value 14
+PATTERN: addiadd with length 6 at 28 with value 15
+PATTERN: addiadd with length 6 at 31 with value 16
+PATTERN: addiadd with length 6 at 34 with value 17
+PATTERN: addiadd with length 6 at 37 with value 18
+PATTERN: addiadd with length 6 at 40 with value 19
+PATTERN: addiadd with length 6 at 43 with value 20
+PATTERN: addiadd with length 6 at 48 with value 21
+PATTERN: addiadd with length 6 at 3 with value -1746
+PATTERN: muliadd with length 10 at 2a72 with value 1000
+PATTERN: muli with length 8 at 2ad2 with value 1000
+PATTERN: addiadd with length 6 at 2 with value 1712
+
+Instruction count: 2250 (7062 bytes, avg 3.14 bytes/insn)
+
+             addiadd       18 12bit=0.8000% 9bit=0.7111% avgbytes=6.11
+             muliadd        1 12bit=0.0444% 9bit=0.0000% avgbytes=10.00
+                muli        1 12bit=0.0444% 9bit=0.0000% avgbytes=8.00
+
+Values for addiadd patterns:
+                1712        1
+                  21        1
+                  20        1
+                  19        1
+                  18        1
+                  17        1
+                  16        1
+                  15        1
+                  14        1
+                  13        1
+                  12        1
+                  11        1
+                  10        1
+                   9        1
+                   8        1
+                   7        1
+                   0        1
+               -1746        1
+
+Values for muliadd patterns:
+                1000        1
+
+Values for muli patterns:
+                1000        1
+

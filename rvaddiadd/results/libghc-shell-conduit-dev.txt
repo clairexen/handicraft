@@ -1,0 +1,16 @@
+PATTERN: addiadd with length 6 at 17 with value -2048
+PATTERN: addiadd with length 6 at 23 with value 1024
+PATTERN: addiadd with length 8 at 5 with value -2048
+PATTERN: addiadd with length 6 at 9 with value -1024
+PATTERN: addiadd with length 6 at 17 with value -2048
+PATTERN: addiadd with length 6 at 23 with value 1024
+
+Instruction count: 166548 (523904 bytes, avg 3.15 bytes/insn)
+
+             addiadd        6 12bit=0.0036% 9bit=0.0000% avgbytes=6.33
+
+Values for addiadd patterns:
+               -2048        3
+                1024        2
+               -1024        1
+

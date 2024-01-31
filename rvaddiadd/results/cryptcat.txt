@@ -1,0 +1,69 @@
+PATTERN: addiadd with length 6 at 3 with value 1004
+PATTERN: addiadd with length 6 at 2 with value -2
+PATTERN: addiadd with length 6 at 2 with value -1
+PATTERN: addiadd with length 6 at 3 with value 11
+PATTERN: addiadd with length 6 at 5 with value 11
+PATTERN: addiadd with length 6 at 4 with value -1132
+PATTERN: addiadd with length 6 at 2 with value 32
+PATTERN: addiadd with length 6 at 4 with value -1406
+PATTERN: addiadd with length 6 at 4 with value 32
+PATTERN: addiadd with length 6 at 11 with value 188
+PATTERN: addiadd with length 6 at 2 with value 204
+PATTERN: addiadd with length 6 at 5 with value 204
+PATTERN: addiadd with length 6 at 2 with value 188
+PATTERN: addiadd with length 6 at 6 with value 220
+PATTERN: addiadd with length 6 at 3 with value 204
+PATTERN: addiadd with length 6 at 3 with value -1926
+PATTERN: addiadd with length 6 at 5 with value -2014
+PATTERN: addiadd with length 6 at 14 with value 1746
+PATTERN: addiadd with length 6 at 3 with value 1890
+PATTERN: addiadd with length 6 at 4 with value 1804
+PATTERN: addiadd with length 6 at 9 with value 1468
+PATTERN: addiadd with length 6 at 6 with value 0
+PATTERN: addiadd with length 6 at 8 with value -2044
+PATTERN: addiadd with length 6 at 2 with value 148
+PATTERN: addiadd with length 6 at 2 with value 36
+PATTERN: addiadd with length 6 at 4 with value 164
+PATTERN: addiadd with length 6 at 5 with value 33
+PATTERN: addiadd with length 6 at 3 with value 220
+PATTERN: addiadd with length 6 at 2 with value 204
+PATTERN: addiadd with length 6 at 2 with value 188
+PATTERN: addiadd with length 6 at 1 with value 1
+PATTERN: addiadd with length 6 at 5 with value 41
+PATTERN: addiadd with length 6 at 2 with value -1
+PATTERN: addiadd with length 6 at 7 with value -48
+PATTERN: addiadd with length 6 at 15 with value -48
+PATTERN: addiadd with length 8 at 3 with value -200
+
+Instruction count: 4596 (13812 bytes, avg 3.01 bytes/insn)
+
+             addiadd       36 12bit=0.7833% 9bit=0.3046% avgbytes=6.06
+
+Values for addiadd patterns:
+                 204        4
+                 188        3
+                 220        2
+                  32        2
+                  11        2
+                  -1        2
+                 -48        2
+                1890        1
+                1804        1
+                1746        1
+                1468        1
+                1004        1
+                 164        1
+                 148        1
+                  41        1
+                  36        1
+                  33        1
+                   1        1
+                   0        1
+                  -2        1
+                -200        1
+               -1132        1
+               -1406        1
+               -1926        1
+               -2014        1
+               -2044        1
+

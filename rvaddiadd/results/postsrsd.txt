@@ -1,0 +1,93 @@
+PATTERN: addiadd with length 6 at 21 with value -928
+PATTERN: addiadd with length 6 at 26 with value -936
+PATTERN: addiadd with length 6 at 3 with value -936
+PATTERN: addiadd with length 6 at 6 with value -928
+PATTERN: addiadd with length 6 at 9 with value 936
+PATTERN: addiadd with length 6 at 3 with value -928
+PATTERN: addiadd with length 6 at 5 with value 984
+PATTERN: addiadd with length 6 at 4 with value -928
+PATTERN: addiadd with length 6 at 8 with value 936
+PATTERN: addiadd with length 6 at 5 with value -928
+PATTERN: addiadd with length 6 at 9 with value 984
+PATTERN: addiadd with length 6 at 3 with value -928
+PATTERN: addiadd with length 6 at 8 with value -928
+PATTERN: addiadd with length 6 at 9 with value 928
+PATTERN: addiadd with length 6 at 5 with value -928
+PATTERN: addiadd with length 6 at 7 with value 1016
+PATTERN: addiadd with length 6 at 4 with value -928
+PATTERN: addiadd with length 6 at 9 with value -928
+PATTERN: addiadd with length 6 at 10 with value 952
+PATTERN: addiadd with length 6 at 13 with value 936
+PATTERN: addiadd with length 6 at 5 with value -928
+PATTERN: addiadd with length 6 at 6 with value 952
+PATTERN: addiadd with length 6 at 5 with value -928
+PATTERN: addiadd with length 6 at 6 with value 936
+PATTERN: muli with length 8 at 2cc4 with value 1000
+PATTERN: addiadd with length 6 at 7 with value -928
+PATTERN: addiadd with length 6 at 9 with value 952
+PATTERN: addiadd with length 6 at 11 with value -928
+PATTERN: addiadd with length 6 at 2 with value -928
+PATTERN: addiadd with length 6 at 4 with value 2040
+PATTERN: addiadd with length 6 at 3 with value -1960
+PATTERN: addiadd with length 8 at 7 with value -937
+PATTERN: addiadd with length 6 at 20 with value -2040
+PATTERN: addiadd with length 6 at 20 with value -2032
+PATTERN: addiadd with length 6 at 3 with value -2032
+PATTERN: addiadd with length 6 at 5 with value 2040
+PATTERN: addiadd with length 6 at 2 with value -2040
+PATTERN: addiadd with length 6 at 13 with value -2032
+PATTERN: addiadd with length 6 at 13 with value -2032
+PATTERN: addiadd with length 6 at 16 with value 2040
+PATTERN: addiadd with length 6 at 21 with value -2040
+PATTERN: addiadd with length 6 at 2 with value -2040
+PATTERN: addiadd with length 6 at 12 with value -1639
+PATTERN: addiadd with length 6 at 352 with value -1119
+PATTERN: addiadd with length 6 at 703 with value -804
+PATTERN: addiadd with length 6 at 1065 with value 470
+PATTERN: addiadd with length 8 at 22 with value 56
+PATTERN: addiadd with length 8 at 36 with value 1
+PATTERN: addiadd with length 6 at 6 with value 129
+PATTERN: addiadd with length 6 at 3 with value 0
+PATTERN: addiadd with length 6 at 5 with value -918
+PATTERN: addiadd with length 6 at 4 with value 1024
+PATTERN: addiadd with length 6 at 2 with value 11
+PATTERN: addiadd with length 6 at 2 with value 8
+PATTERN: addiadd with length 6 at 2 with value 8
+PATTERN: addiadd with length 6 at 4 with value 1
+PATTERN: addiadd with length 6 at 6 with value 66
+
+Instruction count: 5659 (17248 bytes, avg 3.05 bytes/insn)
+
+             addiadd       56 12bit=0.9896% 9bit=0.1414% avgbytes=6.11
+                muli        1 12bit=0.0177% 9bit=0.0000% avgbytes=8.00
+
+Values for addiadd patterns:
+                -928       15
+                 936        4
+               -2032        4
+               -2040        4
+                2040        3
+                 952        3
+                 984        2
+                   8        2
+                   1        2
+                -936        2
+                1024        1
+                1016        1
+                 928        1
+                 470        1
+                 129        1
+                  66        1
+                  56        1
+                  11        1
+                   0        1
+                -804        1
+                -918        1
+                -937        1
+               -1119        1
+               -1639        1
+               -1960        1
+
+Values for muli patterns:
+                1000        1
+

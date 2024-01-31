@@ -1,0 +1,65 @@
+PATTERN: addiadd with length 6 at 10 with value 128
+PATTERN: muli with length 8 at 1ccc4 with value 1000
+PATTERN: muli with length 8 at 1cf9e with value 1000
+PATTERN: muli with length 8 at 1d3a8 with value 1000
+PATTERN: muli with length 8 at 1d788 with value 1000
+PATTERN: muli with length 8 at 1df18 with value 1000
+PATTERN: muli with length 8 at 1e1f2 with value 1000
+PATTERN: muli with length 8 at 1e5fc with value 1000
+PATTERN: muli with length 8 at 1e9dc with value 1000
+PATTERN: muli with length 8 at 1f450 with value 1000
+PATTERN: muli with length 8 at 1f72a with value 1000
+PATTERN: muli with length 8 at 1fb34 with value 1000
+PATTERN: muli with length 8 at 1ff14 with value 1000
+PATTERN: muli with length 8 at 206a4 with value 1000
+PATTERN: muli with length 8 at 2097e with value 1000
+PATTERN: muli with length 8 at 20d88 with value 1000
+PATTERN: muli with length 8 at 21168 with value 1000
+PATTERN: muli with length 8 at 21bc0 with value 1000
+PATTERN: muli with length 8 at 21e9a with value 1000
+PATTERN: muli with length 8 at 222a4 with value 1000
+PATTERN: muli with length 8 at 22684 with value 1000
+PATTERN: muli with length 8 at 22e14 with value 1000
+PATTERN: muli with length 8 at 230ee with value 1000
+PATTERN: muli with length 8 at 234f8 with value 1000
+PATTERN: muli with length 8 at 238d8 with value 1000
+PATTERN: muli with length 8 at 2431a with value 1000
+PATTERN: muli with length 8 at 245f4 with value 1000
+PATTERN: muli with length 8 at 249fe with value 1000
+PATTERN: muli with length 8 at 24dde with value 1000
+PATTERN: muli with length 8 at 25864 with value 1000
+PATTERN: muli with length 8 at 25b3e with value 1000
+PATTERN: muli with length 8 at 25f48 with value 1000
+PATTERN: muli with length 8 at 26328 with value 1000
+PATTERN: muli with length 8 at 26dc6 with value 1000
+PATTERN: muli with length 8 at 270ca with value 1000
+PATTERN: muli with length 8 at 274d4 with value 1000
+PATTERN: muli with length 8 at 278b4 with value 1000
+PATTERN: muli with length 8 at 28356 with value 1000
+PATTERN: muli with length 8 at 28630 with value 1000
+PATTERN: muli with length 8 at 28a3a with value 1000
+PATTERN: muli with length 8 at 28e1a with value 1000
+PATTERN: muli with length 8 at 2986e with value 1000
+PATTERN: muli with length 8 at 29b48 with value 1000
+PATTERN: muli with length 8 at 29f52 with value 1000
+PATTERN: muli with length 8 at 2a332 with value 1000
+PATTERN: muli with length 8 at 2adb8 with value 1000
+PATTERN: muli with length 8 at 2b092 with value 1000
+PATTERN: muli with length 8 at 2b49c with value 1000
+PATTERN: muli with length 8 at 2b87c with value 1000
+PATTERN: muli with length 8 at 2c312 with value 1000
+PATTERN: muli with length 8 at 2c5ec with value 1000
+PATTERN: muli with length 8 at 2c9f6 with value 1000
+PATTERN: muli with length 8 at 2cdd6 with value 1000
+
+Instruction count: 35753 (102440 bytes, avg 2.87 bytes/insn)
+
+                muli       52 12bit=0.1454% 9bit=0.0000% avgbytes=8.00
+             addiadd        1 12bit=0.0028% 9bit=0.0000% avgbytes=6.00
+
+Values for muli patterns:
+                1000       52
+
+Values for addiadd patterns:
+                 128        1
+

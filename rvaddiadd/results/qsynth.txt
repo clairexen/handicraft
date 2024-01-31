@@ -1,0 +1,58 @@
+PATTERN: addiadd with length 6 at 3 with value -1384
+PATTERN: addiadd with length 6 at 3 with value -834
+PATTERN: addiadd with length 6 at 3 with value 798
+PATTERN: addiadd with length 6 at 3 with value 838
+PATTERN: addiadd with length 6 at 3 with value 634
+PATTERN: addiadd with length 6 at 3 with value 930
+PATTERN: addiadd with length 6 at 5 with value 16
+PATTERN: addiadd with length 6 at 2 with value -1
+PATTERN: addiadd with length 6 at 2 with value 104
+PATTERN: addiadd with length 6 at 5 with value -1
+PATTERN: addiadd with length 6 at 5 with value 1
+PATTERN: addiadd with length 6 at 9 with value 16
+PATTERN: addiadd with length 6 at 6 with value 16
+PATTERN: addiadd with length 6 at 8 with value 16
+PATTERN: addiadd with length 6 at 5 with value 16
+PATTERN: addiadd with length 6 at 1 with value -1
+PATTERN: addiadd with length 6 at 1 with value 0
+PATTERN: addiadd with length 6 at 7 with value 16
+PATTERN: addiadd with length 6 at 5 with value 16
+PATTERN: addiadd with length 6 at 4 with value 16
+PATTERN: addiadd with length 6 at 1 with value 1056
+PATTERN: addiadd with length 8 at 5 with value 16
+PATTERN: addiadd with length 6 at 4 with value 16
+PATTERN: addiadd with length 6 at 5 with value 16
+PATTERN: addiadd with length 6 at 8 with value 16
+PATTERN: addiadd with length 6 at 3 with value -470
+PATTERN: addiadd with length 6 at 8 with value 16
+PATTERN: addiadd with length 8 at 5 with value 16
+PATTERN: addiadd with length 6 at 5 with value -1
+PATTERN: addiadd with length 6 at 5 with value -1
+PATTERN: addiadd with length 6 at 34 with value -496
+PATTERN: addiadd with length 6 at 5 with value -1
+PATTERN: addiadd with length 6 at 6 with value -1
+PATTERN: addiadd with length 6 at 9 with value -1
+PATTERN: addiadd with length 6 at 10 with value -1
+PATTERN: addiadd with length 6 at 17 with value -1
+PATTERN: addiadd with length 6 at 14 with value -1
+
+Instruction count: 77604 (220200 bytes, avg 2.84 bytes/insn)
+
+             addiadd       37 12bit=0.0477% 9bit=0.0361% avgbytes=6.11
+
+Values for addiadd patterns:
+                  16       14
+                  -1       11
+                1056        1
+                 930        1
+                 838        1
+                 798        1
+                 634        1
+                 104        1
+                   1        1
+                   0        1
+                -470        1
+                -496        1
+                -834        1
+               -1384        1
+

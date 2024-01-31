@@ -1,0 +1,57 @@
+PATTERN: addiadd with length 6 at 9 with value 16
+PATTERN: addiadd with length 6 at 3 with value -848
+PATTERN: addiadd with length 6 at 2 with value 0
+PATTERN: addiadd with length 6 at 5 with value 904
+PATTERN: addiadd with length 6 at 3 with value 0
+PATTERN: addiadd with length 6 at 5 with value 1030
+PATTERN: addiadd with length 6 at 6 with value 16
+PATTERN: addiadd with length 6 at 8 with value 16
+PATTERN: addiadd with length 6 at 14 with value 16
+PATTERN: addiadd with length 6 at 8 with value 16
+PATTERN: addiadd with length 6 at 5 with value 16
+PATTERN: addiadd with length 6 at 3 with value 16
+PATTERN: addiadd with length 6 at 5 with value 16
+PATTERN: addiadd with length 6 at 5 with value 16
+PATTERN: addiadd with length 6 at 5 with value 16
+PATTERN: addiadd with length 8 at 6 with value 16
+PATTERN: addiadd with length 6 at 9 with value 16
+PATTERN: addiadd with length 6 at 3 with value -1520
+PATTERN: addiadd with length 6 at 2 with value 0
+PATTERN: addiadd with length 6 at 5 with value 814
+PATTERN: addiadd with length 6 at 7 with value 18
+PATTERN: addiadd with length 6 at 22 with value 24
+PATTERN: addiadd with length 6 at 27 with value 32
+PATTERN: addiadd with length 6 at 7 with value 32
+PATTERN: addiadd with length 6 at 7 with value 16
+PATTERN: addiadd with length 6 at 9 with value -24
+PATTERN: addiadd with length 6 at 2 with value 32
+PATTERN: addiadd with length 6 at 7 with value 32
+PATTERN: addiadd with length 6 at 8 with value -25
+PATTERN: addiadd with length 6 at 10 with value 32
+PATTERN: addiadd with length 6 at 11 with value -26
+PATTERN: addiadd with length 6 at 5 with value 32
+PATTERN: addiadd with length 6 at 6 with value -27
+PATTERN: addiadd with length 6 at 9 with value 2
+PATTERN: addiadd with length 6 at 5 with value 16
+
+Instruction count: 16701 (47430 bytes, avg 2.84 bytes/insn)
+
+             addiadd       35 12bit=0.2096% 9bit=0.1796% avgbytes=6.06
+
+Values for addiadd patterns:
+                  16       14
+                  32        6
+                   0        3
+                1030        1
+                 904        1
+                 814        1
+                  24        1
+                  18        1
+                   2        1
+                 -24        1
+                 -25        1
+                 -26        1
+                 -27        1
+                -848        1
+               -1520        1
+

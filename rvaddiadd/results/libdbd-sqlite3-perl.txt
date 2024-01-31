@@ -1,0 +1,49 @@
+PATTERN: addiadd with length 6 at 8 with value -8
+PATTERN: addiadd with length 6 at 8 with value -8
+PATTERN: addiadd with length 6 at 8 with value -8
+PATTERN: addiadd with length 6 at 8 with value -8
+PATTERN: addiadd with length 6 at 8 with value -8
+PATTERN: addiadd with length 6 at 8 with value -8
+PATTERN: addiadd with length 6 at 8 with value -8
+PATTERN: addiadd with length 6 at 8 with value -8
+PATTERN: addiadd with length 6 at 8 with value -8
+PATTERN: addiadd with length 6 at 8 with value -8
+PATTERN: addiadd with length 6 at 8 with value -8
+PATTERN: addiadd with length 6 at 8 with value -8
+PATTERN: addiadd with length 6 at 8 with value -8
+PATTERN: addiadd with length 6 at 8 with value -8
+PATTERN: addiadd with length 6 at 8 with value -8
+PATTERN: addiadd with length 6 at 8 with value -8
+PATTERN: addiadd with length 6 at 8 with value -8
+PATTERN: addiadd with length 6 at 8 with value -8
+PATTERN: addiadd with length 6 at 8 with value -8
+PATTERN: addiadd with length 6 at 8 with value -8
+PATTERN: addiadd with length 6 at 8 with value -8
+PATTERN: addiadd with length 6 at 8 with value -8
+PATTERN: addiadd with length 6 at 7 with value 16
+PATTERN: addiadd with length 6 at 7 with value 16
+PATTERN: addiadd with length 6 at 4 with value 8
+PATTERN: addiadd with length 6 at 1 with value 1
+PATTERN: addiadd with length 6 at 4 with value 416
+PATTERN: addiadd with length 6 at 4 with value 8
+PATTERN: addiadd with length 6 at 4 with value 8
+PATTERN: addiadd with length 6 at 5 with value 8
+PATTERN: addiadd with length 6 at 4 with value 8
+PATTERN: addiadd with length 6 at 4 with value 916
+PATTERN: addiadd with length 6 at 4 with value -1288
+PATTERN: addiadd with length 6 at 1 with value -1
+
+Instruction count: 26453 (76398 bytes, avg 2.89 bytes/insn)
+
+             addiadd       34 12bit=0.1285% 9bit=0.1172% avgbytes=6.00
+
+Values for addiadd patterns:
+                  -8       22
+                   8        5
+                  16        2
+                 916        1
+                 416        1
+                   1        1
+                  -1        1
+               -1288        1
+

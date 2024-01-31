@@ -1,0 +1,49 @@
+PATTERN: addiadd with length 6 at 1 with value -3
+PATTERN: muliadd with length 10 at 6270 with value 488
+PATTERN: muliadd with length 12 at 6424 with value 488
+PATTERN: muliadd with length 12 at 75b0 with value 488
+PATTERN: muliadd with length 10 at 75b6 with value 976
+PATTERN: addiadd with length 6 at 4 with value -16
+PATTERN: addiadd with length 6 at 1 with value 1
+PATTERN: addiadd with length 6 at 3 with value 1
+PATTERN: muliadd with length 10 at 857a with value 488
+PATTERN: addiadd with length 6 at 12 with value -1528
+PATTERN: addiadd with length 6 at 12 with value -592
+PATTERN: addiadd with length 6 at 16 with value -1520
+PATTERN: addiadd with length 6 at 5 with value -1520
+PATTERN: addiadd with length 6 at 7 with value 1528
+PATTERN: addiadd with length 6 at 12 with value 2
+PATTERN: addiadd with length 6 at 13 with value -1520
+PATTERN: addiadd with length 6 at 15 with value 2040
+PATTERN: addiadd with length 6 at 16 with value 2
+PATTERN: addiadd with length 6 at 3 with value -1520
+PATTERN: addiadd with length 6 at 5 with value 1520
+PATTERN: addiadd with length 6 at 7 with value -1520
+PATTERN: addiadd with length 6 at 11 with value 1528
+PATTERN: addiadd with length 6 at 12 with value 2040
+PATTERN: addiadd with length 6 at 2 with value -1520
+PATTERN: addiadd with length 6 at 1 with value -1528
+PATTERN: muliadd with length 10 at 9d68 with value 352
+
+Instruction count: 8790 (25462 bytes, avg 2.90 bytes/insn)
+
+             addiadd       20 12bit=0.2275% 9bit=0.0683% avgbytes=6.00
+             muliadd        6 12bit=0.0683% 9bit=0.0000% avgbytes=10.67
+
+Values for addiadd patterns:
+               -1520        6
+                2040        2
+                1528        2
+                   2        2
+                   1        2
+               -1528        2
+                1520        1
+                  -3        1
+                 -16        1
+                -592        1
+
+Values for muliadd patterns:
+                 488        4
+                 976        1
+                 352        1
+

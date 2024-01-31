@@ -1,0 +1,38 @@
+PATTERN: addiadd with length 6 at 3 with value 16
+PATTERN: addiadd with length 6 at 11 with value 1024
+PATTERN: muliadd with length 10 at b642 with value 104
+PATTERN: muliadd with length 10 at b72c with value 104
+PATTERN: muliadd with length 10 at b7dc with value 104
+PATTERN: muli with length 8 at b930 with value 104
+PATTERN: addiadd with length 6 at 4 with value 32
+PATTERN: addiadd with length 6 at 6 with value 224
+PATTERN: addiadd with length 6 at 7 with value 1184
+PATTERN: addiadd with length 6 at 6 with value 408
+PATTERN: addiadd with length 6 at 7 with value 1184
+PATTERN: addiadd with length 6 at 7 with value 1184
+PATTERN: addiadd with length 6 at 13 with value 1184
+PATTERN: addiadd with length 6 at 17 with value 1184
+PATTERN: addiadd with length 6 at 5 with value 1184
+PATTERN: addiadd with length 6 at 9 with value 1184
+PATTERN: addiadd with length 6 at 1 with value 1184
+
+Instruction count: 17928 (54912 bytes, avg 3.06 bytes/insn)
+
+             addiadd       13 12bit=0.0725% 9bit=0.0112% avgbytes=6.00
+             muliadd        3 12bit=0.0167% 9bit=0.0167% avgbytes=10.00
+                muli        1 12bit=0.0056% 9bit=0.0056% avgbytes=8.00
+
+Values for addiadd patterns:
+                1184        8
+                1024        1
+                 408        1
+                 224        1
+                  32        1
+                  16        1
+
+Values for muliadd patterns:
+                 104        3
+
+Values for muli patterns:
+                 104        1
+

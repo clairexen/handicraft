@@ -1,0 +1,57 @@
+PATTERN: addiadd with length 8 at 2 with value -344
+PATTERN: addiadd with length 6 at 7 with value 32
+PATTERN: addiadd with length 6 at 4 with value 226
+PATTERN: addiadd with length 6 at 9 with value 210
+PATTERN: addiadd with length 6 at 9 with value 0
+PATTERN: addiadd with length 6 at 4 with value 422
+PATTERN: addiadd with length 6 at 9 with value 406
+PATTERN: addiadd with length 6 at 9 with value 0
+PATTERN: addiadd with length 6 at 4 with value -1296
+PATTERN: addiadd with length 6 at 9 with value -1312
+PATTERN: addiadd with length 6 at 9 with value 0
+PATTERN: addiadd with length 6 at 8 with value 0
+PATTERN: addiadd with length 6 at 44 with value 8
+PATTERN: addiadd with length 6 at 3 with value -264
+PATTERN: addiadd with length 6 at 3 with value -32
+PATTERN: addiadd with length 6 at 6 with value -264
+PATTERN: addiadd with length 6 at 6 with value -32
+PATTERN: addiadd with length 6 at 6 with value 0
+PATTERN: addiadd with length 6 at 10 with value 48
+PATTERN: addiadd with length 6 at 11 with value 8
+PATTERN: addiadd with length 6 at 2 with value -16
+PATTERN: addiadd with length 6 at 5 with value 1164
+PATTERN: addiadd with length 6 at 10 with value 1148
+PATTERN: addiadd with length 6 at 10 with value 0
+PATTERN: addiadd with length 6 at 5 with value 1008
+PATTERN: addiadd with length 6 at 10 with value 992
+PATTERN: addiadd with length 6 at 10 with value 0
+PATTERN: addiadd with length 6 at 5 with value 508
+PATTERN: addiadd with length 6 at 10 with value 492
+PATTERN: addiadd with length 6 at 10 with value 0
+
+Instruction count: 12163 (38120 bytes, avg 3.13 bytes/insn)
+
+             addiadd       30 12bit=0.2466% 9bit=0.1233% avgbytes=6.07
+
+Values for addiadd patterns:
+                   0        8
+                   8        2
+                 -32        2
+                -264        2
+                1164        1
+                1148        1
+                1008        1
+                 992        1
+                 508        1
+                 492        1
+                 422        1
+                 406        1
+                 226        1
+                 210        1
+                  48        1
+                  32        1
+                 -16        1
+                -344        1
+               -1296        1
+               -1312        1
+

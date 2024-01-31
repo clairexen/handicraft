@@ -1,0 +1,66 @@
+PATTERN: addiadd with length 6 at 5 with value -1744
+PATTERN: addiadd with length 6 at 981 with value 1752
+PATTERN: addiadd with length 6 at 1009 with value 1808
+PATTERN: addiadd with length 6 at 1014 with value 1786
+PATTERN: addiadd with length 6 at 1033 with value 1864
+PATTERN: addiadd with length 6 at 1038 with value 1842
+PATTERN: addiadd with length 6 at 1057 with value 1920
+PATTERN: addiadd with length 6 at 1062 with value 1898
+PATTERN: addiadd with length 6 at 1081 with value 1976
+PATTERN: addiadd with length 6 at 1086 with value 1954
+PATTERN: addiadd with length 6 at 1101 with value 2032
+PATTERN: addiadd with length 6 at 1105 with value 2010
+PATTERN: addiadd with length 6 at 5 with value -1800
+PATTERN: addiadd with length 6 at 958 with value 1808
+PATTERN: addiadd with length 6 at 986 with value 1864
+PATTERN: addiadd with length 6 at 991 with value 1842
+PATTERN: addiadd with length 6 at 1010 with value 1920
+PATTERN: addiadd with length 6 at 1015 with value 1898
+PATTERN: addiadd with length 6 at 1034 with value 1976
+PATTERN: addiadd with length 6 at 1039 with value 1954
+PATTERN: addiadd with length 6 at 1054 with value 2032
+PATTERN: addiadd with length 6 at 1058 with value 2010
+PATTERN: addiadd with length 6 at 5 with value -1856
+PATTERN: addiadd with length 6 at 935 with value 1864
+PATTERN: addiadd with length 6 at 960 with value 1920
+PATTERN: addiadd with length 6 at 965 with value 1898
+PATTERN: addiadd with length 6 at 987 with value 1976
+PATTERN: addiadd with length 6 at 992 with value 1954
+PATTERN: addiadd with length 6 at 1007 with value 2032
+PATTERN: addiadd with length 6 at 1011 with value 2010
+PATTERN: addiadd with length 6 at 5 with value -1912
+PATTERN: addiadd with length 6 at 912 with value 1920
+PATTERN: addiadd with length 6 at 937 with value 1976
+PATTERN: addiadd with length 6 at 942 with value 1954
+PATTERN: addiadd with length 6 at 957 with value 2032
+PATTERN: addiadd with length 6 at 961 with value 2010
+PATTERN: addiadd with length 6 at 5 with value -1968
+PATTERN: addiadd with length 6 at 889 with value 1976
+PATTERN: addiadd with length 6 at 910 with value 2032
+PATTERN: addiadd with length 6 at 914 with value 2010
+PATTERN: addiadd with length 6 at 18 with value -2024
+PATTERN: addiadd with length 6 at 847 with value 2032
+
+Instruction count: 461195 (1520002 bytes, avg 3.30 bytes/insn)
+
+             addiadd       42 12bit=0.0091% 9bit=0.0000% avgbytes=6.00
+
+Values for addiadd patterns:
+                2032        6
+                2010        5
+                1976        5
+                1954        4
+                1920        4
+                1898        3
+                1864        3
+                1842        2
+                1808        2
+                1786        1
+                1752        1
+               -1744        1
+               -1800        1
+               -1856        1
+               -1912        1
+               -1968        1
+               -2024        1
+

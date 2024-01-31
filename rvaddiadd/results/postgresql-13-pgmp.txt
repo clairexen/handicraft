@@ -1,0 +1,10 @@
+PATTERN: muli with length 8 at 6990 with value 100
+PATTERN: muli with length 8 at 69b4 with value 100
+
+Instruction count: 9407 (27590 bytes, avg 2.93 bytes/insn)
+
+                muli        2 12bit=0.0213% 9bit=0.0213% avgbytes=8.00
+
+Values for muli patterns:
+                 100        2
+

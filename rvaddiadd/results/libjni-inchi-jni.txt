@@ -1,0 +1,17 @@
+PATTERN: muli with length 8 at 2c04 with value 120
+PATTERN: muli with length 6 at 2c86 with value 12
+PATTERN: muliadd with length 10 at 2f8c with value 120
+PATTERN: muliadd with length 12 at 3510 with value 120
+
+Instruction count: 2468 (7166 bytes, avg 2.90 bytes/insn)
+
+             muliadd        2 12bit=0.0810% 9bit=0.0810% avgbytes=11.00
+                muli        2 12bit=0.0810% 9bit=0.0810% avgbytes=7.00
+
+Values for muliadd patterns:
+                 120        2
+
+Values for muli patterns:
+                 120        1
+                  12        1
+

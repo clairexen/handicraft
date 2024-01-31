@@ -1,0 +1,50 @@
+PATTERN: addiadd with length 6 at 3 with value 516
+PATTERN: addiadd with length 6 at 9 with value 16
+PATTERN: addiadd with length 6 at 4 with value 16
+PATTERN: addiadd with length 6 at 1 with value -1
+PATTERN: addiadd with length 6 at 1 with value 0
+PATTERN: addiadd with length 6 at 7 with value 16
+PATTERN: addiadd with length 6 at 7 with value 16
+PATTERN: addiadd with length 6 at 9 with value 16
+PATTERN: addiadd with length 6 at 5 with value 16
+PATTERN: addiadd with length 6 at 9 with value 16
+PATTERN: addiadd with length 6 at 7 with value 16
+PATTERN: addiadd with length 8 at 6 with value 16
+PATTERN: addiadd with length 6 at 5 with value 16
+PATTERN: addiadd with length 6 at 9 with value 16
+PATTERN: addiadd with length 6 at 6 with value 16
+PATTERN: muli with length 8 at 15db4 with value 188
+PATTERN: muli with length 8 at 15dc4 with value 468
+PATTERN: muli with length 8 at 15e0e with value 230
+PATTERN: muli with length 8 at 15e1e with value 140
+PATTERN: muli with length 8 at 15e50 with value 380
+PATTERN: muli with length 8 at 15eac with value 230
+PATTERN: muli with length 8 at 15ef0 with value 540
+PATTERN: muli with length 8 at 15f4c with value 150
+PATTERN: muli with length 8 at 15f5c with value 180
+PATTERN: muli with length 8 at 15f8e with value 600
+PATTERN: addiadd with length 6 at 9 with value 16
+PATTERN: addiadd with length 6 at 8 with value 16
+
+Instruction count: 16979 (48576 bytes, avg 2.86 bytes/insn)
+
+             addiadd       17 12bit=0.1001% 9bit=0.0942% avgbytes=6.12
+                muli       10 12bit=0.0589% 9bit=0.0000% avgbytes=8.00
+
+Values for addiadd patterns:
+                  16       14
+                 516        1
+                   0        1
+                  -1        1
+
+Values for muli patterns:
+                 230        2
+                 600        1
+                 540        1
+                 468        1
+                 380        1
+                 188        1
+                 180        1
+                 150        1
+                 140        1
+

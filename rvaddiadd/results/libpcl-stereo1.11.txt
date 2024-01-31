@@ -1,0 +1,54 @@
+PATTERN: addiadd with length 6 at 3 with value 16
+PATTERN: addiadd with length 6 at 4 with value 4
+PATTERN: addiadd with length 6 at 8 with value 4
+PATTERN: addiadd with length 6 at 10 with value 2
+PATTERN: addiadd with length 6 at 3 with value 2
+PATTERN: addiadd with length 6 at 10 with value 2
+PATTERN: addiadd with length 6 at 6 with value 2
+PATTERN: addiadd with length 8 at 4 with value 1
+PATTERN: addiadd with length 6 at 6 with value 1
+PATTERN: addiadd with length 6 at 2 with value -4
+PATTERN: addiadd with length 6 at 2 with value 8
+PATTERN: addiadd with length 8 at 7 with value -2
+PATTERN: addiadd with length 8 at 5 with value 1
+PATTERN: addiadd with length 8 at 14 with value 1
+PATTERN: addiadd with length 6 at 9 with value 1232
+PATTERN: addiadd with length 6 at 9 with value 1232
+PATTERN: addiadd with length 6 at 3 with value -4
+PATTERN: addiadd with length 6 at 1 with value 8
+PATTERN: addiadd with length 8 at 8 with value -2
+PATTERN: addiadd with length 6 at 22 with value 56
+PATTERN: addiadd with length 6 at 22 with value 56
+PATTERN: addiadd with length 6 at 22 with value 56
+PATTERN: addiadd with length 6 at 22 with value 56
+PATTERN: addiadd with length 6 at 22 with value 56
+PATTERN: addiadd with length 6 at 22 with value 56
+PATTERN: addiadd with length 6 at 22 with value 56
+PATTERN: addiadd with length 6 at 22 with value 56
+PATTERN: addiadd with length 6 at 22 with value 56
+PATTERN: addiadd with length 6 at 22 with value 56
+PATTERN: addiadd with length 6 at 22 with value 56
+PATTERN: addiadd with length 6 at 22 with value 56
+PATTERN: addiadd with length 6 at 22 with value 56
+PATTERN: addiadd with length 6 at 22 with value 56
+PATTERN: addiadd with length 6 at 22 with value 56
+PATTERN: addiadd with length 6 at 22 with value 56
+PATTERN: addiadd with length 6 at 22 with value 56
+PATTERN: addiadd with length 6 at 10 with value 304
+
+Instruction count: 24776 (73480 bytes, avg 2.97 bytes/insn)
+
+             addiadd       37 12bit=0.1493% 9bit=0.1372% avgbytes=6.27
+
+Values for addiadd patterns:
+                  56       17
+                   2        4
+                   1        4
+                1232        2
+                   8        2
+                   4        2
+                  -2        2
+                  -4        2
+                 304        1
+                  16        1
+

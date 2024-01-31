@@ -1,0 +1,59 @@
+PATTERN: addiadd with length 8 at 1 with value 1
+PATTERN: addiadd with length 6 at 8 with value -1280
+PATTERN: addiadd with length 6 at 4 with value 722
+PATTERN: addiadd with length 6 at 4 with value 704
+PATTERN: addiadd with length 6 at 7 with value -1714
+PATTERN: addiadd with length 6 at 3 with value 1537
+PATTERN: addiadd with length 6 at 3 with value 1281
+PATTERN: addiadd with length 6 at 3 with value 1025
+PATTERN: addiadd with length 6 at 3 with value 769
+PATTERN: addiadd with length 6 at 3 with value 513
+PATTERN: addiadd with length 6 at 3 with value 257
+PATTERN: addiadd with length 6 at 3 with value -255
+PATTERN: addiadd with length 6 at 3 with value -511
+PATTERN: addiadd with length 6 at 3 with value -767
+PATTERN: addiadd with length 6 at 3 with value -1023
+PATTERN: addiadd with length 6 at 3 with value -1279
+PATTERN: addiadd with length 6 at 3 with value -1535
+PATTERN: addiadd with length 6 at 3 with value -1791
+PATTERN: addiadd with length 6 at 3 with value -2047
+PATTERN: addiadd with length 6 at 3 with value 1793
+PATTERN: addiadd with length 6 at 6 with value 32
+PATTERN: addiadd with length 6 at 12 with value 1060
+PATTERN: addiadd with length 6 at 9 with value 72
+PATTERN: addiadd with length 8 at 27 with value 40
+PATTERN: addiadd with length 6 at 2 with value 1344
+PATTERN: addiadd with length 6 at 4 with value 1204
+
+Instruction count: 3964 (11816 bytes, avg 2.98 bytes/insn)
+
+             addiadd       26 12bit=0.6559% 9bit=0.1009% avgbytes=6.15
+
+Values for addiadd patterns:
+                1793        1
+                1537        1
+                1344        1
+                1281        1
+                1204        1
+                1060        1
+                1025        1
+                 769        1
+                 722        1
+                 704        1
+                 513        1
+                 257        1
+                  72        1
+                  40        1
+                  32        1
+                   1        1
+                -255        1
+                -511        1
+                -767        1
+               -1023        1
+               -1279        1
+               -1280        1
+               -1535        1
+               -1714        1
+               -1791        1
+               -2047        1
+

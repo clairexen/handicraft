@@ -1,0 +1,105 @@
+PATTERN: addiadd with length 6 at 5 with value 334
+PATTERN: addiadd with length 6 at 2 with value 81
+PATTERN: addiadd with length 6 at 3 with value 0
+PATTERN: addiadd with length 6 at 5 with value 226
+PATTERN: addiadd with length 6 at 2 with value 1332
+PATTERN: addiadd with length 6 at 17 with value -1936
+PATTERN: addiadd with length 6 at 17 with value 16
+PATTERN: addiadd with length 6 at 21 with value -1928
+PATTERN: addiadd with length 6 at 24 with value -1920
+PATTERN: addiadd with length 6 at 29 with value -2000
+PATTERN: addiadd with length 6 at 30 with value -1912
+PATTERN: addiadd with length 6 at 34 with value -2008
+PATTERN: addiadd with length 6 at 5 with value -2000
+PATTERN: addiadd with length 6 at 7 with value -1936
+PATTERN: addiadd with length 8 at 8 with value 2040
+PATTERN: addiadd with length 6 at 3 with value -2000
+PATTERN: addiadd with length 6 at 5 with value 2016
+PATTERN: addiadd with length 6 at 7 with value -2000
+PATTERN: addiadd with length 6 at 9 with value 2032
+PATTERN: addiadd with length 6 at 11 with value -2000
+PATTERN: addiadd with length 6 at 13 with value 2024
+PATTERN: addiadd with length 6 at 1 with value -2000
+PATTERN: addiadd with length 6 at 1 with value -2000
+PATTERN: addiadd with length 6 at 2 with value -2008
+PATTERN: addiadd with length 6 at 3 with value -2000
+PATTERN: addiadd with length 6 at 4 with value 2040
+PATTERN: addiadd with length 6 at 2 with value -2000
+PATTERN: addiadd with length 6 at 12 with value -1952
+PATTERN: addiadd with length 6 at 12 with value -2032
+PATTERN: addiadd with length 6 at 16 with value -1944
+PATTERN: addiadd with length 6 at 19 with value -1936
+PATTERN: addiadd with length 6 at 22 with value -1928
+PATTERN: addiadd with length 6 at 25 with value -1920
+PATTERN: addiadd with length 6 at 30 with value -2000
+PATTERN: addiadd with length 6 at 31 with value -1912
+PATTERN: addiadd with length 6 at 35 with value -2008
+PATTERN: addiadd with length 6 at 4 with value -2000
+PATTERN: addiadd with length 8 at 5 with value -1952
+PATTERN: addiadd with length 8 at 6 with value 2040
+PATTERN: addiadd with length 6 at 3 with value -2000
+PATTERN: addiadd with length 6 at 5 with value 2016
+PATTERN: addiadd with length 6 at 7 with value -2000
+PATTERN: addiadd with length 6 at 9 with value 2032
+PATTERN: addiadd with length 6 at 11 with value -2000
+PATTERN: addiadd with length 6 at 13 with value 2024
+PATTERN: addiadd with length 6 at 1 with value -2000
+PATTERN: addiadd with length 6 at 2 with value -2000
+PATTERN: addiadd with length 6 at 3 with value 2040
+PATTERN: addiadd with length 6 at 2 with value -2008
+PATTERN: addiadd with length 6 at 3 with value -2000
+PATTERN: addiadd with length 6 at 5 with value 2040
+PATTERN: addiadd with length 6 at 13 with value 72
+PATTERN: addiadd with length 6 at 18 with value 80
+PATTERN: addiadd with length 6 at 22 with value 88
+PATTERN: addiadd with length 6 at 26 with value 96
+PATTERN: addiadd with length 6 at 29 with value 104
+PATTERN: addiadd with length 8 at 2 with value 72
+PATTERN: addiadd with length 6 at 5 with value 16
+PATTERN: addiadd with length 6 at 13 with value 2040
+PATTERN: addiadd with length 6 at 2 with value -2048
+PATTERN: addiadd with length 6 at 3 with value 16
+PATTERN: addiadd with length 6 at 5 with value -8
+PATTERN: addiadd with length 6 at 7 with value 16
+PATTERN: addiadd with length 6 at 9 with value 2040
+PATTERN: addiadd with length 6 at 5 with value 2040
+PATTERN: addiadd with length 6 at 5 with value -8
+PATTERN: addiadd with length 6 at 3 with value -8
+PATTERN: addiadd with length 8 at 2 with value 1
+PATTERN: addiadd with length 8 at 5 with value 1
+PATTERN: addiadd with length 8 at 1 with value -1
+
+Instruction count: 9111 (26938 bytes, avg 2.96 bytes/insn)
+
+             addiadd       70 12bit=0.7683% 9bit=0.1976% avgbytes=6.20
+
+Values for addiadd patterns:
+               -2000       17
+                2040        8
+                  16        4
+               -2008        4
+                  -8        3
+               -1936        3
+                2032        2
+                2024        2
+                2016        2
+                  72        2
+                   1        2
+               -1912        2
+               -1920        2
+               -1928        2
+               -1952        2
+                1332        1
+                 334        1
+                 226        1
+                 104        1
+                  96        1
+                  88        1
+                  81        1
+                  80        1
+                   0        1
+                  -1        1
+               -1944        1
+               -2032        1
+               -2048        1
+

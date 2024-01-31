@@ -1,0 +1,56 @@
+PATTERN: addiadd with length 6 at 1 with value -1
+PATTERN: addiadd with length 6 at 8 with value -1032
+PATTERN: addiadd with length 6 at 8 with value -1088
+PATTERN: addiadd with length 6 at 14 with value -1024
+PATTERN: addiadd with length 6 at 17 with value -1016
+PATTERN: addiadd with length 6 at 23 with value -1008
+PATTERN: addiadd with length 6 at 26 with value -1000
+PATTERN: addiadd with length 6 at 29 with value -992
+PATTERN: addiadd with length 6 at 33 with value -1072
+PATTERN: addiadd with length 6 at 35 with value -1072
+PATTERN: addiadd with length 6 at 36 with value -984
+PATTERN: addiadd with length 6 at 38 with value 1088
+PATTERN: addiadd with length 6 at 42 with value -1080
+PATTERN: addiadd with length 6 at 1 with value -1080
+PATTERN: addiadd with length 6 at 7 with value 178
+PATTERN: addiadd with length 6 at 19 with value 920
+PATTERN: addiadd with length 6 at 5 with value 928
+PATTERN: addiadd with length 6 at 6 with value -912
+PATTERN: addiadd with length 6 at 2 with value 920
+PATTERN: addiadd with length 6 at 3 with value 928
+PATTERN: addiadd with length 6 at 1 with value 928
+PATTERN: addiadd with length 8 at 4 with value -928
+PATTERN: addiadd with length 6 at 3 with value 928
+PATTERN: addiadd with length 6 at 3 with value 928
+PATTERN: addiadd with length 6 at 11 with value -1652
+PATTERN: addiadd with length 6 at 5 with value -1800
+PATTERN: addiadd with length 6 at 3 with value -1474
+PATTERN: addiadd with length 6 at 1 with value 24
+
+Instruction count: 3842 (12144 bytes, avg 3.16 bytes/insn)
+
+             addiadd       28 12bit=0.7288% 9bit=0.0521% avgbytes=6.07
+
+Values for addiadd patterns:
+                 928        5
+                 920        2
+               -1072        2
+               -1080        2
+                1088        1
+                 178        1
+                  24        1
+                  -1        1
+                -912        1
+                -928        1
+                -984        1
+                -992        1
+               -1000        1
+               -1008        1
+               -1016        1
+               -1024        1
+               -1032        1
+               -1088        1
+               -1474        1
+               -1652        1
+               -1800        1
+

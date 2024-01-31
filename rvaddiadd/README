@@ -1,0 +1,54 @@
+Count instrustions in riscv64 debian packages
+=============================================
+
+Usage:
+
+1. Make sure you have a working riscv64-unknown-elf-objdump in your PATH
+
+2. Disassemble base image
+
+	bash base.sh
+
+3. Create large Makefile for packages
+
+	bash packages.sh
+
+4. Download and disassemble individual packages
+
+	make -f packages.mk -k -j$(nproc)
+
+5. Analyze results
+
+	bash analyze.sh
+	make -f analyze.mk -k -j$(nproc)
+
+6. Collect results
+
+	python3 results.py results/*.txt
+
+
+Cached results from previous run
+================================
+
+Package count: 16073
+Instruction count: 1938897079
+
+Bytes/insn: MIN=2.270 MEDIAN=2.950 MEAN=2.976 STDDEV=0.177 MAX=3.990
+
+      muli   12-bit MIN=0.000% MEDIAN=0.000% MEAN=0.008% STDDEV=0.025% MAX=0.720%
+   muliadd   12-bit MIN=0.000% MEDIAN=0.000% MEAN=0.012% STDDEV=0.074% MAX=6.504%
+   addiadd   12-bit MIN=0.000% MEDIAN=0.245% MEAN=0.523% STDDEV=0.840% MAX=12.441%
+
+      muli    9-bit MIN=0.000% MEDIAN=0.000% MEAN=0.004% STDDEV=0.018% MAX=0.713%
+   muliadd    9-bit MIN=0.000% MEDIAN=0.000% MEAN=0.005% STDDEV=0.027% MAX=1.013%
+   addiadd    9-bit MIN=0.000% MEDIAN=0.109% MEAN=0.186% STDDEV=0.301% MAX=6.721%
+
+      muli    bytes MIN=6.000 MEDIAN=8.000 MEAN=7.701 STDDEV=0.582 MAX=8.000
+   muliadd    bytes MIN=8.000 MEDIAN=10.000 MEAN=10.104 STDDEV=0.836 MAX=12.000
+   addiadd    bytes MIN=6.000 MEDIAN=6.130 MEAN=6.241 STDDEV=0.374 MAX=8.000
+
+            4-bits  5-bits  6-bits  7-bits  8-bits  9-bits 10-bits 11-bits 12-bits
+      muli   8.06%  14.82%  30.46%  43.63%  62.15%  72.39%  84.64%  96.55% 100.00%
+   muliadd   1.52%   4.30%  20.33%  33.80%  51.99%  69.98%  82.68%  92.67% 100.00%
+   addiadd  10.53%  14.07%  19.49%  23.80%  29.49%  35.53%  44.69%  60.57% 100.00%
+

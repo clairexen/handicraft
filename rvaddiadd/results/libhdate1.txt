@@ -1,0 +1,98 @@
+PATTERN: addiadd with length 6 at 3 with value -2026
+PATTERN: muliadd with length 10 at 49b4 with value 74
+PATTERN: addiadd with length 6 at 14 with value 990
+PATTERN: addiadd with length 6 at 9 with value 728
+PATTERN: addiadd with length 8 at 6 with value -1
+PATTERN: addiadd with length 8 at 11 with value -2
+PATTERN: addiadd with length 6 at 11 with value 576
+PATTERN: addiadd with length 6 at 11 with value 518
+PATTERN: addiadd with length 6 at 7 with value 466
+PATTERN: addiadd with length 6 at 10 with value 412
+PATTERN: addiadd with length 6 at 3 with value 352
+PATTERN: addiadd with length 6 at 7 with value 308
+PATTERN: addiadd with length 6 at 9 with value 264
+PATTERN: addiadd with length 6 at 2 with value 352
+PATTERN: addiadd with length 6 at 23 with value 147
+PATTERN: addiadd with length 6 at 32 with value -2
+PATTERN: addiadd with length 6 at 10 with value -38
+PATTERN: addiadd with length 6 at 15 with value 578
+PATTERN: muliadd with length 10 at 4fb6 with value 365
+PATTERN: addiadd with length 6 at 6 with value 704
+PATTERN: addiadd with length 6 at 37 with value 723
+PATTERN: addiadd with length 6 at 2 with value -1106
+PATTERN: addiadd with length 6 at 1 with value -1105
+PATTERN: addiadd with length 8 at 3 with value 148
+PATTERN: muli with length 8 at 512c with value 1461
+PATTERN: muliadd with length 12 at 518a with value 100
+PATTERN: addiadd with length 6 at 2 with value -1063
+PATTERN: addiadd with length 6 at 45 with value 2
+PATTERN: addiadd with length 6 at 3 with value -336
+PATTERN: addiadd with length 8 at 1 with value -1105
+PATTERN: addiadd with length 6 at 7 with value -1102
+PATTERN: addiadd with length 6 at 4 with value -1832
+PATTERN: muliadd with length 10 at 59f6 with value 392
+PATTERN: addiadd with length 6 at 10 with value -338
+PATTERN: muliadd with length 10 at 5a12 with value 392
+PATTERN: muliadd with length 10 at 5a44 with value 392
+PATTERN: muliadd with length 10 at 5a6a with value 392
+PATTERN: muliadd with length 10 at 5a92 with value 392
+PATTERN: muliadd with length 10 at 5aba with value 392
+PATTERN: muliadd with length 10 at 5b32 with value 392
+PATTERN: addiadd with length 6 at 7 with value -704
+PATTERN: muli with length 8 at 5c1e with value 367
+PATTERN: muli with length 8 at 5c5a with value 1461
+PATTERN: muli with length 8 at 5c5e with value 1461
+PATTERN: addiadd with length 6 at 6 with value 804
+PATTERN: addiadd with length 6 at 10 with value 803
+PATTERN: addiadd with length 6 at 12 with value 704
+PATTERN: addiadd with length 8 at 15 with value 703
+PATTERN: addiadd with length 8 at 20 with value -2
+
+Instruction count: 2322 (6870 bytes, avg 2.96 bytes/insn)
+
+             addiadd       35 12bit=1.5073% 9bit=0.2584% avgbytes=6.34
+             muliadd       10 12bit=0.4307% 9bit=0.0861% avgbytes=10.20
+                muli        4 12bit=0.1723% 9bit=0.0000% avgbytes=8.00
+
+Values for addiadd patterns:
+                  -2        3
+                 704        2
+                 352        2
+               -1105        2
+                 990        1
+                 804        1
+                 803        1
+                 728        1
+                 723        1
+                 703        1
+                 578        1
+                 576        1
+                 518        1
+                 466        1
+                 412        1
+                 308        1
+                 264        1
+                 148        1
+                 147        1
+                   2        1
+                  -1        1
+                 -38        1
+                -336        1
+                -338        1
+                -704        1
+               -1063        1
+               -1102        1
+               -1106        1
+               -1832        1
+               -2026        1
+
+Values for muliadd patterns:
+                 392        7
+                 365        1
+                 100        1
+                  74        1
+
+Values for muli patterns:
+                1461        3
+                 367        1
+

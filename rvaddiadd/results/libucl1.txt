@@ -1,0 +1,53 @@
+PATTERN: addiadd with length 6 at 2 with value 1
+PATTERN: addiadd with length 6 at 5 with value 1192
+PATTERN: addiadd with length 6 at 10 with value 0
+PATTERN: addiadd with length 8 at 3 with value 1
+PATTERN: addiadd with length 8 at 3 with value 1
+PATTERN: addiadd with length 8 at 3 with value 1
+PATTERN: addiadd with length 8 at 2 with value 1
+PATTERN: addiadd with length 6 at 2 with value 1
+PATTERN: addiadd with length 8 at 2 with value 1
+PATTERN: addiadd with length 6 at 2 with value 1
+PATTERN: addiadd with length 6 at 5 with value 1916
+PATTERN: addiadd with length 6 at 10 with value 0
+PATTERN: addiadd with length 8 at 4 with value 0
+PATTERN: addiadd with length 8 at 4 with value 0
+PATTERN: addiadd with length 8 at 4 with value 0
+PATTERN: addiadd with length 8 at 4 with value 0
+PATTERN: addiadd with length 8 at 7 with value 0
+PATTERN: addiadd with length 8 at 7 with value 0
+PATTERN: addiadd with length 8 at 7 with value 0
+PATTERN: addiadd with length 8 at 7 with value 0
+PATTERN: addiadd with length 8 at 7 with value 0
+PATTERN: addiadd with length 8 at 7 with value 0
+PATTERN: addiadd with length 6 at 2 with value 1
+PATTERN: addiadd with length 6 at 5 with value 1564
+PATTERN: addiadd with length 6 at 10 with value 0
+PATTERN: addiadd with length 8 at 4 with value 0
+PATTERN: addiadd with length 8 at 4 with value 0
+PATTERN: addiadd with length 8 at 4 with value 0
+PATTERN: addiadd with length 8 at 4 with value 0
+PATTERN: addiadd with length 8 at 7 with value 0
+PATTERN: addiadd with length 8 at 3 with value 1
+PATTERN: addiadd with length 8 at 7 with value 0
+PATTERN: addiadd with length 8 at 3 with value 1
+PATTERN: addiadd with length 8 at 7 with value 0
+PATTERN: addiadd with length 8 at 3 with value 1
+PATTERN: addiadd with length 8 at 7 with value 0
+PATTERN: addiadd with length 8 at 2 with value 1
+PATTERN: addiadd with length 8 at 7 with value 0
+PATTERN: addiadd with length 8 at 2 with value 1
+PATTERN: addiadd with length 8 at 7 with value 0
+PATTERN: addiadd with length 6 at 1 with value 1
+
+Instruction count: 13496 (41048 bytes, avg 3.04 bytes/insn)
+
+             addiadd       41 12bit=0.3038% 9bit=0.2816% avgbytes=7.46
+
+Values for addiadd patterns:
+                   0       23
+                   1       15
+                1916        1
+                1564        1
+                1192        1
+

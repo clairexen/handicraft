@@ -1,0 +1,10 @@
+PATTERN: muliadd with length 10 at 2480 with value 104
+PATTERN: muliadd with length 10 at 25fa with value 104
+
+Instruction count: 2355 (6834 bytes, avg 2.90 bytes/insn)
+
+             muliadd        2 12bit=0.0849% 9bit=0.0849% avgbytes=10.00
+
+Values for muliadd patterns:
+                 104        2
+

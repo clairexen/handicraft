@@ -1,0 +1,94 @@
+PATTERN: addiadd with length 6 at 23 with value 136
+PATTERN: addiadd with length 6 at 5 with value 144
+PATTERN: addiadd with length 6 at 6 with value -8
+PATTERN: addiadd with length 6 at 10 with value 144
+PATTERN: addiadd with length 6 at 11 with value 144
+PATTERN: addiadd with length 6 at 13 with value -136
+PATTERN: addiadd with length 6 at 4 with value 8
+PATTERN: addiadd with length 6 at 10 with value 144
+PATTERN: addiadd with length 6 at 18 with value 144
+PATTERN: addiadd with length 6 at 20 with value 144
+PATTERN: addiadd with length 6 at 1 with value 2
+PATTERN: addiadd with length 6 at 1 with value 6
+PATTERN: addiadd with length 6 at 4 with value 144
+PATTERN: addiadd with length 6 at 3 with value 136
+PATTERN: addiadd with length 8 at 6 with value -48
+PATTERN: addiadd with length 6 at 3 with value 32
+PATTERN: addiadd with length 6 at 4 with value 32
+PATTERN: addiadd with length 6 at 6 with value -24
+PATTERN: addiadd with length 6 at 9 with value 32
+PATTERN: addiadd with length 6 at 10 with value -32
+PATTERN: addiadd with length 6 at 3 with value 32
+PATTERN: addiadd with length 6 at 4 with value 32
+PATTERN: addiadd with length 6 at 4 with value 32
+PATTERN: addiadd with length 6 at 10 with value 32
+PATTERN: addiadd with length 6 at 11 with value 32
+PATTERN: addiadd with length 6 at 12 with value -24
+PATTERN: addiadd with length 6 at 13 with value -8
+PATTERN: addiadd with length 6 at 3 with value 32
+PATTERN: addiadd with length 6 at 4 with value 32
+PATTERN: addiadd with length 6 at 2 with value 23
+PATTERN: addiadd with length 6 at 3 with value 32
+PATTERN: addiadd with length 6 at 4 with value 32
+PATTERN: addiadd with length 6 at 9 with value 32
+PATTERN: addiadd with length 6 at 10 with value -16
+PATTERN: addiadd with length 6 at 5 with value 32
+PATTERN: addiadd with length 6 at 8 with value -8
+PATTERN: addiadd with length 6 at 9 with value 32
+PATTERN: addiadd with length 6 at 11 with value -24
+PATTERN: addiadd with length 6 at 5 with value 32
+PATTERN: addiadd with length 6 at 4 with value 32
+PATTERN: addiadd with length 6 at 4 with value 32
+PATTERN: addiadd with length 6 at 5 with value 32
+PATTERN: addiadd with length 6 at 5 with value 32
+PATTERN: addiadd with length 6 at 4 with value 32
+PATTERN: addiadd with length 6 at 15 with value 1936
+PATTERN: addiadd with length 6 at 10 with value 1736
+PATTERN: addiadd with length 6 at 7 with value 1646
+PATTERN: addiadd with length 6 at 8 with value -960
+PATTERN: muliadd with length 8 at 1ad0 with value 24
+PATTERN: addiadd with length 6 at 11 with value -1864
+PATTERN: muliadd with length 8 at 1dc0 with value 24
+PATTERN: addiadd with length 6 at 9 with value 1486
+PATTERN: muliadd with length 8 at 1dec with value 24
+PATTERN: addiadd with length 6 at 12 with value 1446
+PATTERN: muliadd with length 8 at 1e66 with value 24
+PATTERN: addiadd with length 6 at 12 with value 1324
+PATTERN: addiadd with length 6 at 4 with value -1614
+PATTERN: addiadd with length 6 at 5 with value -1420
+PATTERN: addiadd with length 6 at 3 with value -1716
+
+Instruction count: 8399 (25250 bytes, avg 3.01 bytes/insn)
+
+             addiadd       55 12bit=0.6548% 9bit=0.4048% avgbytes=6.04
+             muliadd        4 12bit=0.0476% 9bit=0.0476% avgbytes=8.00
+
+Values for addiadd patterns:
+                  32       21
+                 144        7
+                  -8        3
+                 -24        3
+                 136        2
+                1936        1
+                1736        1
+                1646        1
+                1486        1
+                1446        1
+                1324        1
+                  23        1
+                   8        1
+                   6        1
+                   2        1
+                 -16        1
+                 -32        1
+                 -48        1
+                -136        1
+                -960        1
+               -1420        1
+               -1614        1
+               -1716        1
+               -1864        1
+
+Values for muliadd patterns:
+                  24        4
+

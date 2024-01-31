@@ -1,0 +1,62 @@
+PATTERN: muli with length 8 at 8e08 with value 200
+PATTERN: addiadd with length 6 at 8 with value 1
+PATTERN: addiadd with length 6 at 10 with value 1
+PATTERN: addiadd with length 8 at 1 with value 1
+PATTERN: addiadd with length 8 at 1 with value 1
+PATTERN: addiadd with length 8 at 1 with value 1
+PATTERN: addiadd with length 8 at 1 with value 1
+PATTERN: addiadd with length 8 at 1 with value 1
+PATTERN: addiadd with length 6 at 1 with value -1
+PATTERN: addiadd with length 8 at 6 with value -8
+PATTERN: addiadd with length 6 at 4 with value 1
+PATTERN: addiadd with length 6 at 1 with value 1
+PATTERN: addiadd with length 6 at 4 with value 1
+PATTERN: addiadd with length 6 at 1 with value 1
+PATTERN: addiadd with length 6 at 5 with value 1
+PATTERN: addiadd with length 6 at 7 with value 1
+PATTERN: addiadd with length 6 at 5 with value 1
+PATTERN: addiadd with length 6 at 8 with value 1
+PATTERN: addiadd with length 6 at 6 with value -1024
+PATTERN: addiadd with length 6 at 4 with value -1
+PATTERN: addiadd with length 6 at 9 with value -1
+PATTERN: addiadd with length 6 at 9 with value -1
+PATTERN: addiadd with length 6 at 11 with value -1
+PATTERN: addiadd with length 8 at 1 with value 56
+PATTERN: muli with length 6 at 1234c with value 3
+PATTERN: addiadd with length 6 at 4 with value -3
+PATTERN: addiadd with length 8 at 13 with value 8
+PATTERN: addiadd with length 8 at 14 with value 16
+PATTERN: addiadd with length 8 at 3 with value -3
+PATTERN: addiadd with length 6 at 5 with value 4
+PATTERN: addiadd with length 6 at 8 with value 8
+PATTERN: addiadd with length 6 at 1 with value -8
+PATTERN: addiadd with length 6 at 3 with value -4
+PATTERN: addiadd with length 6 at 2 with value 8
+PATTERN: addiadd with length 6 at 4 with value 4
+PATTERN: addiadd with length 6 at 7 with value -8
+PATTERN: addiadd with length 6 at 6 with value -4
+PATTERN: addiadd with length 8 at 5 with value 16
+PATTERN: addiadd with length 8 at 2 with value 8
+PATTERN: addiadd with length 6 at 4 with value 8
+
+Instruction count: 25142 (75620 bytes, avg 3.01 bytes/insn)
+
+             addiadd       38 12bit=0.1511% 9bit=0.1472% avgbytes=6.63
+                muli        2 12bit=0.0080% 9bit=0.0040% avgbytes=7.00
+
+Values for addiadd patterns:
+                   1       15
+                   8        5
+                  -1        5
+                  -8        3
+                  16        2
+                   4        2
+                  -3        2
+                  -4        2
+                  56        1
+               -1024        1
+
+Values for muli patterns:
+                 200        1
+                   3        1
+

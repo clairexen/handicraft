@@ -1,0 +1,52 @@
+PATTERN: addiadd with length 6 at 3 with value -1114
+PATTERN: addiadd with length 6 at 3 with value 920
+PATTERN: addiadd with length 6 at 3 with value 1578
+PATTERN: addiadd with length 6 at 3 with value 1854
+PATTERN: addiadd with length 6 at 3 with value -94
+PATTERN: addiadd with length 6 at 3 with value -1508
+PATTERN: addiadd with length 6 at 3 with value 28
+PATTERN: addiadd with length 6 at 3 with value 1398
+PATTERN: addiadd with length 6 at 3 with value -782
+PATTERN: addiadd with length 6 at 3 with value -282
+PATTERN: addiadd with length 6 at 3 with value 818
+PATTERN: addiadd with length 6 at 3 with value -274
+PATTERN: addiadd with length 6 at 3 with value 876
+PATTERN: addiadd with length 6 at 3 with value -532
+PATTERN: addiadd with length 6 at 3 with value 1358
+PATTERN: addiadd with length 6 at 3 with value 1994
+PATTERN: addiadd with length 6 at 3 with value 1358
+PATTERN: addiadd with length 6 at 3 with value 4
+PATTERN: addiadd with length 6 at 9 with value -1922
+PATTERN: addiadd with length 6 at 10 with value -1018
+PATTERN: addiadd with length 6 at 7 with value 1644
+PATTERN: addiadd with length 6 at 3 with value 1494
+PATTERN: addiadd with length 6 at 3 with value 1736
+
+Instruction count: 181647 (560318 bytes, avg 3.08 bytes/insn)
+
+             addiadd       23 12bit=0.0127% 9bit=0.0017% avgbytes=6.00
+
+Values for addiadd patterns:
+                1358        2
+                1994        1
+                1854        1
+                1736        1
+                1644        1
+                1578        1
+                1494        1
+                1398        1
+                 920        1
+                 876        1
+                 818        1
+                  28        1
+                   4        1
+                 -94        1
+                -274        1
+                -282        1
+                -532        1
+                -782        1
+               -1018        1
+               -1114        1
+               -1508        1
+               -1922        1
+

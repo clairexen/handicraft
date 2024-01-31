@@ -1,0 +1,44 @@
+[*]
+[*] GTKWave Analyzer v3.3.105 (w)1999-2020 BSI
+[*] Fri Jun 19 13:14:55 2020
+[*]
+[dumpfile] "/home/claire/Work/handicraft/2020/prv32fmcmp/prv32fmcmp/engine_0/trace.vcd"
+[dumpfile_mtime] "Fri Jun 19 12:49:50 2020"
+[dumpfile_size] 90146
+[savefile] "/home/claire/Work/handicraft/2020/prv32fmcmp/prv32fmcmp.gtkw"
+[timestart] 0
+[size] 1669 964
+[pos] 712 26
+*-5.222869 73 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
+[sst_width] 223
+[signals_width] 206
+[sst_expanded] 1
+[sst_vpaned_height] 278
+@28
+prv32fmcmp.clock
+@29
+prv32fmcmp.resetn
+@200
+-
+-prv32_a
+@28
+prv32fmcmp.mem_valid_a
+prv32fmcmp.mem_ready_b
+@22
+prv32fmcmp.mem_addr_a[31:0]
+prv32fmcmp.mem_rdata_a[31:0]
+@24
+prv32fmcmp.mem_access_cnt_a[31:0]
+@200
+-
+-prv32_b
+@28
+prv32fmcmp.mem_valid_b
+prv32fmcmp.mem_ready_b
+@22
+prv32fmcmp.mem_addr_b[31:0]
+prv32fmcmp.mem_rdata_b[31:0]
+@24
+prv32fmcmp.mem_access_cnt_b[31:0]
+[pattern_trace] 1
+[pattern_trace] 0

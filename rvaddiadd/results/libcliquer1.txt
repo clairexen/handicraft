@@ -1,0 +1,55 @@
+PATTERN: addiadd with length 8 at 10 with value 4
+PATTERN: addiadd with length 8 at 4 with value -8
+PATTERN: addiadd with length 8 at 6 with value -4
+PATTERN: addiadd with length 8 at 6 with value 4
+PATTERN: addiadd with length 8 at 4 with value 8
+PATTERN: addiadd with length 8 at 4 with value 8
+PATTERN: addiadd with length 8 at 5 with value -1
+PATTERN: addiadd with length 8 at 4 with value 8
+PATTERN: addiadd with length 8 at 5 with value -1
+PATTERN: addiadd with length 8 at 4 with value 8
+PATTERN: addiadd with length 8 at 3 with value 526
+PATTERN: addiadd with length 8 at 12 with value 8
+PATTERN: addiadd with length 8 at 9 with value 8
+PATTERN: addiadd with length 8 at 2 with value 0
+PATTERN: addiadd with length 8 at 6 with value 8
+PATTERN: addiadd with length 8 at 5 with value 8
+PATTERN: addiadd with length 8 at 16 with value -2024
+PATTERN: addiadd with length 8 at 4 with value -2016
+PATTERN: addiadd with length 8 at 5 with value 2040
+PATTERN: addiadd with length 8 at 3 with value -2016
+PATTERN: addiadd with length 8 at 4 with value -2016
+PATTERN: addiadd with length 6 at 7 with value 2024
+PATTERN: addiadd with length 6 at 8 with value 2016
+PATTERN: addiadd with length 8 at 2 with value -2024
+PATTERN: addiadd with length 8 at 4 with value -2016
+PATTERN: addiadd with length 8 at 5 with value -2016
+PATTERN: addiadd with length 8 at 8 with value 2020
+PATTERN: addiadd with length 6 at 5 with value 16
+PATTERN: addiadd with length 8 at 4 with value 4
+PATTERN: addiadd with length 8 at 7 with value 4
+PATTERN: addiadd with length 6 at 2 with value 4
+PATTERN: addiadd with length 8 at 7 with value 4
+PATTERN: addiadd with length 8 at 7 with value -4
+PATTERN: addiadd with length 8 at 4 with value 4
+
+Instruction count: 12736 (42666 bytes, avg 3.35 bytes/insn)
+
+             addiadd       34 12bit=0.2670% 9bit=0.1727% avgbytes=7.76
+
+Values for addiadd patterns:
+                   8        8
+                   4        7
+               -2016        5
+                  -1        2
+                  -4        2
+               -2024        2
+                2040        1
+                2024        1
+                2020        1
+                2016        1
+                 526        1
+                  16        1
+                   0        1
+                  -8        1
+

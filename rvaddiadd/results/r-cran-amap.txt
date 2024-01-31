@@ -1,0 +1,51 @@
+PATTERN: addiadd with length 6 at 3 with value -1628
+PATTERN: addiadd with length 6 at 7 with value 8
+PATTERN: addiadd with length 6 at 5 with value 8
+PATTERN: addiadd with length 6 at 5 with value 8
+PATTERN: addiadd with length 6 at 4 with value 8
+PATTERN: addiadd with length 6 at 6 with value -1
+PATTERN: addiadd with length 6 at 26 with value 8
+PATTERN: addiadd with length 6 at 2 with value 1
+PATTERN: addiadd with length 6 at 4 with value -108
+PATTERN: addiadd with length 6 at 4 with value 192
+PATTERN: addiadd with length 6 at 29 with value 1992
+PATTERN: addiadd with length 6 at 3 with value 1852
+PATTERN: addiadd with length 6 at 6 with value -730
+PATTERN: addiadd with length 6 at 3 with value -882
+PATTERN: addiadd with length 6 at 6 with value 4
+PATTERN: addiadd with length 6 at 3 with value 590
+PATTERN: addiadd with length 6 at 10 with value -1
+PATTERN: addiadd with length 8 at 11 with value 1
+PATTERN: addiadd with length 8 at 8 with value -2
+PATTERN: addiadd with length 6 at 1 with value -1
+PATTERN: addiadd with length 8 at 8 with value -2
+PATTERN: addiadd with length 6 at 1 with value -1
+PATTERN: addiadd with length 6 at 10 with value -1
+PATTERN: addiadd with length 6 at 17 with value -1
+PATTERN: addiadd with length 8 at 8 with value 0
+PATTERN: addiadd with length 6 at 2 with value -2
+PATTERN: addiadd with length 6 at 2 with value 0
+PATTERN: addiadd with length 8 at 4 with value -1
+PATTERN: addiadd with length 8 at 4 with value -1
+PATTERN: addiadd with length 6 at 1 with value 0
+
+Instruction count: 11181 (31750 bytes, avg 2.84 bytes/insn)
+
+             addiadd       30 12bit=0.2683% 9bit=0.2057% avgbytes=6.40
+
+Values for addiadd patterns:
+                  -1        8
+                   8        5
+                   0        3
+                  -2        3
+                   1        2
+                1992        1
+                1852        1
+                 590        1
+                 192        1
+                   4        1
+                -108        1
+                -730        1
+                -882        1
+               -1628        1
+

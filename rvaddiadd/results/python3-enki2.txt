@@ -1,0 +1,49 @@
+PATTERN: muli with length 6 at 65c1a with value 24
+PATTERN: addiadd with length 6 at 4 with value 128
+PATTERN: addiadd with length 6 at 6 with value 472
+PATTERN: addiadd with length 6 at 6 with value 472
+PATTERN: addiadd with length 6 at 6 with value -1016
+PATTERN: addiadd with length 6 at 6 with value -1016
+PATTERN: addiadd with length 6 at 6 with value 472
+PATTERN: addiadd with length 6 at 6 with value 472
+PATTERN: addiadd with length 6 at 6 with value 472
+PATTERN: addiadd with length 6 at 6 with value -1016
+PATTERN: addiadd with length 6 at 6 with value -1016
+PATTERN: addiadd with length 6 at 6 with value -1016
+PATTERN: addiadd with length 6 at 6 with value -1016
+PATTERN: addiadd with length 6 at 6 with value 472
+PATTERN: addiadd with length 6 at 5 with value -1016
+PATTERN: addiadd with length 6 at 5 with value 16
+PATTERN: addiadd with length 6 at 7 with value 464
+PATTERN: addiadd with length 6 at 7 with value 464
+PATTERN: addiadd with length 6 at 7 with value -1024
+PATTERN: addiadd with length 6 at 7 with value -1024
+PATTERN: addiadd with length 6 at 1 with value 32
+PATTERN: muli with length 6 at 7a1cc with value 24
+PATTERN: addiadd with length 6 at 3 with value 8
+PATTERN: addiadd with length 6 at 4 with value 32
+PATTERN: addiadd with length 6 at 4 with value 24
+PATTERN: addiadd with length 6 at 4 with value 280
+PATTERN: addiadd with length 6 at 1 with value 16
+PATTERN: addiadd with length 6 at 8 with value 8
+
+Instruction count: 62106 (180500 bytes, avg 2.91 bytes/insn)
+
+             addiadd       26 12bit=0.0419% 9bit=0.0113% avgbytes=6.00
+                muli        2 12bit=0.0032% 9bit=0.0032% avgbytes=6.00
+
+Values for addiadd patterns:
+               -1016        7
+                 472        6
+                 464        2
+                  32        2
+                  16        2
+                   8        2
+               -1024        2
+                 280        1
+                 128        1
+                  24        1
+
+Values for muli patterns:
+                  24        2
+

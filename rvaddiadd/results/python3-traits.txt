@@ -1,0 +1,53 @@
+PATTERN: addiadd with length 6 at 6 with value -1086
+PATTERN: addiadd with length 6 at 3 with value 774
+PATTERN: addiadd with length 6 at 11 with value 1630
+PATTERN: addiadd with length 6 at 3 with value 1192
+PATTERN: addiadd with length 6 at 3 with value -204
+PATTERN: addiadd with length 6 at 3 with value -720
+PATTERN: addiadd with length 6 at 7 with value 8
+PATTERN: addiadd with length 6 at 8 with value 8
+PATTERN: addiadd with length 8 at 9 with value 8
+PATTERN: addiadd with length 6 at 14 with value 890
+PATTERN: addiadd with length 6 at 5 with value 1080
+PATTERN: addiadd with length 6 at 7 with value 8
+PATTERN: addiadd with length 6 at 4 with value 32
+PATTERN: addiadd with length 6 at 10 with value 8
+PATTERN: addiadd with length 6 at 6 with value -1414
+PATTERN: addiadd with length 6 at 5 with value 394
+PATTERN: addiadd with length 6 at 3 with value -1560
+PATTERN: addiadd with length 6 at 11 with value -696
+PATTERN: addiadd with length 6 at 14 with value -970
+PATTERN: addiadd with length 6 at 3 with value -1580
+PATTERN: addiadd with length 6 at 3 with value -46
+PATTERN: addiadd with length 6 at 3 with value -610
+PATTERN: addiadd with length 6 at 7 with value 8
+PATTERN: addiadd with length 6 at 8 with value 8
+PATTERN: addiadd with length 8 at 9 with value 8
+PATTERN: addiadd with length 6 at 7 with value 8
+PATTERN: addiadd with length 6 at 4 with value 32
+PATTERN: addiadd with length 6 at 10 with value 8
+
+Instruction count: 17204 (44966 bytes, avg 2.61 bytes/insn)
+
+             addiadd       28 12bit=0.1628% 9bit=0.0756% avgbytes=6.14
+
+Values for addiadd patterns:
+                   8       10
+                  32        2
+                1630        1
+                1192        1
+                1080        1
+                 890        1
+                 774        1
+                 394        1
+                 -46        1
+                -204        1
+                -610        1
+                -696        1
+                -720        1
+                -970        1
+               -1086        1
+               -1414        1
+               -1560        1
+               -1580        1
+

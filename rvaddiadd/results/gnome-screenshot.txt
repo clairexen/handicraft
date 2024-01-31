@@ -1,0 +1,15 @@
+PATTERN: muli with length 8 at 75b0 with value 1000
+PATTERN: addiadd with length 8 at 1 with value 0
+PATTERN: addiadd with length 6 at 1 with value 0
+
+Instruction count: 6745 (20200 bytes, avg 2.99 bytes/insn)
+
+             addiadd        2 12bit=0.0297% 9bit=0.0297% avgbytes=7.00
+                muli        1 12bit=0.0148% 9bit=0.0000% avgbytes=8.00
+
+Values for addiadd patterns:
+                   0        2
+
+Values for muli patterns:
+                1000        1
+

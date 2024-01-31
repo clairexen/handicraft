@@ -1,0 +1,114 @@
+PATTERN: addiadd with length 6 at 6 with value 1144
+PATTERN: addiadd with length 6 at 33 with value 219
+PATTERN: addiadd with length 6 at 73 with value 1578
+PATTERN: addiadd with length 6 at 87 with value 1555
+PATTERN: addiadd with length 6 at 113 with value -1832
+PATTERN: addiadd with length 6 at 140 with value -1103
+PATTERN: addiadd with length 6 at 167 with value 290
+PATTERN: addiadd with length 6 at 194 with value 910
+PATTERN: addiadd with length 6 at 208 with value -2015
+PATTERN: addiadd with length 6 at 221 with value 1378
+PATTERN: addiadd with length 6 at 246 with value -1455
+PATTERN: addiadd with length 6 at 259 with value 1962
+PATTERN: addiadd with length 6 at 283 with value 1107
+PATTERN: addiadd with length 6 at 296 with value 1665
+PATTERN: addiadd with length 6 at 309 with value -1080
+PATTERN: addiadd with length 6 at 321 with value -538
+PATTERN: addiadd with length 6 at 334 with value 2006
+PATTERN: addiadd with length 6 at 358 with value 1261
+PATTERN: addiadd with length 6 at 383 with value 1016
+PATTERN: addiadd with length 6 at 395 with value 729
+PATTERN: addiadd with length 6 at 419 with value -1726
+PATTERN: addiadd with length 6 at 441 with value 290
+PATTERN: addiadd with length 6 at 452 with value -2036
+PATTERN: addiadd with length 6 at 476 with value -87
+PATTERN: addiadd with length 6 at 499 with value -912
+PATTERN: addiadd with length 6 at 510 with value -314
+PATTERN: addiadd with length 6 at 522 with value 2042
+PATTERN: addiadd with length 6 at 544 with value -763
+PATTERN: addiadd with length 6 at 567 with value -1563
+PATTERN: addiadd with length 6 at 578 with value -776
+PATTERN: addiadd with length 6 at 603 with value 580
+PATTERN: addiadd with length 6 at 615 with value -105
+PATTERN: addiadd with length 6 at 628 with value 935
+PATTERN: addiadd with length 6 at 641 with value 57
+PATTERN: addiadd with length 6 at 652 with value -1597
+PATTERN: addiadd with length 6 at 690 with value -559
+PATTERN: addiadd with length 6 at 702 with value -433
+PATTERN: addiadd with length 6 at 715 with value 1760
+PATTERN: addiadd with length 6 at 728 with value 788
+PATTERN: addiadd with length 6 at 740 with value 417
+PATTERN: addiadd with length 6 at 753 with value -382
+PATTERN: addiadd with length 6 at 777 with value 699
+PATTERN: addiadd with length 8 at 30 with value 48
+PATTERN: addiadd with length 6 at 3 with value 1
+PATTERN: addiadd with length 8 at 1 with value -64
+PATTERN: addiadd with length 6 at 10 with value -8
+PATTERN: addiadd with length 6 at 10 with value -8
+PATTERN: addiadd with length 6 at 10 with value -8
+PATTERN: addiadd with length 6 at 10 with value -8
+PATTERN: addiadd with length 6 at 10 with value -8
+PATTERN: addiadd with length 6 at 10 with value -8
+PATTERN: addiadd with length 6 at 10 with value -8
+PATTERN: addiadd with length 6 at 10 with value -8
+PATTERN: addiadd with length 6 at 10 with value -8
+PATTERN: addiadd with length 6 at 10 with value -8
+PATTERN: addiadd with length 6 at 10 with value -8
+PATTERN: addiadd with length 6 at 10 with value -8
+PATTERN: addiadd with length 6 at 10 with value -8
+PATTERN: addiadd with length 6 at 10 with value -8
+PATTERN: addiadd with length 6 at 10 with value -8
+PATTERN: addiadd with length 6 at 9 with value -8
+PATTERN: addiadd with length 6 at 9 with value -8
+
+Instruction count: 5470 (16294 bytes, avg 2.98 bytes/insn)
+
+             addiadd       62 12bit=1.1335% 9bit=0.4205% avgbytes=6.06
+
+Values for addiadd patterns:
+                  -8       17
+                 290        2
+                2042        1
+                2006        1
+                1962        1
+                1760        1
+                1665        1
+                1578        1
+                1555        1
+                1378        1
+                1261        1
+                1144        1
+                1107        1
+                1016        1
+                 935        1
+                 910        1
+                 788        1
+                 729        1
+                 699        1
+                 580        1
+                 417        1
+                 219        1
+                  57        1
+                  48        1
+                   1        1
+                 -64        1
+                 -87        1
+                -105        1
+                -314        1
+                -382        1
+                -433        1
+                -538        1
+                -559        1
+                -763        1
+                -776        1
+                -912        1
+               -1080        1
+               -1103        1
+               -1455        1
+               -1563        1
+               -1597        1
+               -1726        1
+               -1832        1
+               -2015        1
+               -2036        1
+

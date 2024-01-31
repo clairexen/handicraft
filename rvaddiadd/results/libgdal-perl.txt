@@ -1,0 +1,86 @@
+PATTERN: addiadd with length 6 at 5 with value -1094
+PATTERN: addiadd with length 6 at 3 with value -1184
+PATTERN: muliadd with length 10 at 144f6 with value 104
+PATTERN: muliadd with length 10 at 15ee4 with value 104
+PATTERN: muliadd with length 10 at 17bea with value 104
+PATTERN: muliadd with length 10 at 196ac with value 104
+PATTERN: muliadd with length 10 at 1b022 with value 104
+PATTERN: muliadd with length 10 at 1f78a with value 104
+PATTERN: muliadd with length 10 at 1fd72 with value 104
+PATTERN: muliadd with length 10 at 20004 with value 104
+PATTERN: muliadd with length 10 at 2253a with value 104
+PATTERN: muliadd with length 10 at 26212 with value 104
+PATTERN: muliadd with length 10 at 26e02 with value 104
+PATTERN: muliadd with length 10 at 27094 with value 104
+PATTERN: muliadd with length 10 at 27326 with value 104
+PATTERN: muliadd with length 10 at 275b8 with value 104
+PATTERN: muliadd with length 10 at 28f8e with value 104
+PATTERN: muliadd with length 10 at 29278 with value 104
+PATTERN: muliadd with length 10 at 2bad4 with value 104
+PATTERN: muliadd with length 10 at 32b18 with value 104
+PATTERN: addiadd with length 6 at 4 with value -1
+PATTERN: addiadd with length 6 at 4 with value -1
+PATTERN: addiadd with length 8 at 5 with value -350
+PATTERN: addiadd with length 6 at 6 with value -326
+PATTERN: muliadd with length 10 at 3ec38 with value 104
+PATTERN: muliadd with length 10 at 40a7e with value 104
+PATTERN: muliadd with length 10 at 43640 with value 104
+PATTERN: muliadd with length 10 at 43e8c with value 104
+PATTERN: muliadd with length 10 at 49a66 with value 104
+PATTERN: addiadd with length 6 at 4 with value -1
+PATTERN: addiadd with length 6 at 4 with value -1
+PATTERN: addiadd with length 6 at 3 with value -470
+PATTERN: addiadd with length 6 at 4 with value -616
+PATTERN: addiadd with length 6 at 4 with value -1
+PATTERN: addiadd with length 6 at 4 with value -1
+PATTERN: addiadd with length 8 at 3 with value -1928
+PATTERN: muliadd with length 10 at 55ea6 with value 104
+PATTERN: muliadd with length 10 at 5627a with value 104
+PATTERN: addiadd with length 6 at 5 with value 2040
+PATTERN: addiadd with length 6 at 3 with value 1950
+PATTERN: muliadd with length 10 at 168e4 with value 104
+PATTERN: addiadd with length 6 at 1 with value -8
+PATTERN: addiadd with length 6 at 1 with value -8
+PATTERN: muliadd with length 10 at 1cca4 with value 104
+PATTERN: muliadd with length 10 at 21f78 with value 104
+PATTERN: muliadd with length 10 at 222e4 with value 104
+PATTERN: muliadd with length 10 at 225fc with value 104
+PATTERN: muliadd with length 10 at 229f0 with value 104
+PATTERN: addiadd with length 6 at 5 with value 106
+PATTERN: addiadd with length 6 at 3 with value 16
+PATTERN: muliadd with length 10 at 109bc with value 104
+PATTERN: muliadd with length 10 at 22c68 with value 104
+PATTERN: muliadd with length 10 at 22f4e with value 104
+PATTERN: muliadd with length 10 at 23238 with value 104
+PATTERN: muliadd with length 10 at 29304 with value 104
+PATTERN: muliadd with length 10 at 29542 with value 104
+PATTERN: addiadd with length 6 at 5 with value -1000
+PATTERN: addiadd with length 6 at 3 with value -1090
+PATTERN: muliadd with length 10 at 52b8 with value 104
+PATTERN: muliadd with length 10 at 76f8 with value 104
+
+Instruction count: 228621 (670672 bytes, avg 2.93 bytes/insn)
+
+             muliadd       39 12bit=0.0171% 9bit=0.0171% avgbytes=10.00
+             addiadd       21 12bit=0.0092% 9bit=0.0044% avgbytes=6.19
+
+Values for muliadd patterns:
+                 104       39
+
+Values for addiadd patterns:
+                  -1        6
+                  -8        2
+                2040        1
+                1950        1
+                 106        1
+                  16        1
+                -326        1
+                -350        1
+                -470        1
+                -616        1
+               -1000        1
+               -1090        1
+               -1094        1
+               -1184        1
+               -1928        1
+

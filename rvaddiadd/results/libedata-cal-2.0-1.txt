@@ -1,0 +1,56 @@
+PATTERN: addiadd with length 6 at 4 with value 862
+PATTERN: addiadd with length 8 at 1 with value 17
+PATTERN: addiadd with length 6 at 5 with value 8
+PATTERN: addiadd with length 6 at 2 with value 1387
+PATTERN: addiadd with length 6 at 3 with value 0
+PATTERN: addiadd with length 6 at 5 with value -232
+PATTERN: addiadd with length 6 at 4 with value 8
+PATTERN: addiadd with length 6 at 4 with value 8
+PATTERN: addiadd with length 6 at 2 with value 1387
+PATTERN: addiadd with length 6 at 3 with value 0
+PATTERN: addiadd with length 6 at 5 with value -1614
+PATTERN: addiadd with length 6 at 1 with value 1
+PATTERN: addiadd with length 6 at 5 with value -136
+PATTERN: addiadd with length 8 at 2 with value 1792
+PATTERN: addiadd with length 6 at 3 with value 1948
+PATTERN: addiadd with length 6 at 1 with value 2
+PATTERN: addiadd with length 6 at 4 with value 1250
+PATTERN: addiadd with length 6 at 3 with value -1908
+PATTERN: addiadd with length 6 at 4 with value -726
+PATTERN: addiadd with length 6 at 5 with value 2
+PATTERN: addiadd with length 6 at 7 with value 510
+PATTERN: addiadd with length 6 at 5 with value 2
+PATTERN: addiadd with length 6 at 5 with value 2
+PATTERN: addiadd with length 6 at 5 with value 2
+PATTERN: addiadd with length 6 at 5 with value 2
+PATTERN: addiadd with length 6 at 5 with value 2
+PATTERN: addiadd with length 6 at 3 with value 110
+PATTERN: addiadd with length 6 at 3 with value -718
+PATTERN: addiadd with length 6 at 3 with value -1000
+PATTERN: addiadd with length 6 at 5 with value 2
+
+Instruction count: 63303 (179114 bytes, avg 2.83 bytes/insn)
+
+             addiadd       30 12bit=0.0474% 9bit=0.0253% avgbytes=6.13
+
+Values for addiadd patterns:
+                   2        8
+                   8        3
+                1387        2
+                   0        2
+                1948        1
+                1792        1
+                1250        1
+                 862        1
+                 510        1
+                 110        1
+                  17        1
+                   1        1
+                -136        1
+                -232        1
+                -718        1
+                -726        1
+               -1000        1
+               -1614        1
+               -1908        1
+

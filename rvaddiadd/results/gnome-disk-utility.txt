@@ -1,0 +1,75 @@
+PATTERN: muli with length 8 at 1ab6c with value 1000
+PATTERN: addiadd with length 6 at 8 with value 24
+PATTERN: addiadd with length 6 at 8 with value 24
+PATTERN: addiadd with length 6 at 8 with value 24
+PATTERN: addiadd with length 6 at 5 with value 24
+PATTERN: addiadd with length 6 at 5 with value 24
+PATTERN: addiadd with length 6 at 5 with value 24
+PATTERN: addiadd with length 6 at 14 with value -1414
+PATTERN: addiadd with length 6 at 5 with value 450
+PATTERN: addiadd with length 6 at 8 with value 26
+PATTERN: addiadd with length 6 at 6 with value -334
+PATTERN: addiadd with length 6 at 6 with value 72
+PATTERN: addiadd with length 6 at 5 with value 234
+PATTERN: addiadd with length 6 at 4 with value -712
+PATTERN: addiadd with length 6 at 6 with value 410
+PATTERN: addiadd with length 6 at 6 with value 338
+PATTERN: addiadd with length 6 at 6 with value 266
+PATTERN: addiadd with length 6 at 5 with value -636
+PATTERN: addiadd with length 6 at 6 with value 1636
+PATTERN: addiadd with length 6 at 6 with value 1382
+PATTERN: addiadd with length 6 at 6 with value 1138
+PATTERN: addiadd with length 6 at 6 with value 894
+PATTERN: addiadd with length 6 at 5 with value 792
+PATTERN: addiadd with length 6 at 6 with value 66
+PATTERN: addiadd with length 6 at 6 with value -1988
+PATTERN: addiadd with length 8 at 3 with value 2
+PATTERN: addiadd with length 6 at 2 with value 175
+PATTERN: addiadd with length 6 at 1 with value -12
+PATTERN: addiadd with length 6 at 1 with value -1
+PATTERN: addiadd with length 6 at 1 with value 1
+PATTERN: muli with length 8 at 379f8 with value 101
+PATTERN: addiadd with length 6 at 1 with value 1
+PATTERN: addiadd with length 6 at 1 with value -1216
+PATTERN: addiadd with length 6 at 1 with value -1
+PATTERN: addiadd with length 6 at 1 with value 1
+PATTERN: muli with length 8 at 7248 with value 101
+PATTERN: addiadd with length 6 at 1 with value 1
+PATTERN: addiadd with length 6 at 1 with value -1216
+
+Instruction count: 54457 (159260 bytes, avg 2.92 bytes/insn)
+
+             addiadd       35 12bit=0.0643% 9bit=0.0312% avgbytes=6.06
+                muli        3 12bit=0.0055% 9bit=0.0037% avgbytes=8.00
+
+Values for addiadd patterns:
+                  24        6
+                   1        4
+                  -1        2
+               -1216        2
+                1636        1
+                1382        1
+                1138        1
+                 894        1
+                 792        1
+                 450        1
+                 410        1
+                 338        1
+                 266        1
+                 234        1
+                 175        1
+                  72        1
+                  66        1
+                  26        1
+                   2        1
+                 -12        1
+                -334        1
+                -636        1
+                -712        1
+               -1414        1
+               -1988        1
+
+Values for muli patterns:
+                 101        2
+                1000        1
+

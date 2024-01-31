@@ -1,0 +1,58 @@
+PATTERN: muliadd with length 10 at 1fb2 with value 632
+PATTERN: addiadd with length 6 at 7 with value 592
+PATTERN: muliadd with length 10 at 2064 with value 632
+PATTERN: addiadd with length 6 at 5 with value 592
+PATTERN: muliadd with length 10 at 299e with value 632
+PATTERN: addiadd with length 6 at 5 with value 1808
+PATTERN: muliadd with length 10 at 44e4 with value 632
+PATTERN: addiadd with length 6 at 3 with value -514
+PATTERN: addiadd with length 6 at 1 with value 8
+PATTERN: addiadd with length 6 at 1 with value 20
+PATTERN: addiadd with length 6 at 3 with value 16
+PATTERN: muliadd with length 10 at 532c with value 632
+PATTERN: muliadd with length 10 at 59be with value 632
+PATTERN: muliadd with length 10 at 5b4e with value 632
+PATTERN: muliadd with length 10 at 5c52 with value 632
+PATTERN: muliadd with length 10 at 5e64 with value 632
+PATTERN: muliadd with length 10 at 63f4 with value 632
+PATTERN: muliadd with length 10 at 64f0 with value 632
+PATTERN: muliadd with length 10 at 662e with value 632
+PATTERN: muliadd with length 10 at 6728 with value 632
+PATTERN: muliadd with length 10 at 6896 with value 632
+PATTERN: muliadd with length 10 at 697c with value 632
+PATTERN: muliadd with length 10 at 6b76 with value 632
+PATTERN: muliadd with length 10 at 6e2a with value 632
+PATTERN: muliadd with length 10 at 6eee with value 632
+PATTERN: muliadd with length 10 at 6fb4 with value 632
+PATTERN: muliadd with length 12 at 70ba with value 632
+PATTERN: muliadd with length 10 at 729a with value 632
+PATTERN: addiadd with length 6 at 1 with value -8
+PATTERN: muliadd with length 10 at 75f0 with value 632
+PATTERN: addiadd with length 6 at 7 with value 592
+PATTERN: muliadd with length 12 at 779a with value 632
+PATTERN: muliadd with length 10 at 7900 with value 632
+PATTERN: addiadd with length 6 at 4 with value 592
+PATTERN: muliadd with length 10 at 7a36 with value 632
+PATTERN: muliadd with length 10 at 7acc with value 632
+PATTERN: muliadd with length 10 at 7aee with value 632
+PATTERN: addiadd with length 6 at 3 with value 592
+PATTERN: muliadd with length 10 at 7bd0 with value 632
+PATTERN: addiadd with length 6 at 3 with value 592
+
+Instruction count: 8988 (26232 bytes, avg 2.92 bytes/insn)
+
+             muliadd       28 12bit=0.3115% 9bit=0.0000% avgbytes=10.14
+             addiadd       12 12bit=0.1335% 9bit=0.0445% avgbytes=6.00
+
+Values for muliadd patterns:
+                 632       28
+
+Values for addiadd patterns:
+                 592        6
+                1808        1
+                  20        1
+                  16        1
+                   8        1
+                  -8        1
+                -514        1
+

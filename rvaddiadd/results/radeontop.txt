@@ -1,0 +1,67 @@
+PATTERN: addiadd with length 6 at 2 with value -1536
+PATTERN: addiadd with length 6 at 3 with value 0
+PATTERN: addiadd with length 6 at 5 with value 384
+PATTERN: addiadd with length 6 at 2 with value 1932
+PATTERN: addiadd with length 6 at 2 with value -772
+PATTERN: addiadd with length 6 at 2 with value -1024
+PATTERN: addiadd with length 6 at 3 with value 0
+PATTERN: addiadd with length 6 at 5 with value -132
+PATTERN: addiadd with length 6 at 2 with value 2046
+PATTERN: addiadd with length 6 at 2 with value 1820
+PATTERN: addiadd with length 6 at 3 with value 0
+PATTERN: addiadd with length 6 at 5 with value -1974
+PATTERN: addiadd with length 6 at 2 with value 1648
+PATTERN: muliadd with length 10 at 34be with value 88
+PATTERN: muli with length 8 at 3c10 with value 100
+PATTERN: muli with length 8 at 3c5e with value 100
+PATTERN: muli with length 8 at 3c84 with value 100
+PATTERN: muli with length 8 at 3cb0 with value 100
+PATTERN: muli with length 8 at 3cd0 with value 100
+PATTERN: muli with length 8 at 3ce4 with value 100
+PATTERN: muli with length 8 at 3cf0 with value 100
+PATTERN: muli with length 8 at 3cfc with value 100
+PATTERN: muli with length 8 at 3d08 with value 100
+PATTERN: muli with length 8 at 3d14 with value 100
+PATTERN: muli with length 8 at 3d20 with value 100
+PATTERN: muli with length 8 at 3d2c with value 100
+PATTERN: muli with length 8 at 421c with value 100
+PATTERN: muli with length 8 at 430c with value 100
+PATTERN: muli with length 8 at 49ba with value 100
+PATTERN: muli with length 8 at 49cc with value 100
+PATTERN: muli with length 8 at 49dc with value 100
+PATTERN: muli with length 8 at 49f0 with value 100
+PATTERN: muli with length 8 at 49f8 with value 100
+PATTERN: muli with length 8 at 4a04 with value 100
+PATTERN: muli with length 8 at 4a10 with value 100
+PATTERN: muli with length 8 at 4a1c with value 100
+PATTERN: muli with length 8 at 4a28 with value 100
+PATTERN: muli with length 8 at 4a34 with value 100
+PATTERN: muli with length 8 at 4a40 with value 100
+PATTERN: muli with length 8 at 4ce0 with value 100
+PATTERN: muli with length 8 at 4d0c with value 100
+
+Instruction count: 3786 (11826 bytes, avg 3.12 bytes/insn)
+
+                muli       27 12bit=0.7132% 9bit=0.7132% avgbytes=8.00
+             addiadd       13 12bit=0.3434% 9bit=0.0792% avgbytes=6.00
+             muliadd        1 12bit=0.0264% 9bit=0.0264% avgbytes=10.00
+
+Values for muli patterns:
+                 100       27
+
+Values for addiadd patterns:
+                   0        3
+                2046        1
+                1932        1
+                1820        1
+                1648        1
+                 384        1
+                -132        1
+                -772        1
+               -1024        1
+               -1536        1
+               -1974        1
+
+Values for muliadd patterns:
+                  88        1
+

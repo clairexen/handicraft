@@ -1,0 +1,11 @@
+An example to demonstrate that nonblocking assignments for
+non-clocked latches are a bad coding style in Verilog.
+
+Run simulation:
+iverilog -s test -o demo demo.v test.v && ./demo
+
+Run synthesis:
+yosys -p synth -p dump demo.v
+
+Changing "if (en) bar <= foo;" to "if (en) bar = foo;" in
+demo.v fixes the issue.

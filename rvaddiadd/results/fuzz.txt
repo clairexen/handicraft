@@ -1,0 +1,108 @@
+PATTERN: addiadd with length 6 at 17 with value 1792
+PATTERN: addiadd with length 6 at 23 with value -1824
+PATTERN: addiadd with length 6 at 29 with value -1832
+PATTERN: addiadd with length 6 at 42 with value -1824
+PATTERN: addiadd with length 6 at 44 with value 1836
+PATTERN: addiadd with length 6 at 46 with value -1824
+PATTERN: addiadd with length 6 at 48 with value 1840
+PATTERN: addiadd with length 6 at 53 with value -1824
+PATTERN: addiadd with length 6 at 65 with value 1856
+PATTERN: addiadd with length 6 at 6 with value -1824
+PATTERN: addiadd with length 6 at 8 with value 1872
+PATTERN: addiadd with length 6 at 6 with value -1824
+PATTERN: addiadd with length 6 at 8 with value 1864
+PATTERN: addiadd with length 6 at 6 with value -1824
+PATTERN: addiadd with length 6 at 8 with value 1848
+PATTERN: addiadd with length 6 at 3 with value -1824
+PATTERN: addiadd with length 6 at 6 with value -1824
+PATTERN: addiadd with length 8 at 13 with value 1888
+PATTERN: addiadd with length 6 at 5 with value -1824
+PATTERN: addiadd with length 6 at 6 with value 2040
+PATTERN: addiadd with length 6 at 5 with value -1824
+PATTERN: addiadd with length 6 at 6 with value 1888
+PATTERN: addiadd with length 6 at 5 with value -1824
+PATTERN: addiadd with length 6 at 6 with value 1888
+PATTERN: addiadd with length 6 at 8 with value -1824
+PATTERN: addiadd with length 6 at 10 with value 8
+PATTERN: addiadd with length 6 at 6 with value -1824
+PATTERN: addiadd with length 6 at 7 with value 1880
+PATTERN: addiadd with length 6 at 12 with value -1824
+PATTERN: addiadd with length 6 at 13 with value -1824
+PATTERN: addiadd with length 6 at 15 with value 1835
+PATTERN: addiadd with length 6 at 6 with value -1824
+PATTERN: addiadd with length 6 at 25 with value 136
+PATTERN: addiadd with length 6 at 3 with value 144
+PATTERN: addiadd with length 6 at 3 with value 144
+PATTERN: addiadd with length 6 at 5 with value -144
+PATTERN: addiadd with length 6 at 4 with value 144
+PATTERN: addiadd with length 6 at 2 with value 144
+PATTERN: addiadd with length 6 at 3 with value 144
+PATTERN: addiadd with length 6 at 6 with value -136
+PATTERN: addiadd with length 6 at 9 with value 144
+PATTERN: addiadd with length 6 at 10 with value 2040
+PATTERN: addiadd with length 6 at 3 with value 144
+PATTERN: addiadd with length 6 at 2 with value 144
+PATTERN: addiadd with length 6 at 4 with value 144
+PATTERN: addiadd with length 6 at 5 with value 144
+PATTERN: addiadd with length 6 at 5 with value 144
+PATTERN: addiadd with length 6 at 4 with value 144
+PATTERN: addiadd with length 6 at 5 with value 144
+PATTERN: addiadd with length 6 at 3 with value 136
+PATTERN: addiadd with length 8 at 2 with value 1
+PATTERN: addiadd with length 6 at 21 with value 1920
+PATTERN: addiadd with length 6 at 22 with value -1912
+PATTERN: addiadd with length 6 at 3 with value -1904
+PATTERN: addiadd with length 6 at 5 with value 2040
+PATTERN: addiadd with length 6 at 2 with value -1904
+PATTERN: addiadd with length 6 at 1 with value -1904
+PATTERN: addiadd with length 6 at 3 with value -1904
+PATTERN: addiadd with length 6 at 3 with value -1904
+PATTERN: addiadd with length 6 at 2 with value -1912
+PATTERN: addiadd with length 6 at 2 with value -1920
+PATTERN: addiadd with length 6 at 2 with value -1904
+PATTERN: addiadd with length 6 at 4 with value 1908
+PATTERN: addiadd with length 6 at 6 with value -1904
+PATTERN: addiadd with length 6 at 3 with value -1904
+PATTERN: addiadd with length 6 at 2 with value -1904
+PATTERN: addiadd with length 6 at 3 with value -1904
+PATTERN: addiadd with length 6 at 5 with value 1912
+PATTERN: addiadd with length 6 at 3 with value -1904
+PATTERN: addiadd with length 6 at 5 with value 2040
+PATTERN: addiadd with length 6 at 4 with value -1904
+PATTERN: addiadd with length 6 at 6 with value 2040
+PATTERN: addiadd with length 6 at 2 with value -1904
+PATTERN: addiadd with length 6 at 4 with value 1912
+PATTERN: addiadd with length 6 at 3 with value -1904
+PATTERN: addiadd with length 6 at 5 with value 2040
+
+Instruction count: 3596 (11362 bytes, avg 3.16 bytes/insn)
+
+             addiadd       76 12bit=2.1135% 9bit=0.0556% avgbytes=6.05
+
+Values for addiadd patterns:
+               -1824       17
+               -1904       14
+                 144       13
+                2040        6
+                1888        3
+                1912        2
+                 136        2
+               -1912        2
+                1920        1
+                1908        1
+                1880        1
+                1872        1
+                1864        1
+                1856        1
+                1848        1
+                1840        1
+                1836        1
+                1835        1
+                1792        1
+                   8        1
+                   1        1
+                -136        1
+                -144        1
+               -1832        1
+               -1920        1
+

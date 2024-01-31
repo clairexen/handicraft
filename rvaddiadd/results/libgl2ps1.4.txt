@@ -1,0 +1,90 @@
+PATTERN: addiadd with length 6 at 6 with value 2
+PATTERN: addiadd with length 6 at 10 with value 36
+PATTERN: addiadd with length 6 at 10 with value 36
+PATTERN: addiadd with length 6 at 3 with value 8
+PATTERN: addiadd with length 6 at 13 with value 28
+PATTERN: addiadd with length 6 at 4 with value -1110
+PATTERN: addiadd with length 6 at 4 with value -1742
+PATTERN: addiadd with length 6 at 4 with value -2048
+PATTERN: addiadd with length 6 at 8 with value 28
+PATTERN: addiadd with length 6 at 4 with value 2
+PATTERN: addiadd with length 6 at 4 with value -830
+PATTERN: addiadd with length 6 at 4 with value -976
+PATTERN: addiadd with length 6 at 8 with value 68
+PATTERN: addiadd with length 6 at 7 with value 56
+PATTERN: addiadd with length 6 at 17 with value 84
+PATTERN: addiadd with length 6 at 3 with value -28
+PATTERN: muliadd with length 8 at 5ba0 with value 28
+PATTERN: addiadd with length 6 at 5 with value -56
+PATTERN: muliadd with length 8 at 5c28 with value 28
+PATTERN: addiadd with length 6 at 5 with value -56
+PATTERN: addiadd with length 6 at 3 with value 628
+PATTERN: muliadd with length 10 at 62fa with value 88
+PATTERN: addiadd with length 6 at 17 with value 88
+PATTERN: addiadd with length 6 at 11 with value 120
+PATTERN: addiadd with length 6 at 3 with value 1792
+PATTERN: addiadd with length 6 at 4 with value 1272
+PATTERN: addiadd with length 6 at 4 with value -292
+PATTERN: muli with length 8 at 78e6 with value 88
+PATTERN: addiadd with length 6 at 4 with value -830
+PATTERN: addiadd with length 6 at 9 with value 64
+PATTERN: addiadd with length 6 at 8 with value 36
+PATTERN: addiadd with length 6 at 4 with value -632
+PATTERN: addiadd with length 6 at 3 with value -996
+PATTERN: addiadd with length 6 at 5 with value -1990
+PATTERN: addiadd with length 6 at 6 with value 2000
+PATTERN: addiadd with length 8 at 17 with value 8
+PATTERN: addiadd with length 6 at 8 with value 36
+PATTERN: addiadd with length 6 at 5 with value -896
+PATTERN: addiadd with length 6 at 6 with value -1082
+PATTERN: addiadd with length 6 at 4 with value -1134
+PATTERN: addiadd with length 6 at 3 with value 1785
+PATTERN: addiadd with length 6 at 3 with value 912
+PATTERN: addiadd with length 6 at 3 with value 878
+
+Instruction count: 12219 (37752 bytes, avg 3.09 bytes/insn)
+
+             addiadd       39 12bit=0.3192% 9bit=0.1555% avgbytes=6.05
+             muliadd        3 12bit=0.0246% 9bit=0.0246% avgbytes=8.67
+                muli        1 12bit=0.0082% 9bit=0.0082% avgbytes=8.00
+
+Values for addiadd patterns:
+                  36        4
+                  28        2
+                   8        2
+                   2        2
+                 -56        2
+                -830        2
+                2000        1
+                1792        1
+                1785        1
+                1272        1
+                 912        1
+                 878        1
+                 628        1
+                 120        1
+                  88        1
+                  84        1
+                  68        1
+                  64        1
+                  56        1
+                 -28        1
+                -292        1
+                -632        1
+                -896        1
+                -976        1
+                -996        1
+               -1082        1
+               -1110        1
+               -1134        1
+               -1742        1
+               -1990        1
+               -2048        1
+
+Values for muliadd patterns:
+                  28        2
+                  88        1
+
+Values for muli patterns:
+                  88        1
+

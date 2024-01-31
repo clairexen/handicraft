@@ -1,0 +1,39 @@
+[options]
+size 100
+tags COVERED UNCOVERED NOCHANGE EQGAP
+
+[script]
+read_verilog serial_alu.v
+prep -top serial_alu
+
+[files]
+serial_alu.v
+
+[logic]
+tb_okay = (result("test_sim") == "PASS")
+eq_okay = (result("test_eq") == "PASS")
+
+if tb_okay and not eq_okay:
+    tag("UNCOVERED")
+elif not tb_okay and not eq_okay:
+    tag("COVERED")
+elif tb_okay and eq_okay:
+    tag("NOCHANGE")
+elif not tb_okay and eq_okay:
+    tag("EQGAP")
+else:
+    assert 0
+
+[report]
+if tags("EQGAP"):
+    print("Found %d mutations exposing a formal equivalence gap!" % tags("EQGAP"))
+if tags("COVERED")+tags("UNCOVERED"):
+    print("Coverage: %.2f%%" % (100.0*tags("COVERED")/(tags("COVERED")+tags("UNCOVERED"))))
+
+[test test_sim]
+expect PASS FAIL
+run bash $PRJDIR/test_sim.sh
+
+[test test_eq]
+expect PASS FAIL
+run bash $PRJDIR/test_eq.sh

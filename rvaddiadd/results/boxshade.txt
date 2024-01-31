@@ -1,0 +1,99 @@
+PATTERN: addiadd with length 6 at 3 with value -730
+PATTERN: addiadd with length 6 at 3 with value -776
+PATTERN: addiadd with length 6 at 7 with value 4
+PATTERN: muli with length 8 at 5d48 with value 41
+PATTERN: addiadd with length 6 at 14 with value -41
+PATTERN: addiadd with length 6 at 4 with value -8
+PATTERN: muliadd with length 10 at 6062 with value 41
+PATTERN: muliadd with length 10 at 6134 with value 41
+PATTERN: addiadd with length 6 at 3 with value 0
+PATTERN: addiadd with length 6 at 1 with value -1
+PATTERN: addiadd with length 6 at 9 with value -1
+PATTERN: addiadd with length 6 at 1 with value -1
+PATTERN: addiadd with length 6 at 10 with value 8
+PATTERN: addiadd with length 6 at 3 with value -8
+PATTERN: addiadd with length 6 at 3 with value -8
+PATTERN: addiadd with length 6 at 10 with value 41
+PATTERN: addiadd with length 6 at 5 with value 16
+PATTERN: addiadd with length 6 at 2 with value 9
+PATTERN: addiadd with length 6 at 2 with value 9
+PATTERN: addiadd with length 6 at 5 with value 9
+PATTERN: addiadd with length 6 at 6 with value 10
+PATTERN: addiadd with length 6 at 1 with value 4
+PATTERN: addiadd with length 6 at 1 with value 6
+PATTERN: addiadd with length 6 at 6 with value 4
+PATTERN: addiadd with length 6 at 2 with value -1
+PATTERN: addiadd with length 6 at 10 with value 41
+PATTERN: addiadd with length 6 at 6 with value 4
+PATTERN: addiadd with length 6 at 12 with value 1
+PATTERN: addiadd with length 6 at 17 with value 1
+PATTERN: addiadd with length 6 at 7 with value 1
+PATTERN: addiadd with length 6 at 3 with value -836
+PATTERN: addiadd with length 6 at 5 with value -1378
+PATTERN: addiadd with length 6 at 2 with value -1884
+PATTERN: addiadd with length 6 at 3 with value 1262
+PATTERN: addiadd with length 6 at 5 with value 1316
+PATTERN: addiadd with length 6 at 13 with value 704
+PATTERN: addiadd with length 6 at 3 with value -730
+PATTERN: addiadd with length 6 at 5 with value -682
+PATTERN: addiadd with length 6 at 5 with value -1684
+PATTERN: addiadd with length 6 at 3 with value 932
+PATTERN: addiadd with length 6 at 5 with value 980
+PATTERN: addiadd with length 6 at 3 with value 940
+PATTERN: addiadd with length 6 at 5 with value 1
+PATTERN: addiadd with length 6 at 7 with value 1272
+PATTERN: addiadd with length 6 at 3 with value 1468
+PATTERN: addiadd with length 6 at 5 with value 1552
+PATTERN: addiadd with length 6 at 3 with value -770
+PATTERN: addiadd with length 6 at 3 with value 1372
+PATTERN: addiadd with length 6 at 5 with value 1362
+PATTERN: addiadd with length 6 at 3 with value 1934
+PATTERN: addiadd with length 6 at 9 with value -164
+
+Instruction count: 15245 (48666 bytes, avg 3.19 bytes/insn)
+
+             addiadd       48 12bit=0.3149% 9bit=0.1705% avgbytes=6.00
+             muliadd        2 12bit=0.0131% 9bit=0.0131% avgbytes=10.00
+                muli        1 12bit=0.0066% 9bit=0.0066% avgbytes=8.00
+
+Values for addiadd patterns:
+                   4        4
+                   1        4
+                  -1        4
+                   9        3
+                  -8        3
+                  41        2
+                -730        2
+                1934        1
+                1552        1
+                1468        1
+                1372        1
+                1362        1
+                1316        1
+                1272        1
+                1262        1
+                 980        1
+                 940        1
+                 932        1
+                 704        1
+                  16        1
+                  10        1
+                   8        1
+                   6        1
+                   0        1
+                 -41        1
+                -164        1
+                -682        1
+                -770        1
+                -776        1
+                -836        1
+               -1378        1
+               -1684        1
+               -1884        1
+
+Values for muliadd patterns:
+                  41        2
+
+Values for muli patterns:
+                  41        1
+

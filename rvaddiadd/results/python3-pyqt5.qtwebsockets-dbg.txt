@@ -1,0 +1,50 @@
+PATTERN: addiadd with length 6 at 5 with value 16
+PATTERN: addiadd with length 6 at 13 with value 16
+PATTERN: addiadd with length 6 at 8 with value 16
+PATTERN: addiadd with length 6 at 5 with value 16
+PATTERN: addiadd with length 6 at 9 with value -2046
+PATTERN: addiadd with length 6 at 20 with value -2034
+PATTERN: addiadd with length 6 at 9 with value -2002
+PATTERN: addiadd with length 6 at 9 with value -2028
+PATTERN: addiadd with length 6 at 9 with value -2007
+PATTERN: addiadd with length 6 at 9 with value -2040
+PATTERN: addiadd with length 6 at 9 with value -2017
+PATTERN: addiadd with length 6 at 9 with value -2046
+PATTERN: addiadd with length 6 at 20 with value -2034
+PATTERN: addiadd with length 6 at 19 with value -1997
+PATTERN: addiadd with length 6 at 9 with value -1997
+PATTERN: addiadd with length 6 at 6 with value -1997
+PATTERN: addiadd with length 6 at 20 with value -2034
+PATTERN: addiadd with length 6 at 5 with value 16
+PATTERN: addiadd with length 6 at 13 with value 16
+PATTERN: addiadd with length 6 at 8 with value 16
+PATTERN: addiadd with length 6 at 5 with value 16
+PATTERN: addiadd with length 6 at 9 with value -2046
+PATTERN: addiadd with length 6 at 20 with value -2034
+PATTERN: addiadd with length 6 at 9 with value -2002
+PATTERN: addiadd with length 6 at 9 with value -2028
+PATTERN: addiadd with length 6 at 9 with value -2007
+PATTERN: addiadd with length 6 at 9 with value -2040
+PATTERN: addiadd with length 6 at 9 with value -2017
+PATTERN: addiadd with length 6 at 9 with value -2046
+PATTERN: addiadd with length 6 at 20 with value -2034
+PATTERN: addiadd with length 6 at 19 with value -1997
+PATTERN: addiadd with length 6 at 9 with value -1997
+PATTERN: addiadd with length 6 at 6 with value -1997
+PATTERN: addiadd with length 6 at 20 with value -2034
+
+Instruction count: 18174 (51770 bytes, avg 2.85 bytes/insn)
+
+             addiadd       34 12bit=0.1871% 9bit=0.0440% avgbytes=6.00
+
+Values for addiadd patterns:
+                  16        8
+               -1997        6
+               -2034        6
+               -2046        4
+               -2002        2
+               -2007        2
+               -2017        2
+               -2028        2
+               -2040        2
+

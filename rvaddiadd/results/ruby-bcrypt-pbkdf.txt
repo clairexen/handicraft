@@ -1,0 +1,53 @@
+PATTERN: addiadd with length 6 at 20 with value 152
+PATTERN: addiadd with length 6 at 24 with value 120
+PATTERN: addiadd with length 6 at 28 with value 128
+PATTERN: addiadd with length 6 at 34 with value 160
+PATTERN: addiadd with length 6 at 35 with value 136
+PATTERN: addiadd with length 6 at 37 with value -112
+PATTERN: addiadd with length 6 at 40 with value 144
+PATTERN: addiadd with length 6 at 3 with value 160
+PATTERN: addiadd with length 6 at 4 with value -144
+PATTERN: addiadd with length 6 at 6 with value 160
+PATTERN: addiadd with length 6 at 12 with value 160
+PATTERN: addiadd with length 8 at 16 with value 120
+PATTERN: addiadd with length 6 at 17 with value -146
+PATTERN: addiadd with length 6 at 4 with value 160
+PATTERN: addiadd with length 6 at 5 with value -144
+PATTERN: addiadd with length 6 at 8 with value 160
+PATTERN: addiadd with length 8 at 10 with value -112
+PATTERN: addiadd with length 6 at 3 with value 160
+PATTERN: addiadd with length 6 at 5 with value -144
+PATTERN: addiadd with length 6 at 2 with value 160
+PATTERN: addiadd with length 6 at 5 with value -112
+PATTERN: addiadd with length 6 at 1 with value 152
+PATTERN: addiadd with length 8 at 21 with value 72
+PATTERN: addiadd with length 6 at 3 with value 1024
+PATTERN: addiadd with length 8 at 25 with value 72
+PATTERN: addiadd with length 6 at 3 with value 1024
+PATTERN: addiadd with length 6 at 25 with value -16
+PATTERN: addiadd with length 6 at 26 with value -8
+PATTERN: addiadd with length 6 at 24 with value 80
+PATTERN: addiadd with length 6 at 1 with value -128
+PATTERN: addiadd with length 6 at 3 with value 128
+
+Instruction count: 5716 (19264 bytes, avg 3.37 bytes/insn)
+
+             addiadd       31 12bit=0.5423% 9bit=0.1924% avgbytes=6.26
+
+Values for addiadd patterns:
+                 160        8
+                -112        3
+                -144        3
+                1024        2
+                 152        2
+                 128        2
+                 120        2
+                  72        2
+                 144        1
+                 136        1
+                  80        1
+                  -8        1
+                 -16        1
+                -128        1
+                -146        1
+

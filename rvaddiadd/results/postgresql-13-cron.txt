@@ -1,0 +1,48 @@
+PATTERN: addiadd with length 6 at 13 with value -1080
+PATTERN: addiadd with length 6 at 13 with value -1040
+PATTERN: addiadd with length 6 at 2 with value -1072
+PATTERN: addiadd with length 6 at 7 with value 1072
+PATTERN: addiadd with length 6 at 4 with value -1072
+PATTERN: addiadd with length 6 at 5 with value 1072
+PATTERN: addiadd with length 6 at 2 with value -1080
+PATTERN: addiadd with length 6 at 3 with value -1072
+PATTERN: addiadd with length 6 at 5 with value 1072
+PATTERN: addiadd with length 6 at 3 with value -1072
+PATTERN: addiadd with length 6 at 5 with value 1072
+PATTERN: addiadd with length 6 at 3 with value -1072
+PATTERN: addiadd with length 6 at 5 with value 1072
+PATTERN: addiadd with length 6 at 3 with value -1072
+PATTERN: addiadd with length 6 at 5 with value 1072
+PATTERN: addiadd with length 6 at 3 with value -1072
+PATTERN: addiadd with length 6 at 5 with value 1072
+PATTERN: addiadd with length 6 at 4 with value 0
+PATTERN: addiadd with length 6 at 12 with value 0
+PATTERN: addiadd with length 6 at 3 with value -228
+PATTERN: addiadd with length 6 at 3 with value 1108
+PATTERN: addiadd with length 6 at 2 with value 1664
+PATTERN: addiadd with length 6 at 4 with value 1664
+PATTERN: addiadd with length 6 at 5 with value -802
+PATTERN: muliadd with length 10 at 8d28 with value 1000
+PATTERN: addiadd with length 6 at 6 with value 12
+PATTERN: muliadd with length 10 at 8e94 with value 1000
+
+Instruction count: 6420 (20234 bytes, avg 3.15 bytes/insn)
+
+             addiadd       25 12bit=0.3894% 9bit=0.0467% avgbytes=6.00
+             muliadd        2 12bit=0.0312% 9bit=0.0000% avgbytes=10.00
+
+Values for addiadd patterns:
+                1072        7
+               -1072        7
+                1664        2
+                   0        2
+               -1080        2
+                1108        1
+                  12        1
+                -228        1
+                -802        1
+               -1040        1
+
+Values for muliadd patterns:
+                1000        2
+

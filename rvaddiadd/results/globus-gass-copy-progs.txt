@@ -1,0 +1,102 @@
+PATTERN: addiadd with length 6 at 21 with value -1864
+PATTERN: addiadd with length 6 at 3 with value -1856
+PATTERN: addiadd with length 6 at 810 with value -1856
+PATTERN: addiadd with length 6 at 813 with value 1888
+PATTERN: addiadd with length 6 at 825 with value -1856
+PATTERN: addiadd with length 6 at 825 with value 80
+PATTERN: addiadd with length 6 at 838 with value 1880
+PATTERN: addiadd with length 6 at 843 with value -1856
+PATTERN: addiadd with length 6 at 847 with value 1876
+PATTERN: addiadd with length 6 at 3 with value -1856
+PATTERN: addiadd with length 6 at 13 with value -1856
+PATTERN: addiadd with length 6 at 19 with value 1896
+PATTERN: addiadd with length 6 at 21 with value 1904
+PATTERN: addiadd with length 6 at 4 with value -1094
+PATTERN: addiadd with length 6 at 3 with value -1864
+PATTERN: addiadd with length 6 at 4 with value -1856
+PATTERN: addiadd with length 6 at 6 with value 1888
+PATTERN: addiadd with length 6 at 3 with value -1856
+PATTERN: addiadd with length 6 at 4 with value -1856
+PATTERN: addiadd with length 6 at 5 with value 1912
+PATTERN: addiadd with length 6 at 9 with value -1856
+PATTERN: addiadd with length 6 at 11 with value 1928
+PATTERN: addiadd with length 6 at 3 with value -1856
+PATTERN: addiadd with length 6 at 3 with value -1856
+PATTERN: addiadd with length 6 at 3 with value -1856
+PATTERN: addiadd with length 6 at 3 with value -1856
+PATTERN: addiadd with length 6 at 3 with value -1856
+PATTERN: addiadd with length 6 at 3 with value -1856
+PATTERN: addiadd with length 6 at 3 with value -1856
+PATTERN: addiadd with length 6 at 4 with value -1856
+PATTERN: addiadd with length 6 at 4 with value -1856
+PATTERN: addiadd with length 6 at 4 with value -1856
+PATTERN: addiadd with length 6 at 3 with value -1856
+PATTERN: addiadd with length 6 at 9 with value 1912
+PATTERN: addiadd with length 6 at 7 with value -1856
+PATTERN: addiadd with length 6 at 9 with value 1928
+PATTERN: addiadd with length 6 at 3 with value -1856
+PATTERN: addiadd with length 6 at 3 with value -1856
+PATTERN: addiadd with length 6 at 4 with value -1856
+PATTERN: addiadd with length 6 at 3 with value -1856
+PATTERN: addiadd with length 6 at 5 with value -1856
+PATTERN: addiadd with length 6 at 7 with value 1928
+PATTERN: addiadd with length 6 at 5 with value -1856
+PATTERN: addiadd with length 6 at 7 with value 1928
+PATTERN: addiadd with length 6 at 5 with value -1856
+PATTERN: addiadd with length 6 at 7 with value 1928
+PATTERN: addiadd with length 6 at 6 with value -1856
+PATTERN: addiadd with length 6 at 8 with value -1856
+PATTERN: addiadd with length 6 at 10 with value 1912
+PATTERN: addiadd with length 6 at 8 with value -1856
+PATTERN: addiadd with length 6 at 9 with value -1856
+PATTERN: addiadd with length 6 at 9 with value 80
+PATTERN: addiadd with length 6 at 12 with value -1856
+PATTERN: addiadd with length 6 at 14 with value 1912
+PATTERN: addiadd with length 6 at 21 with value 1904
+PATTERN: addiadd with length 6 at 4 with value -1856
+PATTERN: addiadd with length 6 at 6 with value 1928
+PATTERN: addiadd with length 6 at 9 with value 32
+PATTERN: addiadd with length 6 at 10 with value -1856
+PATTERN: addiadd with length 6 at 3 with value -1856
+PATTERN: muli with length 8 at be70 with value 1000
+PATTERN: muli with length 8 at beb0 with value 1000
+PATTERN: addiadd with length 6 at 1 with value -1
+PATTERN: addiadd with length 6 at 3 with value 1
+PATTERN: addiadd with length 6 at 22 with value -2024
+PATTERN: addiadd with length 6 at 4 with value -2016
+PATTERN: addiadd with length 6 at 10 with value -2016
+PATTERN: addiadd with length 6 at 11 with value 2040
+PATTERN: addiadd with length 6 at 13 with value -2016
+PATTERN: addiadd with length 6 at 14 with value 2032
+PATTERN: addiadd with length 6 at 15 with value 2024
+PATTERN: addiadd with length 6 at 3 with value -2024
+
+Instruction count: 8749 (27502 bytes, avg 3.14 bytes/insn)
+
+             addiadd       70 12bit=0.8001% 9bit=0.0571% avgbytes=6.00
+                muli        2 12bit=0.0229% 9bit=0.0000% avgbytes=8.00
+
+Values for addiadd patterns:
+               -1856       37
+                1928        6
+                1912        4
+               -2016        3
+                1904        2
+                1888        2
+                  80        2
+               -1864        2
+               -2024        2
+                2040        1
+                2032        1
+                2024        1
+                1896        1
+                1880        1
+                1876        1
+                  32        1
+                   1        1
+                  -1        1
+               -1094        1
+
+Values for muli patterns:
+                1000        2
+

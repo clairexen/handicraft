@@ -1,0 +1,49 @@
+PATTERN: addiadd with length 6 at 23 with value 328
+PATTERN: addiadd with length 6 at 23 with value 328
+PATTERN: addiadd with length 6 at 15 with value 1264
+PATTERN: addiadd with length 6 at 3 with value 1264
+PATTERN: addiadd with length 6 at 15 with value 1264
+PATTERN: addiadd with length 6 at 21 with value 872
+PATTERN: addiadd with length 6 at 3 with value 1264
+PATTERN: addiadd with length 6 at 3 with value 1264
+PATTERN: addiadd with length 6 at 10 with value 1280
+PATTERN: addiadd with length 6 at 3 with value -2048
+PATTERN: addiadd with length 6 at 10 with value -2048
+PATTERN: addiadd with length 6 at 3 with value -2048
+PATTERN: addiadd with length 6 at 3 with value -2048
+PATTERN: addiadd with length 6 at 6 with value -2048
+PATTERN: addiadd with length 6 at 10 with value -2048
+PATTERN: addiadd with length 6 at 3 with value -2048
+PATTERN: addiadd with length 6 at 3 with value -2048
+PATTERN: addiadd with length 6 at 3 with value -2048
+PATTERN: addiadd with length 6 at 10 with value 672
+PATTERN: addiadd with length 6 at 5 with value 1056
+PATTERN: addiadd with length 6 at 4 with value 1056
+PATTERN: addiadd with length 6 at 23 with value 88
+PATTERN: addiadd with length 8 at 3 with value 16
+PATTERN: addiadd with length 6 at 3 with value 8
+PATTERN: addiadd with length 8 at 3 with value 16
+PATTERN: addiadd with length 6 at 1 with value 32
+PATTERN: addiadd with length 8 at 5 with value 16
+PATTERN: addiadd with length 6 at 10 with value 144
+PATTERN: addiadd with length 6 at 3 with value 1
+
+Instruction count: 10091 (30016 bytes, avg 2.97 bytes/insn)
+
+             addiadd       29 12bit=0.2874% 9bit=0.0694% avgbytes=6.21
+
+Values for addiadd patterns:
+               -2048        9
+                1264        5
+                  16        3
+                1056        2
+                 328        2
+                1280        1
+                 872        1
+                 672        1
+                 144        1
+                  88        1
+                  32        1
+                   8        1
+                   1        1
+

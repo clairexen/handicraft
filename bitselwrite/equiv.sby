@@ -1,0 +1,21 @@
+[options]
+mode bmc
+depth 4
+
+[engines]
+smtbmc boolector
+
+[script]
+read -noverific
+read -define CHECK_REFERENCE
+read -vlog2k reference.v
+read -vlog2k improved.v
+read -vlog2k improved2.v
+read -sv equiv.sv
+prep -top miter
+
+[files]
+reference.v
+improved.v
+improved2.v
+equiv.sv

@@ -1,0 +1,50 @@
+PATTERN: addiadd with length 8 at 1 with value 0
+PATTERN: addiadd with length 6 at 4 with value -1
+PATTERN: addiadd with length 6 at 4 with value 1
+PATTERN: addiadd with length 6 at 4 with value -1
+PATTERN: addiadd with length 6 at 4 with value 1
+PATTERN: muliadd with length 12 at 28c8 with value 80
+PATTERN: muliadd with length 12 at 28e8 with value 80
+PATTERN: muliadd with length 12 at 299e with value 80
+PATTERN: muliadd with length 10 at 2b48 with value 80
+PATTERN: muliadd with length 12 at 2c8a with value 80
+PATTERN: addiadd with length 8 at 4 with value 1
+PATTERN: muliadd with length 12 at 2cdc with value 80
+PATTERN: addiadd with length 8 at 4 with value -1
+PATTERN: addiadd with length 6 at 1 with value 1
+PATTERN: muliadd with length 10 at 2d66 with value 80
+PATTERN: muliadd with length 10 at 2d74 with value 80
+PATTERN: muliadd with length 12 at 2d98 with value 80
+PATTERN: addiadd with length 6 at 4 with value -1
+PATTERN: muliadd with length 10 at 2dd2 with value 80
+PATTERN: addiadd with length 8 at 9 with value 80
+PATTERN: addiadd with length 6 at 6 with value -2
+PATTERN: addiadd with length 8 at 2 with value 45
+PATTERN: addiadd with length 8 at 2 with value 43
+PATTERN: muli with length 8 at 3afe with value 1000
+PATTERN: addiadd with length 6 at 4 with value -696
+PATTERN: muliadd with length 12 at 44dc with value 100
+
+Instruction count: 4676 (14368 bytes, avg 3.07 bytes/insn)
+
+             addiadd       14 12bit=0.2994% 9bit=0.2780% avgbytes=6.86
+             muliadd       11 12bit=0.2352% 9bit=0.2352% avgbytes=11.27
+                muli        1 12bit=0.0214% 9bit=0.0000% avgbytes=8.00
+
+Values for addiadd patterns:
+                   1        4
+                  -1        4
+                  80        1
+                  45        1
+                  43        1
+                   0        1
+                  -2        1
+                -696        1
+
+Values for muliadd patterns:
+                  80       10
+                 100        1
+
+Values for muli patterns:
+                1000        1
+

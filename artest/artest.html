@@ -1,0 +1,349 @@
+<html>
+<head>
+  <title>Simple test for attention and reaction time</title>
+  <link rel="shortcut icon" href="favicon.ico" />
+</head>
+<body style="background:#aaa; color:#000;" onload="init()">
+
+<pre style="background:#eee;" id="banner">
+  artest.html - A simple test for attention and reaction time
+  Copyright (C) 2020  Claire Xenia Wolf &lt;claire@clairexen.net&gt;
+
+  Click anywhere on the black canvas whenever a symbol is different
+  in shape, shade, _and_ size compared to the previous symbol.
+
+  There are three shapes: Square, Triangle, Circle
+  Three shades: Black, Red, Blue
+  Three sizes: Small, Medium, Large
+
+  One round takes about one minute.
+  Press ESQ to quit a round early.
+  The results are collected as CSV at the bottom of this page.
+</pre>
+
+<center>
+<canvas id="display" width="800" height="400" onclick="handleClick()"></canvas>
+</center>
+
+<p id="csv">CSV data:<br/><textarea style="width:100%" id="csvtext" rows="10" readonly>date,time,num,min,median,max,avg,stddev,missed,misclick,correct,score</textarea></p>
+
+<script language="JavaScript"><!--
+
+var quitEarly = false;
+var roundSize = 20;
+var roundCnt = 0;
+var roundStart;
+var currentState;
+var currentStep;
+var currentSym;
+var lastSym;
+var expectClick;
+var gotClick;
+var startTime;
+var dataMissed;
+var dataFalse;
+var dataTimeSum;
+var dataTimeSumSq;
+var dataTimeCnt;
+var dataValues;
+var darkState = false;
+var resultText = "";
+
+function setDark(dark)
+{
+	darkState = dark;
+
+	el = document.getElementById("banner");
+	el.style.visibility = dark ? "hidden" : "visible";
+
+	el = document.getElementById("csv");
+	el.style.visibility = dark ? "hidden" : "visible";
+
+	el = document.body;
+	el.style.background = dark ? "#000" : "#aaa";
+}
+
+function drawShape(ctx, x, y, sym)
+{
+	var shade = sym % 3;
+	var shape = Math.floor(sym / 3) % 3;
+	var size = Math.floor(sym / 9) % 3;
+
+	var step = 20;
+	if (size == 1) step = 60;
+	if (size == 2) step = 180;
+
+	function drawPath() {
+		if (shape == 0) {
+			ctx.moveTo(x-step, y+step);
+			ctx.lineTo(x+step, y+step);
+			ctx.lineTo(x+step, y-step);
+			ctx.lineTo(x-step, y-step);
+			ctx.lineTo(x-step, y+step);
+		}
+		if (shape == 1) {
+			ctx.moveTo(x-step, y+step);
+			ctx.lineTo(x+step, y+step);
+			ctx.lineTo(x, y-step);
+			ctx.lineTo(x-step, y+step);
+		}
+		if (shape == 2) {
+			ctx.ellipse(x, y, step, step, 0, 0, 2 * Math.PI);
+		}
+	}
+
+	// console.log("sym="+sym+" shade="+shade+" shape="+shape+" size="+size+" step="+step);
+
+	if (shade == 1) {
+		// var grd = ctx.createRadialGradient(x, y, step*0.5, x, y, step);
+		// grd.addColorStop(0.0, "rgb(200,100,100)");
+		// grd.addColorStop(1.0, "rgb(255,0,0)");
+		// ctx.fillStyle = grd;
+		ctx.fillStyle = "red";
+		ctx.beginPath();
+		drawPath();
+		ctx.fill();
+	}
+
+	if (shade == 2) {
+		// var grd = ctx.createRadialGradient(x, y, step*0.5, x, y, step);
+		// grd.addColorStop(1.0, "rgb(100,100,200)");
+		// grd.addColorStop(0.0, "rgb(0,0,255)");
+		// ctx.fillStyle = grd;
+		ctx.fillStyle = "blue";
+		ctx.beginPath();
+		drawPath();
+		ctx.fill();
+	}
+
+	ctx.strokeStyle = "rgb(255,255,255)";
+	ctx.lineJoin = "miter";
+	ctx.lineWidth = 3;
+	ctx.beginPath();
+	drawPath();
+	ctx.closePath();
+	ctx.stroke();
+}
+
+function cmpSyms(a, b)
+{
+	sameShade = (a % 3) == (b % 3);
+	sameShape = (Math.floor(a / 3) % 3) == (Math.floor(b / 3) % 3);
+	sameSize = (Math.floor(a / 9) % 3) == (Math.floor(b / 9) % 3);
+	return !sameShade && !sameShape && !sameSize;
+}
+
+function clearScreen()
+{
+	var canvas = document.getElementById("display");
+	var ctx = canvas.getContext("2d");
+
+	ctx.fillStyle = "rgb(0,0,0)";
+	ctx.fillRect(0, 0, 800, 400);
+
+	return ctx;
+}
+
+function clearScreenCross()
+{
+	var ctx = clearScreen();
+
+	ctx.strokeStyle = "rgb(100,100,100)";
+	ctx.lineWidth = 1;
+	ctx.beginPath();
+	ctx.moveTo(400-10, 200);
+	ctx.lineTo(400+10, 200);
+	ctx.moveTo(400, 200-10);
+	ctx.lineTo(400, 200+10);
+	ctx.stroke();
+
+	return ctx;
+}
+
+function drawScreen()
+{
+	var ctx = clearScreen();
+
+	if (currentState != "run") {
+		if (resultText == "") {
+			drawShape(ctx, 385, 110, 6);
+			drawShape(ctx, 400,  95, 1);
+			drawShape(ctx, 415, 110, 5);
+		} else {
+			ctx.font = "18px monospace";
+			ctx.textAlign = "left";
+			ctx.fillStyle = "rgb(255,255,255)";
+			lines = resultText.split("\n");
+			for (var i = 0; i < lines.length; i++)
+				ctx.fillText(lines[i], 280, 100+20*i);
+			ctx.fillText("Score:", 470, 150);
+			ctx.font = "40px monospace";
+			ctx.fillText(resultScore, 470, 190);
+		}
+
+		ctx.font = "30px Arial";
+		ctx.textAlign = "center";
+		ctx.fillStyle = "rgb(255,255,255)";
+		ctx.fillText("Click to start", 400, 250);
+	} else {
+		drawShape(ctx, 400, 200, currentSym);
+		setTimeout(clearScreenCross, 500);
+
+		gotClick = false;
+		expectClick = cmpSyms(currentSym, lastSym);
+		startTime = (new Date()).getTime();
+	}
+}
+
+function startRound()
+{
+	roundCnt += 1;
+	roundStart = new Date();
+	quitEarly = false;
+
+	dataMissed = 0;
+	dataFalse = 0;
+	dataTimeSum = 0;
+	dataTimeSumSq = 0;
+	dataTimeCnt = 0;
+	dataValues = [];
+
+	currentState = "run";
+	currentStep = 0;
+	currentSym = Math.floor(Math.random() * 27);
+	lastSym = currentSym;
+
+	setDark(true);
+	clearScreenCross();
+
+	setTimeout(drawScreen, 1000);
+	setTimeout(handleTick, 3000 + Math.random() * 2000);
+}
+
+function finishRound()
+{
+	var yyyy = roundStart.getFullYear();
+	var mm = roundStart.getMonth() + 1;
+	mm = (mm > 9 ? "" : "0") + mm;
+	var dd = roundStart.getDate();
+	dd = (dd > 9 ? "" : "0") + dd;
+	var yyyymmdd = [yyyy, mm, dd].join("-");
+
+	var hh = roundStart.getHours();
+	var mm = roundStart.getMinutes();
+	mm = (mm > 9 ? "" : "0") + mm;
+	var ss = roundStart.getSeconds();
+	ss = (ss > 9 ? "" : "0") + ss;
+	var hhmmss = [hh, mm, ss].join(":");
+
+	el = document.getElementById("csvtext");
+	el.textContent += "\n"+yyyymmdd+","+hhmmss+",";
+
+	var medianVal = NaN;
+	if (dataTimeCnt == 0) {
+		resultScore = 0;
+		el.textContent += [0, "", "", "", "", ""].join(",");
+	} else {
+		dataValues.sort(function(a,b){return a-b;})
+		var minVal = dataValues[0];
+		var maxVal = dataValues[dataValues.length-1];
+		medianVal = dataValues[Math.floor(dataValues.length/2)];
+		var stddev = Math.round(Math.sqrt(dataTimeSumSq/dataTimeCnt - Math.pow(dataTimeSum/dataTimeCnt, 2)));
+		resultScore = Math.max(Math.floor(500*(1000/medianVal)*(dataTimeCnt-dataMissed-dataFalse)/dataTimeCnt), 0);
+		el.textContent += [dataTimeCnt, minVal, medianVal, maxVal, Math.round(dataTimeSum/dataTimeCnt), stddev].join(",");
+	}
+
+	el.textContent += ","+dataMissed+","+dataFalse+","+(currentStep-dataMissed-dataFalse)+","+resultScore;
+
+	setTimeout(function(){
+		el.scrollTop = el.scrollHeight;
+	}, 100);
+
+	resultText =    " ** Round " + roundCnt + " results **\n";
+	resultText += "\nMissed:   " + dataMissed;
+	resultText += "\nMisclick: " + dataFalse;
+	resultText += "\nAvg (ms): " + Math.round(dataTimeSum/dataTimeCnt);
+	resultText += "\nMedian:   " + medianVal;
+
+	setDark(false);
+	currentState = "start";
+	drawScreen();
+}
+
+function handleTick()
+{
+	if (currentState == "run") {
+		if (expectClick && !gotClick) {
+			dataMissed += 1;
+		}
+		if (currentStep == roundSize || quitEarly) {
+			finishRound();
+		} else {
+			currentStep += 1;
+			lastSym = currentSym;
+			if (Math.random() > 0.5) {
+				do {
+					currentSym = Math.floor(Math.random() * 27);
+				} while (currentSym == lastSym || cmpSyms(currentSym, lastSym));
+			} else {
+				do {
+					currentSym = Math.floor(Math.random() * 27);
+				} while (currentSym == lastSym || !cmpSyms(currentSym, lastSym));
+			}
+
+			drawScreen();
+			setTimeout(handleTick, 2000 + Math.random() * 2000);
+		}
+	}
+}
+
+function handleClick()
+{
+	if (currentState == "start") {
+		currentState = "wait";
+		setTimeout(startRound, 100);
+		return;
+	}
+
+	if (currentState == "run") {
+		if (gotClick)
+			return;
+		// console.log("click");
+		if (expectClick) {
+			var reactTime = (new Date()).getTime() - startTime;
+			dataTimeSum += reactTime;
+			dataTimeSumSq += reactTime * reactTime;
+			dataValues.push(reactTime);
+			dataTimeCnt += 1;
+		} else {
+			dataFalse += 1;
+		}
+		gotClick = true;
+	}
+}
+
+function handleBodyClick()
+{
+	if (currentState == "run" && !gotClick)
+		handleClick();
+}
+
+function handleKeyDown(e)
+{
+	if (!quitEarly && e.key == "Escape") {
+		quitEarly = true;
+		setDark(false);
+	}
+}
+
+function init()
+{
+	document.body.onclick = handleBodyClick;
+	document.body.onkeydown = handleKeyDown;
+	currentState = "start";
+	drawScreen();
+}
+//--></script>
+
+</body>
+</html>

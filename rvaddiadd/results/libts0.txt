@@ -1,0 +1,70 @@
+PATTERN: addiadd with length 6 at 10 with value 8
+PATTERN: addiadd with length 6 at 9 with value 8
+PATTERN: addiadd with length 6 at 5 with value -1798
+PATTERN: addiadd with length 6 at 6 with value 5
+PATTERN: muli with length 8 at 74c with value 88
+PATTERN: addiadd with length 6 at 12 with value 8
+PATTERN: muli with length 8 at bfc with value 88
+PATTERN: addiadd with length 6 at 12 with value 8
+PATTERN: addiadd with length 6 at 4 with value 8
+PATTERN: addiadd with length 6 at 6 with value 8
+PATTERN: muli with length 8 at af2 with value 88
+PATTERN: muli with length 8 at b28 with value 88
+PATTERN: addiadd with length 6 at 12 with value 8
+PATTERN: addiadd with length 6 at 5 with value -32
+PATTERN: addiadd with length 6 at 6 with value -32
+PATTERN: addiadd with length 6 at 7 with value -32
+PATTERN: addiadd with length 6 at 2 with value -512
+PATTERN: muli with length 8 at eca with value 88
+PATTERN: addiadd with length 6 at 10 with value 8
+PATTERN: muli with length 8 at 132c with value 88
+PATTERN: addiadd with length 6 at 10 with value 8
+PATTERN: muli with length 8 at 1372 with value 88
+PATTERN: muli with length 8 at 13be with value 88
+PATTERN: addiadd with length 6 at 8 with value 8
+PATTERN: muliadd with length 10 at 147e with value 88
+PATTERN: muliadd with length 10 at 14ae with value 88
+PATTERN: muliadd with length 10 at 1504 with value 88
+PATTERN: muliadd with length 10 at 153e with value 88
+PATTERN: muliadd with length 10 at 157e with value 88
+PATTERN: muliadd with length 10 at 15ba with value 88
+PATTERN: muliadd with length 10 at 1600 with value 88
+PATTERN: muliadd with length 10 at 1642 with value 88
+PATTERN: muliadd with length 10 at 167c with value 88
+PATTERN: muliadd with length 10 at 16aa with value 88
+PATTERN: muliadd with length 10 at 16e4 with value 88
+PATTERN: muliadd with length 10 at 172a with value 88
+PATTERN: muliadd with length 10 at 1764 with value 88
+PATTERN: muliadd with length 10 at 179e with value 88
+PATTERN: muliadd with length 10 at 17d8 with value 88
+PATTERN: muliadd with length 10 at 1812 with value 88
+PATTERN: muliadd with length 10 at 1854 with value 88
+PATTERN: muliadd with length 10 at 1882 with value 88
+PATTERN: muliadd with length 10 at 18b2 with value 88
+PATTERN: muliadd with length 10 at 18e2 with value 88
+PATTERN: muliadd with length 10 at 1926 with value 88
+PATTERN: addiadd with length 6 at 5 with value 8
+PATTERN: addiadd with length 6 at 5 with value 8
+PATTERN: addiadd with length 6 at 5 with value 8
+PATTERN: muli with length 8 at bde with value 88
+PATTERN: addiadd with length 6 at 11 with value 8
+
+Instruction count: 9954 (29184 bytes, avg 2.93 bytes/insn)
+
+             muliadd       21 12bit=0.2110% 9bit=0.2110% avgbytes=10.00
+             addiadd       20 12bit=0.2009% 9bit=0.1808% avgbytes=6.00
+                muli        9 12bit=0.0904% 9bit=0.0904% avgbytes=8.00
+
+Values for muliadd patterns:
+                  88       21
+
+Values for addiadd patterns:
+                   8       14
+                 -32        3
+                   5        1
+                -512        1
+               -1798        1
+
+Values for muli patterns:
+                  88        9
+

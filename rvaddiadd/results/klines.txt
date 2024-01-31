@@ -1,0 +1,54 @@
+PATTERN: addiadd with length 6 at 3 with value -1806
+PATTERN: addiadd with length 6 at 3 with value -1972
+PATTERN: addiadd with length 6 at 3 with value 1972
+PATTERN: addiadd with length 6 at 5 with value 16
+PATTERN: addiadd with length 6 at 5 with value 16
+PATTERN: addiadd with length 6 at 9 with value 16
+PATTERN: addiadd with length 6 at 7 with value 16
+PATTERN: addiadd with length 6 at 3 with value 0
+PATTERN: addiadd with length 6 at 9 with value 16
+PATTERN: addiadd with length 6 at 18 with value -1
+PATTERN: addiadd with length 6 at 5 with value 16
+PATTERN: addiadd with length 6 at 7 with value 16
+PATTERN: addiadd with length 6 at 13 with value 16
+PATTERN: addiadd with length 6 at 8 with value 16
+PATTERN: addiadd with length 8 at 6 with value 16
+PATTERN: addiadd with length 6 at 8 with value 16
+PATTERN: addiadd with length 6 at 8 with value 16
+PATTERN: addiadd with length 6 at 4 with value 1302
+PATTERN: addiadd with length 6 at 4 with value 1010
+PATTERN: addiadd with length 6 at 4 with value 876
+PATTERN: addiadd with length 6 at 4 with value 786
+PATTERN: addiadd with length 6 at 6 with value 16
+PATTERN: addiadd with length 6 at 9 with value 16
+PATTERN: addiadd with length 6 at 1 with value 1
+PATTERN: addiadd with length 6 at 4 with value 16
+PATTERN: addiadd with length 6 at 9 with value 8
+PATTERN: addiadd with length 6 at 8 with value 8
+PATTERN: addiadd with length 6 at 8 with value 8
+PATTERN: addiadd with length 6 at 4 with value 16
+PATTERN: addiadd with length 6 at 5 with value 16
+PATTERN: addiadd with length 6 at 8 with value 8
+PATTERN: addiadd with length 6 at 5 with value 16
+PATTERN: addiadd with length 8 at 6 with value 16
+PATTERN: addiadd with length 6 at 13 with value 16
+PATTERN: addiadd with length 6 at 8 with value 16
+
+Instruction count: 12661 (35888 bytes, avg 2.83 bytes/insn)
+
+             addiadd       35 12bit=0.2764% 9bit=0.2212% avgbytes=6.11
+
+Values for addiadd patterns:
+                  16       21
+                   8        4
+                1972        1
+                1302        1
+                1010        1
+                 876        1
+                 786        1
+                   1        1
+                   0        1
+                  -1        1
+               -1806        1
+               -1972        1
+

@@ -1,0 +1,69 @@
+PATTERN: addiadd with length 6 at 8 with value 2
+PATTERN: addiadd with length 6 at 12 with value 2
+PATTERN: addiadd with length 6 at 3 with value 1136
+PATTERN: muli with length 6 at 3aec with value 7
+PATTERN: muli with length 6 at 3b02 with value 7
+PATTERN: addiadd with length 6 at 3 with value 322
+PATTERN: addiadd with length 8 at 13 with value 1
+PATTERN: addiadd with length 6 at 4 with value 1
+PATTERN: addiadd with length 6 at 7 with value 1
+PATTERN: muli with length 8 at 4e0a with value 1000
+PATTERN: addiadd with length 6 at 5 with value 1
+PATTERN: addiadd with length 6 at 4 with value 1
+PATTERN: muliadd with length 8 at 537a with value 10
+PATTERN: addiadd with length 6 at 5 with value 2
+PATTERN: addiadd with length 6 at 7 with value -2
+PATTERN: addiadd with length 6 at 60 with value 142
+PATTERN: addiadd with length 8 at 3 with value 0
+PATTERN: addiadd with length 6 at 4 with value 14
+PATTERN: addiadd with length 6 at 5 with value 18
+PATTERN: addiadd with length 6 at 5 with value -242
+PATTERN: addiadd with length 6 at 5 with value -502
+PATTERN: addiadd with length 6 at 5 with value -762
+PATTERN: addiadd with length 6 at 5 with value -1022
+PATTERN: addiadd with length 6 at 8 with value 2
+PATTERN: muli with length 8 at 6be8 with value 1000
+PATTERN: muliadd with length 10 at 6bf8 with value 1000
+PATTERN: muli with length 8 at 6c2e with value 1000
+PATTERN: muliadd with length 10 at 6c3a with value 1000
+PATTERN: addiadd with length 6 at 4 with value -632
+PATTERN: muliadd with length 8 at 789a with value 24
+PATTERN: addiadd with length 6 at 5 with value 1110
+PATTERN: muli with length 6 at 81ea with value 3
+PATTERN: muli with length 6 at 8200 with value 3
+PATTERN: addiadd with length 6 at 5 with value 8
+
+Instruction count: 8217 (25654 bytes, avg 3.12 bytes/insn)
+
+             addiadd       23 12bit=0.2799% 9bit=0.1704% avgbytes=6.17
+                muli        7 12bit=0.0852% 9bit=0.0487% avgbytes=6.86
+             muliadd        4 12bit=0.0487% 9bit=0.0243% avgbytes=9.00
+
+Values for addiadd patterns:
+                   1        5
+                   2        4
+                1136        1
+                1110        1
+                 322        1
+                 142        1
+                  18        1
+                  14        1
+                   8        1
+                   0        1
+                  -2        1
+                -242        1
+                -502        1
+                -632        1
+                -762        1
+               -1022        1
+
+Values for muli patterns:
+                1000        3
+                   7        2
+                   3        2
+
+Values for muliadd patterns:
+                1000        2
+                  24        1
+                  10        1
+

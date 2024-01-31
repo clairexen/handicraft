@@ -1,0 +1,44 @@
+Simple example comparing MCY against other coverage methods
+===========================================================
+
+This directory contains a small design (`serial_alu.v`) and a
+test-bench (`serial_alu_tb.v`).
+
+Running `bash run-covered.sh` shows that "covered" reports
+100% line, toggle, logic, and FSM coverage. However, the
+design has a bug in line 40 (see comment in serial_alu.v)
+that the test-bench didn't catch and the test bench also
+doesn't test for proper timing on the control signals.
+
+Running `bash run-mcy.sh` (followed by `mcy gui` to display
+the results) exposes these issues with the test bench.
+
+
+Exercise 1
+----------
+
+Run `bash run-covered.sh` and `bash run-mcy.sh` and investigate
+the results.
+
+
+Exercise 2
+----------
+
+Change line 23 of serial_alu_tb.v from
+
+    repeat (30) @(posedge clock); // 30 is too small, change to 50 to catch the bug in the UUT
+to
+    repeat (50) @(posedge clock); // 30 is too small, change to 50 to catch the bug in the UUT
+
+and run `bash run-covered.sh`. Does the test-bench find the bug now? Why did
+the test bench not find the bug before but still reported 100% coverage?
+
+Fix the bug (change `==` in line 40 of `serial_alu.v` to `!=`) and now re-run
+`bash run-covered.sh` and `bash run-mcy.sh`. How have the results changed?
+
+
+Exercise 3
+----------
+
+Remove the comment begin/end-tags at lines 72..99 in `serial_alu_tb.v` and re-un
+`bash run-covered.sh` and `bash run-mcy.sh`. How have the results changed?

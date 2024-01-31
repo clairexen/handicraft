@@ -1,0 +1,58 @@
+PATTERN: addiadd with length 6 at 8 with value -8
+PATTERN: addiadd with length 6 at 5 with value -8
+PATTERN: addiadd with length 6 at 5 with value -8
+PATTERN: addiadd with length 6 at 5 with value -8
+PATTERN: addiadd with length 6 at 5 with value -8
+PATTERN: addiadd with length 6 at 5 with value -8
+PATTERN: addiadd with length 6 at 7 with value -8
+PATTERN: addiadd with length 6 at 7 with value -8
+PATTERN: addiadd with length 6 at 8 with value -8
+PATTERN: addiadd with length 6 at 8 with value -8
+PATTERN: addiadd with length 6 at 8 with value -8
+PATTERN: addiadd with length 6 at 4 with value 1
+PATTERN: addiadd with length 6 at 8 with value -8
+PATTERN: addiadd with length 6 at 7 with value -8
+PATTERN: addiadd with length 6 at 5 with value -8
+PATTERN: addiadd with length 6 at 7 with value -8
+PATTERN: addiadd with length 6 at 1 with value -1
+PATTERN: muliadd with length 10 at 3560 with value 104
+PATTERN: addiadd with length 6 at 8 with value -8
+PATTERN: addiadd with length 6 at 8 with value -8
+PATTERN: addiadd with length 6 at 7 with value -8
+PATTERN: muliadd with length 10 at 3260 with value 104
+PATTERN: muliadd with length 10 at 3b3a with value 104
+PATTERN: addiadd with length 6 at 2 with value -1239
+PATTERN: addiadd with length 6 at 1 with value -8
+PATTERN: muliadd with length 10 at 3cc2 with value 104
+PATTERN: addiadd with length 6 at 2 with value -1239
+PATTERN: muliadd with length 10 at 3ef0 with value 104
+PATTERN: muliadd with length 10 at 40bc with value 104
+PATTERN: muliadd with length 10 at 4280 with value 104
+PATTERN: muliadd with length 10 at 50d0 with value 104
+PATTERN: muliadd with length 10 at 524a with value 104
+PATTERN: muliadd with length 10 at 546c with value 104
+PATTERN: muliadd with length 10 at 575e with value 104
+PATTERN: addiadd with length 6 at 2 with value -1239
+PATTERN: addiadd with length 6 at 1 with value -8
+PATTERN: muliadd with length 10 at 58e6 with value 104
+PATTERN: addiadd with length 6 at 2 with value -1239
+PATTERN: muliadd with length 10 at 5b6c with value 104
+PATTERN: addiadd with length 6 at 2 with value -1239
+PATTERN: addiadd with length 6 at 1 with value -8
+PATTERN: muliadd with length 10 at 5cf4 with value 104
+PATTERN: addiadd with length 6 at 2 with value -1239
+
+Instruction count: 17649 (50528 bytes, avg 2.86 bytes/insn)
+
+             addiadd       29 12bit=0.1643% 9bit=0.1303% avgbytes=6.00
+             muliadd       14 12bit=0.0793% 9bit=0.0793% avgbytes=10.00
+
+Values for addiadd patterns:
+                  -8       21
+               -1239        6
+                   1        1
+                  -1        1
+
+Values for muliadd patterns:
+                 104       14
+

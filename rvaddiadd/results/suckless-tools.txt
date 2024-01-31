@@ -1,0 +1,96 @@
+PATTERN: muliadd with length 8 at 25e2 with value 12
+PATTERN: addiadd with length 6 at 3 with value -820
+PATTERN: addiadd with length 6 at 3 with value -822
+PATTERN: addiadd with length 6 at 3 with value -1036
+PATTERN: addiadd with length 6 at 6 with value 992
+PATTERN: addiadd with length 6 at 22 with value 8
+PATTERN: addiadd with length 6 at 32 with value 16
+PATTERN: addiadd with length 6 at 39 with value -8
+PATTERN: addiadd with length 6 at 5 with value -384
+PATTERN: addiadd with length 6 at 3 with value -1
+PATTERN: addiadd with length 6 at 22 with value 8
+PATTERN: addiadd with length 6 at 26 with value 16
+PATTERN: addiadd with length 8 at 7 with value -1742
+PATTERN: addiadd with length 6 at 3 with value -1662
+PATTERN: addiadd with length 6 at 1 with value 1104
+PATTERN: addiadd with length 6 at 1 with value -1
+PATTERN: addiadd with length 6 at 5 with value 16
+PATTERN: addiadd with length 6 at 9 with value 8
+PATTERN: addiadd with length 6 at 5 with value 8
+PATTERN: addiadd with length 6 at 5 with value 2
+PATTERN: muli with length 8 at 2fc0 with value 200
+PATTERN: addiadd with length 8 at 1 with value -200
+PATTERN: addiadd with length 6 at 5 with value 8
+PATTERN: addiadd with length 6 at 7 with value 8
+PATTERN: muli with length 8 at 3792 with value 200
+PATTERN: muliadd with length 12 at 3830 with value -200
+PATTERN: addiadd with length 6 at 22 with value 16
+PATTERN: addiadd with length 6 at 29 with value 6
+PATTERN: addiadd with length 6 at 5 with value 8
+PATTERN: addiadd with length 6 at 5 with value 8
+PATTERN: addiadd with length 6 at 4 with value 8
+PATTERN: addiadd with length 6 at 9 with value 8
+PATTERN: addiadd with length 6 at 5 with value 8
+PATTERN: addiadd with length 6 at 5 with value 2
+PATTERN: muli with length 8 at 2fc0 with value 200
+PATTERN: addiadd with length 8 at 1 with value -200
+PATTERN: addiadd with length 6 at 5 with value 8
+PATTERN: addiadd with length 6 at 7 with value 8
+PATTERN: muli with length 8 at 3792 with value 200
+PATTERN: muliadd with length 12 at 3830 with value -200
+PATTERN: addiadd with length 6 at 22 with value 16
+PATTERN: addiadd with length 6 at 29 with value 6
+PATTERN: addiadd with length 6 at 5 with value 8
+PATTERN: addiadd with length 6 at 5 with value 8
+PATTERN: addiadd with length 6 at 4 with value 8
+PATTERN: addiadd with length 6 at 4 with value 8
+PATTERN: addiadd with length 6 at 11 with value 8
+PATTERN: addiadd with length 6 at 4 with value 128
+PATTERN: addiadd with length 6 at 1 with value 80
+PATTERN: addiadd with length 6 at 1 with value 160
+PATTERN: addiadd with length 6 at 22 with value 24
+PATTERN: addiadd with length 6 at 25 with value 32
+PATTERN: addiadd with length 6 at 5 with value 32
+PATTERN: addiadd with length 6 at 6 with value -16
+PATTERN: addiadd with length 6 at 10 with value 32
+PATTERN: addiadd with length 6 at 11 with value 32
+PATTERN: addiadd with length 6 at 14 with value -24
+PATTERN: addiadd with length 6 at 5 with value 32
+
+Instruction count: 13953 (41858 bytes, avg 3.00 bytes/insn)
+
+             addiadd       51 12bit=0.3655% 9bit=0.2795% avgbytes=6.12
+                muli        4 12bit=0.0287% 9bit=0.0000% avgbytes=8.00
+             muliadd        3 12bit=0.0215% 9bit=0.0072% avgbytes=10.67
+
+Values for addiadd patterns:
+                   8       18
+                  32        5
+                  16        5
+                   6        2
+                   2        2
+                  -1        2
+                -200        2
+                1104        1
+                 992        1
+                 160        1
+                 128        1
+                  80        1
+                  24        1
+                  -8        1
+                 -16        1
+                 -24        1
+                -384        1
+                -820        1
+                -822        1
+               -1036        1
+               -1662        1
+               -1742        1
+
+Values for muli patterns:
+                 200        4
+
+Values for muliadd patterns:
+                -200        2
+                  12        1
+

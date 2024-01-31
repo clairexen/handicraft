@@ -1,0 +1,30 @@
+PATTERN: addiadd with length 6 at 4 with value 2
+PATTERN: addiadd with length 6 at 4 with value 2
+PATTERN: addiadd with length 6 at 1 with value 1040
+PATTERN: addiadd with length 8 at 1 with value 0
+PATTERN: addiadd with length 8 at 5 with value 0
+PATTERN: addiadd with length 6 at 1 with value -3
+PATTERN: addiadd with length 6 at 2 with value -1
+PATTERN: addiadd with length 6 at 5 with value 8
+PATTERN: addiadd with length 6 at 1 with value 2
+PATTERN: addiadd with length 6 at 20 with value 8
+PATTERN: addiadd with length 6 at 16 with value 24
+PATTERN: addiadd with length 8 at 3 with value 0
+PATTERN: addiadd with length 8 at 4 with value 1
+PATTERN: addiadd with length 8 at 3 with value 0
+PATTERN: addiadd with length 8 at 5 with value 0
+
+Instruction count: 11135 (31984 bytes, avg 2.87 bytes/insn)
+
+             addiadd       15 12bit=0.1347% 9bit=0.1257% avgbytes=6.80
+
+Values for addiadd patterns:
+                   0        5
+                   2        3
+                   8        2
+                1040        1
+                  24        1
+                   1        1
+                  -1        1
+                  -3        1
+

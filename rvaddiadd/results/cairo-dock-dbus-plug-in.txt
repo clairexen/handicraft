@@ -1,0 +1,12 @@
+PATTERN: muli with length 8 at cd6e with value 1000
+PATTERN: muli with length 8 at cd82 with value 1000
+PATTERN: muli with length 8 at 10d54 with value 1000
+PATTERN: muli with length 8 at 11742 with value 1000
+
+Instruction count: 15770 (46468 bytes, avg 2.95 bytes/insn)
+
+                muli        4 12bit=0.0254% 9bit=0.0000% avgbytes=8.00
+
+Values for muli patterns:
+                1000        4
+

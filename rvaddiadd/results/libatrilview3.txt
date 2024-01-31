@@ -1,0 +1,94 @@
+PATTERN: addiadd with length 6 at 3 with value 778
+PATTERN: addiadd with length 6 at 3 with value 280
+PATTERN: addiadd with length 6 at 6 with value 70
+PATTERN: addiadd with length 6 at 5 with value 296
+PATTERN: addiadd with length 6 at 4 with value -216
+PATTERN: addiadd with length 6 at 5 with value -402
+PATTERN: addiadd with length 6 at 4 with value 64
+PATTERN: muliadd with length 10 at 20152 with value 104
+PATTERN: muliadd with length 10 at 201ec with value 104
+PATTERN: muliadd with length 10 at 20676 with value 104
+PATTERN: muliadd with length 10 at 20796 with value 104
+PATTERN: muliadd with length 10 at 20856 with value 104
+PATTERN: muliadd with length 10 at 20916 with value 104
+PATTERN: muliadd with length 10 at 209d6 with value 104
+PATTERN: muliadd with length 10 at 20a94 with value 104
+PATTERN: muliadd with length 10 at 20b52 with value 104
+PATTERN: muliadd with length 10 at 20c1c with value 104
+PATTERN: muliadd with length 10 at 20d1a with value 104
+PATTERN: muliadd with length 10 at 20de6 with value 104
+PATTERN: muliadd with length 10 at 20f68 with value 104
+PATTERN: muliadd with length 10 at 210f6 with value 176
+PATTERN: muliadd with length 10 at 211a8 with value 176
+PATTERN: muliadd with length 10 at 211ba with value 176
+PATTERN: muliadd with length 10 at 213ac with value 176
+PATTERN: muliadd with length 10 at 2141e with value 176
+PATTERN: muliadd with length 12 at 214c0 with value 176
+PATTERN: muli with length 8 at 219f2 with value 176
+PATTERN: muli with length 8 at 21b40 with value 176
+PATTERN: muli with length 8 at 21b56 with value 176
+PATTERN: muli with length 8 at 21b6c with value 176
+PATTERN: muli with length 8 at 22504 with value 176
+PATTERN: muli with length 8 at 2263a with value 176
+PATTERN: muli with length 8 at 22650 with value 176
+PATTERN: muli with length 8 at 22666 with value 176
+PATTERN: muli with length 8 at 227ae with value 176
+PATTERN: muli with length 8 at 227c2 with value 176
+PATTERN: muli with length 8 at 227f8 with value 176
+PATTERN: addiadd with length 6 at 5 with value 8
+PATTERN: muli with length 8 at 26816 with value 1000
+PATTERN: addiadd with length 6 at 4 with value -1882
+PATTERN: addiadd with length 6 at 3 with value 334
+PATTERN: muli with length 8 at 2cfac with value 1000
+PATTERN: addiadd with length 6 at 3 with value -1924
+PATTERN: addiadd with length 6 at 3 with value -588
+PATTERN: addiadd with length 6 at 3 with value -1046
+PATTERN: addiadd with length 6 at 4 with value 270
+PATTERN: addiadd with length 6 at 4 with value 146
+PATTERN: addiadd with length 6 at 3 with value -370
+PATTERN: addiadd with length 6 at 3 with value -432
+PATTERN: addiadd with length 6 at 2 with value -1820
+PATTERN: addiadd with length 6 at 3 with value 1932
+PATTERN: addiadd with length 6 at 2 with value 80
+PATTERN: addiadd with length 6 at 5 with value -200
+PATTERN: addiadd with length 6 at 2 with value 80
+PATTERN: addiadd with length 6 at 4 with value -448
+
+Instruction count: 48030 (138244 bytes, avg 2.88 bytes/insn)
+
+             addiadd       23 12bit=0.0479% 9bit=0.0104% avgbytes=6.00
+             muliadd       19 12bit=0.0396% 9bit=0.0271% avgbytes=10.11
+                muli       13 12bit=0.0271% 9bit=0.0000% avgbytes=8.00
+
+Values for addiadd patterns:
+                  80        2
+                1932        1
+                 778        1
+                 334        1
+                 296        1
+                 280        1
+                 270        1
+                 146        1
+                  70        1
+                  64        1
+                   8        1
+                -200        1
+                -216        1
+                -370        1
+                -402        1
+                -432        1
+                -448        1
+                -588        1
+               -1046        1
+               -1820        1
+               -1882        1
+               -1924        1
+
+Values for muliadd patterns:
+                 104       13
+                 176        6
+
+Values for muli patterns:
+                 176       11
+                1000        2
+

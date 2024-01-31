@@ -1,0 +1,49 @@
+PATTERN: addiadd with length 6 at 17 with value 1216
+PATTERN: addiadd with length 6 at 23 with value 688
+PATTERN: addiadd with length 6 at 3 with value 1216
+PATTERN: addiadd with length 6 at 3 with value 1216
+PATTERN: addiadd with length 6 at 17 with value 1216
+PATTERN: addiadd with length 6 at 23 with value 168
+PATTERN: addiadd with length 6 at 3 with value 1216
+PATTERN: addiadd with length 6 at 4 with value 1216
+PATTERN: addiadd with length 6 at 17 with value 688
+PATTERN: addiadd with length 6 at 3 with value 1216
+PATTERN: addiadd with length 6 at 3 with value 1216
+PATTERN: addiadd with length 6 at 3 with value 1216
+PATTERN: addiadd with length 6 at 3 with value 1216
+PATTERN: addiadd with length 6 at 3 with value 1216
+PATTERN: addiadd with length 6 at 3 with value 1216
+PATTERN: addiadd with length 6 at 18 with value -1992
+PATTERN: addiadd with length 6 at 18 with value -2032
+PATTERN: addiadd with length 6 at 6 with value -1984
+PATTERN: addiadd with length 6 at 9 with value 2040
+PATTERN: addiadd with length 6 at 1 with value -1992
+PATTERN: addiadd with length 6 at 18 with value -1992
+PATTERN: addiadd with length 6 at 18 with value -2032
+PATTERN: addiadd with length 6 at 6 with value -1984
+PATTERN: addiadd with length 6 at 10 with value 2040
+PATTERN: addiadd with length 6 at 1 with value -1992
+PATTERN: addiadd with length 6 at 15 with value -1992
+PATTERN: addiadd with length 6 at 15 with value -2032
+PATTERN: addiadd with length 6 at 9 with value -1984
+PATTERN: addiadd with length 6 at 13 with value 2040
+PATTERN: addiadd with length 6 at 1 with value -1992
+PATTERN: addiadd with length 6 at 15 with value -1992
+PATTERN: addiadd with length 6 at 15 with value -2032
+PATTERN: addiadd with length 6 at 9 with value -1984
+PATTERN: addiadd with length 6 at 12 with value 2040
+PATTERN: addiadd with length 6 at 1 with value -1992
+
+Instruction count: 3789 (11154 bytes, avg 2.94 bytes/insn)
+
+             addiadd       35 12bit=0.9237% 9bit=0.0000% avgbytes=6.00
+
+Values for addiadd patterns:
+                1216       12
+               -1992        8
+                2040        4
+               -1984        4
+               -2032        4
+                 688        2
+                 168        1
+

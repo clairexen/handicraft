@@ -1,0 +1,53 @@
+PATTERN: addiadd with length 6 at 3 with value -320
+PATTERN: addiadd with length 6 at 9 with value 1662
+PATTERN: addiadd with length 6 at 3 with value 1294
+PATTERN: addiadd with length 6 at 3 with value -912
+PATTERN: addiadd with length 6 at 3 with value -718
+PATTERN: addiadd with length 6 at 5 with value -1226
+PATTERN: addiadd with length 6 at 3 with value -1654
+PATTERN: addiadd with length 6 at 3 with value -1434
+PATTERN: addiadd with length 6 at 5 with value 2038
+PATTERN: addiadd with length 6 at 9 with value 56
+PATTERN: addiadd with length 6 at 5 with value -590
+PATTERN: addiadd with length 6 at 3 with value 230
+PATTERN: addiadd with length 6 at 5 with value -534
+PATTERN: addiadd with length 6 at 9 with value 692
+PATTERN: addiadd with length 6 at 5 with value -40
+PATTERN: addiadd with length 6 at 9 with value 578
+PATTERN: addiadd with length 6 at 9 with value -370
+PATTERN: addiadd with length 6 at 3 with value -1216
+PATTERN: addiadd with length 6 at 9 with value 916
+PATTERN: addiadd with length 6 at 9 with value 1364
+PATTERN: addiadd with length 6 at 9 with value 814
+PATTERN: addiadd with length 6 at 5 with value -514
+PATTERN: addiadd with length 6 at 3 with value 2
+
+Instruction count: 567961 (1760060 bytes, avg 3.10 bytes/insn)
+
+             addiadd       23 12bit=0.0040% 9bit=0.0005% avgbytes=6.00
+
+Values for addiadd patterns:
+                2038        1
+                1662        1
+                1364        1
+                1294        1
+                 916        1
+                 814        1
+                 692        1
+                 578        1
+                 230        1
+                  56        1
+                   2        1
+                 -40        1
+                -320        1
+                -370        1
+                -514        1
+                -534        1
+                -590        1
+                -718        1
+                -912        1
+               -1216        1
+               -1226        1
+               -1434        1
+               -1654        1
+

@@ -1,0 +1,95 @@
+PATTERN: muliadd with length 10 at 7caa with value 100
+PATTERN: muli with length 8 at 7d1a with value 58
+PATTERN: muli with length 8 at 7d1e with value 58
+PATTERN: addiadd with length 8 at 16 with value 67
+PATTERN: addiadd with length 8 at 9 with value 67
+PATTERN: addiadd with length 8 at 9 with value 67
+PATTERN: addiadd with length 8 at 9 with value 67
+PATTERN: addiadd with length 8 at 15 with value 67
+PATTERN: addiadd with length 8 at 9 with value 67
+PATTERN: addiadd with length 8 at 9 with value 67
+PATTERN: addiadd with length 6 at 9 with value 67
+PATTERN: addiadd with length 8 at 9 with value 67
+PATTERN: addiadd with length 8 at 8 with value 67
+PATTERN: addiadd with length 8 at 8 with value 67
+PATTERN: addiadd with length 8 at 8 with value 67
+PATTERN: addiadd with length 6 at 8 with value 67
+PATTERN: addiadd with length 8 at 9 with value 67
+PATTERN: addiadd with length 6 at 8 with value 67
+PATTERN: addiadd with length 8 at 9 with value 67
+PATTERN: addiadd with length 8 at 9 with value 67
+PATTERN: addiadd with length 8 at 9 with value 67
+PATTERN: addiadd with length 6 at 9 with value 67
+PATTERN: addiadd with length 8 at 9 with value 67
+PATTERN: addiadd with length 8 at 9 with value 67
+PATTERN: addiadd with length 8 at 9 with value 67
+PATTERN: addiadd with length 6 at 9 with value 67
+PATTERN: addiadd with length 8 at 9 with value 67
+PATTERN: addiadd with length 8 at 9 with value 67
+PATTERN: addiadd with length 8 at 9 with value 67
+PATTERN: addiadd with length 6 at 9 with value 67
+PATTERN: addiadd with length 8 at 9 with value 67
+PATTERN: addiadd with length 8 at 9 with value 67
+PATTERN: addiadd with length 8 at 9 with value 67
+PATTERN: addiadd with length 6 at 9 with value 67
+PATTERN: addiadd with length 8 at 9 with value 67
+PATTERN: addiadd with length 8 at 9 with value 67
+PATTERN: addiadd with length 8 at 9 with value 67
+PATTERN: addiadd with length 6 at 9 with value 67
+PATTERN: addiadd with length 8 at 10 with value 67
+PATTERN: addiadd with length 8 at 9 with value 67
+PATTERN: addiadd with length 8 at 9 with value 67
+PATTERN: addiadd with length 8 at 9 with value 67
+PATTERN: addiadd with length 8 at 10 with value 67
+PATTERN: muliadd with length 12 at 85f2 with value -100
+PATTERN: addiadd with length 8 at 11 with value 67
+PATTERN: addiadd with length 8 at 8 with value 67
+PATTERN: addiadd with length 8 at 9 with value 67
+PATTERN: addiadd with length 6 at 9 with value 67
+PATTERN: addiadd with length 8 at 9 with value 67
+PATTERN: addiadd with length 8 at 8 with value 67
+PATTERN: addiadd with length 8 at 9 with value 67
+PATTERN: addiadd with length 8 at 9 with value 67
+PATTERN: addiadd with length 8 at 10 with value 67
+PATTERN: addiadd with length 8 at 9 with value 67
+PATTERN: addiadd with length 8 at 8 with value 67
+PATTERN: addiadd with length 8 at 21 with value 67
+PATTERN: addiadd with length 8 at 9 with value 67
+PATTERN: addiadd with length 8 at 9 with value 67
+PATTERN: addiadd with length 8 at 9 with value 67
+PATTERN: addiadd with length 8 at 8 with value 67
+PATTERN: addiadd with length 6 at 8 with value 67
+PATTERN: addiadd with length 8 at 9 with value 67
+PATTERN: addiadd with length 8 at 8 with value 67
+PATTERN: addiadd with length 8 at 9 with value 67
+PATTERN: addiadd with length 8 at 9 with value 67
+PATTERN: addiadd with length 8 at 8 with value 67
+PATTERN: addiadd with length 8 at 8 with value 67
+PATTERN: addiadd with length 6 at 8 with value 67
+PATTERN: addiadd with length 8 at 7 with value 67
+PATTERN: addiadd with length 6 at 7 with value 67
+PATTERN: addiadd with length 6 at 7 with value 67
+PATTERN: addiadd with length 6 at 3 with value -1332
+PATTERN: muli with length 8 at 95a4 with value 100
+PATTERN: addiadd with length 6 at 1 with value 8
+PATTERN: addiadd with length 6 at 1 with value 8
+
+Instruction count: 6749 (22220 bytes, avg 3.29 bytes/insn)
+
+             addiadd       70 12bit=1.0372% 9bit=1.0224% avgbytes=7.54
+                muli        3 12bit=0.0445% 9bit=0.0445% avgbytes=8.00
+             muliadd        2 12bit=0.0296% 9bit=0.0296% avgbytes=11.00
+
+Values for addiadd patterns:
+                  67       67
+                   8        2
+               -1332        1
+
+Values for muli patterns:
+                  58        2
+                 100        1
+
+Values for muliadd patterns:
+                 100        1
+                -100        1
+

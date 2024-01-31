@@ -1,0 +1,64 @@
+PATTERN: addiadd with length 6 at 21 with value 8
+PATTERN: addiadd with length 6 at 2 with value 16
+PATTERN: addiadd with length 6 at 7 with value 16
+PATTERN: addiadd with length 8 at 14 with value -8
+PATTERN: addiadd with length 6 at 15 with value -8
+PATTERN: addiadd with length 6 at 5 with value 1
+PATTERN: addiadd with length 6 at 4 with value 1
+PATTERN: addiadd with length 6 at 22 with value 8
+PATTERN: addiadd with length 6 at 3 with value 16
+PATTERN: addiadd with length 6 at 12 with value -8
+PATTERN: addiadd with length 8 at 4 with value 1
+PATTERN: addiadd with length 6 at 2 with value -1502
+PATTERN: addiadd with length 6 at 4 with value 1844
+PATTERN: addiadd with length 6 at 4 with value -2002
+PATTERN: addiadd with length 6 at 4 with value -1752
+PATTERN: addiadd with length 6 at 2 with value 1604
+PATTERN: addiadd with length 6 at 4 with value 884
+PATTERN: addiadd with length 6 at 4 with value 1124
+PATTERN: addiadd with length 6 at 4 with value 1364
+PATTERN: addiadd with length 6 at 5 with value -1402
+PATTERN: addiadd with length 6 at 5 with value -1752
+PATTERN: addiadd with length 6 at 3 with value 1082
+PATTERN: addiadd with length 8 at 1 with value 0
+PATTERN: addiadd with length 6 at 12 with value -936
+PATTERN: addiadd with length 6 at 12 with value -1184
+PATTERN: addiadd with length 6 at 2 with value -928
+PATTERN: addiadd with length 6 at 4 with value 1064
+PATTERN: addiadd with length 6 at 2 with value -928
+PATTERN: addiadd with length 6 at 3 with value 936
+PATTERN: addiadd with length 6 at 2 with value -936
+PATTERN: addiadd with length 6 at 4 with value 96
+PATTERN: addiadd with length 6 at 2 with value 96
+PATTERN: addiadd with length 6 at 2 with value 96
+PATTERN: addiadd with length 6 at 14 with value 16
+PATTERN: addiadd with length 6 at 18 with value 8
+PATTERN: addiadd with length 6 at 1 with value 8
+
+Instruction count: 16763 (50624 bytes, avg 3.02 bytes/insn)
+
+             addiadd       36 12bit=0.2148% 9bit=0.1074% avgbytes=6.17
+
+Values for addiadd patterns:
+                  16        4
+                   8        4
+                  96        3
+                   1        3
+                  -8        3
+                -928        2
+                -936        2
+               -1752        2
+                1844        1
+                1604        1
+                1364        1
+                1124        1
+                1082        1
+                1064        1
+                 936        1
+                 884        1
+                   0        1
+               -1184        1
+               -1402        1
+               -1502        1
+               -2002        1
+

@@ -1,0 +1,51 @@
+PATTERN: addiadd with length 6 at 3 with value 1200
+PATTERN: addiadd with length 6 at 3 with value 708
+PATTERN: addiadd with length 6 at 3 with value -1086
+PATTERN: addiadd with length 6 at 3 with value 834
+PATTERN: addiadd with length 6 at 3 with value -136
+PATTERN: addiadd with length 6 at 3 with value -256
+PATTERN: addiadd with length 6 at 3 with value -1362
+PATTERN: addiadd with length 6 at 1 with value -1
+PATTERN: addiadd with length 6 at 3 with value -644
+PATTERN: addiadd with length 6 at 3 with value -146
+PATTERN: addiadd with length 6 at 4 with value -500
+PATTERN: addiadd with length 6 at 4 with value -658
+PATTERN: addiadd with length 6 at 4 with value -816
+PATTERN: addiadd with length 6 at 4 with value -970
+PATTERN: addiadd with length 6 at 4 with value -1156
+PATTERN: addiadd with length 6 at 4 with value -1342
+PATTERN: addiadd with length 6 at 3 with value -1666
+PATTERN: addiadd with length 6 at 4 with value 2
+PATTERN: addiadd with length 6 at 7 with value 982
+PATTERN: addiadd with length 6 at 4 with value 2
+PATTERN: addiadd with length 6 at 7 with value 1822
+PATTERN: addiadd with length 6 at 4 with value 2
+PATTERN: addiadd with length 6 at 7 with value -1572
+
+Instruction count: 48718 (138730 bytes, avg 2.85 bytes/insn)
+
+             addiadd       23 12bit=0.0472% 9bit=0.0082% avgbytes=6.00
+
+Values for addiadd patterns:
+                   2        3
+                1822        1
+                1200        1
+                 982        1
+                 834        1
+                 708        1
+                  -1        1
+                -136        1
+                -146        1
+                -256        1
+                -500        1
+                -644        1
+                -658        1
+                -816        1
+                -970        1
+               -1086        1
+               -1156        1
+               -1342        1
+               -1362        1
+               -1572        1
+               -1666        1
+

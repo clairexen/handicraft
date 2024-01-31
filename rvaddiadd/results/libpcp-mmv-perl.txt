@@ -1,0 +1,22 @@
+PATTERN: addiadd with length 6 at 3 with value -32
+PATTERN: addiadd with length 6 at 17 with value 4
+PATTERN: addiadd with length 6 at 4 with value -16
+PATTERN: muliadd with length 10 at 1ba2 with value 104
+PATTERN: muliadd with length 10 at 21f0 with value 104
+PATTERN: muliadd with length 10 at 2206 with value 104
+PATTERN: muliadd with length 10 at 2220 with value 104
+PATTERN: muliadd with length 10 at 2236 with value 104
+
+Instruction count: 6845 (19766 bytes, avg 2.89 bytes/insn)
+
+             muliadd        5 12bit=0.0730% 9bit=0.0730% avgbytes=10.00
+             addiadd        3 12bit=0.0438% 9bit=0.0438% avgbytes=6.00
+
+Values for muliadd patterns:
+                 104        5
+
+Values for addiadd patterns:
+                   4        1
+                 -16        1
+                 -32        1
+

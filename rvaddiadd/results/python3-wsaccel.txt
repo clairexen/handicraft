@@ -1,0 +1,60 @@
+PATTERN: addiadd with length 6 at 3 with value 1224
+PATTERN: addiadd with length 6 at 3 with value 1360
+PATTERN: addiadd with length 6 at 3 with value 390
+PATTERN: addiadd with length 6 at 3 with value 286
+PATTERN: addiadd with length 6 at 3 with value 56
+PATTERN: addiadd with length 6 at 6 with value 256
+PATTERN: addiadd with length 6 at 3 with value 26
+PATTERN: addiadd with length 6 at 3 with value -318
+PATTERN: addiadd with length 6 at 3 with value -660
+PATTERN: addiadd with length 6 at 2 with value -1002
+PATTERN: addiadd with length 6 at 3 with value -1174
+PATTERN: addiadd with length 6 at 6 with value -1260
+PATTERN: addiadd with length 6 at 3 with value 1040
+PATTERN: addiadd with length 6 at 6 with value 1984
+PATTERN: addiadd with length 6 at 3 with value 1922
+PATTERN: addiadd with length 6 at 3 with value 1070
+PATTERN: addiadd with length 6 at 6 with value 256
+PATTERN: addiadd with length 6 at 2 with value -1516
+PATTERN: addiadd with length 6 at 3 with value -1688
+PATTERN: addiadd with length 6 at 6 with value -1774
+PATTERN: addiadd with length 6 at 3 with value 426
+PATTERN: addiadd with length 6 at 3 with value 84
+PATTERN: addiadd with length 6 at 3 with value -260
+PATTERN: addiadd with length 6 at 6 with value -850
+PATTERN: addiadd with length 6 at 3 with value 76
+PATTERN: addiadd with length 6 at 3 with value 1060
+PATTERN: addiadd with length 6 at 3 with value 388
+
+Instruction count: 25487 (74424 bytes, avg 2.92 bytes/insn)
+
+             addiadd       27 12bit=0.1059% 9bit=0.0157% avgbytes=6.00
+
+Values for addiadd patterns:
+                 256        2
+                1984        1
+                1922        1
+                1360        1
+                1224        1
+                1070        1
+                1060        1
+                1040        1
+                 426        1
+                 390        1
+                 388        1
+                 286        1
+                  84        1
+                  76        1
+                  56        1
+                  26        1
+                -260        1
+                -318        1
+                -660        1
+                -850        1
+               -1002        1
+               -1174        1
+               -1260        1
+               -1516        1
+               -1688        1
+               -1774        1
+

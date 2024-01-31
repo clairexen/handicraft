@@ -1,0 +1,62 @@
+PATTERN: addiadd with length 6 at 6 with value 1848
+PATTERN: addiadd with length 6 at 10 with value 1856
+PATTERN: addiadd with length 6 at 14 with value 1864
+PATTERN: addiadd with length 6 at 18 with value 1872
+PATTERN: addiadd with length 6 at 22 with value 1880
+PATTERN: addiadd with length 6 at 26 with value 1888
+PATTERN: addiadd with length 6 at 29 with value 1896
+PATTERN: addiadd with length 8 at 3 with value 1848
+PATTERN: addiadd with length 6 at 5 with value 1816
+PATTERN: addiadd with length 6 at 12 with value 1824
+PATTERN: addiadd with length 6 at 13 with value -1816
+PATTERN: addiadd with length 6 at 4 with value 1824
+PATTERN: addiadd with length 6 at 5 with value -1816
+PATTERN: addiadd with length 6 at 7 with value 1824
+PATTERN: addiadd with length 6 at 8 with value -1816
+PATTERN: addiadd with length 6 at 4 with value 1808
+PATTERN: addiadd with length 6 at 5 with value -1808
+PATTERN: addiadd with length 6 at 4 with value 1808
+PATTERN: addiadd with length 6 at 5 with value -1808
+PATTERN: addiadd with length 8 at 4 with value 0
+PATTERN: addiadd with length 6 at 3 with value -2
+PATTERN: addiadd with length 6 at 16 with value -1712
+PATTERN: addiadd with length 6 at 22 with value -464
+PATTERN: addiadd with length 6 at 23 with value -1808
+PATTERN: addiadd with length 6 at 6 with value -464
+PATTERN: addiadd with length 6 at 7 with value 480
+PATTERN: addiadd with length 6 at 4 with value -464
+PATTERN: addiadd with length 6 at 5 with value 476
+PATTERN: addiadd with length 6 at 3 with value -464
+PATTERN: addiadd with length 6 at 4 with value -464
+PATTERN: addiadd with length 6 at 8 with value -464
+PATTERN: addiadd with length 8 at 9 with value 472
+PATTERN: addiadd with length 6 at 7 with value -464
+PATTERN: addiadd with length 6 at 2 with value 1712
+PATTERN: addiadd with length 6 at 1 with value 0
+
+Instruction count: 7200 (23236 bytes, avg 3.23 bytes/insn)
+
+             addiadd       35 12bit=0.4861% 9bit=0.0417% avgbytes=6.17
+
+Values for addiadd patterns:
+                -464        7
+                1824        3
+               -1808        3
+               -1816        3
+                1848        2
+                1808        2
+                   0        2
+                1896        1
+                1888        1
+                1880        1
+                1872        1
+                1864        1
+                1856        1
+                1816        1
+                1712        1
+                 480        1
+                 476        1
+                 472        1
+                  -2        1
+               -1712        1
+

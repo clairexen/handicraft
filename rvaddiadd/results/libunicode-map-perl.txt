@@ -1,0 +1,14 @@
+PATTERN: muliadd with length 10 at fd4 with value 104
+PATTERN: addiadd with length 8 at 7 with value 1
+
+Instruction count: 2420 (7032 bytes, avg 2.91 bytes/insn)
+
+             muliadd        1 12bit=0.0413% 9bit=0.0413% avgbytes=10.00
+             addiadd        1 12bit=0.0413% 9bit=0.0413% avgbytes=8.00
+
+Values for muliadd patterns:
+                 104        1
+
+Values for addiadd patterns:
+                   1        1
+

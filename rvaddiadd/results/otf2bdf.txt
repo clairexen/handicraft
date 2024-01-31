@@ -1,0 +1,57 @@
+PATTERN: addiadd with length 6 at 8 with value 0
+PATTERN: addiadd with length 6 at 8 with value 0
+PATTERN: addiadd with length 6 at 3 with value -1024
+PATTERN: addiadd with length 6 at 3 with value -918
+PATTERN: addiadd with length 6 at 20 with value 16
+PATTERN: addiadd with length 6 at 31 with value 8
+PATTERN: addiadd with length 6 at 3 with value -410
+PATTERN: addiadd with length 6 at 3 with value -502
+PATTERN: addiadd with length 6 at 4 with value 32
+PATTERN: addiadd with length 6 at 13 with value 32
+PATTERN: addiadd with length 6 at 20 with value 32
+PATTERN: addiadd with length 6 at 21 with value -26
+PATTERN: addiadd with length 6 at 4 with value 896
+PATTERN: addiadd with length 6 at 4 with value 32
+PATTERN: addiadd with length 6 at 3 with value 32
+PATTERN: addiadd with length 6 at 7 with value 32
+PATTERN: addiadd with length 6 at 9 with value -7
+PATTERN: addiadd with length 6 at 1 with value 1
+PATTERN: addiadd with length 6 at 4 with value 32
+PATTERN: addiadd with length 6 at 4 with value 32
+PATTERN: addiadd with length 6 at 6 with value -16
+PATTERN: addiadd with length 6 at 9 with value 32
+PATTERN: addiadd with length 8 at 11 with value -24
+PATTERN: addiadd with length 6 at 2 with value 32
+PATTERN: addiadd with length 6 at 3 with value -1716
+PATTERN: addiadd with length 6 at 4 with value 32
+PATTERN: addiadd with length 6 at 3 with value 32
+PATTERN: addiadd with length 6 at 4 with value 32
+PATTERN: addiadd with length 6 at 4 with value 32
+PATTERN: addiadd with length 6 at 9 with value 32
+PATTERN: addiadd with length 6 at 3 with value 908
+PATTERN: addiadd with length 6 at 3 with value 866
+PATTERN: addiadd with length 6 at 4 with value 32
+
+Instruction count: 3384 (10590 bytes, avg 3.13 bytes/insn)
+
+             addiadd       33 12bit=0.9752% 9bit=0.7388% avgbytes=6.06
+
+Values for addiadd patterns:
+                  32       16
+                   0        2
+                 908        1
+                 896        1
+                 866        1
+                  16        1
+                   8        1
+                   1        1
+                  -7        1
+                 -16        1
+                 -24        1
+                 -26        1
+                -410        1
+                -502        1
+                -918        1
+               -1024        1
+               -1716        1
+

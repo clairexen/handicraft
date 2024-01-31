@@ -1,0 +1,50 @@
+PATTERN: addiadd with length 6 at 7 with value 32
+PATTERN: addiadd with length 6 at 5 with value 32
+PATTERN: addiadd with length 6 at 3 with value -686
+PATTERN: addiadd with length 6 at 7 with value 32
+PATTERN: addiadd with length 6 at 5 with value 32
+PATTERN: addiadd with length 6 at 3 with value -1946
+PATTERN: addiadd with length 6 at 3 with value 1638
+PATTERN: addiadd with length 6 at 6 with value 32
+PATTERN: addiadd with length 6 at 3 with value -488
+PATTERN: addiadd with length 6 at 3 with value -1208
+PATTERN: addiadd with length 6 at 3 with value 1
+PATTERN: addiadd with length 6 at 4 with value -490
+PATTERN: addiadd with length 8 at 3 with value 32
+PATTERN: addiadd with length 6 at 4 with value 500
+PATTERN: addiadd with length 8 at 3 with value 32
+PATTERN: addiadd with length 6 at 7 with value 32
+PATTERN: addiadd with length 6 at 5 with value 32
+PATTERN: addiadd with length 6 at 7 with value 32
+PATTERN: addiadd with length 6 at 5 with value 32
+PATTERN: addiadd with length 6 at 3 with value -1114
+PATTERN: addiadd with length 6 at 3 with value -1626
+PATTERN: addiadd with length 6 at 3 with value 242
+PATTERN: addiadd with length 6 at 3 with value -474
+PATTERN: addiadd with length 6 at 3 with value 1
+PATTERN: addiadd with length 6 at 4 with value 176
+PATTERN: addiadd with length 6 at 4 with value 1096
+PATTERN: addiadd with length 6 at 3 with value -1726
+
+Instruction count: 14978 (42612 bytes, avg 2.84 bytes/insn)
+
+             addiadd       27 12bit=0.1803% 9bit=0.0868% avgbytes=6.15
+
+Values for addiadd patterns:
+                  32       11
+                   1        2
+                1638        1
+                1096        1
+                 500        1
+                 242        1
+                 176        1
+                -474        1
+                -488        1
+                -490        1
+                -686        1
+               -1114        1
+               -1208        1
+               -1626        1
+               -1726        1
+               -1946        1
+

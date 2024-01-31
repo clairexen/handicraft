@@ -1,0 +1,14 @@
+PATTERN: muli with length 6 at 50dc with value -1
+PATTERN: muli with length 6 at 5158 with value -1
+PATTERN: muli with length 6 at 51d4 with value -1
+PATTERN: muli with length 6 at 5316 with value -1
+PATTERN: muli with length 6 at 5424 with value -1
+PATTERN: muli with length 6 at 5532 with value -1
+
+Instruction count: 3333 (9648 bytes, avg 2.89 bytes/insn)
+
+                muli        6 12bit=0.1800% 9bit=0.1800% avgbytes=6.00
+
+Values for muli patterns:
+                  -1        6
+

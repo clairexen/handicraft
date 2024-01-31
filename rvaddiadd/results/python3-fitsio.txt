@@ -1,0 +1,52 @@
+PATTERN: addiadd with length 6 at 3 with value 558
+PATTERN: addiadd with length 6 at 3 with value 420
+PATTERN: addiadd with length 6 at 3 with value 8
+PATTERN: addiadd with length 6 at 13 with value -1000
+PATTERN: addiadd with length 6 at 13 with value -1120
+PATTERN: addiadd with length 6 at 3 with value -992
+PATTERN: addiadd with length 6 at 5 with value 1000
+PATTERN: addiadd with length 6 at 7 with value -992
+PATTERN: addiadd with length 6 at 10 with value 996
+PATTERN: addiadd with length 6 at 2 with value -1000
+PATTERN: addiadd with length 6 at 2 with value -992
+PATTERN: addiadd with length 6 at 4 with value 2032
+PATTERN: addiadd with length 6 at 2 with value -1000
+PATTERN: addiadd with length 6 at 7 with value -160
+PATTERN: addiadd with length 6 at 6 with value -160
+PATTERN: addiadd with length 6 at 9 with value 8
+PATTERN: addiadd with length 6 at 3 with value 502
+PATTERN: addiadd with length 6 at 3 with value 364
+PATTERN: addiadd with length 6 at 3 with value -48
+PATTERN: addiadd with length 6 at 13 with value -1000
+PATTERN: addiadd with length 6 at 13 with value -1120
+PATTERN: addiadd with length 6 at 3 with value -992
+PATTERN: addiadd with length 6 at 5 with value 1000
+PATTERN: addiadd with length 6 at 7 with value -992
+PATTERN: addiadd with length 6 at 10 with value 996
+PATTERN: addiadd with length 6 at 2 with value -1000
+PATTERN: addiadd with length 6 at 2 with value -992
+PATTERN: addiadd with length 6 at 4 with value 2032
+PATTERN: addiadd with length 6 at 2 with value -1000
+PATTERN: addiadd with length 6 at 7 with value -160
+PATTERN: addiadd with length 6 at 6 with value -160
+PATTERN: addiadd with length 6 at 9 with value 8
+
+Instruction count: 17277 (48912 bytes, avg 2.83 bytes/insn)
+
+             addiadd       32 12bit=0.1852% 9bit=0.0232% avgbytes=6.00
+
+Values for addiadd patterns:
+                -992        6
+               -1000        6
+                -160        4
+                   8        3
+                2032        2
+                1000        2
+                 996        2
+               -1120        2
+                 558        1
+                 502        1
+                 420        1
+                 364        1
+                 -48        1
+

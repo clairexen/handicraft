@@ -1,0 +1,16 @@
+PATTERN: muli with length 8 at 11b2e with value 728
+PATTERN: muliadd with length 10 at 11b9c with value 728
+PATTERN: muli with length 8 at 11b2e with value 728
+PATTERN: muliadd with length 10 at 11b9c with value 728
+
+Instruction count: 20790 (56524 bytes, avg 2.72 bytes/insn)
+
+             muliadd        2 12bit=0.0096% 9bit=0.0000% avgbytes=10.00
+                muli        2 12bit=0.0096% 9bit=0.0000% avgbytes=8.00
+
+Values for muliadd patterns:
+                 728        2
+
+Values for muli patterns:
+                 728        2
+

@@ -1,0 +1,9 @@
+PATTERN: addiadd with length 8 at 3 with value -1
+
+Instruction count: 2362 (6740 bytes, avg 2.85 bytes/insn)
+
+             addiadd        1 12bit=0.0423% 9bit=0.0423% avgbytes=8.00
+
+Values for addiadd patterns:
+                  -1        1
+

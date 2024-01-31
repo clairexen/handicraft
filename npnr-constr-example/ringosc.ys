@@ -1,0 +1,3 @@
+read -noverific
+read -vlog2k ringosc.v
+synth_ice40 -json ringosc.json -top top

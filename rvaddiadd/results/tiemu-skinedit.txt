@@ -1,0 +1,51 @@
+PATTERN: muliadd with length 10 at 9074 with value 648
+PATTERN: addiadd with length 6 at 6 with value -94
+PATTERN: addiadd with length 6 at 5 with value 1
+PATTERN: addiadd with length 6 at 4 with value 12
+PATTERN: addiadd with length 6 at 4 with value 16
+PATTERN: addiadd with length 6 at 4 with value 20
+PATTERN: addiadd with length 6 at 8 with value 8
+PATTERN: addiadd with length 6 at 5 with value 432
+PATTERN: addiadd with length 6 at 13 with value -2032
+PATTERN: addiadd with length 6 at 13 with value -2032
+PATTERN: addiadd with length 6 at 14 with value 2040
+PATTERN: addiadd with length 6 at 17 with value -1976
+PATTERN: addiadd with length 6 at 17 with value 16
+PATTERN: addiadd with length 6 at 24 with value -1968
+PATTERN: addiadd with length 6 at 24 with value 16
+PATTERN: addiadd with length 6 at 27 with value -1960
+PATTERN: addiadd with length 6 at 30 with value -1952
+PATTERN: addiadd with length 6 at 36 with value -1944
+PATTERN: addiadd with length 6 at 39 with value -1936
+PATTERN: addiadd with length 6 at 42 with value -1928
+PATTERN: addiadd with length 6 at 43 with value -2032
+PATTERN: addiadd with length 6 at 48 with value -2040
+PATTERN: addiadd with length 6 at 1 with value -2040
+
+Instruction count: 11420 (34634 bytes, avg 3.03 bytes/insn)
+
+             addiadd       22 12bit=0.1926% 9bit=0.0701% avgbytes=6.00
+             muliadd        1 12bit=0.0088% 9bit=0.0000% avgbytes=10.00
+
+Values for addiadd patterns:
+                  16        3
+               -2032        3
+               -2040        2
+                2040        1
+                 432        1
+                  20        1
+                  12        1
+                   8        1
+                   1        1
+                 -94        1
+               -1928        1
+               -1936        1
+               -1944        1
+               -1952        1
+               -1960        1
+               -1968        1
+               -1976        1
+
+Values for muliadd patterns:
+                 648        1
+
