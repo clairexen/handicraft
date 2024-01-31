@@ -1,0 +1,46 @@
+[*]
+[*] GTKWave Analyzer v3.3.65 (w)1999-2015 BSI
+[*] Sat Mar 25 16:35:44 2017
+[*]
+[dumpfile] "/home/clifford/Work/handicraft/2017/icohramtst/trace.vcd"
+[dumpfile_mtime] "Sat Mar 25 16:35:09 2017"
+[dumpfile_size] 91536
+[savefile] "/home/clifford/Work/handicraft/2017/icohramtst/trace.gtkw"
+[timestart] 0
+[size] 1275 633
+[pos] -1 -1
+*-7.000000 380 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
+[sst_width] 225
+[signals_width] 174
+[sst_expanded] 1
+[sst_vpaned_height] 172
+@28
+clock
+@200
+-
+@28
+hram_ck
+hram_cs
+hram_rwds_din
+@800022
+#{hram_dq_din<[7:0]>} hram_dq_din<7> hram_dq_din<6> hram_dq_din<5> hram_dq_din<4> hram_dq_din<3> hram_dq_din<2> hram_dq_din<1> hram_dq_din<0>
+@200
+-
+@28
+hram_dq_din<7>
+hram_dq_din<6>
+hram_dq_din<5>
+hram_dq_din<4>
+hram_dq_din<3>
+hram_dq_din<2>
+hram_dq_din<1>
+hram_dq_din<0>
+@1001200
+-group_end
+@200
+-
+@28
+hram_dq_dir
+hram_rwds_dir
+[pattern_trace] 1
+[pattern_trace] 0

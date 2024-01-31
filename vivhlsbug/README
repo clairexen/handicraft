@@ -1,0 +1,63 @@
+
+The files in this directory demonstrate a bug in Vivado_HLS that has been
+introduced in Vivado_HLS 2016.3 and is still there in Vivado_HLS 2016.4.
+(Vivado 2015.4, 2016.1, and 2016.2 have been tested OK and do not seem to
+suffer from this issue.)
+
+The attached design has two building blocks (demo_func1 and demo_func2) that
+are connected up in a dataflow top-level function (demo). The stream
+"internal_stream" connects the two blocks.
+
+This is a synthetic test case that I created to demonstrate the issue. The
+design where we found the bug is much more complicated of course. Here is what
+the attached design does:
+
+Assuming there is data available on the top-level input, demo_func1 writes on
+average once every four cycles to internal_stream.
+
+Assuming there is data available in internal_stream, demo_func2 reads from
+internal_stream once every four cycles.
+
+demo_func1 can write more often to internal_stream, depending on the exact
+values read from the top-level input. In this case the expected behavior is of
+course to first fill up internal_stream, and when internal_stream becomes full,
+to block demo_func1 until space in internal_stream becomes available.
+
+While demo_func1 is blocked, demo_func2 is of course expected to continue
+running and consume words from internal_stream.
+
+However, since Vivado_HLS 2016.3 the ap_start input of demo_func2 is wired up
+in a way so that ap_start of demo_func2 is only asserted when demo_func1
+finishes (which of course contradicts the whole idea of a dataflow module).
+Because of this, when demo_func1 is blocked, demo_func2 will also stop running,
+thus no elements from internal_stream are consumed and the whole design just
+locks.
+ 
+I have tried setting the ap_ctrl_none interface on demo_func2 to disable the
+creation of an ap_start input for the module, but it looks like ap_ctrl_none is
+only effective on the top-level module of the design.
+
+The attached files use a stand-alone verilog test bench to simulate the design
+and show that it is hanging. But the design also works with C/RTL cosim:
+Vivado_HLS version before 2016.3 will pass cosim and since 2016.3 cosim will
+simply hang in the RTL simulation stage.
+
+As a hotfix, I'm using the following sed command to patch the driver for
+the ap_start input of demo_func2 in the generated Verilog code:
+
+	sed -i "/^demo_func2/,/;/ s/.ap_start(.*)/.ap_start(1'b1)/;" \
+			hlsprj/solution/syn/verilog/demo.v
+
+This also works as "exec sed -i ...." in a Vivado_HLS TCL script right after
+the call to csynth_design (and before calling export_design or cosim_design).
+
+See "runall.sh" for a simple shell script that runs HLS and simulation the
+exact same way I did during my tests.
+
+Please verify that this indeed is a bug, and still present in current dev
+versions of Vivado_HLS, and create a CR so that it will be fixed in future
+releases of the tool.
+
+Please note that this is a bug report. I do not need support. My motivation is
+simply that I'd like to help you guys creating software with fewer bugs.
+

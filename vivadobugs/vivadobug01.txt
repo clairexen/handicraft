@@ -1,0 +1,29 @@
+
+Vivado produces incorrect results for the following Verilog code:
+
+	module top(input s, input [1:0] x, output [1:0] y);
+		wire u = 1'bx;
+		assign y = s ? u : x;
+	endmodule
+
+Run "vivadobug01.sh" for synthesis, and pre- and post-synthesis simulation.
+
+Pre-synthesis simulation results:
+
+	s=1, x=11, y=0x
+
+Post-synthesis simulation results:
+
+	s=1, x=11, y=11
+
+Vivado seems to think that because u = 1'bx, this circuit may be implemented as
+y = x. However, this is not correct! u must be _zero_ extended to a 2 bit value,
+yielding effectively "y = s ? 2'b0x : x".
+
+Replacing "y = s ? u : x" with the equivalent "y = s ? 2'b0x : x" works around
+the synthesis bug in vivado.
+
+This bug has been reproduced with Vivado 2016.4 and 2017.1.
+
+This issue has been reported as Xilinx SR 10394723 and CR 975225.
+

@@ -1,0 +1,17 @@
+# see http://www.pighixxx.com/test/portfolio-items/icestick/
+
+set_io clk 21
+
+set_io spi_ss   78  # PMOD Pin 1
+set_io spi_clk  79  # PMOD Pin 2
+set_io spi_mosi 80  # PMOD Pin 3
+set_io spi_miso 81  # PMOD Pin 4
+
+set_io debug_ss   119
+set_io debug_clk  118
+set_io debug_mosi 117
+set_io debug_miso 116
+
+set_io pwm_left  44
+set_io pwm_right 45
+set_io pwm_pulse 47

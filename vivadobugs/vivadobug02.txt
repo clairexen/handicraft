@@ -1,0 +1,24 @@
+
+Vivado produces incorrect results for the following Verilog code:
+
+	module top(input [2:0] a, output [3:0] y);
+		localparam [5:15] p = 51681708;
+		assign y = p[15 + a -: 5];
+	endmodule
+
+Run "vivadobug02.sh" for synthesis, and pre- and post-synthesis simulation.
+
+Pre-synthesis simulation results:
+
+	a=001, y=100x
+
+Post-synthesis simulation results:
+
+	a=001, y=0000
+
+The post-synthesis result for the MSB of y is incorrect.
+
+This bug has been reproduced with Vivado 2016.4 and 2017.1.
+
+This issue has been reported as Xilinx SR 10394724 and CR 975552.
+

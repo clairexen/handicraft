@@ -1,0 +1,31 @@
+verific -vhdl2008 utils.vhd constants_pkg.vhd components.vhd orca.vhd \
+	orca_core.vhd instruction_fetch.vhd decode.vhd branch_unit.vhd \
+	execute.vhd load_store_unit.vhd sys_call.vhd register_file.vhd \
+	alu.vhd axi_instruction_master.vhd axi_master.vhd
+verific -import orca
+synth_ice40 -top orca -blif synth_ice40.blif
+
+# Initialize register file to zeros.   (From experiments we know it is
+# insufficient to simply start the firmware with an instruction sequence
+# that writes zero to all registers. ORCA will still have some internal
+# signals stuck at X if we do that. So we zero-initialize it right here.)
+#
+setparam -set INIT_0 256'b0 orca/core.D.register_file_1.registers.*
+setparam -set INIT_1 256'b0 orca/core.D.register_file_1.registers.*
+setparam -set INIT_2 256'b0 orca/core.D.register_file_1.registers.*
+setparam -set INIT_3 256'b0 orca/core.D.register_file_1.registers.*
+setparam -set INIT_4 256'b0 orca/core.D.register_file_1.registers.*
+setparam -set INIT_5 256'b0 orca/core.D.register_file_1.registers.*
+setparam -set INIT_6 256'b0 orca/core.D.register_file_1.registers.*
+setparam -set INIT_7 256'b0 orca/core.D.register_file_1.registers.*
+setparam -set INIT_8 256'b0 orca/core.D.register_file_1.registers.*
+setparam -set INIT_9 256'b0 orca/core.D.register_file_1.registers.*
+setparam -set INIT_A 256'b0 orca/core.D.register_file_1.registers.*
+setparam -set INIT_B 256'b0 orca/core.D.register_file_1.registers.*
+setparam -set INIT_C 256'b0 orca/core.D.register_file_1.registers.*
+setparam -set INIT_D 256'b0 orca/core.D.register_file_1.registers.*
+setparam -set INIT_E 256'b0 orca/core.D.register_file_1.registers.*
+setparam -set INIT_F 256'b0 orca/core.D.register_file_1.registers.*
+
+write_verilog synth_ice40.v
+write_ilang synth_ice40.il

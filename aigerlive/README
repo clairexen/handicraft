@@ -1,0 +1,16 @@
+Experiments with AIGER liveness, fairness, and justice.
+
+Example 1:
+
+	aigbmc simple.aag
+
+Example 2:
+
+	aigtosmv simple.aag | uniq > simple.smv
+	nuXmv simple.smv
+
+Example 3:
+
+	ltl2smv 1 reqresp.ltl
+	smvtoaig justice.svm
+

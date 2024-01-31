@@ -1,0 +1,40 @@
+; Run with "cvc4 --lang=sygus rot_mask_bitperm.sygus"
+
+(set-logic BV)
+
+(define-sort word  () (BitVec 8))
+
+(define-fun rot1 ((a word)) word (bvor (bvshl a #x01) (bvlshr a #x07)))
+(define-fun rot2 ((a word)) word (bvor (bvshl a #x02) (bvlshr a #x06)))
+(define-fun rot3 ((a word)) word (bvor (bvshl a #x03) (bvlshr a #x05)))
+(define-fun rot4 ((a word)) word (bvor (bvshl a #x04) (bvlshr a #x04)))
+(define-fun rot5 ((a word)) word (bvor (bvshl a #x05) (bvlshr a #x03)))
+(define-fun rot6 ((a word)) word (bvor (bvshl a #x06) (bvlshr a #x02)))
+(define-fun rot7 ((a word)) word (bvor (bvshl a #x07) (bvlshr a #x01)))
+
+(define-fun comb ((a word) (b word) (mask word)) word (bvor (bvand a mask) (bvand b (bvnot mask))))
+
+(synth-fun perm ((x word)) word (
+	(Start word (
+		EXPR
+		(comb Start EXPR (Constant word))
+	))
+	(EXPR word (
+		x
+		(rot1 EXPR)
+		(rot2 EXPR)
+		(rot3 EXPR)
+		(rot4 EXPR)
+		(rot5 EXPR)
+		(rot6 EXPR)
+		(rot7 EXPR)
+	))
+))
+
+(declare-var x word)
+
+(constraint ( = (= (bvand x #x80) #x80) (= (bvand (perm x) #x01) #x01)))
+(constraint ( = (= (bvand x #x40) #x40) (= (bvand (perm x) #x02) #x02)))
+; (constraint ( = (= (bvand x #x20) #x20) (= (bvand (perm x) #x04) #x04)))
+
+(check-synth)

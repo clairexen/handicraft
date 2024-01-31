@@ -1,0 +1,8 @@
+When programmed using SRAM programming, the iCE40 BRAM reads incorrect (i.e.
+zero) data for the first few cycles after reset. The issue seems to go away
+when programming the same bit-stream a second time. This simple design
+demonstrates this issue.
+
+Note: When building with iCEcube2, make sure you synthesize with LSE and set
+the "Propagate Constants" option to False. Otherwise iCEcube2 will (incorrectly)
+optimize the design away.

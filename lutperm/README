@@ -1,0 +1,11 @@
+
+Functions to calculate the LUT init value bit permutations that correspond to
+swapping input pins on the LUT.
+
+See lutperm.cc:
+
+perm_lut(): Implementation using bext and bdep operations. Constant time on
+architectures that provide instructions for those operations.
+
+perm_lut_naive(): naive implementation based on resampling of the original LUT.
+

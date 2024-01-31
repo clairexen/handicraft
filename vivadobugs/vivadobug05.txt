@@ -1,0 +1,56 @@
+
+The attached simple TCL script produces an "internal application error" when
+run in GUI mode. Running the same script in "batch" or "tcl" mode works fine.
+
+I.e. run the following command to reproduce the issue:
+
+	vivado -source vivadobug05.tcl
+
+After a short while a window pops up with the following error message:
+
+	#-------------------------------------------------------------------------------
+	# Vivado v2017.1 (64-bit)
+	# SW Build 1846317 on Fri Apr 14 18:54:47 MDT 2017
+	# IP Build 1846188 on Fri Apr 14 20:52:08 MDT 2017
+	# Current time: 5/4/17 11:59:31 AM CEST
+	# Process ID: 26297
+	# OS: Linux
+	#
+	# This report is an indication that an internal application error occurred.
+	# This information is useful for debugging. Please open a case with Xilinx
+	# Technical Support with this file and a testcase attached.
+	#-------------------------------------------------------------------------------
+	java.lang.UnsupportedOperationException: This is supposed to be overridden by subclasses.
+		at com.google.protobuf.GeneratedMessage.getUnknownFields(GeneratedMessage.java:262)
+		at ui.data.device.d.l.getSerializedSize(SourceFile:8409)
+		at com.google.protobuf.AbstractMessageLite.toByteArray(AbstractMessageLite.java:67)
+		at ui.data.device.H.axB(SourceFile:531)
+		at ui.data.device.H.axy(SourceFile:454)
+		at ui.data.device.H.axl(SourceFile:276)
+		at ui.data.device.E.j(SourceFile:122)
+		at ui.data.device.E.<init>(SourceFile:63)
+		at ui.data.ah.lN(SourceFile:1347)
+		at ui.data.ah.cP(SourceFile:217)
+		at ui.data.ah.<init>(SourceFile:146)
+		at ui.data.aW.<init>(SourceFile:38)
+		at ui.project.a.edJ(SourceFile:252)
+		at ui.project.a.init(SourceFile:236)
+		at ui.project.r.a(SourceFile:1080)
+		at ui.frmwork.a.k.d(SourceFile:41)
+		at ui.frmwork.HTclEventBroker.i(SourceFile:259)
+		at ui.frmwork.HTclEventBroker.fireTclEvent(SourceFile:330)
+
+The following two commands do not produce any errors. This is not surprising as
+the call trace above indicates that the error is related to the GUI code.
+
+	vivado -mode batch -source vivadobug05.tcl
+	vivado -mode tcl -source vivadobug05.tcl
+
+This bug has been observed with Vivado 2017.1 on 64 Bit Ubuntu 16.04 LTS.
+
+Please note that this is a bug report. I don't need support. Please verify the
+existence of the bug and create a CR so this is going to be fixed in a future
+release of Vivado HLS.
+
+This issue has been reported as Xilinx SR 10395738.
+

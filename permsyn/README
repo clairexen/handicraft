@@ -1,0 +1,97 @@
+
+This is an experiment that tries to quantify the utility of GREV and BEXT/BDEP
+instructions over just rotate-shift for generating arbitrary bit permutations.
+
+See here for results:
+http://nbviewer.jupyter.org/url/svn.clifford.at/handicraft/2017/permsyn/data.ipynb
+
+See here for the source code:
+http://svn.clifford.at/handicraft/2017/permsyn/
+
+
+SUMMARY OF RESULTS
+
+I generated 1600 problems (50 problems for each number of used bits in the
+range 1..32) and synthesized programs for all of those examples for different
+version of the ISA: (1) Just ROT, (2) ROT+GREV, and (3) ROT+GREV+BEXT/BDEP.
+
+In this test, adding GREV to the ISA reduces the size of the programs by about
+30%. Adding GREV+BEXT/BDEP reduces the size of the programs by about 70%.
+
+Or in other words: Adding GREV+BEXT/BDEP produces programs that are about 3x
+smaller than programs without GREV+BEXT/BDEP, and about 2x smaller than
+programs with GREV but without BEXT/BDEP.
+
+The faster ("simple") algorithm produces only about 7% worse programs than the
+full version of the algorithm.
+
+
+DETAILED PROBLEM DESCRIPTION
+
+permsyn.cc is a simple program synthesizer for bit permutations. It is using
+some simple heuristics combined with a brute force search of the space of
+program snippets that are just alternating rotate-shift and GREV instructions.
+
+Input is a list of pairs of integers: bit position in input word and bit
+positition in output word. Each input or output bit is referenced zero or
+one times. This describes a bit permutation. Bits in the input word that are
+not referenced in the list are ignored. Bits in the output word that are not
+referenced in the list must be set to zero.
+
+Output is a program implementing the given bit permutation utilizing only the
+following instructions:
+
+	AND is a bit-wise logical AND of a variable and a constant mask.
+
+	OR is a bit-wise logical OR of two variables.
+
+	ROT is a right-rotate shift by a constant number of positions.
+
+	GREV is a generalized bit reversal instruction. When the LSB of
+	the 2nd constant argument is set then it swaps odd and even bits.
+	When the next bit is set it swaps the two halfs in each nibble.
+	The next bit swaps the nibbles in a byte, and so forth. When the
+	MSB is set it swaps the half words in a word.
+
+	BEXT/BDEP are bit extract and bit deposit instructions. They are
+	usually called PEXT/PDEP, but I don't particularly like that name
+	because it implies a specific implementation (P=parallel, B=bit).
+	
+	BEXT is called with a variable and a bit mask. All bits in the
+	variable that are marked by a set bit in the mask are extracted
+	from the variable and "packed" to the LSB end of the output word.
+
+	BDEP is the inverse operation: The bits at the LSB end of the input
+	word are moved to the positions indicated in the mask argument
+	(without changing their order) to form the output word.
+
+The permsyn program is called with an 32 character argument specifying the
+layout of the input word. A '-' character marks an unused bit. Used bits
+are marked with a radix-32 digit (0..9 and a..v) specifying the destination
+bit position in the output word for this input bit.
+
+Support for GREV can be disabled using the -g command line option.
+
+Support for BEXT/BDEP can be disabled using the -b command line option
+
+A much simpler and faster search that seems to be almost as good in practice
+can be enabled using the -s command line option.
+
+Simply running "make" in the source directory will build "permsyn" and run
+it with an example configuration.
+
+
+LIMITATIONS OF THIS ANALYSIS
+
+This is not a superoptimizer. It produces reasonably good code, but there is
+no guarantee that the generated programs are optimal.
+
+Some of the generated instructions use word-wide bit masks (AND, BEXT, BDEP). I
+do not count the extra instructions needed to create or load those constants.
+
+I was only looking at programs operating on 32 bit words, and only can cases
+where in- and output bit positions are uniformly distributed.
+
+I'm only looking at permutations, not combinations. So the generated programs
+can not copy a bit in the input word to multiple places in the output word.
+

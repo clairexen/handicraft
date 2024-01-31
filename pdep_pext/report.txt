@@ -1,0 +1,58 @@
+
+ASIC (NAND/NOR/NOT) gate counts:
+  Control Circuits          786   ( 11%)
+  Butterfly Networks       2689   ( 38%)
+  Parallel Prefix Count    2886   ( 41%)
+  LROTC of Zero Units       652   (  9%)
+
+ASIC transistor counts:
+  Control Circuits         2864   ( 11%)
+  Butterfly Networks      10370   ( 40%)
+  Parallel Prefix Count   10356   ( 40%)
+  LROTC of Zero Units      2320   (  9%)
+
+Size reduction from flattening design hierarchy:
+  By gates:        20%
+  By transistors:  17%
+
+Size reduction from eliminating grev operation (flattened):
+  By gates:         5%
+  By transistors:   5%
+
+Relative size compared to "shift64":
+  By gates:        1.63x (not flattened),  1.30x (flattened)
+  By transistors:  1.55x (not flattened),  1.28x (flattened)
+
+Relative size compared to "rshift64":
+  By gates:        6.05x (not flattened),  4.82x (flattened)
+  By transistors:  5.73x (not flattened),  4.73x (flattened)
+
+Relative size compared to "mul32":
+  By gates:        0.44x (not flattened),  0.35x (flattened)
+  By transistors:  0.44x (not flattened),  0.36x (flattened)
+
+Relative size compared to multi-cycle pdep_pext:
+  By gates:        3.76x (not flattened),  2.99x (flattened)
+  By transistors:  4.18x (not flattened),  3.45x (flattened)
+
+Summary by relative transistor count:
+  "mul32" reference          2.78
+  single-cycle pdep_pext     1.00
+  "shift64" reference        0.78
+  "mul16" reference          0.57
+  multi-cycle pdep_pext      0.29
+  stand-alone grev           0.22
+  "rshift64" reference       0.21
+
+Max path from iCE40 timing analysis (no pipelining):
+  Total number of logic levels: 20
+  Total path delay: 31.58 ns (31.66 MHz)
+
+Max path from iCE40 timing analysis (with pipelining):
+  Total number of logic levels: 15
+  Total path delay: 21.12 ns (47.35 MHz)
+
+Max path from iCE40 timing analysis (multi-cycle):
+  Total number of logic levels: 67
+  Total path delay: 20.97 ns (47.68 MHz)
+

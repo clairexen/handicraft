@@ -1,0 +1,3 @@
+read_verilog -sv hierloop.sv
+prep -flatten -top testbench
+sat -verify -prove-asserts -set-assumes -show-public

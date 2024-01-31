@@ -1,0 +1,11 @@
+
+FizzBuzz Verilog Challange
+==========================
+
+Create a Verilog module that outputs at least the first 10000 lines of FizzBuzz
+(ASCII text, decimal numbers), strictly one byte per cycle (no idle cycles).
+
+This directory contains a pre-synthesized reference implementation and a simple
+test bench. (Note: The test bench does not check the output, just write it to
+stdout. You have to check externally if the output is correct.)
+

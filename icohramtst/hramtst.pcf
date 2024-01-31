@@ -1,0 +1,29 @@
+set_io CLKIN R9
+
+set_io LED1 C8
+set_io LED2 F7
+set_io LED3 K9
+
+set_io RASPI_11 D5
+set_io RASPI_12 D6
+set_io RASPI_15 C6
+set_io RASPI_16 C7
+set_io RASPI_19 A6
+set_io RASPI_21 A7
+set_io RASPI_26 D4
+set_io RASPI_35 D7
+set_io RASPI_36 D9
+set_io RASPI_38 C9
+set_io RASPI_40 C10
+
+set_io HRAM_CK   N10
+set_io HRAM_CS   P10
+set_io HRAM_RWDS P8
+set_io HRAM_DQ0  T2
+set_io HRAM_DQ1  R3
+set_io HRAM_DQ2  T3
+set_io HRAM_DQ3  R4
+set_io HRAM_DQ4  R5
+set_io HRAM_DQ5  T5
+set_io HRAM_DQ6  R6
+set_io HRAM_DQ7  T6

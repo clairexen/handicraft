@@ -1,0 +1,3 @@
+Building 32-bit wide 10-1 MUXes using different Verilog codes.
+Expected result is a three-layer deep circuit of 224 4-LUTs.
+Context: https://twitter.com/TinyFPGA/status/937369267296546816

@@ -1,0 +1,8 @@
+read_verilog -sv sequential.sv
+synth -flatten -top testbench
+delete -output
+abc -g AND
+opt -fast
+sat -verify -seq 10 -prove-asserts -set-assumes -show-public
+write_aiger -zinit sequential.aig
+! yosys-abc -c 'read_aiger sequential.aig; fold; strash; pdr'

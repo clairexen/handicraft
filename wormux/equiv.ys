@@ -1,0 +1,18 @@
+echo on
+read_verilog wormux.v
+prep
+
+miter -equiv -flatten check_en_ref check_en check_en_miter
+sat -verify -prove trigger 0 check_en_miter
+
+miter -equiv -flatten check_en_ref check_en_alt check_en_alt_miter
+sat -verify -prove trigger 0 check_en_alt_miter
+
+miter -equiv -flatten check_en_ref check_en_alt2 check_en_alt2_miter
+sat -verify -prove trigger 0 check_en_alt2_miter
+
+flatten miter12
+sat -verify -prove trigger 0 miter12
+
+flatten miter13
+sat -verify -prove trigger 0 miter13

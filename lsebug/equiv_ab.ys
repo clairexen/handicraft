@@ -1,0 +1,5 @@
+read_verilog test.v
+prep
+miter -equiv -make_assert -flatten test_a test_b miter
+hierarchy -top miter
+sat -verify -set-init-zero -tempinduct -prove-asserts

@@ -1,0 +1,52 @@
+Vivado HLS includes the wrong gmp.h in cosim mode
+
+Vivado HLS comes with its own version of "gmp.h". However, during cosim Vivado
+HLS incorrectly preferrs header files from the system include directories over
+the headers in /opt/Xilinx/Vivado_HLS/2017.1/include/. Because of that, when
+running Vivado HLS on Ubuntu 16.04 with libgmp-dev installed, every HLS project
+that includes <ap_fixed.h> will fail with something like the following error
+during cosim:
+
+	INFO: [COSIM 212-14] Instrumenting C test bench ...
+	   Build using "/opt/Xilinx/Vivado_HLS/2017.1/lnx64/tools/gcc/bin/g++"
+	   Compiling apatb_vivadobug04.cpp
+	   Compiling vivadobug04_tb.cc_pre.cc.tb.cc
+	cosim.tv.mk:58: recipe for target 'obj/vivadobug04_tb.cc_pre.cc.tb.o' failed
+	In file included from apatb_vivadobug04.cpp:18:0:
+	/opt/Xilinx/Vivado_HLS/2017.1/include/ap_stream.h:70:2: warning: #warning AP_STREAM macros are deprecated. Please use hls::stream<> from "hls_stream.h" instead. [-Wcpp]
+	In file included from /opt/Xilinx/Vivado_HLS/2017.1/include/floating_point_v7_0_bitacc_cmodel.h:148:0,
+			 from /opt/Xilinx/Vivado_HLS/2017.1/include/hls_fpo.h:172,
+			 from /opt/Xilinx/Vivado_HLS/2017.1/include/hls_half.h:57,
+			 from /opt/Xilinx/Vivado_HLS/2017.1/include/ap_int.h:74,
+			 from /opt/Xilinx/Vivado_HLS/2017.1/include/ap_fixed.h:67,
+			 from /home/clifford/Work/handicraft/2017/vivadobugs/vivadobug04.h:7,
+			 from /home/clifford/Work/handicraft/2017/vivadobugs/vivadobug04_tb.cc:1:
+	/opt/Xilinx/Vivado_HLS/2017.1/include/mpfr.h:181:9: error: ‘__gmp_const’ does not name a type
+	In file included from /opt/Xilinx/Vivado_HLS/2017.1/include/floating_point_v7_0_bitacc_cmodel.h:148:0,
+			 from /opt/Xilinx/Vivado_HLS/2017.1/include/hls_fpo.h:172,
+			 from /opt/Xilinx/Vivado_HLS/2017.1/include/hls_half.h:57,
+			 from /opt/Xilinx/Vivado_HLS/2017.1/include/ap_int.h:74,
+			 from /opt/Xilinx/Vivado_HLS/2017.1/include/ap_fixed.h:67,
+			 from /home/clifford/Work/handicraft/2017/vivadobugs/vivadobug04.h:7,
+			 from /home/clifford/Work/handicraft/2017/vivadobugs/vivadobug04_tb.cc:1:
+	/opt/Xilinx/Vivado_HLS/2017.1/include/mpfr.h:244:2: error: ‘__gmp_const’ does not name a type
+	/opt/Xilinx/Vivado_HLS/2017.1/include/mpfr.h:245:2: error: ‘__gmp_const’ does not name a type
+	/opt/Xilinx/Vivado_HLS/2017.1/include/mpfr.h:260:2: error: ‘__gmp_const’ does not name a type
+
+The attached project demontrates this. Simply install libgmp-dev and then run
+vivado_hls (on Ubuntu 16.04 LTS):
+
+	sudo apt-get install libgmp-dev
+	/opt/Xilinx/Vivado_HLS/2017.1/bin/vivado_hls -f vivadobug04.tcl
+
+Work-arounds: Either uninstall libgmp-dev or manually #include
+"/opt/Xilinx/Vivado_HLS/2017.1/include/gmp.h" before including any
+headers that #include <gmp.h>. 
+
+This bug has been reproduced with Vivado 2016.4 and 2017.1.
+
+Please note that this is a bug report. I don't need support. Please verify the
+existence of the bug and create a CR so this is going to be fixed in a future
+release of Vivado HLS.
+
+This issue has been reported as Xilinx SR 10395072.

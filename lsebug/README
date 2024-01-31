@@ -1,0 +1,33 @@
+
+This simple test case demonstrates a bug in Lattice LSE (iCEcube2.2016.12).
+
+The file test.v in this directory contains three modules (test_a, test_b, and
+test_c). All three modules are formally equivalent. However, LSE thinks that
+the output in test_a is stuck at zero, thus creating incorrect synthesis
+results for test_a.
+
+Formal equivalence between the three modules is demonstrated using Yosys.
+Simply run "yosys equiv_ab.ys" and "yosys equiv_ac.ys" to prove it.
+
+The files test_{a,b,c}.project are iCEcube2 project files for synthesizing
+the three modules.
+
+test_a is the module that triggers the bug: LSE thinks that the output pins
+are constant zero. The relevant log messages are:
+
+	######## Missing driver on net n13. Patching with GND.
+	######## Missing driver on net n14. Patching with GND.
+	WARNING - synthesis: Bit 0 of Register serdes_out_ is stuck at Zero
+	WARNING - synthesis: Bit 1 of Register serdes_out_ is stuck at Zero
+
+test_b does not trigger the bug. It is written in a way that allows for "manual
+equivalence checking" against test_a.
+
+test_c does also not trigger the bug. It is written in a way that makes it
+obvious that serdes_out is in fact not stuck at zero.
+
+(Yes, test_a uses blocking and nonblocking assignments in a way that is
+discouraged by most reasonable Verilog style guides. But it carefully avoids
+constructs that have undefined behaviour or are marked not supported for
+synthesis by IEEE 1364.1. So this is a bug.)
+

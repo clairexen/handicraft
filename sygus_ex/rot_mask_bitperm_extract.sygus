@@ -1,0 +1,40 @@
+; Run with "cvc4 --lang=sygus rot_mask_bitperm_extract.sygus"
+
+(set-logic BV)
+
+(define-sort word  () (BitVec 8))
+
+(define-fun rot1 ((a word)) word (concat ((_ extract 6 0) a) ((_ extract 7 7) a)))
+(define-fun rot2 ((a word)) word (concat ((_ extract 5 0) a) ((_ extract 7 6) a)))
+(define-fun rot3 ((a word)) word (concat ((_ extract 4 0) a) ((_ extract 7 5) a)))
+(define-fun rot4 ((a word)) word (concat ((_ extract 3 0) a) ((_ extract 7 4) a)))
+(define-fun rot5 ((a word)) word (concat ((_ extract 2 0) a) ((_ extract 7 3) a)))
+(define-fun rot6 ((a word)) word (concat ((_ extract 1 0) a) ((_ extract 7 2) a)))
+(define-fun rot7 ((a word)) word (concat ((_ extract 0 0) a) ((_ extract 7 1) a)))
+
+(define-fun comb ((a word) (b word) (mask word)) word (bvor (bvand a mask) (bvand b (bvnot mask))))
+
+(synth-fun perm ((x word)) word (
+	(Start word (
+		EXPR
+		(comb Start EXPR (Constant word))
+	))
+	(EXPR word (
+		x
+		(rot1 EXPR)
+		(rot2 EXPR)
+		(rot3 EXPR)
+		(rot4 EXPR)
+		(rot5 EXPR)
+		(rot6 EXPR)
+		(rot7 EXPR)
+	))
+))
+
+(declare-var x word)
+
+(constraint (= ((_ extract 7 7) x) ((_ extract 0 0) (perm x))))
+(constraint (= ((_ extract 6 6) x) ((_ extract 1 1) (perm x))))
+; (constraint (= ((_ extract 3 3) x) ((_ extract 2 2) (perm x))))
+
+(check-synth)

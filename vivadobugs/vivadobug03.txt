@@ -1,0 +1,26 @@
+
+Vivado produces incorrect results for the following Verilog code:
+
+	module top(input [2:0] a, output y);
+		assign y = a != 1'bx;
+	endmodule
+
+Run "vivadobug03.sh" for synthesis, and pre- and post-synthesis simulation.
+
+Pre-synthesis simulation results:
+
+	a=010, y=1
+
+Post-synthesis simulation results:
+
+	a=010, y=0
+
+Vivado sets "y = 0" for this design. It seems like Vivado thinks that the result
+of a comparison with 1'bx is undefined. This is of course wrong. The value 1'bx
+has to be zero extended to 3'b00x, and the comparison has to return "1" if the
+operands differ in any of the non-x bits.
+
+This bug has been reproduced with Vivado 2016.4 and 2017.1.
+
+This issue has been reported as Xilinx SR 10394726 and CR 975241.
+

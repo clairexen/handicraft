@@ -1,0 +1,3 @@
+read_verilog -sv mulequiv.sv
+prep -flatten -top testbench
+sat -verify -prove-asserts -show-public

@@ -1,0 +1,9 @@
+
+Hotfixes for Vivado 2017.1 (on 64 Bit Ubuntu 16.04 LTS):
+--------------------------------------------------------
+
+1. Remove /opt/Xilinx/Vivado/2017.1/lib/classes/protobuf-java-3.1.0.jar.
+
+2. Edit /opt/Xilinx/Vivado/2017.1/bin/rdiArgs.sh. Replace "RDI_VERBOSE=False"
+with "export RDI_VERBOSE=False" in line 64.
+

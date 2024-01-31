@@ -1,0 +1,118 @@
+read_verilog pdep_pext.v
+synth -top pdep_pext
+
+flatten pdep_pext_decoder/c:*.lrotc_zero
+hierarchy
+
+abc -g cmos2
+opt_clean
+tee -o pdep_pext.rpt stat
+
+flatten
+rename pdep_pext pdep_pext_flat
+abc -g cmos2
+opt_clean
+tee -a pdep_pext.rpt stat
+
+################################################
+
+design -reset
+read_verilog -D PDEP_PEXT_NO_GREV pdep_pext.v
+synth -top pdep_pext
+
+flatten pdep_pext_decoder/c:*.lrotc_zero
+hierarchy
+
+abc -g cmos2
+opt_clean
+
+flatten
+rename pdep_pext pdep_pext_nogrev
+abc -g cmos2
+opt_clean
+tee -a pdep_pext.rpt stat
+
+################################################
+
+design -reset
+read_verilog pdep_pext.v
+synth -top pdep_pext_mc
+abc -g cmos2
+opt_clean
+
+flatten
+abc -g cmos2
+opt_clean
+tee -a pdep_pext.rpt stat
+
+################################################
+
+design -reset
+read_verilog pdep_pext.v
+synth -top pdep_pext_mc2
+abc -g cmos2
+opt_clean
+
+flatten
+abc -g cmos2
+opt_clean
+tee -a pdep_pext.rpt stat
+
+################################################
+
+design -reset
+read_verilog pdep_pext.v
+synth -top pdep_pext_mc3
+abc -g cmos2
+opt_clean
+
+flatten
+abc -g cmos2
+opt_clean
+tee -a pdep_pext.rpt stat
+
+################################################
+
+design -reset
+read_verilog pdep_pext.v
+synth -top shift64
+abc -g cmos2
+opt_clean
+tee -a pdep_pext.rpt stat
+
+################################################
+
+design -reset
+read_verilog pdep_pext.v
+synth -top rshift64
+abc -g cmos2
+opt_clean
+tee -a pdep_pext.rpt stat
+
+################################################
+
+design -reset
+read_verilog pdep_pext.v
+synth -top mul32
+abc -g cmos2
+opt_clean
+tee -a pdep_pext.rpt stat
+
+################################################
+
+design -reset
+read_verilog pdep_pext.v
+synth -top mul16
+abc -g cmos2
+opt_clean
+tee -a pdep_pext.rpt stat
+
+################################################
+
+design -reset
+read_verilog pdep_pext.v
+synth -top grev
+abc -g cmos2
+opt_clean
+tee -a pdep_pext.rpt stat
+

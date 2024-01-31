@@ -1,0 +1,8 @@
+
+Some example Verilog code to help us think about a future Yosy Coq back-end.
+
+Equivalent coq files to come.
+
+File extensions are a mess: Coq uses .v for its files, like verilog, so we
+use .sv (SystemVerilog) for the Verilog files and .v for Coq files.
+

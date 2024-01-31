@@ -1,0 +1,19 @@
+
+The following design should output a="a" and b="b". However, there seems to be
+a bug in Vivado Synthesis and a similar bug in XSIM that causes the tools to
+stop processing the adata string at the zero byte (i.e. interpretation as "C
+string") which causes the design to output a="\000" and b="b" in simulation and
+synthesis instead.
+
+	module top(output [7:0] a, b);
+		localparam [15:0] adata = "a\000";
+		localparam [15:0] bdata = "b\001";
+		assign a = adata[15:8], b = bdata[15:8];
+	endmodule
+
+I'm using Vivado 2017.2 on Ubuntu 16.04 LTS.
+
+Note that this is a bug report, not a support request. Please verify that the
+behavior is as described and that this behavior is in vialoation of IEEE Std 1364
+and create a CR accordingly.
+

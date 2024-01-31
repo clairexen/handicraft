@@ -1,0 +1,19 @@
+
+Experimental Hardware Implementation of Parallel Bit Deposit/Extract
+====================================================================
+
+Some references:
+http://palms.ee.princeton.edu/PALMSopen/hilewitz06FastBitCompression.pdf
+http://palms.ee.princeton.edu/PALMSopen/hilewitz04comparing_with_cit.pdf
+http://programming.sirrida.de/bit_perm.html
+
+Let's make everything concerete for simplicity: We are working on 64 bit
+words using a 6-stage (6 = log2 64) butterfly network.
+
+Because we already have the butterfly networks in this module, we optionally
+also support Generalized Reverse (grev) in the same core.
+
+Find the implementation of the core in pdep_pext.v.
+
+See report.txt for an analysis of area and timing for this core.
+

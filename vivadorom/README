@@ -1,0 +1,1 @@
+A simple demo showing that vivado can optimize ROMs with large regions of unused address space.
