@@ -1,0 +1,35 @@
+A few programs for finding sequences of RISC-V Bitmanip
+ROR/GREV/[UN]SHFL instructions for given permutations.
+
+permexplore
+-----------
+
+Usage:
+  ./permexplore
+
+Enumerate state reachable within a certain number of cycles.
+
+permfind
+--------
+
+Usage:
+  ./permfind
+
+Find sequences for various swaps and bitfield-rotate.
+
+permrvcj
+--------
+
+Usage:
+  ./permrvcj
+
+Find sequence for decoding RISC-V CJ-type immediates.
+
+permsolve
+---------
+
+Usage:
+  sby -f permsolve.sby
+  python3 permsolve.py
+
+Use SMT solvers and SymbiYosys to solve for permutations.

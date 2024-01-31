@@ -1,0 +1,8 @@
+read_verilog shifter_rotate.v
+read_verilog shifter_reflect.v
+read_verilog shifter_bigrot.v
+synth
+# abc -g NAND,NOR
+abc -lut 4
+opt_clean
+stat

@@ -1,0 +1,481 @@
+Alternative proposal for instruction length encoding >32 bit and proposed instructions
+======================================================================================
+
+Section "1.2 Instruction Length Encoding" of the RISC-V User-Level ISA V2.2 defines
+an encoding for instructions >32 bits. But this encoding isn't ratified at the time
+of writing this document, and no instructions >32 bits are defined. In this document
+I am proposing a different instruction length encoding. In addition to that I'm
+also proposing concrete instruction formats for instructions >32 bits, and first
+instructions using those instruction formats.
+
+See also this discussion:
+https://github.com/riscv/riscv-isa-manual/issues/280#issuecomment-485403752
+
+Link to RISC-V User-Level ISA V2.2 (see p. 5ff for instruction length encoding):
+https://raw.githubusercontent.com/riscv/riscv-isa-manual/master/release/riscv-spec-v2.2.pdf
+
+
+Overview
+========
+
+This is a proposal for instruction formats and an overall encoding scheme for
+RISC-V instructions >32 bit.
+
+It provides load-immediate instructions for integers and floats of different
+sizes in the most compact form (immediate size + 16 bit), namely:
+
+    48 bit instructions for loading 32 bit integer immediates
+    64 bit instructions for loading 48 bit integer immediates
+    80 bit instructions for loading 64 bit integer immediates
+
+    48 bit instructions for loading 32 bit floats
+    48 bit instructions for loading 32 bit floats and convert them to 64-bit float
+    48 bit instructions for loading 32 bit floats and convert them to 128-bit float
+    80 bit instructions for loading 64 bit floats
+    80 bit instructions for loading 64 bit floats and convert them to 128-bit float
+
+The integer immediates can be ones- or zero-extended to XLEN.
+
+It also provides instructions that combine any of the instructions in OP and
+OP-FP with an immediate, using an instruction width of immediate size + 32 bit:
+
+    64-bit instructions for OP/OP-32/OP-FP with 32-bit immediate
+    80-bit instructions for OP with 48-bit immediate
+    96-bit instructions for OP/OP-FP with 64-bit immediate
+
+And JAL instructions with large immediate:
+
+    48 bit instructions for JAL with 32 bit immediate
+    64 bit instructions for JAL with 48 bit immediate
+    80 bit instructions for JAL with 64 bit immediate
+
+Furthermore, it provides 64 greenfield 32-bit instruction encoding spaces for
+each instruction length <=128 bit, and two greenfield 32-bit encoding spaces
+for  each instruction length >128 bit. Half of those encoding spaces are
+reserved for custom extensions.
+
+(By definition, there is no rule how to structure a greenfield encoding space,
+but the recommendation is to always put a 7-bit major opcode in the LSB of the
+encoding space and subdivide it from there.)
+
+To put this in numbers: The base 32-bit ISA contains 4 major opcodes that are
+reserved for custom extensions, and 24 major opcodes used by or reserved for
+standard extensions. The 48-bit encoding space, as organized in this proposal,
+provides 3584 additional major opcodes for standard extensions and another 4608
+additional major opcodes for custom extensions.
+
+The 64-bit encoding space also contains 3584+4608 additional major opcodes, each
+one with an added 16-bit immediate. The 80 bit encoding space contains another
+3584+4608 major opcodes, each one with an added 32-bit immediate, and so forth.
+
+One of those entire 32-bit greenfields is called a "page", and the instruction format
+using it is called an LP-type instructions. It's basically a 2 bytes prefix that
+tells the machine how long the instruction is that starts in the following byte,
+and what page to use for decoding it.
+
+Furthermore, each instruction <=96 bit provides at least two additional
+encoding spaces, each as large as a traditional minor opcode, that have 16-bit
+more immediate then instructions of the same size using the greenfields, i.e. a
+48-bit instruction using this encoding has a 16-bit immediate, a 64-bit
+instruction a 32-bit immediate, and so forth. These are called LS-type
+instructions.
+
+There is not much LS-type encoding space and it should therefore only be used
+for instructions that are used very frequently, where 16-bit size difference
+makes a measurable difference, and that are using funct7 in an economical way.
+Each LS-type instruction occupies one "slot".
+
+                                                     Instruction length in bits
+                                         |  48 |  64 |  80 |  96 | 112 | 128 | 144 ... 624 |
+                                         |-----|-----|-----|-----|-----|-----|-------------|
+  slots reserved for standard extensions |   3 |   2 |   3 |   2 |   0 |   0 |      0      |
+  slots reserved for custom extensions   |   1 |   1 |   1 |   1 |   0 |   0 |      0      |
+                                         |-----|-----|-----|-----|-----|-----|-------------|
+  pages reserved for standard extensions |  32 |  32 |  32 |  32 |  32 |  32 |      1      |
+  pages reserved for custom extensions   |  32 |  32 |  32 |  32 |  32 |  32 |      1      |
+
+Each page is the equivalent of 128 base-ISA major opcodes, and each slot is the
+equivalent of just one minor opcode, but with a 16 bit shorter instruction
+encoding than using a page.
+
+
+Instruction Length Encoding
+===========================
+
+The following instruction length encoding provides encodings for instructions
+of up to 624 bits length, provides a 16-bit prefix to be used for longer
+instructions, and reserves 0xFFFF as illegal instruction.
+
+The base RISC-V 32-bit encoding space is organized in major and minor opcodes.
+Likewise each of the instruction lengths >32 bit are organized in "slots" and
+"pages".
+
+Instructions are allocated "slot first". Then the slot is either used as a whole
+to implement LS-type or LT-type instructions, with rd in insn[11:7], or the
+slot is broken into 32 pages, with the pager number stored in the rd field, to
+implement LP-type instructions.
+
+              |          1                    |
+              |5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0|
+        ------|-------------------------------|
+              |e|  f3 |    rd   |    opcode   |
+        ======|===============================|
+          rs1   | slot|    rd   |   0011111   |   48-bit LS-type prefix, slot != 111
+          rs1   | slot|    rd   |   0111111   |   64-bit LS-type prefix, slot != 111
+          rs1   | slot|    rd   |   1011111   |   80-bit LS-type prefix, slot != 111
+          rs1   | slot|    rd   |   1111111   |   96-bit LS-type prefix, slot < 100
+        ------|-------------------------------|
+     opcode   |e| 111 |   page  |   0011111   |   48-bit LP-type prefix
+     opcode   |e| 111 |   page  |   0111111   |   64-bit LP-type prefix
+     opcode   |e| 111 |   page  |   1011111   |   80-bit LP-type prefix
+     opcode   |e| 100 |   page  |   1111111   |   96-bit LP-type prefix
+     opcode   |e| 101 |   page  |   1111111   |  112-bit LP-type prefix
+     opcode   |e| 110 |   page  |   1111111   |  128-bit LP-type prefix
+        ------|-------------------------------|
+     opcode   |e| 111 |  00000  |   1111111   |  144-bit LP-type prefix
+     opcode   |e| 111 |  00001  |   1111111   |  160-bit LP-type prefix
+     opcode   |e| ... |  .....  |   1111111   |  ...
+     opcode   |e| 111 |  11110  |   1111111   |  624-bit LP-type prefix
+        ------|-------------------------------|
+     opcode   |0| 111 |  11111  |   1111111   |  prefix for >624-bit
+     opcode   |1| 111 |  11111  |   1111111   |  illegal instruction
+
+There are two types of long instructions: Those that use the first 16 bit as
+the lower half of a standard 32-bit instruction encoding, and those that use
+the first 16 bits as a prefix to a standard encoding starting in the next
+16-bit word. We call the former LS-type instruction (long simple encoding), and
+the latter LP-type instruction (long prefix encoding). Note the "e" bit is
+rs1[0] in LS-type encoded instructions.
+
+The remaining instruction bits in LP-type and LS-type encoded instructions form
+a long immediate. This immediate value is stored in little endian format,
+without any additional bit permutations.
+
+               1                    |          1                    |
+     5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0|5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0|
+    --------------------------------|-------------------------------|
+   ...         immediate            |e| slot|    rd   |   ??11111   | LT-type
+
+
+               1                    |  3                   2                   1                    |
+     5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0|1 0 9 8 7 6 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0|
+    --------------------------------|---------------------------------------------------------------|
+   ...         immediate            |    funct7   |   rs2   |   rs1   | slot|    rd   |   ??11111   | LS-type
+
+
+               1                    |  3                   2                   1                    |          1                    |
+     5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0|1 0 9 8 7 6 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0|5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0|
+    --------------------------------|---------------------------------------------------------------|-------------------------------|
+   ...         immediate            |    funct7   |   rs2   |   rs1   |  f3 |    rd   |    opcode   |e| slot|   page  |   ??11111   | LP-type
+
+For 144-bit to 624-bit instructions only a single 16-bit prefix for each length
+is available, thus only LP-type instruction encodings are possible. (with e=1
+reserved for custom extensions)
+
+For 96-bit to 128-bit instructions the page field selects one of 32 "pages" of
+LP-type opcode spaces, each with it's own opcode[6:0] field (when sticking to
+the standard instruction format within that page).
+
+Instructions of length 48-bit to 96-bit are LS-type instructions if opc != 111
+(opc[3] != 1 for 96-bit instructions), and LP-type instructions otherwise. In
+the case of an LP-type instruction, and the rd field is used to select a page.
+Pages >= 28 are reserved for custom extensions. e=1 is also reserved for custom
+extensions.
+
+A variant of LS-type instructions are LT-type instructions (long truncated
+encoding). They use the rd field as destination register, but the immediate
+starts right after the first 16-bit. I.e. they do not contain the upper half of
+the standard instruction encoding. This encoding is used for load-immediate
+instructions and JAL instructions. The 'e' bit can be used to put two LT-type
+instructions in one slot, or as additional configuration flag for the
+instruction.
+
+
+Load Immediate Instructions
+===========================
+
+The most obvious use case for long instructions are load immediate
+instructions.
+
+The load immediate instructions are using LT-type instruction encoding.
+
+For integer constants:
+
+    |          1                    |
+    |5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0|
+    |-------------------------------|
+    |e|  f3 |    rd   |    opcode   |
+    |===============================|
+    |e| 000 |    rd   |   0011111   |  load 32-bit immediate
+    |e| 000 |    rd   |   0111111   |  load 48-bit immediate
+    |e| 000 |    rd   |   1011111   |  load 64-bit immediate
+
+The immediate value is extended to XLEN by filling the remaining bits with
+the 'e' bit.
+
+And load immediate instructions for floating point values:
+
+    |          1                    |
+    |5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0|
+    |-------------------------------|
+    |e|  f3 |    rd   |    opcode   |
+    |===============================|
+    |1| 001 |    rd   |   0011111   |  load 32-bit immediate, as 32-bit float
+    |0| 100 |    rd   |   0011111   |  load 32-bit immediate, converted to 64-bit float
+    |1| 100 |    rd   |   0011111   |  load 32-bit immediate, converted to 128-bit float
+    |0| 100 |    rd   |   1011111   |  load 64-bit immediate, as 64-bit float
+    |1| 100 |    rd   |   1011111   |  load 64-bit immediate, converted to 128-bit float
+
+
+Jump and Link Instruction
+=========================
+
+Another obvious use-case for long instructions is a JAL instruction with large
+immediate, also using LT-type encoding:
+
+                |          1                    |
+     5 4 3 2 1 0|5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0|
+    ------------|-------------------------------|
+   ...   imm    |e|  f3 |    rd   |    opcode   |
+   =============|===============================|
+   ...   imm    |0| 001 |    rd   |   0011111   |  JAL with 32-bit immediate
+   ...   imm    |0| 001 |    rd   |   0111111   |  JAL with 48-bit immediate
+   ...   imm    |0| 001 |    rd   |   1011111   |  JAL with 64-bit immediate
+
+The LSB and MSB of the immediate are XOR'ed and the resulting bit value is used
+to extend the immediate to XLEN. Then the LSB of the immediate is cleared.
+
+Long JAL instructions can be used in trampolines for interrupts, where no
+register can be spilled, or for (dynamic) relocations that are faster/easier to
+patch than LUI+JALR.
+
+
+OP-Immediate Instructions
+=========================
+
+We create "mirrors" of OP/OP-32/OP-FP to create ALU instructions with large
+immediates, using the LS-type instruction format:
+
+            |          1                    |
+     9 8 7 6|5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0|
+    --------|-------------------------------|
+   ... f3 |idx|  f3 |    rd   |    opcode   |
+    ========|===============================|
+   ... f3 |idx| 010 |    rd   |   0111111   |  OP with 32-bit immediate
+   ... f3 |idx| 101 |    rd   |   0111111   |  OP-32 with 32-bit immediate
+   ... f3 |idx| 011 |    rd   |   0111111   |  OP-FP with 32-bit immediate
+   ... f3 |idx| 010 |    rd   |   1011111   |  OP with 48-bit immediate
+   ... f3 |idx| 010 |    rd   |   1111111   |  OP with 64-bit immediate
+   ... f3 |idx| 011 |    rd   |   1111111   |  OP-FP with 64-bit immediate
+
+As a reminder, the standard R-type and R4-type instruction formats:
+
+    |  3                   2                   1                    |
+    |1 0 9 8 7 6 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0|
+    |---------------------------------------------------------------|
+    |    funct7   |   rs2   |   rs1   |  f3 |    rd   |    opcode   | R-type
+    |   rs3   | f2|   rs2   |   rs1   |  f3 |    rd   |    opcode   | R4-type
+
+To convert this into a long-op-immediate instruction we copy rs1 into the
+rs?-field that belongs to the immediate. Then we write the index of the
+immediate argument to rs1[1:0]:
+
+	rs1[1:0] <- 00 ... imm rs1
+	rs1[1:0] <- 01 ... imm rs2
+	rs1[1:0] <- 10 ... imm rs3
+	rs1[1:0] <- 11 ... reserved or imm rs2 (*)
+
+(*) for integer OPs with imm < XLEN this encoding is used to select rs2
+and also invert the imm sign extension, i.e. to zero-extend when the imm MSB is
+1 and to ones-extend when the imm MSB is 0. For rs1 and rs3 only sign extension
+is available.
+
+Then we copy funct3 to rs1[4:2], fill the funct3 and opcode field as indicated
+in the table above, and append the immediate to the instruction.
+
+                 |  3                   2                   1                    |
+      5 4 3 2 1 0|1 0 9 8 7 6 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0|
+     ------------|---------------------------------------------------------------|
+    ...   imm    |    funct7   |   rsA   |  f3 |idx| slot|    rd   |   ??11111   | LS2-type
+    ...   imm    |   rsB   | f2|   rsA   |  f3 |idx| slot|    rd   |   ??11111   | LS3-type
+
+For integer instructions the immediate is sign-extended to XLEN, except for
+rs1[1:0] == 11, see (*) above.
+
+For float instructions the immediate is converted to the format indicated in
+the instruction in funct7[1:0] and NaN-boxed as needed.
+
+
+Prefix Table
+============
+
+The following table shows the 16-bit prefixes for up to 96-bit instructions:
+
+    |          1                    |
+    |5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0|
+    |-------------------------------|
+    |e|  f3 |    rd   |    opcode   |
+    |===============================|
+    |      48-bit instructions      |
+    |-------------------------------|
+    |e| 000 |    rd   |   0011111   |  LT-type, Load 32-bit integer immediate
+    |0| 001 |    rd   |   0011111   |  LT-type, Jump and link
+    |1| 001 |    rd   |   0011111   |  LT-type, Load 32-bit immediate, as 32-bit float
+    |e| 010 |    rd   |   0011111   |  LS-type, Reserved
+    |e| 011 |    rd   |   0011111   |  LS-type, Reserved
+    |0| 100 |    rd   |   0011111   |  LT-type, Load 32-bit immediate, converted to 64-bit float
+    |1| 100 |    rd   |   0011111   |  LT-type, Load 32-bit immediate, converted to 128-bit float
+    |e| 101 |    rd   |   0011111   |  LS-type, Reserved
+    |e| 110 |    rd   |   0011111   |  LS-type, Reserved (custom)
+    |0| 111 |   page  |   0011111   |  LP-type
+    |1| 111 |   page  |   0011111   |  LP-type, Reserved (custom)
+    |===============================|
+    |      64-bit instructions      |
+    |-------------------------------|
+    |e| 000 |    rd   |   0111111   |  LT-type, Load 48-bit integer immediate
+    |0| 001 |    rd   |   0111111   |  LT-type, Jump and link
+    |1| 001 |    rd   |   0111111   |  LT-type, Reserved
+    |e| 010 |    rd   |   0111111   |  LS-type, OP with 32-bit immediate
+    |e| 011 |    rd   |   0111111   |  LS-type, OP-FP with 32-bit immediate
+    |e| 100 |    rd   |   0111111   |  LS-type, Reserved
+    |e| 101 |    rd   |   0111111   |  LS-type, OP-32 with 32-bit immediate
+    |e| 110 |    rd   |   0111111   |  LS-type, Reserved (custom/rv128)
+    |0| 111 |   page  |   0111111   |  LP-type
+    |1| 111 |   page  |   0111111   |  LP-type, Reserved (custom)
+    |===============================|
+    |      80-bit instructions      |
+    |-------------------------------|
+    |e| 000 |    rd   |   1011111   |  LT-type, Load 64-bit integer immediate
+    |0| 001 |    rd   |   1011111   |  LT-type, Jump and link
+    |1| 001 |    rd   |   1011111   |  LT-type, Reserved
+    |e| 010 |    rd   |   1011111   |  LS-type, OP with 48-bit immediate
+    |e| 011 |    rd   |   1011111   |  LS-type, Reserved
+    |0| 100 |    rd   |   1011111   |  LT-type, Load 64-bit immediate, as 64-bit float
+    |1| 100 |    rd   |   1011111   |  LT-type, Load 64-bit immediate, converted to 128-bit float
+    |e| 101 |    rd   |   1011111   |  LS-type, Reserved
+    |e| 110 |    rd   |   1011111   |  LS-type, Reserved (custom/rv128)
+    |0| 111 |   page  |   1011111   |  LP-type
+    |1| 111 |   page  |   1011111   |  LP-type, Reserved (custom)
+    |===============================|
+    |      96-bit instructions      |
+    |-------------------------------|
+    |e| 000 |    rd   |   1111111   |  LS-type, Reserved
+    |e| 001 |    rd   |   1111111   |  LS-type, Reserved (custom/rv128)
+    |e| 010 |    rd   |   1111111   |  LS-type, OP with 64-bit immediate
+    |e| 011 |    rd   |   1111111   |  LS-type, OP-FP with 64-bit immediate
+    |0| 100 |   page  |   1111111   |  LP-type
+    |1| 100 |   page  |   1111111   |  LP-type, Reserved (custom)
+
+The three entries marked "Reserved (custom/rv128)" implement OP-64 with
+immediate instructions on RV128.
+
+
+Conclusion and Comparison with RISC-V Spec v2.2 Proposal
+========================================================
+
+The proposal above allows for a uniform way of encoding long instructions, in
+such a form that a lot of the decoder hardware for the standard 32-bit
+instruction format can be re-used to decode long instructions. The use of unary
+numbers to encode instruction sizes in the v2.2 spec proposal makes it harder
+to do that.
+
+The v2.2 spec proposal encodes 80-bit instructions in a way that doesn't leave
+enough encoding space for 80-bit instructions that load 64-bit immediates.
+
+This proposal provides one bit fewer encoding space in the 48-bit instruction
+space than the v2.2 spec proposal.
+
+This proposal creates very efficient encodings for instructions with
+32/48/64-bit immediates, while also creating enormous reserved instruction
+encoding spaces, effectively guaranteeing that we will never run out of
+encoding space for RISC-V instructions of any length, as long as we accept a
+16-bit prefix for some instructions.
+
+The v2.2 spec proposal doesn't actually propose any instruction formats >32
+bits, only the length encoding. This proposal however is a proposal for a
+length encoding, instruction formats, and a bunch of concrete instructions,
+demonstrating that the encoding proposed here is actually feasible to encode
+the most-likely long instructions.
+
+Even when RISC-V instructions >32 bit are a long way from ratification, I think
+there is great utility in defining a roadmap for how to encode them now. My
+main two reasons for this are:
+
+- The allocation of instructions in the 32-bit encoding space may be informed
+  by the plans for larger instructions. For example, knowing that there will be
+  mirrors of OP/OP-32/OP-FP with large immediates, and the semantic described
+  above, can inform the decision what to put in which major opcode in the
+  32-bit encoding space.
+
+- Creating instruction formats for instructions >32-bit, and a framework for
+  allocating opcodes in that encoding space, enables the use of that space.
+  Otherwise the first person using a (custom) long instruction in their core
+  would also be left with the task of defining those instruction formats.
+
+Also, sometimes it is best to start a conversation by putting a concrete
+proposal out there.
+
+
+
+
+==============================================================================
+
+                                   APPENDIX
+
+     Everything below is additional remarks and not part of the proposal
+
+==============================================================================
+
+
+
+
+
+Bitfield extract and place
+--------------------------
+
+In the RISC-V Bit Manipulation ISA task group we considered an instruction
+such as the following (bfxp = bitfield extract and place):
+
+	uint_xlen_t bfxp(uint_xlen_t rs1, uint_xlen_t rs2,
+			unsigned start, unsigned len, unsigned dest)
+	{
+		assert(start < XLEN && len < XLEN && dest < XLEN);
+
+		assert(start + len <= XLEN);
+		assert(dest + len <= XLEN);
+		assert(len != 0);
+
+		uint_xlen_t x = rs1;
+		x <<= XLEN-start-len;
+		x >>= XLEN-len;
+		x <<= dest;
+
+		uint_xlen_t y = ~uint_xlen_t(0);
+		y <<= XLEN-start-len;
+		y >>= XLEN-len;
+		y <<= dest;
+
+		return x | (rs2 & ~y);
+	}
+
+With start, len, dest being 7-bit immediate arguments.
+(For future-compatibility with RV128, all three arguments must be 7 bits wide.)
+
+So this instruction would have 3*7=21 immediate bits, too large for a 32-bit
+instruction. But it could be easy implemented as 64-bit LP-type instruction:
+
+    |          1                    |  3                   2                   1                    |          1                    |
+    |5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0|1 0 9 8 7 6 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0|5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0|
+    |-------------------------------|---------------------------------------------------------------|-------------------------------|
+    |    start    |     len     |     dest    | f2|   rs2   |   rs1   |  f3 |    rd   |    opcode   |0| 111 |   page  |   0111111   | LP-type
+
+Alternatively, a ternary instruction with this semantic can be added to the
+32-bit "OP" opcode, that gets start/len/dest in a third control register
+argument. Then we'd automatically get a version with an immediate for this
+control word for free. The encoding would also be a 64-bit instruction:
+
+    |  3                   2                   1                    |  3                   2                   1                    |
+    |1 0 9 8 7 6 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0|1 0 9 8 7 6 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0|
+    |---------------------------------------------------------------|---------------------------------------------------------------|
+    |     ???????????     |    start    |     len     |     dest    |   rsB   | f2|   rsA   |  f3 |idx| 010 |    rd   |   0111111   | LS3-type
+

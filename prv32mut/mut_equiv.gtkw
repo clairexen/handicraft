@@ -1,0 +1,60 @@
+[*]
+[*] GTKWave Analyzer v3.3.86 (w)1999-2017 BSI
+[*] Wed Mar 13 18:54:35 2019
+[*]
+[dumpfile] "/home/clifford/Work/handicraft/2019/prv32mut/mut_equiv_0/engine_0/trace.vcd"
+[dumpfile_mtime] "Wed Mar 13 18:51:06 2019"
+[dumpfile_size] 161680
+[savefile] "/home/clifford/Work/handicraft/2019/prv32mut/trace.gtkw"
+[timestart] 0
+[size] 1720 1086
+[pos] -1 -1
+*-4.661558 80 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
+[treeopen] testbench.
+[sst_width] 223
+[signals_width] 182
+[sst_expanded] 1
+[sst_vpaned_height] 323
+@28
+testbench.clk
+testbench.resetn
+@23
+testbench.irq[31:0]
+@200
+-
+@28
+testbench.mem_ready
+@22
+testbench.mem_rdata[31:0]
+@200
+-
+@28
+testbench.ref_trap
+testbench.uut_trap
+@200
+-
+@28
+testbench.ref_mem_instr
+testbench.uut_mem_instr
+@200
+-
+@28
+testbench.ref_mem_valid
+testbench.uut_mem_valid
+@200
+-
+@22
+testbench.ref_mem_addr[31:0]
+testbench.uut_mem_addr[31:0]
+@200
+-
+@22
+testbench.ref_mem_wstrb[3:0]
+testbench.uut_mem_wstrb[3:0]
+@200
+-
+@22
+testbench.ref_mem_wdata[31:0]
+testbench.uut_mem_wdata[31:0]
+[pattern_trace] 1
+[pattern_trace] 0

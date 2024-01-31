@@ -1,0 +1,46 @@
+diff --git a/design/lib/beh_lib.sv b/design/lib/beh_lib.sv
+index ba01eca..5412f8b 100644
+--- a/design/lib/beh_lib.sv
++++ b/design/lib/beh_lib.sv
+@@ -93,7 +93,7 @@ module `TEC_RV_ICG
+         en_ff = enable;
+    end
+ `endif
+-   assign Q = CP & en_ff;
++   assign Q = CP;
+ 
+ endmodule
+ 
+diff --git a/design/swerv.sv b/design/swerv.sv
+index e438070..d6291ce 100644
+--- a/design/swerv.sv
++++ b/design/swerv.sv
+@@ -371,11 +371,11 @@ module swerv
+    input   logic                 dma_bus_clk_en,
+ 
+    // JTAG ports	       
+-   input logic 	           jtag_tck, // JTAG clk
+-   input logic 	           jtag_tms, // JTAG TMS  
+-   input logic 	           jtag_tdi, // JTAG tdi
+-   input logic 	           jtag_trst_n, // JTAG Reset
+-   output logic            jtag_tdo, // JTAG TDO
++   //input logic 	           jtag_tck, // JTAG clk
++   //input logic 	           jtag_tms, // JTAG TMS  
++   //input logic 	           jtag_tdi, // JTAG tdi
++   //input logic 	           jtag_trst_n, // JTAG Reset
++   //output logic            jtag_tdo, // JTAG TDO
+    
+ 			    
+    input logic [`RV_PIC_TOTAL_INT:1]           extintsrc_req,
+@@ -385,6 +385,11 @@ module swerv
+ 
+ `include "global.h"
+    
++wire jtag_tck = 1'b0;
++wire jtag_tms = 1'b0;
++wire jtag_tdi = 1'b0;
++wire jtag_trst_n = 1'b0;
++wire jtag_tdo;
+    
+ 
+ // for the testbench

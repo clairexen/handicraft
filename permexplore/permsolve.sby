@@ -1,0 +1,13 @@
+[options]
+mode cover
+depth 1
+
+[engines]
+smtbmc boolector
+
+[script]
+read_verilog -sv permsolve.sv
+prep -top permcluster
+
+[files]
+permsolve.sv

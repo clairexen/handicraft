@@ -1,0 +1,17 @@
+[options]
+depth 0
+mode prove
+
+[engines]
+smtbmc
+
+[script]
+read_verilog shifter_rotate.v
+read_verilog shifter_reflect.v
+prep
+miter -equiv -make_assert -flatten shifter_rotate shifter_reflect miter
+hierarchy -top miter
+
+[files]
+shifter_rotate.v
+shifter_reflect.v

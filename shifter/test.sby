@@ -1,0 +1,31 @@
+[tasks]
+--pycode-begin--
+for uut in "rotate reflect".split():
+  for op in "SRL SRA SLL SRO SLO ROR ROL FSR FSL".split():
+    output("%s_%s %s %s" % (uut, op, uut, op))
+--pycode-end--
+
+[options]
+mode prove
+depth 0
+
+[engines]
+smtbmc
+
+[script]
+--pycode-begin--
+for op in "SRL SRA SLL SRO SLO ROR ROL FSR FSL".split():
+  if op in tags:
+    output("read -define %s" % op)
+--pycode-end--
+rotate: read -define UUT=shifter_rotate
+reflect: read -define UUT=shifter_reflect
+read -sv test.v
+read -sv shifter_reflect.v
+read -sv shifter_rotate.v
+prep -top test
+
+[files]
+test.v
+shifter_reflect.v
+shifter_rotate.v
