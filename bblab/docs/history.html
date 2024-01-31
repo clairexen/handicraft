@@ -1,0 +1,91 @@
+
+<h1> Project History</h1>
+<h3> August 2010</h3>
+Initial idea: let's build a cheap/minimalistic USB-powered device that can be used as
+simple oszi for audio frequencies, signal generator, and power supply for experiments on
+breadboards.
+<p/>
+
+        <p align="center"><table><tr><td>
+    
+            <div id="pic0" align="center" style=""><a href="history/2010_08_b.jpg" target="_blank"><img src="history/2010_08_b.jpg" style="max-width: 600px; border:0"/></a><p/><a href="http://www.arduino.cc/">Arduino</a>-based <a href="http://www.obdev.at/products/vusb/index.html">V-USB</a> prototype platform</div>
+        
+            <div id="pic1" align="center" style="display:none;"><a href="history/2010_08_a.png" target="_blank"><img src="history/2010_08_a.png" style="max-width: 600px; border:0"/></a><p/>Initial schematic and board design</div>
+        
+            <div id="pic2" align="center" style="display:none;"><a href="history/2010_08_c.jpg" target="_blank"><img src="history/2010_08_c.jpg" style="max-width: 600px; border:0"/></a><p/>First batch of prototype PCBs</div>
+        
+            <div id="pic3" align="center" style="display:none;"><a href="history/2010_08_d.jpg" target="_blank"><img src="history/2010_08_d.jpg" style="max-width: 600px; border:0"/></a><p/>Using <a href="http://svn.clifford.at/avrbootprog/trunk/">avrbootprog</a> to high-voltage program the ATtiny85</div>
+        
+        </td><td valign="top">
+    
+            <img id="pre0" src="history/2010_08_b.jpg" style="width: 100px; padding:5px; margin:5px; background:gray" onclick="document.getElementById('pic0').setAttribute('style', '');document.getElementById('pre0').setAttribute('style', 'width: 100px; padding:5px; margin:5px; background:gray;');document.getElementById('pic1').setAttribute('style', 'display:none;');document.getElementById('pre1').setAttribute('style', 'width: 100px; padding:5px; margin:5px;');document.getElementById('pic2').setAttribute('style', 'display:none;');document.getElementById('pre2').setAttribute('style', 'width: 100px; padding:5px; margin:5px;');document.getElementById('pic3').setAttribute('style', 'display:none;');document.getElementById('pre3').setAttribute('style', 'width: 100px; padding:5px; margin:5px;');"/><br/>
+        
+            <img id="pre1" src="history/2010_08_a.png" style="width: 100px; padding:5px; margin:5px; " onclick="document.getElementById('pic0').setAttribute('style', 'display:none;');document.getElementById('pre0').setAttribute('style', 'width: 100px; padding:5px; margin:5px;');document.getElementById('pic1').setAttribute('style', '');document.getElementById('pre1').setAttribute('style', 'width: 100px; padding:5px; margin:5px; background:gray;');document.getElementById('pic2').setAttribute('style', 'display:none;');document.getElementById('pre2').setAttribute('style', 'width: 100px; padding:5px; margin:5px;');document.getElementById('pic3').setAttribute('style', 'display:none;');document.getElementById('pre3').setAttribute('style', 'width: 100px; padding:5px; margin:5px;');"/><br/>
+        
+            <img id="pre2" src="history/2010_08_c.jpg" style="width: 100px; padding:5px; margin:5px; " onclick="document.getElementById('pic0').setAttribute('style', 'display:none;');document.getElementById('pre0').setAttribute('style', 'width: 100px; padding:5px; margin:5px;');document.getElementById('pic1').setAttribute('style', 'display:none;');document.getElementById('pre1').setAttribute('style', 'width: 100px; padding:5px; margin:5px;');document.getElementById('pic2').setAttribute('style', '');document.getElementById('pre2').setAttribute('style', 'width: 100px; padding:5px; margin:5px; background:gray;');document.getElementById('pic3').setAttribute('style', 'display:none;');document.getElementById('pre3').setAttribute('style', 'width: 100px; padding:5px; margin:5px;');"/><br/>
+        
+            <img id="pre3" src="history/2010_08_d.jpg" style="width: 100px; padding:5px; margin:5px; " onclick="document.getElementById('pic0').setAttribute('style', 'display:none;');document.getElementById('pre0').setAttribute('style', 'width: 100px; padding:5px; margin:5px;');document.getElementById('pic1').setAttribute('style', 'display:none;');document.getElementById('pre1').setAttribute('style', 'width: 100px; padding:5px; margin:5px;');document.getElementById('pic2').setAttribute('style', 'display:none;');document.getElementById('pre2').setAttribute('style', 'width: 100px; padding:5px; margin:5px;');document.getElementById('pic3').setAttribute('style', '');document.getElementById('pre3').setAttribute('style', 'width: 100px; padding:5px; margin:5px; background:gray;');"/><br/>
+        
+        </td></tr></table></p>
+    
+Decided to go for an Attiny85 based design utilizing <a href="http://www.obdev.at/products/vusb/index.html">V-USB</a> as USB stack. Created
+an <a href="http://www.arduino.cc/">Arduino</a>-based first prototype platform for playing around with <a href="http://www.obdev.at/products/vusb/index.html">V-USB</a>.
+Crafted an initial schematic and board design in eagle. We did not have schematic
+symbols for the ATtiny85 and TS912 at hand - so we did go with symbols for pin compatible
+parts to save some time.
+<p/>
+Evaluated options for USB protocol. Figured out that we must implement it as
+HID device in order to support M$ Windows 7. Going to use the <a href="http://www.obdev.at/products/vusb/index.html">V-USB</a> hid-data
+example as starting point.
+<p/>
+We implemented a hid-based USB protocol for accessing a memory area on the
+microcontroller and poll/modify the state of the engine running there
+and wrote a simple command line tool to test the communication:
+<p/>
+
+        <pre align="center" style="margin-left:5em; margin-right:5em; padding:1em; background-color:lightgray; border:1px dashed black;">bbshell&gt; rd 0 10
+# read addr=0x0, len=0xa
+0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00
+bbshell&gt; wr 3 1 2 3 4 5
+# write addr=0x3, len=0x5
+bbshell&gt; rd 0 10
+# read addr=0x0, len=0xa
+0x00 0x00 0x00 0x01 0x02 0x03 0x04 0x05 0x00 0x00</pre>
+    
+
+After that we first build a firmware for the Arduino-based test-platform and then
+ported the code to first the BBLab prototype board.
+<p/>
+<h3> September 2010</h3>
+The firmware is finished (modulo bugs) and we can make some first real tests.
+<p/>
+
+        <p align="center"><table><tr><td>
+    
+            <div id="pic4" align="center" style=""><a href="history/2010_09_a.jpg" target="_blank"><img src="history/2010_09_a.jpg" style="max-width: 600px; border:0"/></a><p/>The first test of the feature-complete firmware on the BBLab prototype</div>
+        
+            <div id="pic5" align="center" style="display:none;"><a href="history/2010_09_b.png" target="_blank"><img src="history/2010_09_b.png" style="max-width: 600px; border:0"/></a><p/>Output produced by the test client for the first test</div>
+        
+            <div id="pic6" align="center" style="display:none;"><a href="history/2010_09_c.jpg" target="_blank"><img src="history/2010_09_c.jpg" style="max-width: 600px; border:0"/></a><p/>Testing an alternate PWM filter circuit (with a screenshot of the gui prototype)</div>
+        
+            <div id="pic7" align="center" style="display:none;"><a href="history/2010_09_d.jpg" target="_blank"><img src="history/2010_09_d.jpg" style="max-width: 600px; border:0"/></a><p/>2nd Prototype (almost finished - just some layout cleanups left to do)</div>
+        
+            <div id="pic8" align="center" style="display:none;"><a href="history/2010_09_e.png" target="_blank"><img src="history/2010_09_e.png" style="max-width: 600px; border:0"/></a><p/>Final schematic</div>
+        
+        </td><td valign="top">
+    
+            <img id="pre4" src="history/2010_09_a.jpg" style="width: 100px; padding:5px; margin:5px; background:gray" onclick="document.getElementById('pic4').setAttribute('style', '');document.getElementById('pre4').setAttribute('style', 'width: 100px; padding:5px; margin:5px; background:gray;');document.getElementById('pic5').setAttribute('style', 'display:none;');document.getElementById('pre5').setAttribute('style', 'width: 100px; padding:5px; margin:5px;');document.getElementById('pic6').setAttribute('style', 'display:none;');document.getElementById('pre6').setAttribute('style', 'width: 100px; padding:5px; margin:5px;');document.getElementById('pic7').setAttribute('style', 'display:none;');document.getElementById('pre7').setAttribute('style', 'width: 100px; padding:5px; margin:5px;');document.getElementById('pic8').setAttribute('style', 'display:none;');document.getElementById('pre8').setAttribute('style', 'width: 100px; padding:5px; margin:5px;');"/><br/>
+        
+            <img id="pre5" src="history/2010_09_b.png" style="width: 100px; padding:5px; margin:5px; " onclick="document.getElementById('pic4').setAttribute('style', 'display:none;');document.getElementById('pre4').setAttribute('style', 'width: 100px; padding:5px; margin:5px;');document.getElementById('pic5').setAttribute('style', '');document.getElementById('pre5').setAttribute('style', 'width: 100px; padding:5px; margin:5px; background:gray;');document.getElementById('pic6').setAttribute('style', 'display:none;');document.getElementById('pre6').setAttribute('style', 'width: 100px; padding:5px; margin:5px;');document.getElementById('pic7').setAttribute('style', 'display:none;');document.getElementById('pre7').setAttribute('style', 'width: 100px; padding:5px; margin:5px;');document.getElementById('pic8').setAttribute('style', 'display:none;');document.getElementById('pre8').setAttribute('style', 'width: 100px; padding:5px; margin:5px;');"/><br/>
+        
+            <img id="pre6" src="history/2010_09_c.jpg" style="width: 100px; padding:5px; margin:5px; " onclick="document.getElementById('pic4').setAttribute('style', 'display:none;');document.getElementById('pre4').setAttribute('style', 'width: 100px; padding:5px; margin:5px;');document.getElementById('pic5').setAttribute('style', 'display:none;');document.getElementById('pre5').setAttribute('style', 'width: 100px; padding:5px; margin:5px;');document.getElementById('pic6').setAttribute('style', '');document.getElementById('pre6').setAttribute('style', 'width: 100px; padding:5px; margin:5px; background:gray;');document.getElementById('pic7').setAttribute('style', 'display:none;');document.getElementById('pre7').setAttribute('style', 'width: 100px; padding:5px; margin:5px;');document.getElementById('pic8').setAttribute('style', 'display:none;');document.getElementById('pre8').setAttribute('style', 'width: 100px; padding:5px; margin:5px;');"/><br/>
+        
+            <img id="pre7" src="history/2010_09_d.jpg" style="width: 100px; padding:5px; margin:5px; " onclick="document.getElementById('pic4').setAttribute('style', 'display:none;');document.getElementById('pre4').setAttribute('style', 'width: 100px; padding:5px; margin:5px;');document.getElementById('pic5').setAttribute('style', 'display:none;');document.getElementById('pre5').setAttribute('style', 'width: 100px; padding:5px; margin:5px;');document.getElementById('pic6').setAttribute('style', 'display:none;');document.getElementById('pre6').setAttribute('style', 'width: 100px; padding:5px; margin:5px;');document.getElementById('pic7').setAttribute('style', '');document.getElementById('pre7').setAttribute('style', 'width: 100px; padding:5px; margin:5px; background:gray;');document.getElementById('pic8').setAttribute('style', 'display:none;');document.getElementById('pre8').setAttribute('style', 'width: 100px; padding:5px; margin:5px;');"/><br/>
+        
+            <img id="pre8" src="history/2010_09_e.png" style="width: 100px; padding:5px; margin:5px; " onclick="document.getElementById('pic4').setAttribute('style', 'display:none;');document.getElementById('pre4').setAttribute('style', 'width: 100px; padding:5px; margin:5px;');document.getElementById('pic5').setAttribute('style', 'display:none;');document.getElementById('pre5').setAttribute('style', 'width: 100px; padding:5px; margin:5px;');document.getElementById('pic6').setAttribute('style', 'display:none;');document.getElementById('pre6').setAttribute('style', 'width: 100px; padding:5px; margin:5px;');document.getElementById('pic7').setAttribute('style', 'display:none;');document.getElementById('pre7').setAttribute('style', 'width: 100px; padding:5px; margin:5px;');document.getElementById('pic8').setAttribute('style', '');document.getElementById('pre8').setAttribute('style', 'width: 100px; padding:5px; margin:5px; background:gray;');"/><br/>
+        
+        </td></tr></table></p>
+    
+The next issues to address are (1) a cleanup and some improvements in the hardware design and (2) the
+actual GUI client.
+<p/>

@@ -1,0 +1,12 @@
+
+1. Install pgapack
+
+	apt-get install pgapack libpgapack-serial1
+
+2. Install PGAPy
+
+	http://sourceforge.net/projects/pgapy/
+	(needs some trivial tweaks to build)
+
+3. Have fun!
+

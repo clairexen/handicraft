@@ -1,0 +1,52 @@
+\START92\
+\COMMENT=
+\NAME=e6resclc
+\FILE=E6RESCLC.89P
+()
+Prgm
+  \(C)\ Simple tool for finding a combination
+  \(C)\ of E6 resistors that mathes a given
+  \(C)\ resistor value. (by Clifford Wolf)
+  Local val, v, elist, err, i, j, k
+  Local bestSin, bestSinE
+  Local bestSer, bestSerE
+  Local bestPar, bestParE
+  1\ee\10\->\bestSinE
+  1\ee\10\->\bestSerE
+  1\ee\10\->\bestParE
+  ClrIO 
+  Input "Enter Resistor Value:", val
+  Disp "", "     Please wait..."
+  approx(val)\->\val
+  {1.,1.5,2.2,3.3,4.7,6.8}\->\elist
+  10^(floor(log(val,10))-1)\->\v
+  mat\to\list({elist*v, elist*v*10, elist*v*100})\->\elist
+  For i, 1, dim(elist)
+    abs(elist[i]-val)\->\err
+    If err < bestSinE Then
+      err\->\bestSinE
+      "single Resistor: " & format(elist[i],"s4")\->\bestSin
+    EndIf
+    For j, 1, dim(elist)
+      1/(1/elist[i]+1/elist[j])\->\v
+      abs(v-val)\->\err
+      If err < bestParE Then
+        err\->\bestParE
+        format(elist[i],"s1") & " || " & format(elist[j],"s1") & " = " & format(v,"s4")\->\bestPar
+      EndIf
+      elist[i]+elist[j]\->\v
+      abs(v-val)\->\err
+      If err < bestSerE Then
+        err\->\bestSerE
+        format(elist[i],"s1") & "  + " & format(elist[j],"s1") & " = " & format(v,"s4")\->\bestSer
+      EndIf
+    EndFor
+  EndFor
+  ClrIO 
+  Disp "Resistor Value:  " & format(val,"s4")
+  Disp bestSin, bestSer, bestPar
+  Pause "Press ENTER to quit"
+  DispHome
+EndPrgm
+
+\STOP92\

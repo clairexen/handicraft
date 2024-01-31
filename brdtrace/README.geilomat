@@ -1,0 +1,64 @@
+
+* CNC rechner aufdrehen und einloggen
+
+* EMC2 starten (Pinguin Icon "Geilomat")
+
+* CNC Hauptschalter Ein
+
+* CNC Emergency Stop Aus
+
+* EMC2: Machine Power ON
+
+* EMC2: Home All
+
+* NGC file laden (fuer positinonierumg: output_dimen.ngc)
+
+* Printplatte mit doppenseitigem Klebeband befestigen
+
+* Control using Gamepad:
+
+	Hold [1]: Slow speed
+	Hold [2]: Medium speed
+	Hold [3]: High speed
+
+	Left analog stick: X/Y-Plane
+	Right analog stick: Z-Axis (left/right)
+
+* Control using Keyboard:
+
+	Cursortasten: X/Y-Plane
+	Page Up/Down: Z-Axis
+
+* Werkzeugwechsel:
+
+	- Fraese aus (Schalter oben, '0' sichtbar)
+	- Knopf rechts unten an der Fraese gedrueck halten
+	- Mit Schraubenschluessel Bohrfuetter oeffnen/schliessen
+
+* Koordinatensystem einrichten:
+
+	- Tip knapp ueber Print positionieren
+	- Im EMC2 unter "Manual Control":
+		- Z-Achse auswaehlen
+		- Touch Off druecken
+		- z.Bsp. 0.3 mm eingeben
+			(0 sollte die fraeshoehe sein)
+	- Tip leicht anheben und am linken unteren eck positionieren
+	- Im EMC2 "Touch Off" fuer X=0 und Y=0
+
+* Isolationsfraesen:
+
+	- NGC file laden (z.Bsp. output_back.ngc)
+	- Speed auf fraese langsam (Stufe 2)
+	- Fraese an, Staubsauger an
+	- Start im EMC2
+	- Print abbuersten/absaugen
+	- Kontrolle und bei Bedarf neuer Z-Touchoff und restart
+
+* Bohren und Outline fraesen:
+
+	- NGC file laden (z.Bsp. output_back.ngc)
+	- Speed auf fraese maximal (Stufe 6)
+	- Fraese an, Staubsauger an
+	- Start im EMC2
+

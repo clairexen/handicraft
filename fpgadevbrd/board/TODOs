@@ -1,0 +1,5 @@
+
+ * Import USB plug part from bblab project
+
+ * Add 1k5 resistor on FTDI: [USB DP] <-> [RSTOUT#]
+

@@ -1,0 +1,58 @@
+
+https://whatever.metalab.at/projects/MetaLock2.0/metalock20/metalock20.pde
+
+das ist der arduino source der momentan drauf ist.
+
+der relevante teil ist dieser:
+
+   sprintf(outstr,"KEY: 
+%02X-%02X%02X%02X%02X%02X%02X\n",addr[0],addr[6],addr[5],addr[4],addr[3],addr[2],addr[1]);
+   Serial.print(outstr);
+
+
+
+   if(!readline())
+
+     // we got data from serial for our requested key
+     // can be OK
+     // or     NO
+
+
+     if(!strcmp(inData,"OK"))
+     {
+       open_door();
+       return 1;
+     }
+     if(!strcmp(inData,"NO"))
+     {
+      entry_denied();
+      return 1;
+     }
+
+     trigger_alarm(PROTOCOL_FAIL);
+     return 0;
+   }
+   else
+   {
+
+     // so you wonder.. wtf?
+     // if the serialcom failed we authenticate EVERY button we get and 
+let the bastard in.
+     // why?  well he has to have an ibutton in first place and if the 
+embedded system fucked up we dont want to be locked out right?
+     Serial.print("SERIAL_COM_FAIL SET! openening door ");
+     open_door();
+   }
+
+
+
+
+so was das ding tun sollte wäre:
+  serial lesen
+  kommt KEY: alles bis zum nächsten newline als parameter an einen 
+shellscript call übergeben.
+  cool wäre es wenn cih im shellscript mit echo was rausschreib (OK) was 
+dann an die serielle geschickt wird.
+aber es ist auch möglich das ich einfach return 0, return 1 was auch 
+immer mach und dementsprechend YES/NO an die serielle geschickt wird
+
