@@ -1,0 +1,3 @@
+ble_pack alice_ble {alice}
+clb_pack alice_clb {alice_ble,,,,,,,}
+set_location alice_clb 1 1

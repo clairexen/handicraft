@@ -1,0 +1,10 @@
+<funcprototype>
+                <funcdef>void <function>foo</function></funcdef>
+                <paramdef>int <parameter>target</parameter></paramdef>
+                <paramdef>char <parameter>name</parameter></paramdef>
+</funcprototype>
+<funcprototype>
+                <funcdef>void <function>foo2</function></funcdef>
+                <paramdef>int <parameter>target2</parameter></paramdef>
+                <paramdef>char <parameter>name2</parameter></paramdef>
+</funcprototype>

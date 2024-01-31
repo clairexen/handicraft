@@ -1,0 +1,10 @@
+ble_pack carol_ble {carol}
+clb_pack carol_clb {carol_ble,,,,,,,}
+set_location carol_clb 12 1
+
+###IOSet List 5
+set_io a 67
+set_io b 71
+set_io c 70
+set_io d 68
+set_io y 73

@@ -1,0 +1,25 @@
+
+Tipps and tools for running Xilinx Vivado on Ubuntu (Kubuntu) 2014.04
+=====================================================================
+
+1. before installing run "sudo dpkg-reconfigure dash" and choose not to
+use dash as (/bin/sh). After that /bin/sh should be a symlink to "bash".
+
+2. when running Kubuntu (KDE): Change "System Settings > Application
+Appearance > GTK > GTK2" from "oxygen-gtk" to "Raleigh" [1].
+
+3. install Vivado. select full install ("System Edition" + SDK) and
+install in the default locations:
+
+	/opt/Xilinx/Vivado/{version}/
+	/opt/Xilinx/Vivado_HLS/{version}/
+	/opt/Xilinx/SDK/{version}/
+
+4. change the "web_command" and "pdf_command" settings in "wrapper.sh"
+to reflect your choices and run "sudo bash install.sh {version}".
+
+5. run "/opt/Xilinx/DocNav/docnav", open the Settings Dialog, and set
+"Preferences > PDF Viewer Path" to "/opt/Xilinx/Vivado/{version}/bin/acroread".
+
+[1] http://forums.xilinx.com/t5/High-Level-Synthesis-HLS/Vivado-HLS-crashes-on-Kubuntu-14-04-solved/td-p/472112
+

@@ -1,0 +1,70 @@
+
+Assembler Syntax
+================
+
+Data symbol decl:
+	reg <symbol> [<size>]
+
+Code symbol decl:
+	<symbol>:
+
+Immediate value (src):
+	<value> or <symbol> or <symbol>+<value>
+
+From addr (src or dst):
+	$<address> or $<symbol>
+	(for indirection increase number of $)
+
+Load/store ops:
+	ld <src>
+	st <dst>
+
+Read/write ops:
+	rd
+	wr
+
+ALU ops:
+	add <src>
+	sub <src>
+	and <src>
+	xor <src>
+	lt
+	eq
+
+ALU op suffixes:
+	c  .... carry (add, sub)
+	s  .... signed (lt, le)
+
+Control ops:
+	b <addr>  .... branch unconditionally
+	bc <addr> .... branch if accumulator == 0
+
+
+Instruction encoding
+====================
+
+non-branch instructions are followed by one additional operand byte.
+
+branch instructions are followed by two additional operand bytes (first the lo
+byte then the high byte of the jump target).
+
+|MSB  6   5   4   3   2   1  LSB|
++---+---+---+---+---+---+---+---+
+| 0 | 0 | 0 | 0 | 0 | C |  IND  | add
+| 0 | 0 | 0 | 0 | 1 | C |  IND  | sub
+| 0 | 0 | 0 | 1 | 0 | C |  IND  | eq
+| 0 | 0 | 0 | 1 | 1 | 0 |  IND  | and
+| 0 | 0 | 0 | 1 | 1 | 1 |  IND  | xor
+| 0 | 0 | 1 | 0 | S | C |  IND  | lt
++---+---+---+---+---+---+---+---+
+| 0 | 0 | 1 | 1 | 0 | 0 |  IND  | ld
+| 0 | 0 | 1 | 1 | 0 | 1 |  IND  | st
++---+---+---+---+---+---+---+---+
+| 0 | 0 | 1 | 1 | 1 | 0 |  IND  | b
+| 0 | 0 | 1 | 1 | 1 | 1 |  IND  | bc
++---+---+---+---+---+---+---+---+
+
+IND is a two-bit number specifying the number of indirections used in
+adressing.  A IND value of 0 is used for an immediate value. The
+"st" opcode adds an implicit +1 to IND.
+

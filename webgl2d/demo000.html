@@ -1,0 +1,129 @@
+<html><head>
+<meta charset="utf-8">
+<title>WebGL Demo</title>
+
+<!-- ********************* Draw colored boxes ********************* -->
+
+<script id="colored-box-vertex-shader" type="x-shader/x-vertex">
+attribute vec2 a_position;
+uniform vec2 u_resolution;
+
+void main() {
+	// convert from pixel coordinates to -1 .. +1 coordinate space
+	gl_Position = vec4((2.0 * (a_position / u_resolution) - 1.0) * vec2(1, -1), 0, 1);
+}
+</script></script>
+
+<script id="colored-box-fragment-shader" type="x-shader/x-fragment">
+precision mediump float;
+uniform vec4 u_color;
+
+void main() {
+	gl_FragColor = u_color;
+}
+</script>
+
+<script>
+function ColoredBoxPainter(gl, canvas) {
+	"use strict";
+	var program, loc_position, loc_resolution, loc_color, buffer;
+
+	program = createShaderProgram(gl, "colored-box-vertex-shader", "colored-box-fragment-shader");
+	loc_position = gl.getAttribLocation(program, "a_position");
+	loc_resolution = gl.getUniformLocation(program, "u_resolution");
+	loc_color = gl.getUniformLocation(program, "u_color");
+	buffer = gl.createBuffer();
+
+	this.draw = function (x, y, w, h, r, g, b, a) {
+		gl.useProgram(program);
+		gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+		gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+			x,   y,
+			x+w, y,
+			x,   y+h,
+			x,   y+h,
+			x+w, y,
+			x+w, y+h
+		]), gl.DYNAMIC_DRAW);
+		gl.enableVertexAttribArray(loc_position);
+		gl.vertexAttribPointer(loc_position, 2, gl.FLOAT, false, 0, 0);
+		gl.uniform2f(loc_resolution, canvas.width, canvas.height);
+		gl.uniform4f(loc_color, r, g, b, a);
+		gl.drawArrays(gl.TRIANGLES, 0, 6);
+	}
+}
+</script>
+
+<!-- ********************* Main ********************* -->
+
+<script>
+function createShaderProgram(gl, vertex_shader_id, fragment_shader_id) {
+	"use strict";
+	var vertex_shader, fragment_shader, program;
+
+	vertex_shader = gl.createShader(gl.VERTEX_SHADER);
+	gl.shaderSource(vertex_shader, document.getElementById(vertex_shader_id).text);
+	gl.compileShader(vertex_shader);
+
+	if (!gl.getShaderParameter(vertex_shader, gl.COMPILE_STATUS))
+		throw new Error("Compiler error in vertex shader: " + gl.getShaderInfoLog(vertex_shader));
+
+	fragment_shader = gl.createShader(gl.FRAGMENT_SHADER);
+	gl.shaderSource(fragment_shader, document.getElementById(fragment_shader_id).text);
+	gl.compileShader(fragment_shader);
+
+	if (!gl.getShaderParameter(fragment_shader, gl.COMPILE_STATUS))
+		throw new Error("Compiler error in fragment shader: " + gl.getShaderInfoLog(fragment_shader));
+
+	program = gl.createProgram();
+	gl.attachShader(program, vertex_shader);
+	gl.attachShader(program, fragment_shader);
+	gl.linkProgram(program);
+
+	if (!gl.getProgramParameter(program, gl.LINK_STATUS))
+		throw new Error("Linker error: " + gl.getProgramInfoLog (program));
+
+	return program;
+}
+
+function main() {
+	"use strict";
+	var canvas, gl, program, painter;
+
+	canvas = document.getElementById("canvas");
+	gl = canvas.getContext("webgl");
+
+	if (!gl)
+		throw new Error("Creating WebGL context failed!");
+
+	painter = new ColoredBoxPainter(gl, canvas);
+
+	function draw(time_ms) {
+		window.requestAnimationFrame(draw);
+
+		canvas.width = document.body.clientWidth;
+		canvas.height = document.body.clientHeight;
+		gl.viewport(0, 0, canvas.width, canvas.height);
+
+		gl.enable(gl.BLEND);
+		gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+		painter.draw(0, 0, canvas.width, canvas.height, 0.0, 0.0, 0.0, 1.0);
+		painter.draw(110, 110, 100, 200, 1.0, 0.0, 1.0, 1.0);
+		painter.draw(150, 200, 200, 150, 0.0, 1.0, 0.0, 0.5);
+		
+		gl.disable(gl.BLEND);
+		painter.draw(70, 230, 10 + Math.abs((time_ms/10) % 600 - 300), 50, 1.0, 0.0, 0.0, 1.0);
+
+	}
+
+	window.requestAnimationFrame(draw);
+}
+
+window.onload = main;
+</script>
+
+</head>
+<body style="overflow: hidden;">
+<canvas id="canvas" style="position: absolute; left: 0; top: 0;"></canvas>
+</body>
+</html>

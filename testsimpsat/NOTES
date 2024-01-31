@@ -1,0 +1,39 @@
+
+!!
+!! NOTE: This is not a bug in MiniSat::SimpSolver! A variable most be "frozen"
+!! using the MiniSat::SimpSolver::setFrozen() API when it will be accessed
+!! after again (in assumptions or new clauses) after a call to solve().
+!!
+
+the issue was introduces somewhere here:
+
+5a80e35c    Simple fix to a statistics printout.
+5a80e35c~1  Change implementation of variable-elimination/model-extension. (bisect/bad)
+5a80e35c~2  Misc. cleanups. (bisect/skip-0f6862844a6a6f74cc30ac7012402646a367c5be)
+5a80e35c~3  Added virtual destructor to class Option (bisect/good-fc9c6b66ff5f2265b817b574a500979e8303c8d1)
+5a80e35c~4  Forgot to add Dimacs.h (bisect/good-d6476ccaa882b9b14f026b9eab1377b39ac2ff1c)
+5a80e35c~5  Make sure that macros necessary for C99 features are defined.
+5a80e35c~6  Rework the interface to Options.h somewhat.
+
+The obvious candidate is "Change implementation of variable-elimination/model-extension".
+
+commit 760d4f18fd5c1fda817f82064829bdafb3089faa
+Author: Niklas Sorensson <nik@chalmers.se>
+Date:   Wed Jan 16 18:36:43 2008 +0100
+
+    Change implementation of variable-elimination/model-extension.
+
+     * The interface is changed so that arbitrary remembering is no longer
+       possible. If you need to mention some variable again in the future,
+       this variable has to be frozen.
+
+     * When eliminating a variable, only clauses that contain the variable
+       with one sign is necessary to store. Thereby making the other sign
+       a "default" value when extending models.
+
+     * The memory consumption for eliminated clauses is further improved
+       by storing all eliminated clauses in a single contiguous vector.
+
+     * Memory consumption is reduced enough that oblivious mode seems to
+       be unnecessary. Therefore it is removed for now.
+

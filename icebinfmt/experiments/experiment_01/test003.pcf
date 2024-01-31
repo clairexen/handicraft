@@ -1,0 +1,6 @@
+ble_pack carol_ble {carol}
+clb_pack carol_clb {carol_ble,,,,,,,}
+set_location carol_clb 1 1
+
+set_io alice 37
+set_io bob 38

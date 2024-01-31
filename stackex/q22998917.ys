@@ -1,0 +1,12 @@
+# http://stackoverflow.com/questions/22998917/verilog-continuous-assignment-equivalent-of-always-block
+
+read_verilog q22998917a.v
+rename mux16to8 mux16to8_orig
+
+read_verilog q22998917b.v
+
+proc; opt
+miter -equiv mux16to8_orig mux16to8 miter
+flatten miter;;
+
+sat -prove trigger 0 miter

@@ -1,0 +1,10 @@
+
+Simple floating point benchmark
+-------------------------------
+
+Collection of very simple floating point benchmarks.
+
+Design Goal: Benchmarks that are simple enough so that
+you can look at the generated assembler and see if your
+compiler option produce what you would expect.
+
