@@ -1,0 +1,243 @@
+Index: libvo/video_out.c
+===================================================================
+--- libvo/video_out.c	(.../mplayer-orig-rev23698)	(revision 111)
++++ libvo/video_out.c	(.../mplayer-sources)	(revision 111)
+@@ -84,6 +84,7 @@
+ extern vo_functions_t video_out_zr;
+ extern vo_functions_t video_out_zr2;
+ extern vo_functions_t video_out_bl;
++extern vo_functions_t video_out_metaleds;
+ extern vo_functions_t video_out_syncfb;
+ extern vo_functions_t video_out_fbdev;
+ extern vo_functions_t video_out_fbdev2;
+@@ -225,6 +226,9 @@
+ #ifdef HAVE_BL
+ 	&video_out_bl,
+ #endif
++#ifdef HAVE_METALEDS
++	&video_out_metaleds,
++#endif
+ #ifdef HAVE_VESA
+ 	&video_out_vesa,
+ #endif
+Index: libvo/vo_metaleds.c
+===================================================================
+--- libvo/vo_metaleds.c	(.../mplayer-orig-rev23698)	(revision 0)
++++ libvo/vo_metaleds.c	(.../mplayer-sources)	(revision 111)
+@@ -0,0 +1,154 @@
++/*
++ *   vo_metaleds.c - convert video output to the MetaLEDs streaming protocol
++ *
++ *   Copyright (c)  2007 Clifford Wolf <www.clifford.at>
++ *
++ *   This program is free software; you can redistribute it and/or modify
++ *   it under the terms of the GNU General Public License as published by
++ *   the Free Software Foundation; either version 2 of the License, or
++ *   (at your option) any later version.
++ */
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++
++#include "config.h"
++
++#include "mplayer.h"
++#include "video_out.h"
++#include "video_out_internal.h"
++#include "mp_msg.h"
++#include "m_option.h"
++
++#include "../../libmetaleds/libmetaleds.h"
++
++static vo_info_t info = 
++{
++	"MetaLEDs driver: http://metalab.at/wiki/MetaLEDs",
++	"metaleds",
++	"Clifford Wolf <clifford@clifford.at>",
++	""
++};
++
++LIBVO_EXTERN (metaleds)
++
++/* Engine state as simple global variables
++ */
++static int width, height;
++static unsigned char *image;
++metaleds_frame_p frame;
++
++/* Parse argument string and open the output file.
++ */
++static int preinit(const char *arg)
++{
++	if (!arg || !arg[0] || metaleds_init(arg) < 0) {
++		mp_msg(MSGT_VO, MSGL_ERR, "MetaLEDs initialization error.\n");
++		mp_msg(MSGT_VO, MSGL_ERR,
++			"---\n"
++			"metaleds: Usage examples:\n"
++			"mplayer -vf scale -zoom -x 72 -y 48 -vo metaleds:sim:72:48 pr0n.mp4\n"
++			"mplayer -vf scale -zoom -x 72 -y 48 -vo metaleds:fio:/dev/lp0:72:48 pr0n.mp4\n"
++			"mplayer -vf scale -zoom -x 72 -y 48 -vo metaleds:net:10.20.30.40:6000:72:48 pr0n.mp4\n"
++			"---\n");
++		return 1;
++	}
++
++	frame = metaleds_malloc();
++
++	return 0;
++}
++
++/* Configure the mplayer engine. We only want data in YV12 format.
++ */
++static int control(uint32_t request, void *data, ...)
++{
++	if (request == VOCTRL_QUERY_FORMAT) {
++		uint32_t format = *((uint32_t*)data);
++		if (format == IMGFMT_YV12) 
++			return VFCAP_CSP_SUPPORTED|VFCAP_CSP_SUPPORTED_BY_HW;
++		return 0;
++	}
++  	return VO_NOTIMPL;
++}
++
++/* Initialize/update width and height as well as the image buffer
++ */
++static int config(uint32_t width_arg, uint32_t height_arg, uint32_t d_width, 
++	uint32_t d_height, uint32_t flags, char *title, uint32_t format)
++{
++	width = width_arg;
++	height = height_arg;
++
++	image = realloc(image, width*height*3);
++	memset(image, 0, width*height*3);
++
++	return 0;
++}
++
++/* We have got new data. Lets just copy it to the image buffer.
++ */
++static int draw_slice(uint8_t *srcimg[], int stride[],
++		int wf, int hf, int xf, int yf)
++{
++	uint8_t *dst = image, *src=srcimg[0];
++	int i;
++
++	for (i = 0; i < hf; i++) {
++		memcpy(dst, src, wf);
++		src += stride[0];
++		dst += width;
++	}
++
++ 	return 0;
++}
++
++/* We have got a new frame. Simply dump current image to output.
++ * (We are using the 1st channel only because this is grayscale in YV12.)
++ */
++static void flip_page(void)
++{
++	int buf_idx = 0;
++	int x, y;
++
++	for (y=0; y<height; y++)
++	for (x=0; x<width; x++)
++	{
++		int val = image[buf_idx];
++		metaleds_setpixel(frame, x, y, val);
++		buf_idx++;
++	}
++
++	if (metaleds_frame(frame) < 0) {
++		fprintf(stderr, "MetaLEDs frame update failed.\n");
++		exit_player("MetaLEDs error");
++	}
++}
++
++/* We do not really support OSD.
++ */
++static void draw_osd(void)
++{
++}
++
++/* And we not interested in any events eighter.
++ */
++static void check_events(void)
++{
++}
++
++/* Yet another unused function.
++ */
++static int draw_frame(uint8_t * src[])
++{
++	return 0;
++}
++
++/* Cleanup
++ */
++static void uninit(void)
++{
++	metaleds_free(frame);
++}
++
+Index: configure
+===================================================================
+--- configure	(.../mplayer-orig-rev23698)	(revision 111)
++++ configure	(.../mplayer-sources)	(revision 111)
+@@ -366,6 +366,7 @@
+   --enable-directfb        enable DirectFB video output [autodetect]
+   --enable-zr              enable ZR360[56]7/ZR36060 video output [autodetect]
+   --enable-bl		   enable Blinkenlights video output [disable]
++  --enable-metaleds	   enable MetaLEDs video output [disable]
+   --enable-tdfxvid         enable tdfx_vid video output [disable]
+   --disable-tga            disable Targa video output [enable]
+   --disable-pnm		   disable PNM video output [enable]
+@@ -612,6 +613,7 @@
+ _directfb=auto
+ _zr=auto
+ _bl=no
++_metaleds=no
+ _largefiles=no
+ #_language=en
+ _shm=auto
+@@ -1031,6 +1033,8 @@
+   --disable-zr)		_zr=no		;;
+   --enable-bl)		_bl=yes		;;
+   --disable-bl)		_bl=no		;;
++  --enable-metaleds)	_metaleds=yes	;;
++  --disable-metaleds)	_metaleds=no	;;
+   --enable-mtrr)	_mtrr=yes	;;
+   --disable-mtrr)	_mtrr=no	;;
+   --enable-largefiles)	_largefiles=yes	;;
+@@ -6335,6 +6339,18 @@
+ echores "$_bl"
+ 
+ 
++echocheck "metaleds"
++if test "$_metaleds" = yes ; then
++  _def_metaleds='#define HAVE_METALEDS 1'
++  _vosrc="$_vosrc vo_metaleds.c"
++  _vomodules="metaleds $_vomodules"
++  _ld_extra="$_ld_extra $PWD/../libmetaleds/libmetaleds.o -lSDL -lSDL_net"
++else
++  _def_metaleds='#undef HAVE_METALEDS'
++  _novomodules="metaleds $_novomodules"
++fi
++echores "$_metaleds"
++
+ echocheck "XviD"
+ if test "$_xvid" = auto ; then
+   _xvid=no
+@@ -8346,6 +8362,7 @@
+ $_def_dfbmga
+ $_def_zr
+ $_def_bl
++$_def_metaleds
+ $_def_mga
+ $_def_xmga
+ $_def_syncfb
+
+Property changes on: 
+___________________________________________________________________
+Name: svnbranch:parent
+   + /2008/metaleds/mplayer-orig-rev23698@27
+
