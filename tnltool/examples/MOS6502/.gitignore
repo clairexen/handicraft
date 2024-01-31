@@ -1,0 +1,8 @@
+model6502.tab.h
+model6502.tab.c
+model6502.vcd
+model6502.dot
+*.o
+*.d
+tnltool
+demo

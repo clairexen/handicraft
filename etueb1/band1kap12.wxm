@@ -1,0 +1,129 @@
+/* [wxMaxima batch file version 1] [ DO NOT EDIT BY HAND! ]*/
+/* [ Created with wxMaxima version 0.8.4 ] */
+
+/* [wxMaxima: title   start ]
+ET1 (Prechtl) - Band 1 Kapitel 12
+Loesungen von Clifford Wolf
+   [wxMaxima: title   end   ] */
+
+/* [wxMaxima: input   start ] */
+ratprint: false$ fpprintprec:6$ Par(R1,R2) := R1*R2/(R1+R2)$
+sciprint(v) := block(_exp: floor(log(abs(v))/log(10)/3)*3,
+printf(false, "~,4f E~d", v/(10^_exp), _exp))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: section start ]
+A12.1: Kupferdraht mit Silberueberzug
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(Par, sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+gamma_Cu: 56e6$ gamma_Ag: 60e6$ d: 0.2e-3$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+G1: gamma_Cu*(d/2)^2*%pi$
+G2: gamma_Ag*((d/2+delta)^2*%pi - (d/2)^2*%pi)$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+solve(G1 = G2, delta);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+sciprint((sqrt(435)-15)/150000);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: section start ]
+A12.4: Stromeinspeisung in Platte
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(Par, sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+delta: 0.5e-3$ gamma: 5e6$ r1: 40e-3$ r2: 10e-3$ I: 10$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+J(r) := I / (2*r*%pi * delta);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+E(r) := J(r) / gamma;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+sciprint(integrate(E(r), r, r1, r2));
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: section start ]
+A12.5: Widerstand eines keilfoermigen Leiters
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(Par, sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+A(r) := l*r*beta;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+J(r) := I/A(r);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+E(r) := J(r) / gamma;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+assume(rho2 > rho1, rho1 > 0)$
+U: integrate(E(r), r, rho1, rho2);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+R: U/I;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: section start ]
+A12.5: Widerstand einer Scheibenhaelfte
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(Par, sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+gamma: 0.2$ h: 5e-3$ d: 20e-3$ D: 200e-3$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+Leitwert eines 180 Grad Kreisbogens mit Radius r und Breite dr,
+wobei dr so klein gegenueber r ist, dass die Stromdichte im Kreisbogen
+als homogen angenommen werden kann.
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+G(r, dr) := gamma*dr*h/(r*%pi);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+Parallelschaltung vieler solcher infinitesimal duenner Kreisboegen.
+(und Umwandlung von Leitwert zu Widerstand)
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+R: 1 / integrate(G(r, 1), r, d/2, D/2);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+sciprint(R);
+/* [wxMaxima: input   end   ] */
+
+/* Maxima can't load/batch files which end with a comment! */
+"Created with wxMaxima"$

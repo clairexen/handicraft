@@ -1,0 +1,204 @@
+/* [wxMaxima batch file version 1] [ DO NOT EDIT BY HAND! ]*/
+/* [ Created with wxMaxima version 0.8.4 ] */
+
+/* [wxMaxima: title   start ]
+ET1 (Prechtl) - Band 1 Kapitel 7
+Loesungen von Clifford Wolf
+   [wxMaxima: title   end   ] */
+
+/* [wxMaxima: input   start ] */
+numer:true$ fpprintprec:6$
+sciprint(v) := block(_exp: floor(log(abs(v))/log(10)/3)*3,
+printf(false, "~,4f E~d", v/(10^_exp), _exp))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: section start ]
+Aufgabe A7.1: Abgeleitete Einheiten
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: comment start ]
+L: Laenge, M: Masse, T: Zeit, I: Stromstaerke
+
+Massendichte:
+=> M / L^3
+=> L^-3 M
+
+Kraft:
+=> M (L / T^2)
+=> L M T^-2
+"Kraft ist, was Massen beschleunigt."
+
+Elektrische Feldstaerke:
+=> Kraft / Ladung
+=> (L M T^-2) / (I T)
+=> L M T^-3 I^-1
+"Das E-Feld uebt Kraft auf Ladungen aus."
+
+Elektrischer Widerstand:
+  Spannung:
+  => Energie / Ladung
+  => (Kraft L) / (I T)
+  => ((L M T^-2) * L) / (I T)
+  => L^2 M T^-3 I^-1
+=> Spannung / I
+=> L^2 M T^-3 I^-2
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: section start ]
+Aufgabe A7.2: Abgeleitete Einheiten
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: subsect start ]
+Mit SI Basiseinheiten
+   [wxMaxima: subsect end   ] */
+
+/* [wxMaxima: comment start ]
+Elektrischer Widerstand: (nach A7.1)
+=> m^2 kg s^-3 A^-2
+
+Leistung:
+  Kraft: (nach A7.1)
+  => m kg s^-2
+  Energie:
+  => m^2 kg s^-2
+=> m^2 kg s^-3
+
+Arbeit: (Energie)
+=> m^2 kg s^-2
+
+Ladung:
+=> A s
+
+Kraft:
+=> m kg s^-2
+
+Flaechenladungsdichte:
+=> A s / m^2
+
+elektrische Feldstaerke: (nach A7.1)
+=> m kg s^-3 A^-1
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: subsect start ]
+Mit Meter, Sekunde, Volt und Ampere
+   [wxMaxima: subsect end   ] */
+
+/* [wxMaxima: comment start ]
+Elektrischer Widerstand:
+=> V A^-1
+
+Leistung:
+=> V A
+
+Arbeit: (Energie)
+=> V A s
+
+Ladung:
+=> A s
+
+Kraft:
+Energie ist Kraft mal Weg => Kraft ist Energie durch Weg
+=> V A s m^-1
+
+Flaechenladungsdichte:
+=> A s m^-2
+
+elektrische Feldstaerke:
+=> V m^-1
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: section start ]
+Aufgabe A7.3: Elektrostatisches cgs System
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: comment start ]
+Basis: cm, g, s
+
+Ladung:
+Einheit der Kraft: 1erg = g cm s^-2
+Coulomb-Gesetz: F = Q1*Q2/r^2
+=> Q = sqrt(F * r^2)
+=> [Q] = sqrt(g cm s^-2 cm^2)
+=> g^(1/2) cm^(3/2) s^-1
+
+Stromstaerke:
+"Ladung pro Zeiteinheit"
+=> g^(1/2) cm^(3/2) s^-2
+
+Spannung:
+"Energie pro Ladung"
+Einheit der Energie: 1erg = g cm^2 s^-2
+=> (g cm^2 s^-2) / (g^(1/2) cm^(3/2) s^-1)
+=> g^(1/2) cm^(1/2) s^-1
+
+Widerstand:
+"Spannung pro Stromstaerke"
+=> (g^(1/2) cm^(1/2) s^-1) / (g^(1/2) cm^(3/2) s^-2)
+=> cm^-1 s
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: section start ]
+Aufgabe A7.4: Zahlenwertgleichung
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+[lambda_x] = W/(K cm)
+[gamma_x] = m/(Ohm mm^2)
+[T_x] = [T] = K
+
+[lambda] = W/(K m) = [lambda_x] * cm/m = [lambda_x] * 0.01
+
+[gamma] = m/(Ohm m^2) = [gamma_x] * mm^2/m^2 =
+    = [gamma_x] * (mm/m)^2 = [gamma_x] * (1e-3)^2 = [gamma_x] * 1e-6
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+lambda/(gamma*T) = (pi^2)/3 * (k/e)^2;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+%, lambda = lambda_x / 0.01, gamma = gamma_x / 1e-6;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+%, k = 1.381e-23, pi = 3.14159, e = 1.602e-19;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+solve(%, lambda_x);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: section start ]
+Aufgabe A7.5: Groessengleichung
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: comment start ]
+Angabe:
+    R/1kOhm = 2.36*(U/1kV)^(1/4)  mit U_0 = 1kV
+
+Umformen nach R und einsetzen von U_0:
+    R = U/I = 2.36kOhm*(U/U_0)^(1/4)
+
+Umformen nach U und erweitern mit 1/U_0 = 1/1kV:
+    U/U_0 = I*(2.36kOhm/1kV)*(U/U_0)^(1/4)
+
+Einsetzen von I_0 = 1/(2.36kOhm/1kV):
+    U/U_0 = (I/I_0)*(U/U_0)^(1/4)
+
+Umformen nach U/U_0:
+    (U/U_0)^(3/4) = I/I_0
+
+Gleichung hoch (4/3):
+    U/U_0 = (I/I_0)^(4/3)
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+I_0 = 1/(2.36e3/1e3);
+/* [wxMaxima: input   end   ] */
+
+/* Maxima can't load/batch files which end with a comment! */
+"Created with wxMaxima"$

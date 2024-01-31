@@ -1,0 +1,14 @@
+
+Simple high-voltage programming tests with ATTinyX5 and ATMegaX8, the AVR Dragon and avrdude.
+
+AVR Dragon Manual:
+http://support.atmel.no/knowledgebase/avrstudiohelp/mergedProjects/AVRDragon/AVRDragon.htm
+
+Connection Diagrams for my setup:
+http://support.atmel.no/knowledgebase/avrstudiohelp/mergedProjects/AVRDragon/SCKT3400D1.htm
+http://support.atmel.no/knowledgebase/avrstudiohelp/mergedProjects/AVRDragon/SCKT3200A2.htm
+
+Pictures of the setup:
+http://www.clifford.at/gallery/2011-elektronik/DSCI0527
+http://www.clifford.at/gallery/2011-elektronik/DSCI0528
+

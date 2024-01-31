@@ -1,0 +1,6 @@
+tnltool
+tnl_parser.tab.cc
+tnl_parser.tab.h
+tnl_lexer.tab.cc
+*.o
+*.d

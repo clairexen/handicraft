@@ -1,0 +1,29 @@
+set -xsthdpdir "xilinx"
+run
+-ifn topmod.prj
+-ifmt mixed
+-ofn topmod
+-ofmt NGC
+-p xbr
+-top topmod
+-opt_mode Speed
+-opt_level 1
+-iuc NO
+-lso topmod.lso
+-keep_hierarchy YES
+-netlist_hierarchy as_optimized
+-rtlview Yes
+-hierarchy_separator /
+-bus_delimiter <>
+-case maintain
+-verilog2001 YES
+-fsm_extract YES -fsm_encoding Auto
+-safe_implementation No
+-mux_extract YES
+-resource_sharing YES
+-iobuf YES
+-pld_mp YES
+-pld_xp YES
+-pld_ce YES
+-wysiwyg NO
+-equivalent_register_removal YES

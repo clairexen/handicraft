@@ -1,0 +1,28 @@
+
+The Challange:
+==============
+
+Configure X11 in a way so the user can switch between english/german keyboard
+mapping and amharic and use the amharic composition characters without
+destroying the english/german layout.
+
+
+The Solution:
+=============
+
+cp xcompose.txt $HOME/.XCompose
+sudo cp et.txt /usr/share/X11/xkb/symbols/et
+
+sudo rm -fv /var/lib/xkb/*.xkm
+
+setxkbmap -layout us,de,et
+
+
+The Cheatsheet:
+===============
+
+A nice table with all the compositons can be found in chartab.html.
+
+(It can be re-generated with 'splrun gentable.spl < xcompose.txt  > chartab.html'.)
+
+

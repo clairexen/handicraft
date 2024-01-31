@@ -1,0 +1,158 @@
+/* [wxMaxima batch file version 1] [ DO NOT EDIT BY HAND! ]*/
+/* [ Created with wxMaxima version 0.8.4 ] */
+
+/* [wxMaxima: title   start ]
+ET1 (Prechtl) - Band 1 Kapitel 5
+Loesungen von Clifford Wolf
+   [wxMaxima: title   end   ] */
+
+/* [wxMaxima: input   start ] */
+numer:true$ fpprintprec:6$
+sciprint(v) := block(_exp: floor(log(abs(v))/log(10)/3)*3,
+printf(false, "~,4f E~d", v/(10^_exp), _exp))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: section start ]
+Aufgabe A5.1: Kenngr. einer harmonischen Schwingung
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Amplitude (m)"$ sciprint(a_hat: 3e-6);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Schwingungsbreite (m)"$ sciprint(2*a_hat);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Kreisfrequenz (Hz)"$ sciprint(omega: 9.43e3);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Frequenz (Hz)"$ sciprint(f: omega / (2*%pi));
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Periodendauer (s)"$ sciprint(T: 1/f);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+a(t) := a_hat * sin(omega*t)$
+a(t); wxplot2d('a(t), [t, 0, 2*T]);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: section start ]
+Aufgabe A5.2: Schallwelle
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+c: 340$ a_hat: 10e-6$ f: 440$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Kreisfrequenz"$ sciprint(omega: f*2*%pi);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Wellenlaenge"$ sciprint(lambda: c/f);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Kreiswellenzahl"$ sciprint(k: 2*%pi / lambda);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+a(x, t) := a_hat * sin(k*x - omega*t)$ a(x,t);
+wxplot2d(['a(x,0), 'a(x,0.1/f)], [x, 0, 2/lambda]);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: section start ]
+Aufgabe A5.3: Elektromagnetische Welle
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"26 Nulldurchgaenge = 25 Halbwellen = 12.5 Perioden"$
+sciprint(f: 10e9); sciprint(lambda: 347e-3/12.5);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Kreiswellenzahl"$ sciprint(k: 2*%pi / lambda);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Brechungsindex (zur Kontrolle)"$
+c0: 299792458$
+sciprint(c: f * lambda);
+n: c0/c;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+ACHTUNG Fehler in der Angabe: 347mm statt 3.47mm!
+Sonst kommt ein Brechungsindex >100 raus!
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: section start ]
+Aufgabe A5.4: Ultrakurzwelle
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Frequenzen (Hz)"$
+f1: 87.5e6; f2: 108e6;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Phasengeschwindigkeit (m/s)"$
+c0: 299792458;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Wellenlaengen (m)"$
+lambda1: c0/f1; lambda2: c0/f2;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: section start ]
+Aufgabe A5.5: Strahlstaerke
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Energiefluss (J/s = W)"$ P: 73;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+1 Steradiant (1sr) ist der Raumwinkel der einer 1m^2 Kugelkappe an einer
+Kugel mit r=1m entspricht. D.h. wg. der Formel A=4pi*r^2 fuer die Kugel-
+obeflaeche ist 1sr der 1/(4pi)te Teil des vollen Raumwinkels.
+
+1cd (Candela) ist definiert als 1/683 W/sr.
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+"Strahlstaerke (W/sr)"$ J_Wsr: P/(4*%pi);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Strahlstaerke (cd)"$ J_cd: P*683/(4*%pi);
+/* [wxMaxima: input   end   ] */
+
+/* Maxima can't load/batch files which end with a comment! */
+"Created with wxMaxima"$

@@ -1,0 +1,7 @@
+nmosaoi.tab.h
+nmosaoi.tab.c
+nmosaoi.vcd
+*.o
+*.d
+tnltool
+demo

@@ -1,0 +1,11 @@
+
+NET "sw1" LOC = "12";
+NET "sw2" LOC = "13";
+NET "sw3" LOC = "14";
+NET "sw4" LOC = "16";
+
+NET "led1" LOC = "19";
+NET "led2" LOC = "20";
+NET "led3" LOC = "21";
+NET "led4" LOC = "22";
+

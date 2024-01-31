@@ -1,0 +1,23 @@
+#!/usr/bin/env splrun
+
+// --------------------------------------------------------
+// The videos from Spring 2005 (better quality) on youtube:
+// http://www.youtube.com/user/MIT#g/c/E7DDD91010BC51F8
+// --------------------------------------------------------
+
+load "file";
+load "system";
+load "curl";
+load "xml";
+
+var doc = curl("http://www.academicearth.org/courses/linear-algebra/video.rss");
+doc = xml_parse(doc.body);
+
+foreach[] i (doc["//item"].nodes) {
+	var url = i["enclosure/@url"].data;
+	var fn = "0${ i["title"].data }.${ url =~ s/.*\.//R }" =~ s/^0([0-9][0-9])/$1/R;
+	if (file_access(fn, "F"))
+		continue;
+	system("wget -O '${fn}.new' '$url' && mv '${fn}.new' '$fn'");
+}
+

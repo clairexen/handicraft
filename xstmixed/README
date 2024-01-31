@@ -1,0 +1,8 @@
+
+A short example for using XST for the following mixed language situation:
+-------------------------------------------------------------------------
+
+A library written in VHDL is compiled to an ngc file.
+
+The top module written in Verilog is using this library.
+

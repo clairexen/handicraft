@@ -1,0 +1,31 @@
+
+Alert The Internets - Crowd Edition
+===================================
+
+A set of scripts for crowdsourcing the metalab video blog.
+
+(More information to come - let me finish the thing first..)
+
+
+Installing
+----------
+
+Installing encoding tools:
+	# apt-get install mencoder
+	# apt-get install ffmpeg
+
+Installing youtube-upload (see http://code.google.com/p/youtube-upload/):
+	# apt-get install python-gdata
+	# svn co http://youtube-upload.googlecode.com/svn/trunk/ /usr/local/src/youtube-upload
+	# cd /usr/local/src/youtube-upload && python setup.py install
+
+Building the ledctrl helper app:
+	$ gcc -o ledctrl ledctrl.c
+
+Allow the script to mount the media (the quick&dirty way for user "ati"):
+	# vi /etc/sudoers
+	ati ALL=(ALL) NOPASSWD: ALL
+
+Create mount point:
+	# mkdir /mnt/ati
+

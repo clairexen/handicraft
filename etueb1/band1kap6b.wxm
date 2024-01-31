@@ -1,0 +1,277 @@
+/* [wxMaxima batch file version 1] [ DO NOT EDIT BY HAND! ]*/
+/* [ Created with wxMaxima version 11.04.0 ] */
+
+/* [wxMaxima: title   start ]
+ET1 (Prechtl) - Band 1 Kapitel 6
+Loesungen von Clifford Wolf (2/3)
+   [wxMaxima: title   end   ] */
+
+/* [wxMaxima: input   start ] */
+numer:true$ fpprintprec:6$
+sciprint(v) := block(_exp: floor(log(abs(v))/log(10)/3)*3,
+printf(false, "~,4f E~d", v/(10^_exp), _exp))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: section start ]
+Aufgabe A6.8: Herstellung von Kupferfolie
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Querschnitsflaeche der Folie in cm^2"$
+A: (150e-3 * 10e-6) * 100^2;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Ladung aller zwewertiger Kupfer-Ionen fur 1 cm^3 Cu"$
+F: 96485.3365$ M: 63.7$ rho_mass: 8.9$
+rho_Q: 2 * F * rho_mass / M;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Volumen Cu (cm^3) pro sekunde bei 30A"$
+V: 30 / rho_Q;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Abrollgeschwindigkeit in cm/s"$
+v: V / A;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: section start ]
+Aufgabe A6.9: Vernickelung eines Blechteils
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Zu transportierendes Nickel Volumen (cm^3)"$
+V: 200 * (50e-6 * 100);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Zu transportierende Ladung (C)"$
+F: 96485.3365$ M: 58.7$ rho_mass: 9$
+Q: 2 * F * rho_mass / M;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Strom nach Reduktion auf 85%"$
+I: 5 * 0.85;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Zeit fuer den Ladungstransport (s)"$
+t: Q / I;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: section start ]
+Aufgabe A6.10: Das Elektronenvolt
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: comment start ]
+Die Elementarladung betraegt 1.602176565e-19 C.
+Multipliziert mit 1V kommt man zur Energe 1.602176565e-19 J.
+
+(1J kann dargestellt werden als die potentielle Energie
+der Lage einer 1C Ladung nachdem sie in einem E-Feld 1V
+ueberwunden hat.)
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: section start ]
+Aufgabe A6.11: Reihenschaltungen von R
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+R1: 10$ R2: 120$ R3: 120$ I: 20e-3$
+U1: I*R1; U2: -I*R2; U3: I*R3;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+U: U1 - U2 + U3;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+P1: I*U1; P2: -I*U2; P3: I*U3;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+P1: R1*I^2; P2: R2*I^2; P3: R3*I^2;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+P: P1 + P2 + P3;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+(Einheiten: Ohm, Volt, Ampere, Watt)
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: section start ]
+Aufgabe A6.12: Parallelschaltungen von R
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+R1: 10$ R2: 120$ R3: 120$ U: 5$
+I1: U/R1; I2: U/R2; I3: U/R3;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+P1: I1*U; P2: I2*U; P3: I3*U;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+P1: U^2/R1; P2: U^2/R2; P3: U^2/R3;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+P: P1 + P2 + P3;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+(Einheiten: Ohm, Volt, Ampere, Watt)
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: section start ]
+Aufgabe A6.13: Leistungen an R
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: subsect start ]
+Aufgabe (i) und (ii) nach Abb A6.13a
+   [wxMaxima: subsect end   ] */
+
+/* [wxMaxima: input   start ] */
+U(t) := 1$
+I(t) := 1$
+P(t) := 1$
+wxplot2d(['U(t), 'I(t), 'P(t)], [t, 0, 1], [y, 0, 2],
+            [ylabel, "V, A bzw. W"], [xlabel, "t in s"]);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: subsect start ]
+Aufgabe (i) und (ii) nach Abb A6.13b
+   [wxMaxima: subsect end   ] */
+
+/* [wxMaxima: input   start ] */
+U(t) := (if (mod(t,20e-3) < 10e-3) then 1 else -1)$
+I(t) := U(t)$
+P(t) := 1$
+wxplot2d(['U(t), 'I(t), 'P(t)], [t, 0, 50e-3], [y, -1.5, +1.5],
+            [ylabel, "V, A bzw. W"], [xlabel, "t in s"]);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: subsect start ]
+Aufgabe (i) und (ii) nach Abb A6.13c
+   [wxMaxima: subsect end   ] */
+
+/* [wxMaxima: input   start ] */
+U(t) := (if (mod(t,20e-3) < 5e-3) then 0
+        elseif (mod(t,20e-3) < 10e-3) then 1
+        elseif (mod(t,20e-3) < 15e-3) then 0 else -1)$
+I(t) := U(t)$
+P(t) := (if (mod(t,20e-3) < 5e-3) then 0
+        elseif (mod(t,20e-3) < 10e-3) then 1
+        elseif (mod(t,20e-3) < 15e-3) then 0 else 1)$
+wxplot2d(['U(t), 'I(t), 'P(t)], [t, 0, 50e-3], [y, -1.5, +1.5],
+            [ylabel, "V, A bzw. W"], [xlabel, "t in s"]);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+P_bar: 0.5;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: subsect start ]
+Aufgabe (i) und (ii) nach Abb A6.13d
+   [wxMaxima: subsect end   ] */
+
+/* [wxMaxima: input   start ] */
+omega: 2*%pi / 20e-3;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+U(t) := sin(omega*t)$
+I(t) := U(t)$
+P(t) := (sin(omega*t))^2$
+wxplot2d(['U(t), 'I(t), 'P(t)], [t, 0, 40e-3], [y, -1.5, +1.5],
+            [ylabel, "V, A bzw. W"], [xlabel, "t in s"]);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+Zur Berechnung der Durchschnittsleistung:
+
+Entweder ueber Effektivwerte:
+Ueff = Uhat / sqrt(2) = 1/sqrt(2) V
+=> Ieff = 1/sqrt(2) A
+=> P = Ueff*Ieff = 1/2 W
+
+Oder durch Loesen des Integrals:
+U*I = (sin(omega*t))^2 = 0.5 + 0.5*sin(2*omega*t)
+Int(U*I, 0, T)/T = (0.5*T + 0)/T = 0.5 W
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+P_bar: 0.5;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: subsect start ]
+Aufgabe (iii)
+   [wxMaxima: subsect end   ] */
+
+/* [wxMaxima: comment start ]
+Wird der Widerstand verdoppelt halbiert sich die Leistung
+(momentan sowie gemittelt). D.h. P_neu = P/n
+
+Wird die Spannung verdoppelt so vervierfacht sich die
+Leistung (momentan sowie gemittelt). D.h. P_neu = P * n^2
+
+Allgemein gilt: P = U*I = U*(U/R) = U^2/R
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: section start ]
+Aufgabe A6.14: Reihenschaltung Diode und R
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+Da die Spannung an der Diode U_D = 0.7 konstant ist, entspricht die
+U-I-Kennlinie der Reihenschaltung der des Widerstandes um die 0.7 V
+an der Diode nach Rechts verschoben.
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+wxplot2d((if (U<0.7) then 0 else (U-0.7)/2), [U, 0, 0.7 + 2],
+                [ylabel, "I (A)"], [xlabel, "U (V)"]);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+Die Leistung an der Diode ist
+    0.7V * 0.5A = 0.35W     bzw.
+    0.7V * 1.0A = 0.70W
+
+und am Widerstand
+    2 Ohm * (0.5A)^2 = 0.5W     bzw.
+    2 Ohm * (1.0A)^2 = 2.0W
+   [wxMaxima: comment end   ] */
+
+/* Maxima can't load/batch files which end with a comment! */
+"Created with wxMaxima"$

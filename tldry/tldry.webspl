@@ -1,0 +1,232 @@
+
+load "cgi";
+load "file";
+load "array";
+load "crypt";
+load "encode_js";
+load "encode_xml";
+load "encode_url";
+
+var id = declared cgi.param.id ? cgi.param.id : "";
+
+var bmjs = "";
+bmjs ~= "var el = document.createElement('script');";
+bmjs ~= "el.setAttribute('src', '@?add=' + encodeURIComponent(location.href) +" ~
+		"'&title=' + encodeURIComponent(document.title) + '&url=@');";
+bmjs ~= "document.body.appendChild(el);";
+
+var htmldefs = <:>
+	:   <style type="text/css"><!--
+	:     .info {
+	:       max-width: 700px;
+	:       margin: 1em;
+	:     }
+	:     .header {
+	:       margin-top: 1em;
+	:       font-weight: bold;
+	:     }
+	:     .entry {
+	:       border: 5px ridge black;
+	:       background-color: gray;
+	:       max-width: 700px;
+	:       padding: 3px;
+	:       margin: 3px;
+	:     }
+	:     .entry a {
+	:       color: #fff;
+	:       text-decoration: none;
+	:     }
+	:     .entry a:hover {
+	:       text-decoration: underline;
+	:     }
+	:   --></style>
+	:   <script type="text/javascript"><!--
+	:     var baseurl = location.href.replace(/\?.*/g, "").replace(/[^/]*$$/, "${js::id}");
+	:     function http_post(data, callback) {
+	:           var xmlHttp = new XMLHttpRequest();
+	:           xmlHttp.onreadystatechange = function() {
+	:             if (xmlHttp.readyState == 4)
+	:               callback();
+	:           };
+	:           xmlHttp.open('POST', baseurl, true);
+	:           xmlHttp.setRequestHeader("Content-type", "application/x-www-form-urlencoded");
+	:           xmlHttp.setRequestHeader("Content-length", data.length);
+	:           xmlHttp.setRequestHeader("Connection", "close");
+	:           xmlHttp.send(data);
+	:     }
+	:     function deleteEntry(id, hash, title) {
+	:       if (!confirm("Delete `" + title + "'?"))
+	:         return;
+	:       http_post("delete=" + hash, function() {
+	:         var el = document.getElementById(id);
+	:         el.parentNode.removeChild(el);
+	:       });
+	:     }
+	:     function goTextMode() {
+	:       location.href = baseurl + "?edit=1";
+	:     }
+	:     function goGuiMode() {
+	:       http_post("save=" + encodeURIComponent(document.getElementById("text").value), function() {
+	:         location.href = baseurl;
+	:       });
+	:     }
+	:     function clickedBookmarklet() {
+	:       var code = 'javascript:(function(){';
+        :       code += '${js::bmjs}'.replace(/@/g, baseurl) + '})();';
+	:       prompt('Create a bookmark to:', code);
+	:       return false;
+	:     }
+	:   //--></script>
+</>;
+
+var htmltop = <:>
+	: <h1>TLDRY - Too long; didn't read; yet</H1>
+	: <div class="info">This is a personal web content FIFO.
+	: Push URLs using the bookmarklet and watch/read all
+	: that stuff later.</div>
+</>;
+
+if (id !~ /^[0-9a-z]+$/)
+{
+	if (declared cgi.param.create) {
+		id = "";
+		var chars = "23456789abcdefghkmnpqrstuvwxyz" =~ /./Ag;
+		for (var i = 0; i < 12; i++)
+			id ~= chars[rand(elementsof chars)];
+		file_write("data/${id}.txt", <:>
+			: * Unsorted
+			: http://google.com/ Google
+		</>);
+		write(<:>
+			: <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+			:      "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+			: <html xmlns="http://www.w3.org/1999/xhtml">
+			: <head>
+			:   <title>TLDRY - Too long; didn't read; yet</title>
+			$htmldefs
+			: </head>
+			: <body onload="location.replace(baseurl + '$id');">
+			$htmltop
+			:   <div class="info">Loading...</div>
+			: </body></html>
+		</>);
+		exit;
+	}
+	write(<:>
+		: <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+		:      "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+		: <html xmlns="http://www.w3.org/1999/xhtml">
+		: <head>
+		:   <title>TLDRY - Too long; didn't read; yet</title>
+		$htmldefs
+		: </head>
+		: <body>
+		$htmltop
+		:   <div class="info"><input type="button" onclick="location.href = baseurl + '?create=1';" value="Create new FIFO"/></div>
+		: </body></html>
+	</>);
+	exit;
+}
+
+var data;
+var textdata = file_read("data/${cgi.param.id}.txt");
+if (declared cgi.param.save)
+	textdata = cgi.param.save;
+foreach[] line (textdata =~ /\n/Sg) {
+	if (line =~ /^\s*(\S+)\s*(.*)/)
+		push data, [ $1, $2, crypt(line, '\$1\$\$') =~ s/^....//R ];
+}
+
+function saveData() {
+	var text = "";
+	foreach i (data)
+		text ~= "${data[i][0]} ${data[i][1]}\n";
+	file_write("data/${cgi.param.id}.txt", text);
+}
+
+if (declared cgi.param.delete) {
+	foreach i (data) {
+		if (data[i][2] ~== cgi.param.delete)
+			delete data[i];
+	}
+	array_reindex(data);
+	saveData();
+	write("done.");
+	exit;
+}
+
+if (declared cgi.param.add) {
+	if (cgi.param.title =~ /^\s*$/)
+		push data, [ cgi.param.add, cgi.param.add ];
+	else
+		push data, [ cgi.param.add, cgi.param.title ];
+	saveData();
+	cgi.content_type = "text/javascript";
+	write(<:>
+		: (function(){
+		:	var el = document.createElement('div');
+		:	el.setAttribute('style', 'padding: 3px; background-color: #0a0; z-index: 10000; ' +
+		:			'position: fixed; top: 1em; left: 1em; color: #fff;');
+		:	el.innerHTML = 'Pushed to <a style="color: #fff; text-decoration: underline;" ' +
+		:			'href="${js::cgi.param.url}">TLDRY</a>';
+		:	document.body.appendChild(el);
+		: })();
+	</>);
+	exit;
+}
+
+if (declared cgi.param.save) {
+	saveData();
+	write("done.");
+	exit;
+}
+
+if (declared cgi.param.edit) {
+	write(<:>
+		: <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+		:      "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+		: <html xmlns="http://www.w3.org/1999/xhtml">
+		: <head>
+		:   <title>TLDRY - Too long; didn't read; yet</title>
+		$htmldefs
+		: </head>
+		: <body>
+		$htmltop
+		: <textarea style="width:99%; height:500px" id="text">${xml::file_read("data/${cgi.param.id}.txt") =~ s/\s*$//Rmg}</textarea><br/>
+		: <input type="button" onclick="goGuiMode()" value="Save"/>
+		: </body></html>
+	</>);
+	exit;
+}
+
+write(<:>
+	: <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+	:      "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+	: <html xmlns="http://www.w3.org/1999/xhtml">
+	: <head>
+	:   <title>TLDRY - Too long; didn't read; yet</title>
+	$htmldefs
+	: </head>
+	: <body>
+	$htmltop
+	: <div class="info"><b>Bookmark this page!</b> This link is the
+	: only key you have for accessing this page. You lose this link,
+	: you lose acces to this TLDRY list.</div>
+	: <div class="info">Bookmarklet for pushing stuff to the end of the list: <script type="text/javascript"><!--
+	:   document.write('<a onclick="return clickedBookmarklet()" href="javascript:(function(){');
+	:   document.write('${js::bmjs}'.replace(/@/g, baseurl));
+	:   document.write('})();">Push to TLDRY</a>');
+	: //--></script>.</div>
+	<spl:foreach var="i" list="data">
+	  <spl:if code="data[i][0] ~== '*'">
+		: <div class="header">${xml::data[i][1]}</div>
+	  </spl:if><spl:else>
+		: <div id="e$i" class="entry"><a href="${xml::data[i][0]}">${xml::data[i][1]}</a>$[
+		:]<a style="float:right; color:red;" href="javascript:deleteEntry('e$i', $[
+		:]'${js::data[i][2]}', '${js::data[i][1]}');">&otimes;</a></div>
+	  </spl:else>
+	</spl:foreach>
+	: <div class="info"><input type="button" onclick="goTextMode()" value="Edit/Import/Export (text mode)"/></div>
+	: </body></html>
+</>);
+

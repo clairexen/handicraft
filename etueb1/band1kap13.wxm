@@ -1,0 +1,94 @@
+/* [wxMaxima batch file version 1] [ DO NOT EDIT BY HAND! ]*/
+/* [ Created with wxMaxima version 0.8.4 ] */
+
+/* [wxMaxima: title   start ]
+ET1 (Prechtl) - Band 1 Kapitel 13
+Loesungen von Clifford Wolf
+   [wxMaxima: title   end   ] */
+
+/* [wxMaxima: input   start ] */
+ratprint: false$ fpprintprec:6$
+Par(R1,R2) := R1*R2/(R1+R2)$
+sciprint(v) := block(_exp: floor(log(abs(v))/log(10)/3)*3,
+printf(false, "~,4f E~d", v/(10^_exp), _exp))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: section start ]
+A13.1: Elekt. Moment eines Molekuels
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(Par, sciprint))$
+deg: %pi/180$ e: 1.602e-19$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+Mit der Ladung -2e als Bezugspunkt zeigt das Moment
+offensichtlich senkrecht nach unten. Die horzontale
+Komponente der Vektoren zu den positiven Ladungen heben
+sich auf, sodass nur der Normalabstand zwischen -2e und
+der Strecke zwischen den positiven Ladungen zu bestimmen
+ist:
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+eq1: d * tan(deg * 104 / 2) = 1.53e-10 / 2;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+d: rhs(first(solve(eq1, d)));
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+Damit es der Betrag des elekt. Moments (in Cm):
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+2*d*e;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: section start ]
+A13.9: Geladene kreislinie
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(Par, sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+Wir betrachten einen bel. Punkt X=[0,0,z] auf der Z-Achse.
+Offensichtlich heben sich die nicht zur Z-Achse parallelen
+Anteile des E-Feldes entlang der Z-Achse auf, sodass nur
+der zur Z-Achse parallele Anteil uebrig bleibt.
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+Q: tau * 2 * a * %pi;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+r(z) := sqrt(a^2 + z^2);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+phi(z) := Q/(epsilon * 4 * %pi * r(z));
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+E_temp(z) := Q/(epsilon * 4 * %pi * r(z)^2);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+E(z) := E_temp(z) * z / r(z);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+[phi(z), E(z)];
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+wxplot2d([phi(z), E(z)], [z, -3, +3]), a=1, epsilon=8.8e-12, tau=1;
+/* [wxMaxima: input   end   ] */
+
+/* Maxima can't load/batch files which end with a comment! */
+"Created with wxMaxima"$

@@ -1,0 +1,215 @@
+/* [wxMaxima batch file version 1] [ DO NOT EDIT BY HAND! ]*/
+/* [ Created with wxMaxima version 11.04.0 ] */
+
+/* [wxMaxima: title   start ]
+ET1 (Prechtl) - Band 1 Kapitel 6
+Loesungen von Clifford Wolf (3/3)
+   [wxMaxima: title   end   ] */
+
+/* [wxMaxima: input   start ] */
+numer:true$ fpprintprec:6$
+sciprint(v) := block(_exp: floor(log(abs(v))/log(10)/3)*3,
+printf(false, "~,4f E~d", v/(10^_exp), _exp))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: section start ]
+Aufgabe A6.15: Strohmaufnahme Gluehlampe
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"P = I*U nach I geloest"$
+U: 12$ P: 15$ I: P/U;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: section start ]
+Aufgabe A6.16: Reihenschaltung Gluehlampen
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+Da beide Lampen in Reihe geschalten sind werden sie vom selben Strom
+durchflossen. D.h. I1 = I2.
+
+Gesucht ist also jene horiz. Linie im U-I-Diagramm die die beiden
+Kennlinien so schneidet, dass die Summe der Spannungen 12V ergeben.
+
+Bei U1=10.75V fliessen durch die 15W Lampe ca. I=1.3A. Beim selben
+Strom fallen an der 40W Lampe U2=1.25V ab.
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+I: 1.3$ U1: 10.75$ U2: 1.25$
+P1: I*U1; P2: I*U2;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+Die 40W Lampe wird (wenn ueberhaupt) nur schwach roetlich glimmen.
+Die 15W Lampe wird stark und mit ihrer ueblichen Farbe leuchten.
+
+(Glimmen mit roter Farbe wg. planckschem Strahlungsgesetz.)
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: section start ]
+Aufgabe A6.17: Stromaufnahme Zuggarnitur
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Geschwindigkeit (m/s)"$
+v: 80 * 1000 / 3600;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+Wirkungsgrad eta ist abgegebene durch zugefuehrte Leistung:
+eta = P_ab / P_zu
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+"Bremsleistung ohne Verlust"$
+P_ab: v * 22.5e3;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Bremsleistung mit Verlust"$
+P_zu: P_ab / eta, eta = 0.85;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Stromstaerke bei 850V"$
+I: P_zu / U, U = 850;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Stromstaerke bei 750V"$
+I: P_zu / U, U = 750;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: section start ]
+Aufgabe A6.18: Antrieb eines Schiffskrans
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Gewichtskraft (N)"$
+F: 100*1000*g, g = 9.81;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Hebeleistung ohne Verlust (W)"$
+P_ab: F*v, v = 0.5;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Hebeleistung mit Verlust (W)"$
+P_zu: P_ab / eta, eta = 0.75;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Motorstrom (A)"$
+I: P_zu / U, U = 600;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: section start ]
+Aufgabe A6.19: Schleifmaschinenantrieb
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Elektrische Leistung (W)"$
+P_zu: U * I, U = 270, I = 40;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Mechanische Leistung nach Getriebe (W)"$
+P_ab: P_zu * eta, eta = 0.78;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Umfang Schleifscheibe (m)"$
+U: D * %pi, D = 250e-3;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Bahngeschwindigkeit aussen Schleifscheibe"$
+v: U * 10e3 / 60;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+P = v * F
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+"Umfangskraft Schleifscheibe (N)"$
+F: P_ab / v;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: section start ]
+Aufgabe A6.20: Beschleunigungsantrieb
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+Fuer einen aus dem Stand beschleunigten Koerper gilt:
+    v(t) = a*t      und     s(t) = v(t)*t/2 = a*t^2/2
+
+Wir wissen, dass bei s(t1) = 1 die bed. v(t1) = 4 erfuellt
+sein muss. Gesucht ist a sowie t1:
+
+    v(t1) = 4 = a*t1
+    s(t1) = 1 = a*t1^2/2
+
+D.h. t1 = 4/a und daher 1 = a*(4/a)^2/2 = 16/(2a) = 8/a
+=>  a=8 und t1=0.5
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+"Mechanische Kraft (N)"$
+F: 8 * 50;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+Wg. P = F*v ist die Leistung am Ende der Beschleunigung wenn
+v = 4 m/s ist maximal. Uns interessiert die maximale Leistung.
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+"Maximale Mechanische Leistung (W)"$
+P: F * 4;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Spannung am Motor (V)"$
+U_M: P/I, I = 10;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Spannung am Widerstand (V)"$
+U_R: R*I, R = 2, I = 10;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Spannung an der Quelle (V)"$
+U: U_M + U_R;
+/* [wxMaxima: input   end   ] */
+
+/* Maxima can't load/batch files which end with a comment! */
+"Created with wxMaxima"$

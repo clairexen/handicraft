@@ -1,0 +1,51 @@
+
+# a simple NMOS model with charge preservation
+STATES pulldown float charged pullup
+
+COMBINE   pulldown float    charged  pullup:
+pulldown: pulldown pulldown pulldown pulldown
+float:    pulldown float    charged  pullup
+charged:  pulldown charged  charged  pullup
+pullup:   pulldown pullup   pullup   pullup
+END
+
+ASCEND
+pulldown: float
+float:    float
+charged:  charged
+pullup:   charged
+END
+
+SWITCH nmos:
+ON pullup charged
+OFF float pulldown
+END
+
+# OPTION vcd: fourstate
+# OPTION vcd-1: pullup
+# OPTION vcd-0: pulldown
+# OPTION vcd-x: charged
+# OPTION vcd-z: float
+# OPTION vcd-signals: clk0 clk1out clk2out cp1 vss vcc
+
+# OPTION graph: "clk0->clk1out:2" "clk0->clk2out:2" "clk0->cp1:2" "cp1->clk1out:2" "cp1->clk2out:2" "n358:2"
+# OPTION graph-colors: "pulldown:dodgerblue1" "float:cadetblue3" "charged:orange3" "pullup:red3"
+# OPTION graph-initindicator: "pulldown: -" "pullup: +"
+# OPTION graph-highlight: clk0 clk1out clk2out
+# OPTION graph-global: vss vcc cp1 cclk
+# OPTION graph-steps: "0"
+
+# OPTION graph: "n1549:2"
+# OPTION graph-colors: "pulldown:dodgerblue1" "float:cadetblue3" "charged:orange3" "pullup:red3"
+# OPTION graph-initindicator: "pulldown: -" "pullup: +"
+# OPTION graph-highlight: n1549
+# OPTION graph-stop: idb1 sb1 n1331 n534 n1698 dasb1
+# OPTION graph-global: vss vcc cp1 cclk
+# OPTION graph-steps: "100:120"
+
+OPTION csim-rand-jitter: "c01d:c01d:c001"
+OPTION csim-max-transitions: "10000"
+
+# include the netlist from Visual6502
+INCLUDE model6502.inc
+

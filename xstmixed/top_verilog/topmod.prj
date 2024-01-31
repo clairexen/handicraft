@@ -1,0 +1,3 @@
+verilog work "topmod.v"
+# verilog work "regcell.v"
+vhdl work "regcell.vhd"

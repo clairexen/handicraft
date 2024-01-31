@@ -1,0 +1,59 @@
+<html>
+<head><!--
+/*
+ *  EE-Trainer - a JavaScript tool for training simple network analysis
+ *
+ *  Copyright (C) 2011  Clifford Wolf <clifford@clifford.at>
+ *
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU Lesser General Public License as published by
+ *  the Free Software Foundation; either version 3 of the License, or
+ *  (at your option) any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU Lesser General Public License for more details.
+ *
+ *  You should have received a copy of the GNU Lesser General Public License
+ *  along with this program; if not, write to the Free Software
+ *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ *
+ */
+-->
+  <title>EE-Trainer: Checking the pseudo random number generator</title>
+  <link rel="shortcut icon" href="favicon.ico" />
+  <script src="pseudorand.js" type="text/javascript"></script>
+</head>
+<body style="background:#aaa; color:#000;">
+
+<h3>Simple test for the random number generator:</h3>
+
+<script language="JavaScript"><!--
+
+var idx = 0;
+for (var k = 0; k < 3; k++) {
+	document.write('<p><table cellpadding="10" border><tr>\n');
+	for (var i = 0; i < 5; i++) {
+		document.write('<td align="right"><tt>');
+		for (var j = 0; j < 20; j++) {
+			var v = pseudorand(0);
+			var r = pseudorand_reference[idx++];
+			if (typeof(r) == "undefined")
+				document.write(v);
+			else if (r == v)
+				document.write('<font color="#008800">' + v + "</font>");
+			else
+				document.write('<font color="#880000">' + v + "</font>");
+			if (j < 19)
+				document.write("<br/>\n");
+		}
+		document.write("</tt></td>\n");
+	}
+	document.write('</tr></table></p>\n');
+}
+
+//--></script>
+
+</body>
+</html>

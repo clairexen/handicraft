@@ -1,0 +1,32 @@
+
+.. some files from visual6502:
+https://github.com/trebonian/visual6502.git
+(git commit de265ecdb89d8c5d299f09ad69aaf8b87b1aed5d)
+
+this is a stripped down and hacked up version of the original
+visual6502. i just kicked it hard and long enough to provide
+me with some reference data for my own simulator. if you are
+interested in visual6502, go to www.visual6502.org/JSSim and
+use the original simulator there..
+
+All my changes are either marked using a comment containing
+the string "[Clifford Wolf]" or can be identified by the fact
+that they call the function printConsole().
+
+ - Clifford Wolf
+
+
+------------------ original README ------------------
+
+This is the javascript simulator from the visual5602.org project:
+www.visual6502.org/JSSim
+
+It includes a general purpose transistor-level simulator, layout browser,
+and the data from a 6502 revD chip. 
+
+Recently added: polygon data for the 6800 chip. The simulation is not yet working,
+
+Note the various licenses and Copyright associated with each file.
+
+Enjoy!
+- The Visual 6502 Team

@@ -1,0 +1,234 @@
+/* [wxMaxima batch file version 1] [ DO NOT EDIT BY HAND! ]*/
+/* [ Created with wxMaxima version 0.8.4 ] */
+
+/* [wxMaxima: title   start ]
+ET1 (Prechtl) - Band 1 Kapitel 9
+Loesungen von Clifford Wolf
+   [wxMaxima: title   end   ] */
+
+/* [wxMaxima: input   start ] */
+numer: true; ratprint: false$ fpprintprec:6$
+Par(R1,R2) := R1*R2/(R1+R2)$
+sciprint(v) := block(_exp: floor(log(abs(v))/log(10)/3)*3,
+printf(false, "~,4f E~d", v/(10^_exp), _exp))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: section start ]
+A9.3: Tropfengenerator
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(Par, sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+N: 60*60*5;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+Q: 10e-12 * N;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+epsilon = 8.854 pF*m/m^2 = 8.854*10^-12 C/V * m/m^2
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+epsilon: 8.854e-12;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+U: Q / epsilon / (100*0.01^2) * (5*0.001)$
+sciprint(U);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: section start ]
+A9.4: Streifenleiter
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(Par, sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+epsilon: 2.5 * 8.854e-12;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+Kapazitaet in Farad / Meter
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+C_l: epsilon * 1e-3 / 10e-6;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+Also ca 2.2 nF/m bzw. 2.2 pF/mm
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: section start ]
+A9.5: Bauvolumen eines Kondensators 3
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(Par, sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+Unter Vernachlaessigung der obersten Metallschicht ist das Volumen
+bei gleichbleibender Kapazitaet konstant. Wir betrachten daher den
+einfach Fall einer einzelnen Kunststoffschicht.
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+epsilon: 2.7 * 8.854e-12;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+solve(1.5e-6 = epsilon * A / 1.5e-6, A);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+sciprint(0.09412 * 1.5e-6);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+D.h. das Volumen ist ca. 141 mm^3.
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: section start ]
+A9.6: Metallpapier-Kondensator
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(Par, sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+epsilon: 5 * 8.854e-12;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+solve(220e-9 = epsilon * 2 * 15e-3 * l / 8e-6, l);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+Emax: 200e3 * 100;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+solve(Emax = U / 8e-6, U);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: section start ]
+A9.7: Drehkondensator
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(Par, sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+Zunaechst bestimmen der maximalen Kapazitaet Cmax.
+C(alpha) = Cmax * alpha/180 
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+epsilon: 8.854e-12;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+Amax: (R^2 * %pi / 2) - (r^2 * %pi / 2);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+Cmax: epsilon * (2*n) * Amax / d;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+factor(Cmax * alpha / 180);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+factor(Cmax * alpha / 180), r=0.005, R=0.02, d=0.0002, n=10;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: section start ]
+A9.8: verschiebbare Platte
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(Par, sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+O.b.d.A. sei epsilon=1, A=1 und a=1. (Diese Groessen gehen nur als
+Faktoren in die Kapazitaet ein. D.h. bei einer reinen Betrachtung
+der Kapazitaet C(x) relativ zum Fall C(x=0) spielen sie keine Rolle.)
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+C_links(x) := epsilon * A / (a+x)$
+C_rechts(x) := epsilon * A / (a-x)$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+C: C_links(x) + C_rechts(x), epsilon=1, A=1, a=1;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+C: ratsimp(C);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+C0: C, x=0;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+wxplot2d(C/C0, [x, -0.99, +0.99], [y, 1, 10]);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: section start ]
+A9.9: Plattenanordnung
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(Par, sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+Da der elektr. Fluss zwischen den Platten beim verschieben unveraendert
+bleibt ist auch die Staerke des E-Feldes unveraendert. D.h. wir koennen
+aus der 1. Anordung eine Feldstaerke ermitteln und mit dieser Feldstaerke
+die Spannung in der 2. Anordnung folgen.
+
+Die Platten werden von oben nach unten mit den Bezeichnungen 'a', 'b' und 'c'
+versehen. Fuer den Zustand nach der Verschiebung wird das Suffix 'x' verwendet.
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+Eab: (200-100)/9e-3;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+Ebc: 100/1e-3;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+Uabx: Eab * 1e-3;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+Ubcx: Ebc * 9e-3;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+U1x: Ubcx;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+U2x: Uabx+Ubcx;
+/* [wxMaxima: input   end   ] */
+
+/* Maxima can't load/batch files which end with a comment! */
+"Created with wxMaxima"$

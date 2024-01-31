@@ -1,0 +1,10 @@
+
+AddType application/x-httpd-webspl .webspl
+Action application/x-httpd-webspl /webspl.cgi
+
+RewriteEngine on
+RewriteRule ^([0-9a-z]+)$ tldry.webspl?id=$1&%{QUERY_STRING}
+
+DirectoryIndex tldry.webspl
+Options -Indexes
+

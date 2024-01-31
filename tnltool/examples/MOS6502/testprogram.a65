@@ -1,0 +1,59 @@
+
+; this program sits directly in the zero page
+* = $0000
+
+main
+	jsr printprompt
+mainloop
+	jsr printline
+	jmp mainloop
+
+; .. the idea is to test many cpu features and
+; managing the call stack is an important feature.
+; (and interestingly this is the one thing that
+; breaks noticeably when charge preservation isn't
+; modelled correctly in the simulation)
+printline1
+.(
+	ldx #0
+loop
+	lda !outtext,x
+	beq return
+	sta $ff
+	inx
+	jmp loop
+return
+	rts
+
+outtext
+	.asc "Hello World! -- ", $00
+.)
+
+printline2
+.(
+	ldx #0
+loop
+	lda !outtext,x
+	beq return
+	sta $ff
+	inx
+	jmp loop
+return
+	rts
+
+outtext
+	.asc "This is a test! -- ", $00
+.)
+
+printline
+	jsr printline1
+	jsr printline2
+	rts
+
+printprompt
+	lda #$3e
+	sta $ff
+	lda #$20
+	sta $ff
+	rts
+

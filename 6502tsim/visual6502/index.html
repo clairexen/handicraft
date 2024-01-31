@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+
+<head>
+<title>Visual 6502 in JavaScript</title>
+
+<!-- by default, index.html will run in kiosk mode -->
+<style type="text/css">@import "kiosk.css";</style>
+<script src="segdefs.js"></script>
+<script src="transdefs.js"></script>
+<script src="nodenames.js"></script>
+<script src="kioskWires.js"></script>
+<script src="wires.js"></script>
+<script src="chipsim.js"></script>
+<script src="memtable.js"></script>
+<script src="macros.js"></script>
+<script src="testprogram.js"></script>
+
+<script type="text/javascript">
+function handleOnload() {
+	// two checks and fixes here:
+        //   - replace the dynamic content with an image if running older versions of IE
+        //   - redirect to the expert page if we find any query parameters
+	//
+	/MSIE (\d+\.\d+);/.test(navigator.appVersion);
+	IEVersion=Number(RegExp.$1);
+	if((navigator.appName == 'Microsoft Internet Explorer') && (IEVersion<9)){
+		document.getElementById('browsertrouble').innerHTML=
+			'<p>Sorry, '+navigator.appName+' not supported - showing you a picture instead!</p>';
+		document.getElementById('frame').innerHTML='<a href="browsertrouble.html"><img src="images/jssim2.png" style="border:10px"></a>';
+	}else{
+		var suffix=location.search;
+		var path=location.pathname;
+		// ensure we always have a trailing slash
+		path=path.replace("index.html","").replace(/\/?$/,"/");
+
+		if (suffix != "") {
+			// redirect to the expert page
+			var prefix=location.protocol+"//"+location.host+path;
+			window.location.replace(prefix+"expert.html"+suffix);
+			return;
+		} else {
+			// normal case: start the simulator
+			setTimeout(setup,200);
+		}
+	}
+}
+</script>
+
+</head>
+
+<body onload="handleOnload();">
+<h2>Go to <a href="http://www.visual6502.org/JSSim">http://www.visual6502.org/JSSim</a>
+for the original Visual6502! This version is just a test pattern generator for
+6502tsim.</h2>
+
+<div class="frame" id="frame">
+<div class="chip" id="chip">
+<canvas class="chip" id="chipbg"></canvas>
+<canvas class="chip" id="overlay"></canvas>
+<canvas class="chip" id="hilite"></canvas>
+<canvas class="chip" id="hitbuffer"></canvas>
+</div>
+<div class = "buttons">
+  <div style="position:relative; float:left;">
+    <a href ="javascript:stopChip()"id="stop"><img class="navstop" src="images/stop.png"></a>
+    <a href ="javascript:runChip()" id="start"><img class="navplay" src="images/play.png"></a>
+  </div>
+  <div style="float:left;">
+    <a href ="javascript:resetChip()"><img class="navbutton" src="images/up.png"></a>
+    <a href ="javascript:stepBack()"><img class="navbutton" src="images/prev.png"></a>
+    <a href ="javascript:stepForward()"><img class="navbutton" src="images/next.png"></a>
+  </div>
+</div>
+<p class="status" id="status">x: 0<br>y: 0</p>
+<table class="memtable" id="memtable"></table>
+</div>
+<div id="updateShow">
+</div>
+
+<!-- Added by [Clifford Wolf] -->
+<big id="consolebox">X</big>
+<pre id="console">Console Messages:
+</pre><script type="text/javascript"><!--
+var stateDumpArchive = "";
+function fmt(text)
+{
+	var args = arguments;
+	function replace_arg(_dummy, i) { return i > 0 ? args[i] : "{"; };
+	return text.replace(/\{([0-9]+)\}/g, replace_arg);
+}
+function printConsole(text)
+{
+	var args = arguments;
+	function replace_arg(_dummy, i) { return i > 0 ? args[i] : "{"; };
+	text = text.replace(/\{([0-9]+)\}/g, replace_arg);
+	document.getElementById("console").firstChild.appendData(text);
+	return text;
+}
+function printStateDump(id)
+{
+	var count = 0;
+	printConsole("\n--snip--\n");
+	stateDumpArchive += printConsole(":STATEDUMP:{1}:", id);
+	for (name in nodenames) {
+		nn = nodenames[name];
+		if (nn < 0 || nn == npwr || nn == ngnd)
+			continue;
+		n = nodes[nn];
+		if (++count % 100 == 0)
+			printConsole("\n");
+		stateDumpArchive += printConsole("{1},{2},", nn, n.state ? "1" : "0");
+	}
+	stateDumpArchive += printConsole("-1\n");
+	printConsole("--snap--\n");
+}
+function copyToClipboard(text) {
+	window.prompt ("Copy to clipboard: Ctrl+C, Enter", text);
+}
+document.getElementById("consolebox").firstChild.data = "";
+document.getElementById("console").firstChild.data = "";
+//--></script>
+
+</body>
+</html>

@@ -1,0 +1,12 @@
+
+tnltool - Transistor Netlist Tool
+=================================
+
+tnltool is a program that reads in an architecture description of a
+semiconductor architecture utilizing switching transistors (node states,
+transistor description and state transition tables) as well as a netlist
+and generates C code that can be used to simulate and analyze the circuit.
+
+This project contains an a complete model of a 6502 that is generated using
+the netlists from the visual6502 project (http://visual6502.org/).
+

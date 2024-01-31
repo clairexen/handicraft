@@ -1,0 +1,245 @@
+/* [wxMaxima batch file version 1] [ DO NOT EDIT BY HAND! ]*/
+/* [ Created with wxMaxima version 0.8.4 ] */
+
+/* [wxMaxima: title   start ]
+ET1 (Prechtl) - Band 1 Kapitel 8
+Loesungen von Clifford Wolf (Teil 3/3)
+   [wxMaxima: title   end   ] */
+
+/* [wxMaxima: input   start ] */
+numer: true; ratprint: false$ fpprintprec:6$
+Par(R1,R2) := R1*R2/(R1+R2)$
+sciprint(v) := block(_exp: floor(log(abs(v))/log(10)/3)*3,
+printf(false, "~,4f E~d", v/(10^_exp), _exp))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: section start ]
+A8.45: Zweitorparameter
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(Par, sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+Eq1: U1 = 1e3*(I1-I3);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+Eq2: U2 = 10*(I3+I2+90*I3);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+Eq3: U1-100*I3 = U2;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+Eqs: eliminate([Eq1, Eq2, Eq3], [I3]);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+expand(solve(Eqs, [U1, U2]));
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+Z11: 502.488$ Z12: 4.97512$ Z21: 452.736$ Z22: 5.47264$
+matrix([Z11, Z12], [Z21, Z22]);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: section start ]
+A8.46: Parameter einer Ersatzquelle
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(Par, sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+Eq1: U1 + alpha*U2 = I1*R1;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+Eq2: U2 = R2*(-I2-beta*I1);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+Eq3: first(expand(eliminate([Eq1, Eq2], [I1])));
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+ratsimp(Eq3);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+Vergleich mit:
+Uq - Ri*I2 = U2
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+Uq: (beta*R2*U1) / (-alpha*beta*R2-R1);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+Ri: -(R1*R2) / (-alpha*beta*R2-R1);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: section start ]
+A8.48: Nichtlineares Stromkreiselement
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(Par, sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+(i) Graphische Loesung wie folgt:
+
+1. Einzeichnen des Spannungsabfalls an der Diode bei einem Vorwiderstand
+von 100 Ohm fuer verschiedene Stroeme:
+
+I=0mA -> U=0.5V (da nach U=R*I keine Spannung am Widerstand abfaellt)
+I=5mA -> U=0 (da jetzt nach U=R*I die ganzen 0.5V am Widerstand abfallen)
+
+2. Graphisches ermitteln der Schnittpunkte
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: comment start ]
+(ii) Graphische Loesung wie folgt:
+
+1. Einzeichnen der um die x-Achse gespiegelten U/I Kennlinie des Widerstandes
+(in diesem Fall einfach die 2. Mediane). Nun ist der vertikale Abstand zwischen
+den Kennlinien der Gesamtstrom der durch beide Bauteile fliesst: nach unter ist
+der Strom durch den Widerstand und nach oben der Strom durch die Diode
+eingezeichnet.
+
+2. Ermitteln der Punkte an denen der Abstand genau 4mA entspreicht. Dazu wird
+am einfachsten die Widerstandskennlinie um 4mA nach oben parallelverschoben. Dann
+sind die gesuchten Punkte die Schnittpunkte der beiden Linien.
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: comment start ]
+(iii) Graphische Loesung wie folgt:
+
+1. Einzeichnen der U/I Kennlinie des Widerstandes (in diesem Fall einfach
+die 1. Mediane).
+
+2. Verscheren der Kennlinie der TD mit der Kennlinie des Widerstandes:
+Horizontal fuer die Reihenschaltung und Vertikal fuer die Parallelschaltung.
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: section start ]
+A8.50: Schaltung mit Diode
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(Par, sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+In den ersten beiden Faellen (Uq=+5V und Uq=-5V) leitet die Diode.
+Daher kann sie durch eine 0.7 Spannungsquelle ersetzt werden:
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+I(Uq) := (10-0.7+Uq) / (4.6e3+2.2e3);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+Ua(Uq) := I(Uq)*2.2e3 - Uq;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+VALUES(Uq) := [I=sciprint(I(Uq)), U1=sciprint(4.6e3*I(Uq)),
+U2=sciprint(2.2e3*I(Uq)), Ua=sciprint(Ua(Uq))]$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+VALUES(5);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+VALUES(-5);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+Im Fall Uq=-15V sperrt die Diode. Daher ist in diesem Fall I=0,
+U1=0, U2=0, Ua=-Uq=15V und natuerlich U_D=-5V.
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: section start ]
+A8.54: Gleichrichter (Trafo mit Mittelanzapfung)
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(Par, sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+Bezogen auf die Bezugsmasse des Ausganssignals ist Ue2 = -Ue1.
+D.h. (mit Spitzenwert = 1, omega = 1 und phi = 0 o.v.d.A.):
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+Ue1(t) := sin(t)$ Ue2(t) := -sin(t)$
+wxplot2d([Ue1(t), Ue2(t)], [t, 0, 10]);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+Wegen der gleichrichtenden Eigenschaft der Dioden:
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+Ua1(t) := max(Ue1(t), 0)$ Ua2(t) := max(Ue2(t), 0)$
+wxplot2d([Ua1(t), Ua2(t)], [t, 0, 10]);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+Und somit wegen des Ueberlagerungssatzes:
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+Ua(t) := abs(sin(t))$ wxplot2d(Ua(t), [t, 0, 10]);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: section start ]
+A8.58: Spannungsstabilisierung mit Dioden
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(Par, sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+Ersatzschaltung fuer die zwei Dioden:
+1.4V Spannungsquelle und 0.14 Ohm Widerstand in Serie.
+
+Sei M1 die Masche mit der Spannungsquelle U1 und M2 die innere Masche.
+Sei I1 der Strom aus U1 und I2 der Strom durch den 10k Widerstand.
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+M1: U1-1.4 = I1*4.1 + (I1-I2)*0.14;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+M2: 1.4 = -(I1-I2)*0.14 + I2*10e3;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+eliminate([M1, M2, U2=I2*10e3], [I1, I2]);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+solve(%, U2);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+U2(U1) := 4.716917*10^-8*(700000*U1+28700000);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+[ U2(2.5), U2(3.7) ];
+/* [wxMaxima: input   end   ] */
+
+/* Maxima can't load/batch files which end with a comment! */
+"Created with wxMaxima"$

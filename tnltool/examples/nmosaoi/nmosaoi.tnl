@@ -1,0 +1,52 @@
+
+# a simple NMOS model with charge preservation
+STATES pulldown float charged pullup
+
+COMBINE   pulldown float    charged  pullup:
+pulldown: pulldown pulldown pulldown pulldown
+float:    pulldown float    charged  pullup
+charged:  pulldown charged  charged  pullup
+pullup:   pulldown pullup   pullup   pullup
+END
+
+ASCEND
+pulldown: float
+float:    float
+charged:  charged
+pullup:   charged
+END
+
+SWITCH nmos:
+ON pullup charged
+OFF float pulldown
+END
+
+# An NMOS AOI (And-Or-Invert) gate
+
+N vss: pulldown supply
+
+N in1: float
+N in2: float
+N in3: float
+N in4: float
+
+N tmp1: float
+N tmp2: float
+
+N out: pullup
+
+T t1: nmos in1 out tmp1
+T t2: nmos in2 tmp1 vss
+
+T t3: nmos in3 out tmp2
+T t4: nmos in4 tmp2 vss
+
+# dump tests as VCD file
+
+OPTION vcd: fourstate
+OPTION vcd-1: pullup
+OPTION vcd-0: pulldown
+OPTION vcd-x: charged
+OPTION vcd-z: float
+OPTION vcd-signals: in* out
+

@@ -1,0 +1,102 @@
+#!/usr/bin/env splrun
+
+load "array";
+
+var mod4tab2 = [ E:1, I:1, O:1, U:1 ];
+
+var mod = "", group = 1;
+var tab, modhash, keyhash;
+var tab2, keyhash2;
+
+for (var l = read(); defined l; l = read())
+{
+	if (l =~ /^# Group I$/) {
+		group = 1;
+		continue;
+	}
+	if (l =~ /^# Group II$/) {
+		group = 2;
+		continue;
+	}
+	if (l =~ /^# Modifier: \/(.)\//) {
+		if (not declared mod4tab2[$1])
+			modhash[$1] = 1;
+		mod = $1;
+		continue;
+	}
+	if (l =~ /^<.*: "(.)" .* # key (.) \(base character (.)/) {
+		if (declared mod4tab2[mod]) {
+			keyhash2[$2] = 1;
+			tab2[" $2$group"] = $3;
+			tab2["$mod$2$group"] = $1;
+		} else {
+			keyhash[$2] = 1;
+			tab[" $2$group"] = $3;
+			tab["$mod$2$group"] = $1;
+		}
+		continue;
+	}
+}
+
+modhash[" "] = 1;
+array_sort_by_keys(modhash, function(a,b) { return a ~> b; });
+array_sort_by_keys(keyhash, function(a,b) { return a ~> b; });
+
+write(<:>
+	: <style type="text/css">
+	: th { font-size: x-large; width: 15%; }
+	: td { font-size: xx-large; text-align: center; width: 15%; }
+	: </style>
+</>);
+
+function printch(ch1, ch2)
+{
+	if (defined ch1 and defined ch2)
+		return "&#${ord(ch1)}; / &#${ord(ch2)};";
+	if (defined ch1)
+		return "&#${ord(ch1)};";
+	if (defined ch2)
+		return "&#${ord(ch2)};";
+	return "&nbsp;";
+}
+
+foreach[] b ([ [chr(1), 'd'], ['d', 'k'], ['k', 'q'], ['q', 'w'], ['w', 'z'] ])
+{
+	write('<table border width="100%">\n');
+	write("<tr><th>&nbsp;</th>");
+	foreach k (keyhash)
+		if (k ~> b[0] and k ~<= b[1])
+			write("<th>$k</th>");
+	write("</tr>\n");
+	foreach m (modhash) {
+		if (m ~!= " ")
+			write("<tr><th>$m</th>");
+		else
+			write("<tr><th>&nbsp;</th>");
+		foreach k (keyhash)
+			if (k ~> b[0] and k ~<= b[1])
+				write("<td>${ printch(tab["$m${k}1"], tab["$m${k}2"]) }</td>");
+		write("</tr>\n");
+	}
+	write("</table>\n");
+
+	write("<p/>\n");
+}
+
+write('<table border width="100%">\n');
+write("<tr><th>&nbsp;</th>");
+foreach k (keyhash2)
+	write("<th>$k</th>");
+write("</tr>\n");
+foreach m (mod4tab2) {
+	write("<tr><th>$m</th>");
+	foreach k (keyhash2)
+		write("<td>${ printch(tab2["$m${k}1"], tab2["$m${k}2"]) }</td>");
+	write("</tr>\n");
+}
+write("</table>\n");
+
+write("<p/>&nbsp;<p/>\n");
+
+write('<p align="right"><big>Hinweis: Das Zeichen "[" entspricht der Taste "&uuml;"<br/>und das Zeichen "]" entspricht der Taste "*"<br/>am deutschen Keyboard!</p>\n');
+

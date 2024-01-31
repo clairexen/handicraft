@@ -1,0 +1,237 @@
+/* [wxMaxima batch file version 1] [ DO NOT EDIT BY HAND! ]*/
+/* [ Created with wxMaxima version 0.8.4 ] */
+
+/* [wxMaxima: title   start ]
+ET1 (Prechtl) - Band 1 Kapitel 6
+Loesungen von Clifford Wolf (1/3)
+   [wxMaxima: title   end   ] */
+
+/* [wxMaxima: input   start ] */
+numer:true$ fpprintprec:6$
+sciprint(v) := block(_exp: floor(log(abs(v))/log(10)/3)*3,
+printf(false, "~,4f E~d", v/(10^_exp), _exp))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: section start ]
+Aufgabe A6.1: Raumladungsdichte
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Si-Atome im cm^3"$ sciprint(rho_si: 5e22);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"P-Atome im cm^3"$ sciprint(rho_p: rho_si / 1e6);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"1 mobiles Elektron pro P-Atom"$
+e0: 1.602176565e-19$
+rho_q: rho_p*e0;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Loesung in C/cm^3"$ sciprint(rho_q);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: section start ]
+Aufgabe A6.2: Ladung und Stromstaerke
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: subsect start ]
+Aufgabe nach Abb A6.2a
+   [wxMaxima: subsect end   ] */
+
+/* [wxMaxima: comment start ]
+In der 1. Sekunde wird konstant 1mC/s = 1mA uebertragen.
+Danach werden keine Weiteren Ladungen bewegt.
+D.h. hier fliesst kein Strom.
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+Q(t) := (if (t<1) then t else 1)$
+I(t) := (if (t<1) then 1 else 0)$
+wxplot2d(['Q(t), 'I(t)], [t, 0, 3], [y, -1, 2], [ylabel, "mC bzw. mA"]);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: subsect start ]
+Aufgabe nach Abb A6.2b
+   [wxMaxima: subsect end   ] */
+
+/* [wxMaxima: comment start ]
+In der 1. Sekunde wird konstant 1mA uebertragen.
+Von t=2 bis t=4 werden keine Ladungen bewegt (I=0).
+In der 5. Sekunde fliesst konstant -2mA.
+Danach wieder I=0.
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+Q(t) := (if (t<1) then t elseif (t<4) then 1
+            elseif (t<5) then 9-2*t else -1)$
+I(t) := (if (t<1) then 1 elseif (t<4) then 0
+            elseif (t<5) then -2 else 0)$
+wxplot2d(['Q(t), 'I(t)], [t, 0, 6], [y, -3, 2], [ylabel, "mC bzw. mA"]);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: subsect start ]
+Aufgabe nach Abb A6.2c
+   [wxMaxima: subsect end   ] */
+
+/* [wxMaxima: input   start ] */
+omega: 2*%pi / 20e-3;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+Ein sinusfoermiger Verlauf der bewegten Ladung.
+Der strom ist entdprechend die zeitliche Ableitung.
+(Faktor omega wg. Kettenregel nicht vergessen!)
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+Q(t) := 1e-3 * sin(omega*t)$
+I(t) := 1e-3 * omega * cos(omega*t)$
+wxplot2d([1000 * 'Q(t), 'I(t)], [t, 0, 30e-3], [y, -2, +2],
+                [ylabel, "mC bzw. A"], [xlabel, "t in ms"]);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+D.h. obwohl "nur" 2mC Spizte-Spitze bewegt wird fliessen wegen
+der "hohen" Frequenz von 50Hz Spitze-Spitze ueber 600mA.
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: section start ]
+Aufgabe A6.3: Laden und Entladen
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Ladezyklus"$ t1: 30$ I1: 1e-5$
+sciprint(Q: t1*I1);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Entladezuklus"$ t2: 1e-6$
+sciprint(I2: Q / t2);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+D.h. der Entladepuls hat im Mittel 300A.
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: section start ]
+Aufgabe A6.4: Driftgeschwindigkeit
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Querschnittsflaeche (cm^2)"$ A: 1*7$
+"Stromstaerke (A)"$ I: 300$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Avagardo Konstante (1/mol))"$ N_A: 6.02214129e23$
+"Elementarladung (C)"$ e0: 1.602176565e-19$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Mobile Ladung in Cu pro cm^3"$
+rho: -1 * e0 * N_A * 8.9 / 64;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Driftgeschwindigkeit in m/s"$
+v_cm_per_s: I / (rho*A)$
+sciprint(v: v_cm_per_s / 100);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+D.h. die Driftgeschwindigkeit betraegt ca. -32 um/s.
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: section start ]
+Aufgabe A6.5: Faraday-Konstante
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Avagardo Konstante (1/mol))"$ N_A: 6.02214129e23$
+"Elementarladung (C)"$ e0: 1.602176565e-19$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+F: e0 * N_A;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+D.h. F = -96485.3 C/mol. Wir haben sie in Beispiel A6.4 bereits verwendet.
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: section start ]
+Aufgabe A6.6: Ladungstransport durch Ionen
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Zu transportierende Masse (kg)"$
+m: 1.118e-6$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Zu transportierende Stoffmenge (mol)"$
+M_Ag: 0.108$ N: m / M_Ag;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Ladung mittels Faraday-Konstante"$
+F: 96485.3365$ Q: F * N * 1;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+D.h. es muss etwa 1C an Ladung bewegt werden.
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: section start ]
+Aufgabe A6.7: Wasserstofferzeugung
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Ladung mittels Faraday-Konstante"$
+F: 96485.3365$ sciprint(Q: F * 1000);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Diese Ladung in Ah"$
+Q_Ah: Q / 3600;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+"Das ganze als kWh bei 2V"$
+E_kWh: 2 * Q_Ah / 1000;
+/* [wxMaxima: input   end   ] */
+
+/* Maxima can't load/batch files which end with a comment! */
+"Created with wxMaxima"$

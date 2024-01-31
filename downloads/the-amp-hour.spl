@@ -1,0 +1,18 @@
+#!/usr/bin/env splrun
+
+load "file";
+load "system";
+load "curl";
+load "xml";
+
+var doc = curl("http://feeds.feedburner.com/TheAmpHour");
+doc = xml_parse(doc.body);
+
+foreach[] i (doc["//item"].nodes) {
+	var url = i["enclosure/@url"].data;
+	var fn = url =~ s,.*/,,R =~ s,-([0-9])-,-0$1-,R;
+	if (file_access(fn, "F"))
+		continue;
+	system("wget -O '${fn}.new' '$url' && mv '${fn}.new' '$fn'");
+}
+

@@ -1,0 +1,604 @@
+/* [wxMaxima batch file version 1] [ DO NOT EDIT BY HAND! ]*/
+/* [ Created with wxMaxima version 0.8.4 ] */
+
+/* [wxMaxima: title   start ]
+ET1 (Prechtl) - Band 1 Kapitel 8
+Loesungen von Clifford Wolf (Teil 1/3)
+   [wxMaxima: title   end   ] */
+
+/* [wxMaxima: input   start ] */
+numer: true; ratprint: false$ fpprintprec:6$
+Par(R1,R2) := R1*R2/(R1+R2)$
+sciprint(v) := block(_exp: floor(log(abs(v))/log(10)/3)*3,
+printf(false, "~,4f E~d", v/(10^_exp), _exp))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: section start ]
+A8.1: Kirchhoff-Regeln
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(Par, sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+Bezugssinne:
+    I1: D->B, I2: C->B, I3: C->D, I4: B->A, I5: A->C, I6: D->A
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+A: I4 + I6 = I5;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+B: I1 + I2 = I4;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+C: I5 = I2 + I3;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+D: I3 = I6 + I1;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+eliminate([A, B, C, D], [I6,I5]);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+-> Es gibt 3 unabh. Knotengleichungen (d.h. eine der 4 Knotengleichungen
+ist eine linearkombination der anderen drei).
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+M1: I2*R2 + I4*R4 + I5*R5 = U2;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+M2: I6*R6 + I5*R5 + I3*R3 = U3;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+M3: I1*R1 + I4*R4 + I6*R6 = U1;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+Alle weiteren Maschengleichungen sind offensichtlich linearkombinationen
+dieser drei Maschengleichungen.
+
+Zur Loesung: Gesucht: 6 Stroeme
+Gegeben: 3 unabh. Knotengleichungen + 3 Maschengl.
+d.h. 6 Unbekannte vs. 6 Gleichungen. daher z.B.:
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+[A, B, C, M1, M2, M3], U1=5, U2=9, U3=12;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+%, R1=100, R2=200, R3=300, R4=400, R5=500, R6=600;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+solve(%, [I1, I2, I3, I4, I5, I6]);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: section start ]
+A8.2: Verzweigter Strom
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(Par, sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+Stromteiler zw. R5 und R15
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+I5(t) := 6*sin(omega*t)$ I5(t);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+I15(t) := I5(t)*5/15$ I15(t);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+Kirchhoffsches Stromg.
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+I10(t) := I5(t) + I15(t)$ I10(t);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+Ohmsches Gesetz
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+U_AB(t) := I10(t)*10$ U_AB(t);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+U_BC1(t) := I5(t)*5$ U_BC1(t);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+U_BC2(t) := I15(t)*15$ U_BC2(t);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+Mittlere Leistung
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+P(t) := I10(t)*(U_AB(t)+U_BC1(t))$ P(t);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+integrate(%, t, 0, 1), omega=2*%pi;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: section start ]
+A8.3: Erw. einer Schaltung
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(Par, sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+R: Par(130+70, 200);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+Um 5% gr. durch Serienschaltung mit einem 5 Ohm Widerstand:
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+R_up: 100 + 5;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+Um 5% kleiner durch Parallelwschaltung mit einem 1.9kOhm Widerstand:
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+Par(100, R_p) = 95;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+solve(%, R_p);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+R_down: Par(100, 1900);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: section start ]
+A8.4: Ersatzwiderstand
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(Par, sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+R1: Par(5.6e3 + 3.3e3, 1e3) + 4.6e3;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+R2: 2.2e3 + 3.3e3/2;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+Par(R1, R2) + 1e3;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: section start ]
+A8.5: Dreieck-Stern-Umwandlung
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(Par, sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+Eq1: Par(R12, R23+R31) = R20 + R10;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+Eq2: Par(R31, R23 + R12) = R30 + R10;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+Eq3: Par(R23, R12 + R31) = R20 + R30;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+solve([Eq1, Eq2, Eq3], [R10, R20, R30]);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+EqSetG: [Eq1, Eq2, Eq3],
+R12=1/G12, R31=1/G31, R23=1/G23,
+R10=1/G10, R20=1/G20, R30=1/G30;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+last(solve(EqSetG, [G12, G31, G23]));
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: section start ]
+A8.9: Ersatzwiderstand fuer Zweitor
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(Par, sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+Fall (i)(a): Aufloesen von rechts nach links:
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+R: Par(2,2)$
+R: Par(2, 1+R)$
+R: Par(2, 2+R)$
+float(R);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+Fall (i)(b): Wie oben aber mit anderem Start weil jetzt die
+Widerstaende ganz recht kurzgeschlossen sind.
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+R: 0$
+R: Par(2, 1+R)$
+R: Par(2, 2+R)$
+float(R);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+Fall (ii)(a): Aufloesen von links nach rechts:
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+R: 2$
+R: Par(2 + R, 2)$
+R: Par(1 + R, 2/2)$
+float(R);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+Fall (ii)(b): Wie oben aber mit anderem Start weil jetzt der
+Widerstand ganz links kurzgeschlossen sind.
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+R: 0$
+R: Par(2 + R, 2)$
+R: Par(1 + R, 2/2)$
+float(R);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: section start ]
+A8.10: Widerstandskette
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(Par, sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+Strategie: Ersetzten der ganzen Teilkette ab dem zweitenen Kettenglied durch
+den Ersatzwiderstand R. Dieser muss natuerlich gleich dem Ersatzwiderstand
+fuer die ganze Ketten sein. D.h.
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+Eq: R = Par(R1, R2+R);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+last(solve(Eq, R));
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: section start ]
+A8.11: Teilerregeln
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(Par, sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+r1: 2$ r2: 47$ r3: 220$
+r23: Par(r2, r3); r: r1 + r23; i: 40 / r;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: subsect start ]
+(i) mit Spannungsteilerregel
+   [wxMaxima: subsect end   ] */
+
+/* [wxMaxima: input   start ] */
+u23: 40*(r23/r);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+i2 = u23 / r2;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: subsect start ]
+(i) mit Stromteilerregel
+   [wxMaxima: subsect end   ] */
+
+/* [wxMaxima: input   start ] */
+g2: 1/r2; g3: 1/r3;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+i2 = i*(g2/(g2+g3));
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+i2 = i*(r3/(r2+r3));
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: section start ]
+A8.12: Spannungsteiler
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(Par, sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+alpha = U2/U1 = R2/R1
+
+o.v.d.A. sei R1 = R2 = 1.0
+
+alpha_i = 1.02/1.0 = 102%
+alpha_ii = 1.0/1.02 = 98.04%
+alpha_iii = 1.02/1.02 = 100%
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: section start ]
+A8.13: Reihenschaltung von zwei Parallelschaltungen
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(Par, sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+R: Par(10, 2) + Par(5, 15);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+Par(10,2); Par(5,15);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+Die 2. parallelschaltung hat offensichtlich einen ueber doppelt so grossen wiederstand und
+bekommt daher mehr von der quellenspannung ab und drei viertel des Stromes I fliesst durch
+dem 5 Ohm Widerstand. D.h. nach P=U*I setzt wahrscheinlich dieser Widerstand die meiste Leistung
+um.
+
+Zwar bekommt der 2 Ohm Widerstand sogar fuenf sechstel des Stromes I ab aber wegen des weniger
+als halb so grossen spannungsabfalles verglichen mit dem 5 Ohm Widerstand wird hier nicht die
+meiste Leistung umgesetzt.
+
+Sei o.b.d.A. I=1A
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+I10: 2/(10+2); P10: 10*I10^2;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+I2: 10/(10+2); P2: 2*I2^2;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+I5: 15/(5+15); P5: 5*I5^2;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+I15: 5/(5+15); P15: 15*I15^2;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: section start ]
+A8.14: Erforderliche Quellenspannung
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(Par, sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+Die beiden 10 Ohm Widerstaende koennen durch einen 5 Ohm Widerstand
+ersetzt werden. D.h. der halbe Strom wird durch den originalen 5 Ohm
+widerstand fliessen. D.h. Iq = 2*14A = 28A
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+R: 2 + 5/2;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+Uq: Iq*R, Iq=28;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: section start ]
+A8.16: Abgegebene Leistung von Spannungsquellen
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(Par, sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+R: 7.6+Par(4, 6);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+Udiff: 25-5;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+I: Udiff / R;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+P25: I*25;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+P5: -I*5;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+D.h. die linke quelle gibt 50 W ab und die rechte quelle nimmt 10 W auf.
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: section start ]
+A8.17: Ersatzquelle Batterie
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(Par, sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+LinVoltSrc(I) := U0 - I*R0;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+Ueberbestimmtes aber eindeutig loesbares System:
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+solve([ LinVoltSrc(0.2)=4.0, LinVoltSrc(0.4)=3.5 ], [ U0, R0 ])$
+float(last(%));
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+solve([ LinVoltSrc(0.4)=3.5, LinVoltSrc(0.6)=3.0 ], [ U0, R0 ])$
+float(last(%));
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+Just for fun als lineares Ausgleichsproblem:
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+[ A: matrix([1, -0.2], [1, -0.4], [1, -0.6]), b: matrix([4.0], [3.5], [3.0]) ];
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+invert(transpose(A).A) . (transpose(A).b);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: section start ]
+A8.18: Grundstromkreis
+   [wxMaxima: section end   ] */
+
+/* [wxMaxima: comment start ]
+Ein Grundstromkreis ist ein einfacher Stromkreis aus einer Spannungs- oder Stromquelle
+mit Innenwiderstand (in Serie bei der Spannungsquelle und parallel bei der Stromquelle)
+und einem Lastwiderstand. In diesem Beispiel wird das Konzept der Leistungsanpassung
+eingefuehrt: wenn Last- und Innenwiderstand den gleichen Wert haben wird die maximale
+Leistung in der Last umgesetzt.
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+kill(allbut(Par, sciprint))$
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+Spannungsteilerregel fuer die Bestimmung von U
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+Eq1: U = Uq*(Ra)/(Ra+Ri);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+solve([ Eq1, RaRi = Ra/Ri], [Ra, RaRi]);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+Eq2: last(last(%));
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+solve([ Eq2, UUq = U/Uq ], [U, UUq]);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+UUq_Term: rhs(last(last(%)));
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+Haendische Umformung aus Eq1:
+- 1/Uq auf die linke seite multiplizieren
+- In der rechten seite Zahler und Nenner um 1/Ri erweitern
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+UUq(RaRi) := ''UUq_Term;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+wxplot2d(['UUq(RaRi)], [RaRi, 0, 2]);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+Und jetzt fuer den Strom:
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+Eq3: Ik = Uq/Ri; Eq4: I = Uq/(Ri+Ra);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+solve([Eq3, Eq4, IIk = I/Ik], [I, Ik, IIk]);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+Eq5: last(last(%));
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+solve([Eq5, RaRi = Ra/Ri], [Ra, RaRi]);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+solve([ last(last(%)) ], [IIk]);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+IIk_Term: rhs(last(%));
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+IIk(RaRi) := ''IIk_Term;
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: input   start ] */
+wxplot2d(['IIk(RaRi)], [RaRi, 0, 2]);
+/* [wxMaxima: input   end   ] */
+
+/* [wxMaxima: comment start ]
+Leistungsanpassung bei RaRi = 1:
+   [wxMaxima: comment end   ] */
+
+/* [wxMaxima: input   start ] */
+wxplot2d(['IIk(RaRi) * 'UUq(RaRi)], [RaRi, 0, 2]);
+/* [wxMaxima: input   end   ] */
+
+/* Maxima can't load/batch files which end with a comment! */
+"Created with wxMaxima"$

@@ -1,0 +1,311 @@
+<html>
+<head><!--
+/*
+ *  EE-Trainer - a JavaScript tool for training simple network analysis
+ *
+ *  Copyright (C) 2011  Claire Wolf
+ *
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU Lesser General Public License as published by
+ *  the Free Software Foundation; either version 3 of the License, or
+ *  (at your option) any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU Lesser General Public License for more details.
+ *
+ *  You should have received a copy of the GNU Lesser General Public License
+ *  along with this program; if not, write to the Free Software
+ *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ *
+ */
+-->
+  <title>EE-Trainer by Claire Wolf</title>
+  <link rel="shortcut icon" href="favicon.ico" />
+  <script src="pseudorand.js" type="text/javascript"></script>
+  <script src="topologies.js" type="text/javascript"></script>
+  <script src="circuit.js" type="text/javascript"></script>
+  <script src="numjs_packed.js" type="text/javascript"></script>
+  <script src="solver.js" type="text/javascript"></script>
+  <script src="problem.js" type="text/javascript"></script>
+  <style type="text/css"> @media print { .noPrint { display:none; } } </style>
+</head>
+<body style="background:#aaa; color:#000;" onLoad="main()">
+
+<div id="st">loading..</div>
+
+<div id="q" style="display: none;">
+<div id="menu" style="float:right;" class="noprint">
+<button onclick="jumpq()">Load problem by number</button><p/>
+<button onclick="main()">Generate new problem</button><p/>
+<button onclick="genwb()">Generate workbook</button><p/>
+<button onclick="debug()">Generate debug output</button><p/>
+</div>
+<h3>EE-Trainer by Claire Wolf -- Problem #<span id="qid">0</span></h3>
+<canvas id="schematic" style="float:left; padding:1em;"></canvas>
+<p/>&nbsp;<p/>
+<span id="qtxt_volt" style="display: none;">What is the voltage U<sub><small>AB</small></sub> =
+<span style="font-family: sans-serif;">&#x3C6;</span>(A) -
+<span style="font-family: sans-serif;">&#x3C6;</span>(B)?</span>
+<span id="qtxt_amps" style="display: none;">What is the current I?</span>
+<br/>
+(see markings in the schematic)
+<p/>&nbsp;<p/>
+<span id="qvar_u">U<sub><small>BA</small></sub></span><span id="qvar_i">I</span> = <span id="sol" style="display: none;">xx</span>
+<button id="showbutton" onclick="document.getElementById('sol').style.display='inline';
+document.getElementById('showbutton').style.display='none';">Show solution</button>
+</div>
+
+<div id="berr" style="display: none">
+<h3>EE-Trainer by Claire Wolf</h3>
+I'm sorry, but it looks like the browser you are using does not have sufficient HTML5 support
+for this application. The JavaScript error encountered was: <pre id="jerr">xx</pre>
+</div>
+
+<div id="dbg" style="display: none; clear: left;">
+<table><tr>
+<td>Equation system (unoptimized):<br/><textarea id="dbg1" cols="50" rows="20" readonly="1"></textarea></td>
+<td>Equation system (optimized):<br/><textarea id="dbg2" cols="50" rows="20" readonly="1"></textarea></td>
+<td>Problem generator output:<br/><textarea id="dbg3" cols="50" rows="20" readonly="1"></textarea></td>
+</tr></table><br/>
+<canvas id="dbg4"></canvas> &nbsp;
+<canvas id="dbg5"></canvas>
+</div>
+
+<div id="wb" style="display: none;"></div>
+
+<script language="JavaScript"><!--
+
+var wbpages = 0, wbansel = [];
+var tops, topid, seed, circuit, jserr;
+var setseed = 0, backup_seed = 0, backup_topid;
+
+function guruMeditate()
+{
+	try {
+		seed = setseed > 0 ? setseed : Math.floor(Math.random()*900000 + 1000000*(topid+1));
+		pseudorand_setseed(seed);
+
+		var topology = tops[topid];
+		var components = [];
+		var mags = genRandomMagnitudes();
+		for (var j = 0; j < topology[2].length/2; j++)
+			components.push(genRandomComponent(mags));
+		circuit = genRandomCircuit(topology, components);
+		if (!findGoodProblem(circuit, null)) {
+			if (setseed > 0 && setseed != backup_seed) {
+				alert("Sorry, but this problem number is invalid!");
+				topid = backup_topid;
+				setseed = backup_seed;
+				return guruMeditate();
+			}
+			document.getElementById("st").appendChild(document.createTextNode(" ."));
+			window.setTimeout("guruMeditate()", 10);
+			return;
+		}
+
+		var canvas = document.getElementById("schematic");
+		paintCircuit(canvas, circuit);
+	}
+	catch (e) {
+		jserr = e;
+		var errtxt = e.toString() + "\n";
+		for (var i in e) {
+			errtxt += i + ": " + e[i].toString() + "\n";
+		}
+		document.getElementById("q").style.display = "none";
+		document.getElementById("st").style.display = "none";
+		document.getElementById("berr").style.display = "block";
+		document.getElementById("jerr").firstChild.nodeValue = errtxt;
+		return;
+	}
+
+	var el = document.getElementById("qid");
+	el.firstChild.nodeValue = seed.toString();
+
+	var sol = circuit[6];
+	if (circuit[4] >= 0) {
+		document.getElementById("qtxt_volt").style.display = "block";
+		document.getElementById("qtxt_amps").style.display = "none";
+		document.getElementById("qvar_u").style.display = "inline";
+		document.getElementById("qvar_i").style.display = "none";
+		sol = Math.abs(sol) < 0.9 ? (sol*1000).toFixed(2) + " mV" : sol.toFixed(2) + " V";
+	}
+	if (circuit[5] >= 0) {
+		document.getElementById("qtxt_volt").style.display = "none";
+		document.getElementById("qtxt_amps").style.display = "block";
+		document.getElementById("qvar_u").style.display = "none";
+		document.getElementById("qvar_i").style.display = "inline";
+		sol = Math.abs(sol) < 0.9 ? (sol*1000).toFixed(2) + " mA" : sol.toFixed(2) + " A";
+	}
+	document.getElementById("sol").firstChild.nodeValue = sol;
+
+	el = document.getElementById("sol");
+	el.style.display = "none";
+
+	el = document.getElementById("showbutton");
+	el.style.display = "inline";
+
+	document.getElementById("q").style.display = "block";
+	document.getElementById("st").style.display = "none";
+	document.getElementById("dbg").style.display = "none";
+	setseed = 0;
+
+	if (wbpages > 0)
+	{
+		var newcanvas;
+		var copy = document.getElementById("q").cloneNode(true);
+		function removeAllIdsTree(n) {
+			if (n.firstChild)
+				removeAllIdsTree(n.firstChild);
+			if (n.nextSibling)
+				removeAllIdsTree(n.nextSibling);
+			if (n.getAttribute) {
+				if (n.getAttribute("id") == "menu")
+					n.style.display = "none";
+				if (n.getAttribute("id") == "showbutton")
+					n.style.display = "none";
+				if (n.getAttribute("id") == "sol")
+					wbansel.push(n);
+				if (n.getAttribute("id") == "schematic")
+					newcanvas = n;
+			}
+			if (n.removeAttribute)
+				n.removeAttribute("id");
+		}
+		removeAllIdsTree(copy);
+		document.getElementById("wb").appendChild(copy);
+		newcanvas.getContext('2d').drawImage(document.getElementById("schematic"), 0, 0);
+
+		var pagebr = document.createElement("p");
+		pagebr.setAttribute("style", "page-break-after: always; clear: left;");
+		document.getElementById("wb").appendChild(pagebr);
+
+		if (--wbpages == 0) {
+			document.getElementById("q").style.display = "none";
+			document.getElementById("wb").style.display = "block";
+		} else {
+			window.setTimeout("main()", 10);
+		}
+
+		// window.location.hash = "";
+		return;
+	}
+
+	// window.location.hash = "#" + seed;
+	backup_topid = topid;
+	backup_seed = seed;
+}
+
+function jumpq()
+{
+	var txt = prompt("Enter question number:");
+	if (!txt.match(/^([1-9])[0-9]{6}$/) || parseInt(RegExp.$1) > tops.length) {
+		alert("Sorry, but this problem number is invalid!");
+		return;
+	}
+	topid = parseInt(RegExp.$1)-1;
+	setseed = parseInt(txt);
+	guruMeditate();
+}
+
+function genwb()
+{
+	var txt = prompt("Enter number of pages:");
+	if (!txt.match(/^[1-9][0-9]*$/)) {
+		alert("Input is not a valid integer number!");
+		return;
+	}
+	wbpages = parseInt(txt);
+	wbansel = [];
+
+	while (document.getElementById("wb").firstChild)
+		document.getElementById("wb").removeChild(document.getElementById("wb").firstChild);
+
+	var button1 = document.createElement("button");
+	button1.setAttribute("onclick", "main();");
+	button1.appendChild(document.createTextNode("Back to Application"));
+
+	var button2 = document.createElement("button");
+	button2.setAttribute("onclick", "for (var i in wbansel) wbansel[i].style.display = 'inline';");
+	button2.appendChild(document.createTextNode("Show answeres"));
+
+	var buttondiv = document.createElement("div");
+	buttondiv.setAttribute("style", "float:right;");
+	buttondiv.setAttribute("class", "noprint");
+	buttondiv.appendChild(button1);
+	buttondiv.appendChild(document.createElement("p"));
+	buttondiv.appendChild(button2);
+
+	document.getElementById("wb").appendChild(buttondiv);
+
+	main();
+}
+
+function debug()
+{
+	var dbg1 = "", dbg2 = "", dbg3 = "";
+	document.getElementById("dbg").style.display = "block";
+
+	pseudorand_setseed(seed);
+	var topology = tops[topid];
+	var components = [];
+	var mags = genRandomMagnitudes();
+	for (var j = 0; j < topology[2].length/2; j++)
+		components.push(genRandomComponent(mags));
+	circuit = genRandomCircuit(topology, components);
+	findGoodProblem(circuit, function() { for (i = 0; i < arguments.length; i++) dbg3 += arguments[i].toString(); dbg3 += "\n"; });
+
+	var eqsys = generateEquationSystem(circuit, false);
+	solveEquationSystem(eqsys);
+	dbg1 = eqsysToString(eqsys);
+
+	var eqsys = generateEquationSystem(circuit, true);
+	solveEquationSystem(eqsys);
+	dbg2 = eqsysToString(eqsys);
+
+	document.getElementById("dbg1").value = dbg1;
+	document.getElementById("dbg2").value = dbg2;
+	document.getElementById("dbg3").value = dbg3;
+
+	paintTopology(document.getElementById("dbg4"), topology);
+	paintCircuit(document.getElementById("dbg5"), circuit);
+}
+
+function main()
+{
+	document.getElementById("q").style.display = "none";
+	document.getElementById("st").style.display = "block";
+	document.getElementById("wb").style.display = "none";
+
+	while (document.getElementById("st").firstChild)
+		document.getElementById("st").removeChild(document.getElementById("st").firstChild);
+	document.getElementById("st").appendChild(document.createTextNode("Guru Meditation . ."));
+
+	if (setseed <= 0)
+		topid = Math.floor(Math.random()*tops.length);
+	guruMeditate();
+}
+
+function hashLoader() {
+	var hash = window.location.hash;
+	if (!hash.match(/^#?([1-9])([0-9]{6})$/) || parseInt(RegExp.$1) > tops.length)
+		return;
+	topid = parseInt(RegExp.$1)-1;
+	setseed = parseInt(RegExp.$1 + RegExp.$2);
+}
+
+tops = genTopologies();
+backup_topid = Math.floor(Math.random()*tops.length);
+
+hashLoader();
+// window.onhashchange = function() {
+// 	hashLoader();
+// 	guruMeditate();
+// };
+
+//--></script>
+
+</body>
+</html>

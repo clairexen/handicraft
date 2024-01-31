@@ -1,0 +1,79 @@
+
+#usage "en: <b>Create package for a mezzanine board</b>\n"
+	"<p>This script can be used to create a package for a mezzanine board to\n"
+	"be used on the motherboard by extracting all pin headers and and the outline\n"
+	"from the mezzanine boards BRD file.\n"
+	"<p>Usage:<br>1.) In BRD File: RUN ./genmezzanine;<br>\n"
+	"2.) In LBR file with package open: SCRIPT ./genmezzanine;\n"
+	"<p><author>Author: Clifford Wolf &lt;clifford@clifford.at&gt;</author>"
+
+output("genmezzanine.scr") board(B)
+{
+	// printf("SET UNDO_LOG OFF;\n");
+
+	string pacname = B.name;
+	pacname = strsub(pacname, strrstr(pacname, "/")+1);
+	pacname = strsub(pacname, 0, strrstr(pacname, "."));
+
+	printf("\n## Create (empty) package\n");
+	printf("Edit '%s.pac';\n", strupr(pacname));
+	printf("GRID MM;\n");
+	printf("GROUP ALL;\n");
+	printf("DELETE (C> 0 0);\n");
+	printf("DESCRIPTION '<b>%s Mezzanine Board</b>\\\n", strupr(pacname));
+	printf("<p>Generated from %s.brd using genmezzanine.ulp';\n", pacname);
+
+	printf("\n## Pin headers\n");
+	printf("CHANGE DRILL 1.016;\n");
+	B.elements(E)
+	{
+		if (E.package.library != "mpc_pinhead" && E.package.library != "pinhead")
+			continue;
+
+		string a[];
+		strsplit(a, E.package.name, 'X');
+		int size1 = strtol(a[0]);
+		int size2 = strtol(a[1]);
+
+		printf("# Port %s at %d:%d of dim %dx%x and angle %f.\n",
+			E.name, E.x, E.y, size1, size2, E.angle);
+
+		real a1 = PI * (E.angle-90) / 180, a2 = PI * (E.angle) / 180;
+		int xp = E.x - (size1-1)*25400*cos(a1)/2 - (size2-1)*25400*cos(a2)/2;
+		int yp = E.y - (size1-1)*25400*sin(a1)/2 - (size2-1)*25400*sin(a2)/2;
+
+		int i, j;
+		for (i=0; i<size1; i++)
+		for (j=0; j<size2; j++) {
+			int x = xp + i*25400*cos(a1) + j*25400*cos(a2);
+			int y = yp + i*25400*sin(a1) + j*25400*sin(a2);
+			printf("PAD '%s_%d' OCTAGON 0 R%f (%f %f);\n",
+				E.name, j*size1+i+1, E.angle, x/10000.0, y/10000.0);
+		}
+	}
+
+	printf("\n## Board outline\n");
+	printf("CHANGE WIDTH 0.254;\n");
+	printf("CHANGE LAYER 21;\n");
+	B.wires(W)
+	{
+		if (W.layer != 20)
+			continue;
+
+		printf("WIRE (%f %f) (%f %f);\n",
+			W.x1/10000.0, W.y1/10000.0, W.x2/10000.0, W.y2/10000.0);
+	}
+
+	printf("\n## Labels\n");
+	printf("CHANGE SIZE 1.27;\n");
+	printf("CHANGE RATIO 10;\n");
+	printf("CHANGE FONT VECTOR;\n");
+	printf("LAYER 25;\n");
+	printf("TEXT '>NAME' R0 (1.27 1.27);\n");
+	printf("LAYER 27;\n");
+	printf("TEXT '>VALUE' R0 (1.27 3.81);\n");
+
+	printf("\nWINDOW FIT;\n");
+	// printf("SET UNDO_LOG ON;\n");
+}
+

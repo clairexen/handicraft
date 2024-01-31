@@ -1,0 +1,200 @@
+
+var state2led_map;
+
+var descr = <:>
+	: ** STATE X **
+	: 
+	:   +-------+
+	:   | A A A |
+	:   |B     C|
+	:   |B     C|
+	:   |B     C|
+	:   | D D D |
+	:   |E     F|
+	:   |E     F|
+	:   |E     F|
+	:   | G G G |
+	:   +-------+
+	: 
+	: ** STATE 0 **
+	: 
+	:   +-------+
+	:   | A A A |
+	:   |B     C|
+	:   |B     C|
+	:   |B     C|
+	:   |       |
+	:   |E     F|
+	:   |E     F|
+	:   |E     F|
+	:   | G G G |
+	:   +-------+
+	: 
+	: ** STATE 1 **
+	: 
+	:   +-------+
+	:   |       |
+	:   |      C|
+	:   |      C|
+	:   |      C|
+	:   |       |
+	:   |      F|
+	:   |      F|
+	:   |      F|
+	:   |       |
+	:   +-------+
+	: 
+	: ** STATE 2 **
+	: 
+	:   +-------+
+	:   | A A A |
+	:   |      C|
+	:   |      C|
+	:   |      C|
+	:   | D D D |
+	:   |E      |
+	:   |E      |
+	:   |E      |
+	:   | G G G |
+	:   +-------+
+	: 
+	: ** STATE 3 **
+	: 
+	:   +-------+
+	:   | A A A |
+	:   |      C|
+	:   |      C|
+	:   |      C|
+	:   | D D D |
+	:   |      F|
+	:   |      F|
+	:   |      F|
+	:   | G G G |
+	:   +-------+
+	: 
+	: ** STATE 4 **
+	: 
+	:   +-------+
+	:   |       |
+	:   |B     C|
+	:   |B     C|
+	:   |B     C|
+	:   | D D D |
+	:   |      F|
+	:   |      F|
+	:   |      F|
+	:   |       |
+	:   +-------+
+	: 
+	: ** STATE 5 **
+	: 
+	:   +-------+
+	:   | A A A |
+	:   |B      |
+	:   |B      |
+	:   |B      |
+	:   | D D D |
+	:   |      F|
+	:   |      F|
+	:   |      F|
+	:   | G G G |
+	:   +-------+
+	: 
+	: ** STATE 6 **
+	: 
+	:   +-------+
+	:   | A A A |
+	:   |B      |
+	:   |B      |
+	:   |B      |
+	:   | D D D |
+	:   |E     F|
+	:   |E     F|
+	:   |E     F|
+	:   | G G G |
+	:   +-------+
+	: 
+	: ** STATE 7 **
+	: 
+	:   +-------+
+	:   | A A A |
+	:   |      C|
+	:   |      C|
+	:   |      C|
+	:   |       |
+	:   |      F|
+	:   |      F|
+	:   |      F|
+	:   |       |
+	:   +-------+
+	: 
+	: ** STATE 8 **
+	: 
+	:   +-------+
+	:   | A A A |
+	:   |B     C|
+	:   |B     C|
+	:   |B     C|
+	:   | D D D |
+	:   |E     F|
+	:   |E     F|
+	:   |E     F|
+	:   | G G G |
+	:   +-------+
+	: 
+	: ** STATE 9 **
+	: 
+	:   +-------+
+	:   | A A A |
+	:   |B     C|
+	:   |B     C|
+	:   |B     C|
+	:   | D D D |
+	:   |      F|
+	:   |      F|
+	:   |      F|
+	:   | G G G |
+	:   +-------+
+</>;
+
+var state = 'X';
+
+foreach[] line (descr =~ /\n/Sg) {
+	if (line =~ /^\*\* STATE (.) \*\*$/) {
+		state = $1;
+		continue;
+	}
+	if (line =~ /^[ |\-+ABCDEFG]*$/) {
+		if (state ~== 'X')
+			continue;
+		foreach[] led ("ABCDEFG" =~ /./Ag) {
+			if (line =~ /$led/) {
+				state2led_map["$state$led"] = 1;
+			}
+		}
+		continue;
+	}
+	panic "Can't parse descr line '$line'!";
+}
+
+var px = 1, py = 1;
+foreach m (state2led_map) {
+	if (m !~ /(.)(.)/)
+		continue;
+	var state = $1, led = $2;
+	write(<:>
+		: add 1n4148@mp_diode.lbr DM$m ($px $py);
+		: net STATE$state (${px + 0.1 } $py) (${px + 0.5} $py);
+		: label (${px + 0.4 } $py) (${px + 0.4} $py);
+		: label (0.4 0) (0.4 0);
+		: net LED$led (${px - 0.1 } $py) (${px - 0.5} $py);
+		: label (${px - 0.4 } $py) (${px - 0.4} $py);
+	</>);
+	if (px < (py < 1.4 ? 5 : 8)) {
+		px += 2;
+	} else {
+		px = 1;
+		py += 0.5;
+	}
+}
+
