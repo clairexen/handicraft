@@ -1,0 +1,73 @@
+[*]
+[*] GTKWave Analyzer v3.3.34 (w)1999-2012 BSI
+[*] Wed Jul 10 07:53:32 2013
+[*]
+[dumpfile] "/home/clifford/Work/handicraft-951/2013/dfslang/demo_tb.vcd"
+[dumpfile_mtime] "Wed Jul 10 07:48:24 2013"
+[dumpfile_size] 5742
+[savefile] "/home/clifford/Work/handicraft-951/2013/dfslang/demo_tb.sav"
+[timestart] 0
+[size] 1594 887
+[pos] -1 -1
+*-7.430150 285 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
+[treeopen] testbench.
+[sst_width] 197
+[signals_width] 198
+[sst_expanded] 1
+[sst_vpaned_height] 264
+@28
+testbench.rst
+testbench.clk
+@24
+testbench.UUT.state[4:0]
+@200
+-
+@28
+testbench.sync_in
+@420
+testbench.data_in[15:0]
+@28
+testbench.sync_out
+@420
+testbench.data_out[15:0]
+@200
+-
+@420
+testbench.UUT.\var_matrix2[0][0][15:0]
+testbench.UUT.\var_matrix2[0][1][15:0]
+testbench.UUT.\var_matrix2[0][2][15:0]
+testbench.UUT.\var_matrix2[1][0][15:0]
+testbench.UUT.\var_matrix2[1][1][15:0]
+testbench.UUT.\var_matrix2[1][2][15:0]
+testbench.UUT.\var_matrix2[2][0][15:0]
+testbench.UUT.\var_matrix2[2][1][15:0]
+testbench.UUT.\var_matrix2[2][2][15:0]
+testbench.UUT.\var_matrix[0][0][15:0]
+testbench.UUT.\var_matrix[0][1][15:0]
+testbench.UUT.\var_matrix[0][2][15:0]
+testbench.UUT.\var_matrix[1][0][15:0]
+testbench.UUT.\var_matrix[1][1][15:0]
+testbench.UUT.\var_matrix[1][2][15:0]
+testbench.UUT.\var_matrix[2][0][15:0]
+testbench.UUT.\var_matrix[2][1][15:0]
+testbench.UUT.\var_matrix[2][2][15:0]
+testbench.UUT.\var_outbuf[0][15:0]
+testbench.UUT.\var_outbuf[1][15:0]
+@200
+-
+@28
+testbench.macc.clear
+@29
+testbench.macc.sub
+@420
+testbench.macc.A[15:0]
+testbench.macc.B[15:0]
+testbench.macc.C[15:0]
+@200
+-
+@420
+testbench.macc.prod[15:0]
+testbench.macc.Y_buf[15:0]
+testbench.macc.Y[15:0]
+[pattern_trace] 1
+[pattern_trace] 0

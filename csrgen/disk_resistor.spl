@@ -1,0 +1,114 @@
+
+config = [
+	geometry: [ 50, 40 ],
+	colors: [ "yellow!10", "gray!10" ],
+	test_deltas: [ -15, +15 ],
+	test_angles: [ 60, 120, -60, -120 ],
+	test_expr: [
+		"U", "Uc @ U",
+		"R * (I1 * 0.001)", "P / (I2 * 0.001)",
+		"R", "I1", "I2", "P",
+	],
+	auto: [
+		R: "(Uc @ U) - R*I1*0.001",
+		P: "P - (Uc @ U)*I2*0.001",
+	],
+];
+
+data = [
+	U: [
+		type: "scale_log10",
+		location: 1,
+		orientation: 0,
+		layer: 0,
+		value_span: [ 1, 25 ],
+		angle_span: [ 90+140, 90-140 ],
+	],
+	Uc: [
+		type: "cursor",
+		location: 1,
+		orientation: 1,
+		layer: 1,
+		label: "",
+		angle: 90
+	],
+	Ulabel: [
+		location: 1.2,
+		orientation: 1,
+		layer: 1,
+		label_text: "U = R*I = P/I",
+		label_angle: 90,
+		label_align: "center"
+	],
+	I1: [
+		type: "scale_log10",
+		location: 3,
+		orientation: 1,
+		layer: 1,
+		value_span: [ 10, 50 ],
+		angle_span: [ 20, 160 ],
+		label_text: "I",
+		label_angle: 175,
+		label_align: "right",
+	],
+	R: [
+		type: "scale_log10",
+		location: 3,
+		orientation: 0,
+		layer: 0,
+		value_span: [ 50, 1000 ],
+		angle_span: [ 160, 20 ],
+		window_angle: [ 170, 10 ],
+		reference: [ "U", 1 ],
+		label_text: "R",
+		label_angle: 175,
+		label_align: "right",
+	],
+	I2: [
+		type: "scale_log10",
+		location: 3,
+		orientation: 0,
+		layer: 1,
+		flip: 1,
+		value_span: [ 10, 50 ],
+		angle_span: [ -20, -160 ],
+		label_text: "I",
+		label_angle: -15,
+		label_align: "left",
+		label_flip: 1
+	],
+	P: [
+		type: "scale_log10x",
+		location: 3,
+		orientation: 1,
+		layer: 0,
+		flip: 1,
+		value_span: [ 0.02, 0.5 ],
+		angle_span: [ 60, -240 ],
+		window_angle: [ -160, -20 ],
+		reference: [ "U", 1 ],
+		label_text: "P",
+		label_angle: -15,
+		label_align: "left",
+		label_flip: 1
+	],
+	legend: [
+		location: 2,
+		orientation: 0,
+		layer: 1,
+		label_text: "[U] = Volt, [R] = Ohm, [I] = Milliamp, [P] = Watt",
+		label_angle: 270,
+		label_align: "center",
+		label_flip: 1
+	],
+	copy: [
+		location: 1,
+		orientation: 0,
+		layer: 0,
+		label_text: "(C) 2013 Clifford Wolf",
+		label_angle: 270,
+		label_align: "center",
+		label_flip: 1
+	],
+];
+

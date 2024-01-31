@@ -1,0 +1,50 @@
+
+# synthesis script for converting the MOS6502 transistor netlist
+# to a gate-level logic netlist
+
+read_verilog netlist.v
+read_verilog nmos.v
+select -module MOS6502
+opt
+
+sw2sr
+opt
+
+write_ilang logic6502.il
+
+write_verilog -noattr logic6502.v
+! sed -ri '/.Q\((clk[12]out|cp1|cclk)\)/ d; /output clk[12]out/ s,output ,input ,; s,wire cp1;,wire cp1 = clk1out;,; s,wire cclk;,wire cclk = clk2out;,;' logic6502.v
+
+select -write cmpnets.txt % w:\* %i
+! sed -i 's,^MOS6502/,,' cmpnets.txt
+
+# select -set hay net854 %ci*.100:cclk:cp1:net312 %% %x2:cclk:cp1
+# extract -verbose -map mappings.il @hay
+# 
+# select -clear
+# read_ilang mappings.il
+# show -prefix needle -stretch D_LATCH
+# show -prefix haystack -stretch @hay MOS6502/net312 %co %x2:cclk:cp1
+
+# select sync %ci*.100:cp1:cclk:net1154:pipeUNK23
+# select -del cclk cp1
+# show
+
+# the driver circuit for ab8
+#select net1315 #x2 ab8 net826 net381 %% %x ~ABH0 %x1 abh0 %x1 net705 %x1 net1668 %x
+
+# a non-standard 3-input gate
+#select net480 %x:+[Y] %x10:net480:net118:~IRQP:~NMIG
+
+# a typical subcircuit with a lot of pass transistors
+#select idb0 %x10:+SW[cc1,cc2]:+RES[n1,n2] %x1
+
+# the clock synthesizer
+# select clk0 %x %x5:clk0:clk1out:clk2out:cp1:cclk cp1 %d
+
+# select problematic case
+#select net1480 %x2:-$or,$reduce_or
+
+#show
+#shell
+

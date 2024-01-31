@@ -1,0 +1,26 @@
+
+Installing PyVXI11 1.11.3.5:
+----------------------------
+
+https://pypi.python.org/pypi/PyVXI11
+$ sudo python setup.py install
+
+
+Installing PyVISA 1.4:
+----------------------
+
+https://pypi.python.org/pypi/PyVISA/1.4
+$ sudo python setup.py install
+
+
+Installing NI-VISA 5.4:
+-----------------------
+
+http://joule.ni.com/nidu/cds/view/p/id/4234/lang/en
+$ mkdir -p tmp/loop0; cd tmp
+$ sudo mount -o loop,ro NI-VISA-5.4.0.iso loop0
+$ tar xvzf loop0/nivisa-5.4.0f0.tar.gz
+$ for x in rpms/*.rpm; do rpm2cpio < $x | cpio -id; done
+$ sudo cp -r usr/local/vxipnp/. /usr/local/vxipnp
+$ sudo umount tmp/loop0
+

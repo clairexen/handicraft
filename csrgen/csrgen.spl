@@ -1,0 +1,606 @@
+#!/usr/bin/env splrun
+
+// Circular Slide Rule Generator
+// Copyright (C) 2013  Clifford Wolf <clifford@clifford.at>
+//
+// This program is free software; you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation; either version 2 of the License, or
+
+load "file";
+
+function gen_arc(radius, angle_from, angle_to, style)
+{
+	return <:>
+		: \draw[$style] ($angle_from:${radius}mm) arc($angle_from:$angle_to:${radius}mm);
+	</>;
+}
+
+function gen_tick(radius, angle, length, style)
+{
+	return <:>
+		: \draw[$style] ($angle:${radius}mm) -- ($angle:${radius+length}mm);
+	</>;
+}
+
+function gen_cursor(radius, angle, inv, label, extend)
+{
+	inv = inv ? -1 : +1;
+	return <:>
+		: \draw[latex-] ($angle:${radius}mm) -- ($angle:${radius+(2 + extend*7)*inv}mm) node[${inv > 0 ? "above" : "below"},rotate=${angle-90}] {$label};
+	</>;
+}
+
+function gen_scale_linear(radius, angle_from, angle_to, value_from, value_to, value_step, inv, flip)
+{
+	var text = "", j = 0;
+	inv = inv ? -1 : +1;
+	for (var i = value_from; i <= value_to; i += value_step) {
+		var length = 2;
+		if (j % 5 == 0) length = 3;
+		if (j % 10 == 0) length = 5;
+		var angle = angle_from + (angle_to-angle_from)*(i-value_from)/(value_to-value_from);
+		text ~= gen_tick(radius, angle, inv*length, "");
+		if (j++ % 10 == 0)
+			text ~= <:>
+				: \draw ($angle:${radius+inv*5}mm) node[${inv * (flip ? -1 : +1) > 0 ? "above" : "below"},rotate=${angle + (flip ? +90 : -90)}] {$i};
+			</>;
+	}
+	return text;
+}
+
+function gen_scale_log10(radius, angle_from, angle_to, value_from, value_to, inv, flip)
+{
+	var text = "";
+	inv = inv ? -1 : +1;
+	function tick(value, length, label, force)
+	{
+		if (force || value_from*1.01 < value && value < value_to*0.99) {
+			var angle = fmt("%.3f", angle_from + (angle_to-angle_from)*log(value/value_from)/log(value_to/value_from));
+			text ~= gen_tick(radius, angle, inv*length, "");
+			if (defined label)
+				text ~= <:>
+					: \draw ($angle:${radius+inv*5}mm) node[${inv * (flip ? -1 : +1) > 0 ? "above" : "below"},rotate=${angle + (flip ? +90 : -90)}] {$label};
+				</>;
+		}
+	}
+	for (var i = pow(10, floor(log10(value_from))); i < value_to*0.99; i *= 10) {
+		foreach[] j ([1, 2, 3, 4, 6, 7, 8, 9]) {
+			tick(i+j*i/10, 2);
+			tick(2*i+j*i/10, 2);
+			tick(3*i+j*i/10, 2);
+			tick(4*i+j*i/10, 2);
+		}
+		foreach[] j ([1, 2, 3, 4, 5])
+			tick(j*i, 5, j*i);
+		foreach[] j ([1.5, 7])
+			tick(j*i, 4, j*i);
+		foreach[] j ([2.5, 3.5, 4.5, 6, 8, 9])
+			tick(j*i, 4);
+		foreach[] j ([5.5, 6.5, 7.5, 8.5, 9.5])
+			tick(j*i, 2);
+	}
+	tick(value_from, 5, value_from, 1);
+	tick(value_to, 5, value_to, 1);
+	return text;
+}
+
+function gen_scale_log10x(radius, angle_from, angle_to, value_from, value_to, inv, flip)
+{
+	var text = "";
+	inv = inv ? -1 : +1;
+	function tick(value, length, label, force)
+	{
+		if (force || value_from*1.01 < value && value < value_to*0.99) {
+			var angle = fmt("%.3f", angle_from + (angle_to-angle_from)*log(value/value_from)/log(value_to/value_from));
+			text ~= gen_tick(radius, angle, inv*length, "");
+			if (defined label)
+				text ~= <:>
+					: \draw ($angle:${radius+inv*3}mm) node[${inv * (flip ? -1 : +1) > 0 ? "above" : "below"},rotate=${angle + (flip ? +90 : -90)}] {$label};
+				</>;
+		}
+	}
+	for (var i = pow(10, floor(log10(value_from))); i < value_to*0.99; i *= 10) {
+		foreach[] j ([1, 2, 5])
+			tick(j*i, 3, j*i);
+		foreach[] j ([1.5, 3, 4, 6, 7, 8, 9])
+			tick(j*i, 3);
+		foreach[] j ([1.1, 1.2, 1.3, 1.4, 1.6, 1.7, 1.8, 1.9])
+			tick(j*i, 1.5);
+		foreach[] j ([2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5])
+			tick(j*i, 1.5);
+	}
+	tick(value_from, 3, value_from, 1);
+	tick(value_to, 3, value_to, 1);
+	return text;
+}
+
+function gen_label(radius, angle, align, text, inv, flip)
+{
+	var a1 = angle, a2 = angle;
+	radius -= inv ? 6.5 : 0;
+	radius += flip ? 3.5 : 0;
+	if (align ~== "left" || align ~== "center")
+		a2 += flip ? +90 : -90;
+	if (align ~== "right" || align ~== "center")
+		a1 += flip ? -90 : +90;
+	return <:>
+		: \path[postaction={decorate,decoration={text along path,text align=$align,text={$text}}}] ($a1:${radius+2}mm) arc($a1:$a2:${radius+2}mm);
+	</>;
+
+}
+
+function gen_window(radius, angle_from, angle_to, inv)
+{
+	if (inv)
+		radius -= 10;
+	return "($angle_from:${radius}mm) -- ($angle_from:${radius+10}mm) arc ($angle_from:$angle_to:${radius+10}mm) -- ($angle_to:${radius}mm) arc ($angle_to:$angle_from:${radius}mm)";
+}
+
+var config = [
+	geometry: [ 50, 40 ],
+	colors: [ "yellow!10", "gray!10" ],
+	test_deltas: [ -15, +15 ],
+	test_angles: [ 60, 90, 120 ],
+	test_expr: [ ],
+	auto: [ ],
+];
+var data = [ ];
+
+if (declared argc && argc == 1)
+	eval(file_read(argv[0]));
+
+function eval_expr_arg(arg, delta_angle, at_angle)
+{
+	if (arg =~ /^[0-9]+/)
+		return +arg;
+	if (not declared data[arg] || not declared data[arg].type)
+		panic "Unsupported expression arg: $arg";
+	if (declared data[arg].layer && data[arg].layer == 1)
+		at_angle -= delta_angle;
+	if (data[arg].type ~== "scale_linear")
+		return (data[arg].value_span[1]-data[arg].value_span[0])*(at_angle-data[arg].angle_span[0])/(data[arg].angle_span[1]-data[arg].angle_span[0]) + data[arg].value_span[0];
+	if (data[arg].type ~== "scale_log10" || data[arg].type ~== "scale_log10x")
+		return pow(10, log10(data[arg].value_span[1]/data[arg].value_span[0])*(at_angle-data[arg].angle_span[0])/(data[arg].angle_span[1]-data[arg].angle_span[0]) + log10(data[arg].value_span[0]));
+	panic "Unsupported expression arg: $arg of type ${data[arg].type}";
+}
+
+function eval_expr_op(op, arg1, arg2, delta_angle, at_angle)
+{
+	if (op ~== "@")
+	{
+		if (not declared data[arg1] || not declared data[arg1].angle)
+			panic "Left operand of '@' is not a cursor: $arg1";
+
+		var effective_delta_angle = 0;
+		if (declared data[arg1] && declared data[arg2] && declared data[arg1].layer && declared data[arg2].layer) {
+			if (data[arg1].layer == 0 && data[arg2].layer == 1)
+				effective_delta_angle = -delta_angle;
+			if (data[arg1].layer == 1 && data[arg2].layer == 0)
+				effective_delta_angle = +delta_angle;
+		}
+
+		return eval_expr_arg(arg2, 0, data[arg1].angle + effective_delta_angle);
+	}
+
+	arg1 = eval_expr_arg(arg1, delta_angle, at_angle);
+	arg2 = eval_expr_arg(arg2, delta_angle, at_angle);
+
+	if (op ~== "*") return arg1 .* arg2;
+	if (op ~== "/") return arg1 ./ arg2;
+	if (op ~== "+") return arg1 .+ arg2;
+	if (op ~== "-") return arg1 .- arg2;
+}
+
+function eval_expr(expr, delta_angle, at_angle)
+{
+	var keep_running = 1;
+	while (keep_running) {
+		keep_running = 0;
+		while (expr =~ e,([0-9a-zA-Z_.]+)\s*(@)\s*([0-9a-zA-Z_.]+),g eval_expr_op($2, $1, $3, delta_angle, at_angle))
+			keep_running = 1;
+		while (expr =~ e,([0-9a-zA-Z_.]+)\s*([*/])\s*([0-9a-zA-Z_.]+),g eval_expr_op($2, $1, $3, delta_angle, at_angle))
+			keep_running = 1;
+		while (expr =~ e,([0-9a-zA-Z_.]+)\s*([+-])\s*([0-9a-zA-Z_.]+),g eval_expr_op($2, $1, $3, delta_angle, at_angle))
+			keep_running = 1;
+		while (expr =~ s,\(([0-9a-zA-Z_.]+)\),$1,g)
+			keep_running = 1;
+	}
+	expr =~ e,([0-9a-zA-Z_.]+), eval_expr_arg($1, delta_angle, at_angle);
+	return expr;
+}
+
+function eval_error_vector(expr, angle_from, angle_to)
+{
+	var error_vector = [ ];
+	foreach[] delta_angle ([ -10, 0, 10 ])
+	foreach[] at_angle ([ angle_from, angle_to, (angle_from+angle_to)/2 ])
+		push error_vector, eval_expr(expr, delta_angle, at_angle);
+	return error_vector;
+}
+
+function norm_vector(vector)
+{
+	var norm = 0;
+	for (var i = 0; i < elementsof vector; i++)
+		norm += pow(vector[i], 2);
+	return sqrt(norm);
+}
+
+foreach id (config.auto)
+{
+	var expr = config.auto[id];
+
+	debug "Autodetect angles: $id using expression $expr.";
+	if (not declared data[id] || not declared data[id].type)
+		panic "No such (typed) data section.";
+
+	if (data[id].type ~== "scale_linear")
+	{
+		var last_delta_norm = 10;
+		for (var iter = 0; last_delta_norm > 0.01; iter++)
+		{
+			if (iter >= 100)
+				panic "Solver does not converge!";
+			debug "-- $iter --";
+
+			var eps = last_delta_norm ./ 10;
+			eps = eps > 1.0 ? 1.0 : eps;
+			eps = eps > 0.01 ? eps : 0.01;
+
+			var orig_a1 = data[id].angle_span[0];
+			var orig_a2 = data[id].angle_span[1];
+			var orig_err = eval_error_vector(expr);
+			var orig_err_norm = norm_vector(orig_err);
+			push orig_err, 0;
+			push orig_err, 0;
+
+			data[id].angle_span[0] = orig_a1 + eps;
+			data[id].angle_span[1] = orig_a2;
+			var a1inc_err = eval_error_vector(expr);
+			push a1inc_err, eps ./ 1000;
+			push a1inc_err, 0;
+
+			data[id].angle_span[0] = orig_a1;
+			data[id].angle_span[1] = orig_a2 + eps;
+			var a2inc_err = eval_error_vector(expr, orig_a1, orig_a2);
+			push a2inc_err, 0;
+			push a2inc_err, eps ./ 1000;
+
+			var jacobi_matrix = [ a1inc_err, a2inc_err ];
+			for (var i = 0; i < 2; i++)
+			for (var j = 0; j < elementsof orig_err; j++)
+				jacobi_matrix[i][j] = (jacobi_matrix[i][j] .- orig_err[j]) ./ eps;
+
+			debug "Jacobi matrix and error vector (eps = $eps):\n";
+			for (var j = 0; j < elementsof orig_err; j++)
+				debug fmt("%15.7f %15.7f | %15.7f", jacobi_matrix[0][j], jacobi_matrix[1][j], orig_err[j]);
+
+			// Calculate left hand side (J'*J)
+			var jtj = [ 0, 0, 0, 0 ];
+			for (var i = 0; i < 4; i++) {
+				var i1 = ([ 0, 0, 1, 1 ])[i];
+				var i2 = ([ 0, 1, 0, 1 ])[i];
+				for (var j = 0; j < elementsof orig_err; j++)
+					jtj[i] .+= jacobi_matrix[i1][j] .* jacobi_matrix[i2][j];
+			}
+
+			// Calculate right hand side (J'*r)
+			var jtr = [ 0, 0 ];
+			for (var i = 0; i < 2; i++)
+			for (var j = 0; j < elementsof orig_err; j++)
+				jtr[i] .+= jacobi_matrix[i][j] .* orig_err[j];
+
+			// solve
+			var x = [ (jtj[1].*jtr[1].-jtj[3].*jtr[0])./(jtj[1].*jtj[2].-jtj[0].*jtj[3]), (jtj[2].*jtr[0].-jtj[0].*jtr[1])./(jtj[1].*jtj[2].-jtj[0].*jtj[3]) ];
+
+			debug "Linear system and solution:\n";
+			debug fmt("%15.7f %15.7f | %15.7f | %15.7f", jtj[0], jtj[1], jtr[0], x[0]);
+			debug fmt("%15.7f %15.7f | %15.7f | %15.7f", jtj[2], jtj[3], jtr[1], x[1]);
+
+			last_delta_norm = norm_vector(x);
+			if (last_delta_norm > 10) {
+				x[0] ./= last_delta_norm ./ 10;
+				x[1] ./= last_delta_norm ./ 10;
+				debug "Limit delta vector to 10 deg: ${x[0]} ${x[1]}";
+			}
+
+			for (var i = 0; i < 10; i++) {
+				data[id].angle_span[0] = orig_a1 - x[0];
+				data[id].angle_span[1] = orig_a2 - x[1];
+				var new_err_norm = norm_vector(eval_error_vector(expr));
+				if (new_err_norm < orig_err_norm)
+					break;
+				x[0] ./= 2;
+				x[1] ./= 2;
+				debug "Damping delta vector: ${x[0]} ${x[1]}";
+			}
+
+			data[id].angle_span[0] = fmt("%.3f", data[id].angle_span[0]);
+			data[id].angle_span[1] = fmt("%.3f", data[id].angle_span[1]);
+
+			debug "New angles: ${data[id].angle_span[0]} ${data[id].angle_span[1]}";
+			last_delta_norm = norm_vector(x);
+		}
+		continue;
+	}
+
+	if (data[id].type ~== "scale_log10" || data[id].type ~== "scale_log10x")
+	{
+		var last_delta_norm = 10;
+		if (declared data[id].reference)
+		{
+			var refdata = data[data[id].reference[0]];
+			var scale = data[id].reference[1] .* abs(refdata.angle_span[1] .- refdata.angle_span[0]) ./ log(refdata.value_span[1]./refdata.value_span[0]);
+			var my_scale = abs(data[id].angle_span[1] .- data[id].angle_span[0]) ./ log(data[id].value_span[1]./data[id].value_span[0]);
+			data[id].angle_span[1] = data[id].angle_span[0] .+ (data[id].angle_span[1] .- data[id].angle_span[0]) * scale / my_scale;
+		}
+		for (var iter = 0; last_delta_norm > 0.01; iter++)
+		{
+			if (iter >= 100)
+				panic "Solver does not converge!";
+			debug "-- $iter --";
+
+			var eps = last_delta_norm ./ 10;
+			eps = eps > 1.0 ? 1.0 : eps;
+			eps = eps > 0.01 ? eps : 0.01;
+
+			var orig_a1 = data[id].angle_span[0];
+			var orig_a2 = data[id].angle_span[1];
+			var orig_err = eval_error_vector(expr);
+			var orig_err_norm = norm_vector(orig_err);
+
+			data[id].angle_span[0] = orig_a1 + eps;
+			data[id].angle_span[1] = orig_a2 + eps;
+			var jacobi_vector = eval_error_vector(expr);
+
+			for (var j = 0; j < elementsof orig_err; j++)
+				jacobi_vector[j] = (jacobi_vector[j] .- orig_err[j]) ./ eps;
+
+			debug "Jacobi vector and error vector (eps = $eps):\n";
+			for (var j = 0; j < elementsof orig_err; j++)
+				debug fmt("%15.5f | %15.5f", jacobi_vector[j], orig_err[j]);
+
+			// Calculate left hand side (J'*J)
+			var jtj = 0;
+			for (var j = 0; j < elementsof orig_err; j++)
+				jtj .+= jacobi_vector[j] .* jacobi_vector[j];
+
+			// Calculate right hand side (J'*r)
+			var jtr = 0;
+			for (var j = 0; j < elementsof orig_err; j++)
+				jtr .+= jacobi_vector[j] .* orig_err[j];
+
+			// solve
+			var x = abs(jtj) > abs(jtr)*0.001 ? jtr / jtj : 0;
+
+			debug "Linear system and solution:\n";
+			debug fmt("%15.5f | %15.5f | %15.5f", jtj, jtr, x);
+
+			last_delta_norm = abs(x);
+			if (last_delta_norm > 10) {
+				x ./= last_delta_norm ./ 10;
+				debug "Limit delta vector to 10 deg: $x";
+			}
+
+			for (var i = 0; i < 10; i++) {
+				data[id].angle_span[0] = orig_a1 - x;
+				data[id].angle_span[1] = orig_a2 - x;
+				var new_err_norm = norm_vector(eval_error_vector(expr));
+				if (new_err_norm < orig_err_norm)
+					break;
+				x ./= 2;
+				debug "Damping delta vector: $x";
+			}
+
+			data[id].angle_span[0] = fmt("%.3f", data[id].angle_span[0]);
+			data[id].angle_span[1] = fmt("%.3f", data[id].angle_span[1]);
+
+			debug "New angles: ${data[id].angle_span[0]} ${data[id].angle_span[1]}";
+			last_delta_norm = abs(x);
+		}
+		continue;
+	}
+
+	if (data[id].type ~== "cursor")
+	{
+		var last_delta_norm = 10;
+		for (var iter = 0; last_delta_norm > 0.01; iter++)
+		{
+			if (iter >= 100)
+				panic "Solver does not converge!";
+			debug "-- $iter --";
+
+			var eps = last_delta_norm ./ 10;
+			eps = eps > 1.0 ? 1.0 : eps;
+			eps = eps > 0.01 ? eps : 0.01;
+
+			var orig_a = data[id].angle;
+			var orig_err = eval_error_vector(expr);
+			var orig_err_norm = norm_vector(orig_err);
+
+			data[id].angle = orig_a + eps;
+			var jacobi_vector = eval_error_vector(expr);
+
+			for (var j = 0; j < elementsof orig_err; j++)
+				jacobi_vector[j] = (jacobi_vector[j] .- orig_err[j]) ./ eps;
+
+			debug "Jacobi vector and error vector (eps = $eps):\n";
+			for (var j = 0; j < elementsof orig_err; j++)
+				debug fmt("%15.5f | %15.5f", jacobi_vector[j], orig_err[j]);
+
+			// Calculate left hand side (J'*J)
+			var jtj = 0;
+			for (var j = 0; j < elementsof orig_err; j++)
+				jtj .+= jacobi_vector[j] .* jacobi_vector[j];
+
+			// Calculate right hand side (J'*r)
+			var jtr = 0;
+			for (var j = 0; j < elementsof orig_err; j++)
+				jtr .+= jacobi_vector[j] .* orig_err[j];
+
+			// solve
+			var x = abs(jtj) > 0.001 ? jtr / jtj : 0;
+
+			debug "Linear system and solution:\n";
+			debug fmt("%15.5f | %15.5f | %15.5f", jtj, jtr, x);
+
+			last_delta_norm = abs(x);
+			if (last_delta_norm > 10) {
+				x ./= last_delta_norm ./ 10;
+				debug "Limit delta vector to 10 deg: $x";
+			}
+
+			for (var i = 0; i < 10; i++) {
+				data[id].angle = orig_a - x;
+				var new_err_norm = norm_vector(eval_error_vector(expr));
+				if (new_err_norm < orig_err_norm)
+					break;
+				x ./= 2;
+				debug "Damping delta vector: $x";
+			}
+
+			data[id].angle = fmt("%.3f", data[id].angle);
+
+			debug "New angle: ${data[id].angle}";
+			last_delta_norm = abs(x);
+		}
+		continue;
+	}
+
+	panic "Unsupported type: ${data[id].type}";
+}
+
+var tikz_code;
+
+foreach layer (config.geometry)
+{
+	var code = "";
+	var background_color = declared config.colors ? config.colors[layer] : "white";
+	var background_code = "\\fill[$background_color, even odd rule] (0,0) circle (${config.geometry[layer]}mm)";
+	code ~= gen_arc(config.geometry[layer], 0, 360);
+	code ~= gen_arc(2, 0, 360);
+
+	foreach id (data)
+	{
+		var dat = data[id];
+
+		var radius = config.geometry[0];
+		if (declared dat.location)
+			radius -= dat.location*10;
+
+		if (declared dat.layer && declared dat.window_angle && dat.layer == layer-1)
+		{
+			var win_code = gen_window(radius, dat.window_angle[0], dat.window_angle[1], dat.orientation);
+			background_code ~= "\n\t$win_code";
+			code ~= "\\draw $win_code;\n";
+			if (declared dat.label_text)
+				code ~= gen_label(radius, dat.label_angle, dat.label_align, dat.label_text, dat.orientation, declared dat.label_flip ? dat.label_flip : 0);
+		}
+
+		if (not declared dat.layer || dat.layer != layer)
+			continue;
+
+		if (declared dat.label_text && not declared dat.window_angle)
+		{
+			code ~= gen_label(radius, dat.label_angle, dat.label_align, dat.label_text, dat.orientation, declared dat.label_flip ? dat.label_flip : 0);
+		}
+
+		if (declared dat.type && dat.type ~== "scale_linear")
+		{
+			code ~= gen_scale_linear(radius, dat.angle_span[0], dat.angle_span[1], dat.value_span[0], dat.value_span[1], dat.value_span[2], dat.orientation, declared dat.flip ? dat.flip : 0);
+		}
+
+		if (declared dat.type && dat.type ~== "scale_log10")
+		{
+			code ~= gen_scale_log10(radius, dat.angle_span[0], dat.angle_span[1], dat.value_span[0], dat.value_span[1], dat.orientation, declared dat.flip ? dat.flip : 0);
+		}
+
+		if (declared dat.type && dat.type ~== "scale_log10x")
+		{
+			code ~= gen_scale_log10x(radius, dat.angle_span[0], dat.angle_span[1], dat.value_span[0], dat.value_span[1], dat.orientation, declared dat.flip ? dat.flip : 0);
+		}
+
+		if (declared dat.type && dat.type ~== "cursor")
+		{
+			code ~= gen_cursor(radius, dat.angle, dat.orientation, dat.label, declared dat.extend ? dat.extend : 0);
+		}
+	}
+	push tikz_code, "$background_code;\n$code";
+}
+
+write(<:>
+	: \documentclass{article}
+	: \usepackage[margin=0.5in,paper=a4paper]{geometry}
+	: \usepackage{units}
+	: \usepackage{tikz}
+	: \usetikzlibrary{decorations.text}
+	: \begin{document}
+	: \thispagestyle{empty}
+	:
+	: \begin{tikzpicture}
+	: ${tikz_code[0]}
+	: \end{tikzpicture}
+	: \begin{tikzpicture}
+	: ${tikz_code[1]}
+	: \end{tikzpicture}
+</>);
+
+if (declared config.test_deltas and declared config.test_angles and declared config.test_expr)
+foreach[] angle_delta (config.test_deltas)
+{
+	write(<:>
+		:
+		: \bigskip
+		:
+		: \begin{tikzpicture}
+		: \begin{scope}[scale=0.7, transform shape]
+		: ${tikz_code[0]}
+		: \begin{scope}[transform canvas={rotate=$angle_delta}]
+		: ${tikz_code[1]}
+		: \end{scope}
+		: \end{scope}
+		<spl:foreach var="[]angle" list="config.test_angles">
+			: \draw[red,-latex] (0,0) -- ($angle:${0.7*config.geometry[0]+5}mm) node[above] {$$ $angle^\circ $$};
+		</spl:foreach>
+		: \path (${0.7*config.geometry[0]+10}mm,${0.7*config.geometry[0]}mm) node[below right] {\begin{minipage}{5cm}
+	</>);
+
+	write("\\begin{tabular}{|l");
+	foreach[] angle_at (config.test_angles)
+		write("|r");
+	write("|}\n");
+	write("\\hline\n");
+	foreach[] angle_at (config.test_angles)
+		write(" & $$ $angle_at^\\circ $$");
+	write(" \\\\\n");
+	write("\\hline\n");
+	foreach[] expr (config.test_expr) {
+		write("\\hline\n$expr");
+		foreach[] angle_at (config.test_angles)
+			write(fmt(" & %.2f", eval_expr(expr, angle_delta, angle_at)));
+		write(" \\\\\n");
+	}
+	if (declared config.auto) {
+		write("\\hline\n");
+		foreach id (config.auto) {
+			write("\\hline\nAuto $id");
+			foreach[] angle_at (config.test_angles)
+				write(fmt(" & %.2f", eval_expr(config.auto[id], angle_delta, angle_at)));
+			write(" \\\\\n");
+		}
+	}
+
+	write(<:>
+		: \hline
+		: \end{tabular}
+		: \end{minipage}};
+		: \end{tikzpicture}
+	</>);
+}
+
+write(<:>
+	:
+	: \end{document}
+</>);
+

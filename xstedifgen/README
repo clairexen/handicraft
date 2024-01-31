@@ -1,0 +1,5 @@
+
+A simple test case for using Xilinx XST (and friends) to generate EDIF files.
+This was used to generate reference EDIF files for developping the Yosys EDIF
+backend.
+

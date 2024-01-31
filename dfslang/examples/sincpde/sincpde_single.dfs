@@ -1,0 +1,201 @@
+
+set delay 810;
+set scheduler greedy;
+
+// set delay 780;
+// set scheduler minisat;
+
+set modname sincpde_single_dfs;
+set noregrename 0;
+set noregout 0;
+
+input u18 sample0, sample1, sample2, sample3, sample4, sample5, sample6, sample7, sample8, sample9, sample10;
+output s18 p, ampl;
+
+// ---------------------------------------------------------------------------------------
+
+core DIV 1 begin
+	input u1 sync_in, sync_out;
+	input s48 N, D;
+	output s18 Q;
+end
+
+task div(N, D, Q) begin
+	use DIV as div;
+
+	for i=0:59 begin
+		div.sync_in[i] = i == 0;
+		div.sync_out[i] = i == 59;
+	end
+
+	div.N[0] = N;
+	div.D[0] = D;
+	Q = div.Q[60];
+end
+
+// ---------------------------------------------------------------------------------------
+
+core IMAC 1 begin
+	input u1 sync_in, sync_out;
+	input u2 MODE;
+	input u18 S0, S1, S2, S3, S4, S5, S6, S7, S8, S9, S10;
+	input u18 X;
+	input u48 Y;
+	output u48 Z;
+end
+
+task imac(samples, mode, x, y, z) begin
+	use IMAC as imac;
+
+	imac.MODE[0] = mode;
+	imac.X[0] = x;
+	imac.Y[0] = y;
+
+	imac.S0[0]  = samples[0];
+	imac.S1[0]  = samples[1];
+	imac.S2[0]  = samples[2];
+	imac.S3[0]  = samples[3];
+	imac.S4[0]  = samples[4];
+	imac.S5[0]  = samples[5];
+	imac.S6[0]  = samples[6];
+	imac.S7[0]  = samples[7];
+	imac.S8[0]  = samples[8];
+	imac.S9[0]  = samples[9];
+	imac.S10[0] = samples[10];
+
+	for i=0:33 begin
+		imac.sync_in[i] = i == 0;
+		imac.sync_out[i] = i == 33;
+	end
+	z = imac.Z[34];
+end
+
+// ---------------------------------------------------------------------------------------
+
+core SUBAVG 1 begin
+	input u1 mode;
+	input s18 a, b;
+	output s18 y;
+end
+
+task sub(a, b, y) begin
+	use SUBAVG as sub;
+	sub.mode[0] = 0;
+	sub.a[0] = a;
+	sub.b[0] = b;
+	y = sub.y[2];
+end
+
+task avg(a, b, y) begin
+	use SUBAVG as avg;
+	avg.mode[0] = 1;
+	avg.a[0] = a;
+	avg.b[0] = b;
+	y = avg.y[2];
+end
+
+core SHIFT 1 begin
+	input s48 a;
+	output s48 shr1;
+	output s18 shr19;
+end
+
+core STEP 1 begin
+	input s48 x;
+	input u1 d;
+	output s48 y;
+end
+
+// ---------------------------------------------------------------------------------------
+
+task main(idx) begin
+	// input
+	u18 samples[11];
+	samples[0]  = sample0[idx];
+	samples[1]  = sample1[idx];
+	samples[2]  = sample2[idx];
+	samples[3]  = sample3[idx];
+	samples[4]  = sample4[idx];
+	samples[5]  = sample5[idx];
+	samples[6]  = sample6[idx];
+	samples[7]  = sample7[idx];
+	samples[8]  = sample8[idx];
+	samples[9]  = sample9[idx];
+	samples[10] = sample10[idx];
+
+	// --------------------------------------
+
+	// temp variables for x0
+	s18 x0_tmp[3], x0_tmp_q[2];
+	s48 x0_tmp_n[2], x0_tmp_d[2];
+
+	// calculate x0
+	x0_tmp[0] = 0;
+	for i=0:1 begin
+		imac(samples, 1, x0_tmp[i], 0, x0_tmp_n[i]);
+		imac(samples, 2, x0_tmp[i], 0, x0_tmp_d[i]);
+		div(x0_tmp_n[i], x0_tmp_d[i], x0_tmp_q[i]);
+		sub(x0_tmp[i], x0_tmp_q[i], x0_tmp[i+1]);
+	end
+
+	// assign final x0
+	s18 x0;
+	x0 = x0_tmp[2];
+
+	// assign ampl amd val50
+	s18 amplbuf;
+	s48 val50;
+	use SHIFT as ampl_shift;
+	imac(samples, 0, x0, 0, ampl_shift.a[0]);
+	amplbuf = ampl_shift.shr19[2];
+	val50 = ampl_shift.shr1[2];
+
+	// --------------------------------------
+
+	s18 x1_tmp[4], x1_tmp_q[3];
+	s48 x1_tmp_n[3], x1_tmp_d[3];
+
+	use STEP as step_x1;
+	step_x1.x[0] = x0;
+	step_x1.d[0] = 0;
+	x1_tmp[0] = step_x1.y[2];
+
+	for i=0:2 begin
+		imac(samples, 0, x1_tmp[i], val50, x1_tmp_n[i]);
+		imac(samples, 1, x1_tmp[i], 0, x1_tmp_d[i]);
+		div(x1_tmp_n[i], x1_tmp_d[i], x1_tmp_q[i]);
+		sub(x1_tmp[i], x1_tmp_q[i], x1_tmp[i+1]);
+	end
+
+	s48 x1;
+	x1 = x1_tmp[3];
+
+	// --------------------------------------
+
+	s18 x2_tmp[4], x2_tmp_q[3];
+	s48 x2_tmp_n[3], x2_tmp_d[3];
+
+	use STEP as step_x2;
+	step_x2.x[0] = x0;
+	step_x2.d[0] = 1;
+	x2_tmp[0] = step_x2.y[2];
+
+	for i=0:2 begin
+		imac(samples, 0, x2_tmp[i], val50, x2_tmp_n[i]);
+		imac(samples, 1, x2_tmp[i], 0, x2_tmp_d[i]);
+		div(x2_tmp_n[i], x2_tmp_d[i], x2_tmp_q[i]);
+		sub(x2_tmp[i], x2_tmp_q[i], x2_tmp[i+1]);
+	end
+
+	s48 x2;
+	x2 = x2_tmp[3];
+
+	// --------------------------------------
+
+	// output
+	avg(x1, x2, p[idx]);
+	ampl[idx] = amplbuf;
+end
+
+main(0);
+

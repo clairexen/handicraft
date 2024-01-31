@@ -1,0 +1,38 @@
+
+Without this hotfix, pgapack c-programs will segfault when the malloc'ed data
+happens to be exactly 1 (PGA_TRUE) for ctx->sys.UserFortran.
+
+Installing a patched version of pgapack on debian:
+
+	# install un-patched pgapack and dependencies
+	$ apt-get install pgapack-serial1
+
+	# generate patched pgapack package
+	$ apt-get source pgapack
+	$ cd pgapack-1.1.1
+	$ patch -p1 < ../pgapack-hotfix.patch
+	$ dpkg-buildpackage
+	$ cd ..
+
+	# replacing installed pgapack
+	$ sudo dpkg -i libpgapack-serial1_1.1.1-3_amd64.deb
+	$ sudo apt-mark hold libpgapack-serial1
+
+--- pgapack-1.1.1/source/create.c	2013-07-16 09:34:14.981966543 +0200
++++ pgapack-1.1.1/source/create.c	2013-07-16 09:34:21.605966435 +0200
+@@ -278,13 +278,8 @@
+     ctx->rep.Best              = PGA_UNINITIALIZED_DOUBLE;
+     ctx->rep.starttime         = PGA_UNINITIALIZED_INT;
+ 
+-    /* System
+-     *
+-     *  If ctx->sys.UserFortran is not set to PGA_TRUE in pgacreate_ (the
+-     *  fortran stub to PGACreate), the user program is in C.
+-     */
+-    if (ctx->sys.UserFortran != PGA_TRUE) 
+-         ctx->sys.UserFortran  = PGA_FALSE;
++    /* System */
++    ctx->sys.UserFortran       = PGA_FALSE;
+     ctx->sys.SetUpCalled       = PGA_FALSE;
+     ctx->sys.PGAMaxInt         = INT_MAX;
+     ctx->sys.PGAMinInt         = INT_MIN;

@@ -1,0 +1,109 @@
+
+   Copyright (C) 2013  Clifford Wolf <clifford@clifford.at>
+
+   Permission to use, copy, modify, and/or distribute this software for any
+   purpose with or without fee is hereby granted, provided that the above
+   copyright notice and this permission notice appear in all copies.
+
+   THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+   WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+   MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+   ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+   WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+   ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+   OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+--------------------------------------------------------------------------------
+
+
+A simple-to-use shell for the RIGOL DS2000 VISA Interface.
+
+I had no success with getting the VISA USB interface to work with my DS2072,
+but the VXI (LAN) interface works great. Happy hacking.  -- Clifford Wolf
+
+
+Building and Installing
+=======================
+
+This program requires the LibreVisa library. It can be downloaded, built and
+installed by running 'make install-librevisa'. See Makefile for details.
+
+If you want to use this programm to unlock (enable all options) on your scope,
+you also need rigol-ds2000-keygen, which can be downloaded, built and installed
+by running 'make install-rigol-ds2000-keygen'. See Makefile for details.
+
+This program can be built by running 'make' and installed by running 'make
+install'.
+
+Finally the command reference for the DS2000 devices can be downloaded by
+running 'make doc'.
+
+
+Example Usage
+=============
+
+Connect ethernet on your scope and go to "Utility -> IO Setting -> LAN Set"
+on the scope interface to learn your VISA Address. This is TCPIP:<ip>:INSTR
+with the scopes IP-Address substituted for <ip>.
+
+Simple example session:
+
+	$ ./rigol-ds2000-shell TCPIP::192.168.0.123::INSTR
+
+	Connected to RIGOL TECHNOLOGIES,DS2072,DS2A152701234,00.01.01.
+	Type 'help' for help.
+
+	DS2A152701234> *RST
+	DS2A152701234> :CHANNEL1:PROBE 10
+	DS2A152701234> :CHANNEL1:OFFSET 0
+	DS2A152701234> :CHANNEL1:SCALE 0.5
+	DS2A152701234> :CHANNEL1:COUPLING AC
+	DS2A152701234> :CHANNEL2:DISPLAY OFF
+	DS2A152701234> :TIMEBASE:SCALE 1e-4
+
+Measure something:
+
+	DS2A152701234> :MEASURE:VRMS?
+	6.802009e-01
+
+Writing waveform data to file:
+
+	DS2A152701234> SAVE_TXT :WAVEFORM:DATA? waveform.txt
+	Header: #9000001400
+	Written 1400 bytes to file (ascii).
+
+Writing screenshot to file:
+
+	DS2A152701234> SAVE_BIN :DISPLAY:DATA? screenshot.bmp
+	Header: #9001152054
+	Written 1152054 bytes to file (binary).
+
+Writing high-resolution waveform data to file:
+
+	DS2A152701234> :ACQUIRE:MDEPTH 56000000
+	DS2A152701234> :STOP
+	DS2A152701234> :WAVEFORM:MODE RAW
+	DS2A152701234> :WAVEFORM:POINTS 56000000
+	DS2A152701234> DOWNLOAD_BIN waveform.bin
+
+Installing full options:
+
+	DS2A152701234> INSTALL DSA9
+	*** serial:           DS2A152701234
+	*** options:          DSA9
+	*** lic1-code:        12345678901234
+	*** lic2-code:        56789012345678
+	*** target-code:      90123456789012345678901234567
+	*** ----------------------------------------------------
+	*** your-license-key: 8901234-5678901-2345678-9012345
+	*** ----------------------------------------------------
+	> :SYSTEM:OPTION:INSTALL 8901234567890123456789012345
+
+Uninstalling options:
+
+	DS2A152701234> :SYSTEM:OPTION:UNINSTALL
+
+Exit shell:
+
+	DS2A152701234> EXIT
+

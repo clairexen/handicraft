@@ -1,0 +1,59 @@
+
+set delay 30;
+input s16 in;
+output s16 out;
+s16 matrix[3][3], matrix2[3][3];
+
+core MACC3 1 begin
+	input s16 A, B, C;
+	input u1 clear; // set to '1' to clear
+	input u1 sub;   // set to '1' for subtract
+	output s16 Y;   // two cycles internal delay
+end
+
+task DET3(mtrx, y) begin
+	use MACC3 as macc;
+	for i=0:2 begin
+		macc.A[i] = mtrx[0][(i+0) % 3];
+		macc.B[i] = mtrx[1][(i+1) % 3];
+		macc.C[i] = mtrx[2][(i+2) % 3];
+		macc.clear[i] = i == 0;
+		macc.sub[i] = 0;
+	end
+	for i=0:2 begin
+		macc.A[3+i] = mtrx[0][(i+2) % 3];
+		macc.B[3+i] = mtrx[1][(i+1) % 3];
+		macc.C[3+i] = mtrx[2][(i+0) % 3];
+		macc.clear[3+i] = 0;
+		macc.sub[3+i] = 1;
+	end
+	y = macc.Y[8];
+end
+
+task MUL2(a, b, y) begin
+	use MACC3 as macc;
+	macc.clear[0] = 1;
+	macc.sub[0] = 0;
+	macc.A[0] = a;
+	macc.B[0] = b;
+	macc.C[0] = 1;
+	y = macc.Y[3];
+end
+
+for i=0:2, j=0:2 begin
+	matrix[i][j] = in[i+j*3];
+end
+
+for i=0:2, j=0:2 begin
+	matrix2[i][j] = matrix[2-i][j];
+end
+
+s16 outbuf[3];
+out[0] = outbuf[0];
+out[1] = outbuf[1];
+out[2] = outbuf[2];
+
+DET3(matrix, outbuf[0]);
+DET3(matrix2, outbuf[1]);
+MUL2(outbuf[0], outbuf[1], outbuf[2]);
+

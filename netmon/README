@@ -1,0 +1,12 @@
+
+Simple script to monitor internet connectivity. You might want to change the
+ip-adddress set in netmon_record.sh.
+
+Step 1. record data
+
+	$ bash netmon_record.sh | tee data.txt
+
+Step 2. plot data
+
+	$ bash netmon_plot.sh data.txt
+

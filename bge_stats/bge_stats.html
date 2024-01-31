@@ -1,0 +1,141 @@
+<html><body onload="main()">
+
+<p>
+<b>DISCLAIMER:</b> This is a very naive calculation. It is only intended to
+visualize the basic principle.
+</p>
+
+<p>
+Horizontal division: 10% population<br/>
+Vertical division: 5.000 EUR income per month<br/>
+Thin red line: 500 EUR per month<br/>
+</p>
+
+<p>
+<canvas id="canvas_raw" width="800" height="400"></canvas><br/>
+Figure 1: Current situation (example data for Austria, 2010)
+</p>
+
+<p>
+<canvas id="canvas_mod" width="800" height="400"></canvas><br/>
+Figure 2: BGE, financed using flat tax
+</p>
+
+<p>
+<canvas id="canvas_cby" width="800" height="400"></canvas><br/>
+Figure 3: Current situation with BGE solution overlayed
+</p>
+
+<script language="JavaScript"><!--
+
+// http://www.statistik.at/web_de/statistiken/oeffentliche_finanzen_und_steuern/steuerstatistiken/integrierte_lohn-und_einkommensteuerstatistik/025135.html
+var raw_data = [
+	// faelle, mio eur
+//	[  38568,  -805 ],
+	[ 460116,   402 ],
+	[ 254671,   747 ],
+	[ 260071,  1295 ],
+	[ 269396,  1890 ],
+	[ 308241,  2783 ],
+	[ 385335,  4215 ],
+	[ 567169,  7662 ],
+	[ 940378, 16419 ],
+	[ 866339, 19433 ],
+	[ 684103, 18726 ],
+	[ 776229, 26639 ],
+	[ 356847, 15864 ],
+	[ 280757, 16329 ],
+	[ 130442, 10677 ],
+	[  55296,  6576 ],
+	[  16221,  2777 ],
+	[  17178,  6345 ]
+];
+
+var full_x = 0;
+var full_y = 0;
+var mod_data;
+
+(function(){
+	var sum0 = 0, sum1 = 0;
+
+	for (var idx in raw_data) {
+		var tuple = raw_data[idx];
+		full_x += 1.2 * tuple[0];
+		full_y = Math.max(full_y, 1200 * tuple[1] / tuple[0]);
+		sum0 += tuple[0], sum1 += tuple[1];
+	}
+
+	var tax = 6*sum0 / (1000*sum1);
+	// console.log(tax);
+
+	mod_data = [ ];
+	for (var idx in raw_data) {
+		var tuple = raw_data[idx];
+		var new_tuple = [ tuple[0], tuple[1]*(1-tax) + tuple[0]*6/1000 ];
+		mod_data.push(new_tuple);
+	}
+})();
+
+function draw_plot(canvas_id, data, overlay)
+{
+	var canvas = document.getElementById(canvas_id);
+	var ctx = canvas.getContext('2d');
+
+	cursor_x = 800 / 1.2 * 0.1;
+	cursor_y = 400 / 1.2 * 0.1;
+
+	if (!overlay)
+	{
+		ctx.fillStyle = "rgb(255,255,255)";
+		ctx.fillRect(0, 0, 800, 400);
+
+		ctx.fillStyle = "rgb(250,250,230)";
+		ctx.fillRect(800/12, 400/12, 8000/12, 4000/12);
+
+		ctx.strokeStyle = "rgb(100,100,100)";
+		ctx.beginPath();
+		for (var i = 0; i < 1000; i += 60) {
+			ctx.moveTo(20, 400 - cursor_y - i*400/full_y);
+			ctx.lineTo(780, 400 - cursor_y - i*400/full_y);
+		}
+		ctx.stroke();
+
+		ctx.strokeStyle = "rgb(100,100,100)";
+		ctx.beginPath();
+		for (var i = 0; i <= 10; i++) {
+			ctx.moveTo(cursor_x + i*800/12, 20);
+			ctx.lineTo(cursor_x + i*800/12, 380);
+		}
+		ctx.stroke();
+
+		ctx.strokeStyle = "rgb(200,100,100)";
+		ctx.beginPath();
+		ctx.moveTo(20, 400 - cursor_y - 6*400/full_y);
+		ctx.lineTo(780, 400 - cursor_y - 6*400/full_y);
+		ctx.stroke();
+	}
+
+	ctx.fillStyle = overlay ? "rgb(200,0,0)" : "rgb(50,50,255)";
+	for (var idx in data) {
+		var tuple = data[idx];
+		var w = 800 * tuple[0] / full_x;
+		var h = 400 * (1000 * tuple[1] / tuple[0]) / full_y;
+		if (overlay)
+			ctx.fillRect(cursor_x - 2, 400 - cursor_y - h - 1, w + 4, 3);
+		else
+			ctx.fillRect(cursor_x, 400 - cursor_y, w, -h);
+		cursor_x += w;
+	}
+}
+
+function main()
+{
+	draw_plot("canvas_raw", raw_data, false);
+	draw_plot("canvas_mod", mod_data, false);
+
+	draw_plot("canvas_cby", raw_data, false);
+	draw_plot("canvas_cby", mod_data, true);
+}
+
+// --></script>
+</body></html>

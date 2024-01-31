@@ -1,0 +1,11 @@
+
+Just some experiments with the CuSPARSE library.
+
+If the incomplete preconditioners where doing complete factorizations, this
+would actually solve linear least squares problems..
+
+The purpose of this demo was just to make sure I understood the CuSPARSE data
+structures and have managed successfully to use the API. All calculations have
+been checked against GNU Octave and it seams like everything is doing what it
+should be doing.
+

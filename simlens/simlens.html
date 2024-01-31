@@ -1,0 +1,199 @@
+<html>
+<head><!--
+/*
+ *  SimLens - a simple JavaScript simulator for lenses and mirrors
+ *
+ *  Copyright (C) 2013  Clifford Wolf <clifford@clifford.at>
+ *
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU Lesser General Public License as published by
+ *  the Free Software Foundation; either version 3 of the License, or
+ *  (at your option) any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU Lesser General Public License for more details.
+ *
+ *  You should have received a copy of the GNU Lesser General Public License
+ *  along with this program; if not, write to the Free Software
+ *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ *
+ */
+-->
+  <title>SimLens by Clifford Wolf &lt;http://www.clifford.at/&gt;</title>
+</head>
+<body style="background:#aaa; color:#000;">
+<center>
+
+<p><b>SimLens - a simple JavaScript simulator for lenses and mirrors</b><br/>
+<small>Copyright (C) 2013  Clifford Wolf &lt;clifford@clifford.at&gt;</small></p>
+
+<table><tr><td>
+<canvas id="display" width="800" height="400" onmousemove="mm(this,event)" style="cursor: none;"></canvas><br/>
+Lens/Mirror Type:
+<select id="lenstype" onchange="redraw()">
+	<option value="pl">Positive (converging) lens</option>
+	<option value="nl" disabled>Negative (diverging) lens</option>
+	<option value="pm" disabled>Concave (converging) mirror</option>
+	<option value="nm" disabled>Convex (diverging) mirror</option>
+</select>
+&nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp;
+Focal Length:
+<select id="focallength" onchange="redraw()">
+	<option value=" 50"> 50 Pixel</option>
+	<option value="100" selected>100 Pixel</option>
+	<option value="150">150 Pixel</option>
+	<option value="200">200 Pixel</option>
+	<option value="250">250 Pixel</option>
+	<option value="300">300 Pixel</option>
+	<option value="350">350 Pixel</option>
+</select>
+</td></tr></table>
+
+</center>
+<script language="JavaScript"><!--
+
+var g = 200, G = 50, b, B;
+var f = 150, bf, gf;
+
+function calc()
+{
+	f = +document.getElementById("focallength").value;
+	var flipscale = g < 0 ? -1 : +1;
+	g *= flipscale;
+
+	// zero out results vector
+	b = B = gf = bf = 0;
+
+	if (document.getElementById("lenstype").value == "pl") {
+		b = (f*g) / (f-g);
+		B = G * (b/g);
+		gf = f, bf = -f;
+	}
+
+	g *= flipscale;
+	b *= flipscale;
+	gf *= flipscale;
+	bf *= flipscale;
+}
+
+function redraw()
+{
+	var canvas = document.getElementById("display");
+	var ctx = canvas.getContext('2d');
+
+	calc();
+
+	ctx.fillStyle = "rgb(255,255,255)";
+	ctx.fillRect(0, 0, 800, 400);
+
+	ctx.strokeStyle = "rgb(200,200,200)";
+	ctx.beginPath();
+	for (var i = 0; i < 800; i += 20)
+		ctx.moveTo(i, 0), ctx.lineTo(i, 400);
+	for (var i = 0; i < 400; i += 20)
+		ctx.moveTo(0, i), ctx.lineTo(800, i);
+	ctx.stroke();
+
+	ctx.strokeStyle = "rgb(0,0,0)";
+	ctx.beginPath();
+	ctx.moveTo(0, 200);
+	ctx.lineTo(800, 200);
+	ctx.stroke();
+
+	ctx.strokeStyle = "rgb(0,0,200)";
+	ctx.beginPath();
+	ctx.moveTo(400, 50);
+	ctx.lineTo(400, 350);
+	ctx.moveTo(400-f, 190);
+	ctx.lineTo(400-f, 210);
+	ctx.moveTo(400+f, 190);
+	ctx.lineTo(400+f, 210);
+	if (document.getElementById("lenstype").value == "pl") {
+		ctx.moveTo(400-2*f, 195);
+		ctx.lineTo(400-2*f, 205);
+		ctx.moveTo(400+2*f, 195);
+		ctx.lineTo(400+2*f, 205);
+	}
+	ctx.stroke();
+
+	ctx.fillStyle = "rgb(200,0,0)";
+	ctx.strokeStyle = "rgb(200,0,0)";
+	ctx.beginPath();
+	ctx.moveTo(400+g, 200);
+	ctx.lineTo(400+g, 200-G);
+	var GG = G < 0 ? G + 5 : G - 5;
+	ctx.lineTo(395+g, 200-GG);
+	ctx.lineTo(405+g, 200-GG);
+	ctx.lineTo(400+g, 200-G);
+	ctx.stroke();
+	ctx.fill();
+
+	ctx.strokeStyle = "rgb(200,100,100)";
+	ctx.beginPath();
+	var dx = gf - g, dy = G;
+	var dn = Math.sqrt(dx*dx + dy*dy);
+	dx = 1000 * dx / dn;
+	dy = 1000 * dy / dn;
+	ctx.moveTo(400+gf-dx, 200-dy);
+	ctx.lineTo(400+gf+dx, 200+dy);
+	ctx.moveTo(0, 200-G);
+	ctx.lineTo(800, 200-G);
+	ctx.stroke();
+
+	ctx.fillStyle = "rgb(0,200,0)";
+	ctx.strokeStyle = "rgb(0,200,0)";
+	ctx.beginPath();
+	ctx.moveTo(400+b, 200);
+	ctx.lineTo(400+b, 200-B);
+	var BB = B < 0 ? B + 5 : B - 5;
+	ctx.lineTo(395+b, 200-BB);
+	ctx.lineTo(405+b, 200-BB);
+	ctx.lineTo(400+b, 200-B);
+	ctx.stroke();
+	ctx.fill();
+
+	ctx.strokeStyle = "rgb(100,200,100)";
+	ctx.beginPath();
+	var dx = bf - b, dy = B;
+	var dn = Math.sqrt(dx*dx + dy*dy);
+	dx = 1000 * dx / dn;
+	dy = 1000 * dy / dn;
+	ctx.moveTo(400+bf-dx, 200-dy);
+	ctx.lineTo(400+bf+dx, 200+dy);
+	ctx.moveTo(0, 200-B);
+	ctx.lineTo(800, 200-B);
+	ctx.stroke();
+
+	ctx.strokeStyle = "rgb(200,200,100)";
+	ctx.beginPath();
+	var dx = b, dy = -B;
+	var dn = Math.sqrt(dx*dx + dy*dy);
+	dx = 1000 * dx / dn;
+	dy = 1000 * dy / dn;
+	ctx.moveTo(400-dx, 200-dy);
+	ctx.lineTo(400+dx, 200+dy);
+	ctx.stroke();
+}
+
+function mm(obj, ev)
+{
+	var x = ev.clientX;
+	var y = ev.clientY;
+	while (obj && obj.offsetLeft) {
+		x -= obj.offsetLeft;
+		y -= obj.offsetTop;
+		obj = obj.offsetParent;
+	}
+	if (x > 0 && x < 800 && y > 0 && y < 400) {
+		g = x - 400;
+		G = 200 - y;
+		redraw();
+	}
+}
+
+redraw();
+
+//--></script>
+</body></html>

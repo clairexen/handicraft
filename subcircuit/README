@@ -1,0 +1,13 @@
+
+  **************************************************************************
+  *                                                                        *
+  *                    The SubCircuit C++11 library                        *
+  *                                                                        *
+  * An implementation of a modified Ullmann Subgraph Isomorphism Algorithm *
+  * for coarse grain logic networks.                      by Clifford Wolf *
+  *                                                                        *
+  **************************************************************************
+
+moved to yosys (Yosys Open SYnthesis Suite) to libs/subcircuit:
+https://github.com/cliffordwolf/yosys/tree/master/libs/subcircuit
+

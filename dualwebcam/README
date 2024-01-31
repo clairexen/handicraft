@@ -1,0 +1,34 @@
+
+FIXME: Write a readme..
+
+
+Notes:
+------
+
+avconv version used:
+git e998b56 (2013-08-29)
+
+avconf configure options used:
+./configure --enable-libx264 --enable-libpulse --enable-gpl --enable-libmp3lame
+
+Nice usage examples for avconv and other tools:
+http://www.cit-ec.de/sites/www.cit-ec.de/files/videosync.pdf
+
+Hint: The libav doc/ directory also contains an easy to read html version of
+the avconf manual page (run "make documentation").
+
+Usefull tools:
+--------------
+
+MP4Box:
+concatenating mp4 files and other basic manipulations
+apt-get install gpac
+
+mp4joiner:
+concatenating mp4 files (had troubles with MP4Box an avconv):
+http://www.mp4joiner.org/en/
+
+mp4info:
+querying basing infos (e.g. resulition, fps) from mp4 files
+apt-get install mp4v2-utils
+

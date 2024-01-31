@@ -1,0 +1,27 @@
+
+Qty	Description	Distributor	Order-Id		Price @100
+---	-----------	-----------	--------		----------
+2	OpAmp MAX4238	DigiKey		MAX4238AUT+TCT-ND	1.25420
+2	OpAmp LMV358	DigiKey		LMV358DR2GOSCT-ND	0.31360
+1	BNC Connector	DigiKey		A97581-ND		1.12450
+2	Banana Jack	DigiKey		575-4K-ND		0.48370
+1	Batt. Clip	DigiKey		BK-888-ND		0.25500
+1	Switch 2P3T	DigiKey		EG1913-ND		0.39610
+1	Push Button	DigiKey		450-1650-ND		0.06850
+2	1.24 V Ref.	DigiKey		497-7677-1-ND		0.24600
+5	100uF Cap.	DigiKey		399-3688-1-ND		0.27590
+8	100nF Cap.	DigiKey		399-8140-1-ND		0.02590
+2	10 MOhm Res.	DigiKey		541-10MBACT-ND		0.24040
+9	100 kOhm Res.	DigiKey		A106067CT-ND		0.00710
+3	10 kOhm Res.	DigiKey		A106069CT-ND		0.00710
+2	1 kOhm Res.	DigiKey		A106070CT-ND		0.00710
+4	100 Ohm Res.	DigiKey		A106068CT-ND		0.00710
+1	10k Trimpot	DigiKey		TC33X-103ECT-ND		0.17200
+1	Red LED		DigiKey		475-1416-1-ND		0.07600
+
+Total parts cost per pcs:
+gawk -F '\t+' '/^[0-9]/ { sum += $1 * $5; } END { print sum; }' < parts.txt
+
+BNC Adapter (5 USD):
+http://www.jameco.com/1/1/522-std-bind-post-d-bnc-r-male-bnc-double-banana-binding-posts.html
+

@@ -1,0 +1,40 @@
+
+# synthesis script for converting the MOS6502 transistor netlist
+# to a gate-level logic netlist
+
+read_verilog netlist.v
+opt
+
+nmos
+opt
+
+extract -map cells_stage0.v -cell_attr nmos_sibblings -swap SW cc1,cc2
+extract -map cells_stage1.v -cell_attr nmos_sibblings -swap SW cc1,cc2
+opt
+
+write_ilang logic6502.il
+write_verilog -noattr logic6502.v
+# ! sed -e "1 a \  wire const0 = 0, const1 = 1;" -e "s,1'b0,const0,g; s,1'b1,const1,g;" -i logic6502.v
+
+read_verilog nmos.v
+read_verilog cells_stage0.v
+read_verilog cells_stage1.v
+select -module MOS6502
+
+# the driver circuit for ab8
+#select net1315 #x2 ab8 net826 net381 ## #x ~ABH0 #x1 abh0 #x1 net705 #x1 net1668 #x
+
+# a non-standard 3-input gate
+#select net480 #x:+[Y] #x10:net480:net118:~IRQP:~NMIG
+
+# a typical subcircuit with a lot of pass transistors
+#select idb0 #x10:+SW[cc1,cc2]:+RES[n1,n2] #x1
+
+# the clock synthesizer
+select clk0 #x #x3:clk0:clk1out:clk2out:cp1:cclk cp1 #d
+
+# unselect the internal clock signals
+select -del cclk cp1
+
+show
+# shell

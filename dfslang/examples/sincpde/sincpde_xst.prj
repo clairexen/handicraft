@@ -1,0 +1,4 @@
+verilog work "sincpde_single_core.v"
+verilog work "sincpde_single.v"
+verilog work "sincpde_div.v"
+verilog work "sincpde_imac.v"

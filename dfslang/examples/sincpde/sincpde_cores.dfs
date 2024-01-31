@@ -1,0 +1,107 @@
+
+set delay 500;
+set scheduler greedy;
+
+output s48 out;
+
+// ---------------------------------------------------------------------------------------
+
+core DIV 1 begin
+	input u1 sync_in, sync_out;
+	input s48 N, D;
+	output s18 Q;
+end
+
+task div(N, D, Q) begin
+	use DIV as div;
+
+	for i=0:59 begin
+		div.sync_in[i] = i == 0;
+		div.sync_out[i] = i == 59;
+	end
+
+	div.N[0] = N;
+	div.D[0] = D;
+	Q = div.Q[60];
+end
+
+// ---------------------------------------------------------------------------------------
+
+core IMAC 1 begin
+	input u1 sync_in, sync_out;
+	input u2 MODE;
+	input u18 S0, S1, S2, S3, S4, S5, S6, S7, S8, S9, S10;
+	input u18 X;
+	input u48 Y;
+	output u48 Z;
+end
+
+task imac(mode, x, y, z) begin
+	use IMAC as imac;
+
+	imac.MODE[0] = mode;
+	imac.X[0] = x;
+	imac.Y[0] = y;
+
+	imac.S0[0]  = samples[0];
+	imac.S1[0]  = samples[1];
+	imac.S2[0]  = samples[2];
+	imac.S3[0]  = samples[3];
+	imac.S4[0]  = samples[4];
+	imac.S5[0]  = samples[5];
+	imac.S6[0]  = samples[6];
+	imac.S7[0]  = samples[7];
+	imac.S8[0]  = samples[8];
+	imac.S9[0]  = samples[9];
+	imac.S10[0] = samples[10];
+
+	for i=0:33 begin
+		imac.sync_in[i] = i == 0;
+		imac.sync_out[i] = i == 33;
+	end
+	z = imac.Z[34];
+end
+
+// ---------------------------------------------------------------------------------------
+
+s18 div_outbuf[7];
+div( 100, 409600, div_outbuf[0]);  //      1
+div( 100,  40960, div_outbuf[1]);  //     10
+div( 100,   4096, div_outbuf[2]);  //    100
+div( 100,    100, div_outbuf[3]);  //   4096
+div(-100,    100, div_outbuf[4]);  //  -4096
+div( 100,   -100, div_outbuf[5]);  //  -4096
+div(-100,   -100, div_outbuf[6]);  //   4096
+
+for i=0:6 begin
+	out[i] = div_outbuf[i];
+end
+
+// ---------------------------------------------------------------------------------------
+
+u18 samples[11];
+s48 imac_outbuf[6];
+
+samples[ 0] =    0;
+samples[ 1] =    9;
+samples[ 2] =   99;
+samples[ 3] =  527;
+samples[ 4] = 1433;
+samples[ 5] = 2000;
+samples[ 6] = 1557;
+samples[ 7] =  735;
+samples[ 8] =  210;
+samples[ 9] =   36;
+samples[10] =    3;
+
+imac(0, -24576,  0, imac_outbuf[0]);  //  496918896
+imac(0,   2662, -1, imac_outbuf[1]);  // 1044606800
+imac(1, -22732,  0, imac_outbuf[2]);  //  509795809
+imac(1,  14745,  0, imac_outbuf[3]);  // -394771728
+imac(2, -12492,  1, imac_outbuf[4]);  // -349543019
+imac(2,  24371,  0, imac_outbuf[5]);  //   48571286
+
+for i=0:5 begin
+	out[i+7] = imac_outbuf[i];
+end
+

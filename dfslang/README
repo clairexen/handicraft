@@ -1,0 +1,194 @@
+
+                DFSLANG -- Data Flow Scheduling Language
+                ========================================
+
+This tool reads a text file a "data flow scheduler description" in DFSLANG
+Syntax (see below) and generates a Verilog implementation of the described
+data flow scheduler.
+
+                  ** THIS IS WORK UNDER CONSTRUCTION **
+
+
+What is a "data flow scheduler"
+===============================
+
+FIXME
+
+
+DFSLANG Syntax
+==============
+
+This section informally describes the DFSLANG syntax.
+
+Data types
+----------
+
+Data types are 's<N>' and 'u<N>', where <N> denotes a positive integer. The
+s<N> data type is a signed <N>-bit number and the u<N> data type is an unsigned
+<N>-bit number.
+
+Inputs and outputs
+------------------
+
+Inputs are declared using an 'input <type> <name>;' statement and outputs using
+the 'output <type> <name>;' statement. When refering to <name>, it is mandatory
+to always specify the clock cycle using the <name>[<cycle>] syntax.
+
+The statement 'delay <N>;' can be used to specify an offset for all output clock
+cycles.
+
+Variables and arrays
+--------------------
+
+Variables are declared using '<type> <name>;' statements. In case of an
+N-dimensional array the name is suffixed with N '[<M_n>]' expressions, with
+<M_n> being the size of the n-th dimension.
+
+Assignments
+-----------
+
+Variables can be assigned using the '<variable> = <variable>;' syntax.
+
+Parameters, Loops, Expressions
+------------------------------
+
+Parameters can be declared using a 'parameter <name> = <value>;' statement.
+Parameters are signed 32-bit variables.
+
+Loops can be declared using the 'loop <name> = <from>:<to> begin ... end'
+statement. Within the loop body, <name> acts like a parameter.
+
+Expressions using regular arithmetic operators can be used to calculate new
+parameter values from existing ones.
+
+Simple Examples
+---------------
+
+The following examples describes a DFS that uppon reset reads two consecutive
+16 bit numbers and outputs them 10 cycles later:
+
+	Variant 1:
+	----------
+
+	input u16 in;
+	output u16 out;
+
+	out[10] = in[0];
+	out[11] = in[1];
+
+	Variant 2:
+	----------
+
+	delay 10;
+	input u16 in;
+	output u16 out;
+
+	out[0] = in[0];
+	out[1] = in[1];
+
+	Variant 3:
+	----------
+
+	input u16 in;
+	output u16 out;
+	u16 tmp;
+
+	tmp = in[0];
+	out[10] = tmp;
+
+	tmp = in[1];
+	out[11] = tmp;
+
+	Variant 4:
+	----------
+
+	delay 10;
+	input u16 in;
+	output u16 out;
+	u16 tmp[2];
+
+	tmp[0] = in@0;
+	tmp[1] = in@1;
+
+	out@0 = tmp[0];
+	out@1 = tmp[1];
+
+	Variant 5:
+	----------
+
+	input u16 in;
+	output u16 out;
+
+	for i=0:1 begin
+		out[i+10] = in[i];
+	end
+
+Cores
+-----
+
+A core can be declared using the following syntax:
+
+	core <core_name> <instance_count> begin
+		input  <type> <name>; [...]
+		output <type> <name>; [...]
+	end
+
+The inputs of the core are added as outputs to the generated DFS module and the
+outputs of the core are added as inputs to the generated DFS module.
+
+Task
+----
+
+A task (something a core can do) is declared using the following syntax:
+
+	task <task_name>(arg1, arg2, arg3, ...) begin
+		use <core_name> as <unit_name>; [...]
+		<unit_name>.<input_name>[<cycle>] = arg<N>; [...]
+		arg<N> = <unit_name>.<output_name>[<cycle>]; [...]
+	end
+
+Tasks can be instanciated using a '<task_name>(arg1, arg2, ...);' statement.
+
+Advanced Example
+----------------
+
+The following example calculates the determinant of a 3x3 matrix using
+a three-input MACC core.
+
+	delay 20;
+	input s16 in;
+	output s16 out;
+	s16 matrix[3][3];
+
+	core MACC3 1 begin
+		input s16 A, B, C;
+		input u1 clear; // set to '1' to clear
+		input u1 sub;   // set to '1' for subtract
+		output s16 Y;   // two cycles internal delay
+	end
+
+	task DET3(matrix, y) begin
+		use MACC3 as macc;
+		for i=0:2 begin
+			macc.A[i] = matrix[2-i][(i+0) % 3];
+			macc.B[i] = matrix[2-i][(i+1) % 3];
+			macc.C[i] = matrix[2-i][(i+2) % 3];
+			macc.clear[i] = i == 0;
+			macc.sub[i] = 0;
+		end
+		for i=0:2 begin
+			macc.A[3+i] = matrix[2-i][(i+2) % 3];
+			macc.B[3+i] = matrix[2-i][(i+1) % 3];
+			macc.C[3+i] = matrix[2-i][(i+0) % 3];
+			macc.clear[3+i] = 0;
+			macc.sub[3+i] = 1;
+		end
+		y = macc.Y[7];
+	end
+
+	for i=0:2, j=0:2 begin
+		matrix[i][j] = in[i+j*3];
+	end
+
+	DET3(matrix, out[0]);
+

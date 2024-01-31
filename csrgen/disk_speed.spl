@@ -1,0 +1,68 @@
+
+config = [
+	geometry: [ 50, 40 ],
+	colors: [ "yellow!10", "gray!10" ],
+	test_deltas: [ -15, +15 ],
+	test_angles: [ 60, 90, 120 ],
+	test_expr: [ "A", "mps @ A", "kph @ A", "mph @ A", "knot @ A", "ftps @ A" ],
+	auto: [
+		kph:  "3.600 * (mps @ A) - (kph  @ A)",
+		mph:  "2.237 * (mps @ A) - (mph  @ A)",
+		knot: "1.944 * (mps @ A) - (knot @ A)",
+		ftps: "3.280 * (mps @ A) - (ftps @ A)",
+	],
+];
+
+data = [
+	A: [
+		type: "scale_log10",
+		location: 1,
+		orientation: 0,
+		layer: 0,
+		value_span: [ 1, 100 ],
+		angle_span: [ 240, -60 ],
+	],
+	mps: [
+		type: "cursor",
+		location: 1,
+		orientation: 1,
+		layer: 1,
+		label: "$$\\unitfrac{m}{s}$$",
+		angle: 90
+	],
+	kph: [
+		type: "cursor",
+		location: 1,
+		orientation: 1,
+		layer: 1,
+		extend: 1,
+		label: "$$\\unitfrac{km}{h}$$",
+		angle: 90
+	],
+	mph: [
+		type: "cursor",
+		location: 1,
+		orientation: 1,
+		layer: 1,
+		extend: 1,
+		label: "$$\\unit{mph}$$",
+		angle: 90
+	],
+	knot: [
+		type: "cursor",
+		location: 1,
+		orientation: 1,
+		layer: 1,
+		label: "$$\\unit{knot}$$",
+		angle: 90
+	],
+	ftps: [
+		type: "cursor",
+		location: 1,
+		orientation: 1,
+		layer: 1,
+		label: "$$\\unitfrac{ft}{s}$$",
+		angle: 90
+	],
+];
+

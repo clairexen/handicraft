@@ -1,0 +1,149 @@
+<script src="http://visual6502.org/JSSim/segdefs.js"></script>
+<script src="http://visual6502.org/JSSim/transdefs.js"></script>
+<script src="http://visual6502.org/JSSim/nodenames.js"></script>
+<script>
+
+document.write("<pre>\n");
+document.write("// generated from the data at http://visual6502.org/JSSim/\n\n");
+
+function fmt(text)
+{
+	var args = arguments;
+	function replace_arg(_dummy, i) { return i > 0 ? args[i] : "{"; };
+	return text.replace(/\{([0-9]+)\}/g, replace_arg);
+}
+
+var allNets = new Array();
+var uniqueTransMap = new Object();
+
+for (i in segdefs) {
+	netid = segdefs[i][0];
+	pullup = segdefs[i][1] == '+';
+	if (allNets[netid] == undefined)
+		allNets[netid] = { pullup: false, names: [ ] };
+	if (pullup)
+		allNets[netid].pullup = true;
+}
+for (i in nodenames) {
+	if (nodenames[i] >= 0)
+		allNets[nodenames[i]].names.push(i);
+}
+
+function writeVerilog()
+{
+	function get_netname(idx)
+	{
+		var n = allNets[idx];
+		var netname = "net" + idx;
+		for (j in n.names) {
+			netname = n.names[j];
+			if (/^(a[0-9]|a1[0-5]|d[0-7]|vss|rdy|clk[12]out|irq|nmi|sync|vcc|rw|clk0|so|res)$/.test(netname))
+				return netname;
+		}
+		if (/^[a-zA-Z_][a-zA-Z0-9_]+$/.test(netname))
+			return netname;
+		return '\\' + netname + ' ';
+	}
+
+	document.write("module MOS6502(vss, rdy, clk1out, irq, nmi, sync, vcc, ab0, ab1, ab2, ab3, ab4, ab5, ab6, ab7, ab8, ab9, ab10, ab11,\n");
+	document.write("\t\tab12, ab13, ab14, ab15, db7, db6, db5, db4, db3, db2, db1, db0, rw, clk0, so, clk2out, res);\n\n");
+
+	document.write("input vss, vcc, irq, nmi, clk0, res, rdy, so;\n");
+	document.write("inout db7, db6, db5, db4, db3, db2, db1, db0;\n\n");
+
+	document.write("output clk1out, clk2out, sync, rw;\n");
+	document.write("output ab0, ab1, ab2, ab3, ab4, ab5, ab6, ab7, ab8, ab9, ab10, ab11, ab12, ab13, ab14, ab15;\n\n");
+
+	var idx = 0;
+	for (i in allNets) {
+		var n = allNets[i];
+		var netname = get_netname(i);
+		if (idx % 10 == 0)
+			document.write(idx ? ";\nwire " : "wire ");
+		else
+			document.write(", ");
+		document.write(netname);
+		idx++;
+	}
+	document.write(";\n\n");
+
+	for (i in allNets) {
+		var n = allNets[i];
+		if (n.pullup)
+			document.write(fmt("PULLUP pullup{1} (.y({2}));\n", i, get_netname(i)));
+	}
+	document.write("\n");
+
+	for (i in transdefs) {
+		var gate = transdefs[i][1];
+		var cc1 = transdefs[i][2];
+		var cc2 = transdefs[i][3];
+		if (get_netname(cc2) == "vcc" || get_netname(cc2) == "vss") {
+			var tmp = cc1;
+			cc1 = cc2;
+			cc2 = tmp;
+		}
+		if (get_netname(cc1) == "vcc") {
+			document.write(fmt("SW1 switch{1} (.gate({2}), .cc({3}));\n", i,
+					get_netname(gate), get_netname(cc2)));
+		} else if (get_netname(cc1) == "vss") {
+			if (get_netname(gate) != "vss") // don't include guard transistors
+				document.write(fmt("SW0 switch{1} (.gate({2}), .cc({3}));\n", i,
+						get_netname(gate), get_netname(cc2)));
+		} else {
+			document.write(fmt("SW switch{1} (.gate({2}), .cc1({3}), .cc2({4}));\n", i,
+					get_netname(gate), get_netname(cc1), get_netname(cc2)));
+		}
+	}
+	document.write("\n");
+
+	document.write("endmodule\n");
+}
+
+function writeSwitchSim()
+{
+	function get_netname(idx)
+	{
+		var n = allNets[idx];
+		var netname = "net" + idx;
+		for (j in n.names) {
+			netname = n.names[j];
+			if (/^(a[0-9]|a1[0-5]|d[0-7]|vss|rdy|clk[12]out|irq|nmi|sync|vcc|rw|clk0|so|res)$/.test(netname))
+				return netname;
+		}
+		return netname;
+	}
+
+	document.write("static const struct { const char *name; int state; } segmentsList[] = {\n");
+	for (i in allNets) {
+		var n = allNets[i];
+		var netname = get_netname(i);
+		document.write(fmt('{ "{1}", {2} },\n', netname, n.pullup ? "PulledHigh" : "Floating"));
+	}
+	document.write("};\n");
+
+	document.write("static const struct { const char *name, *gate, *cc1, *cc2; int state; } switchesList[] = {\n");
+	for (i in transdefs) {
+		var gate = get_netname(transdefs[i][1]);
+		var cc1 = get_netname(transdefs[i][2]);
+		var cc2 = get_netname(transdefs[i][3]);
+
+		if (gate == "vss")
+			continue;
+
+		var switchState = "Floating";
+		if (cc1 == "vcc" || cc2 == "vcc") switchState = "SwitchedHigh";
+		if (cc1 == "vss" || cc2 == "vss") switchState = "SwitchedLow";
+
+		cc1 = (cc1 == "vcc" || cc1 == "vss") ? 'NULL' : '"' + cc1 + '"';
+		cc2 = (cc2 == "vcc" || cc2 == "vss") ? 'NULL' : '"' + cc2 + '"';
+
+		document.write(fmt('{ "switch{1}", "{2}", {3}, {4}, {5} },\n', i, gate, cc1, cc2, switchState));
+	}
+	document.write("};\n");
+}
+
+writeVerilog();
+// writeSwitchSim();
+
+</script>

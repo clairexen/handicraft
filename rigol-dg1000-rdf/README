@@ -1,0 +1,80 @@
+
+    ascii2rdf - Convert ASCII to RIGOL DG1000 RDF files
+    rdf2ascii - Convert RIGOL DG1000 RDF to ASCII files
+
+    Copyright (C) 2013  Clifford Wolf <clifford@clifford.at>
+
+    Permission to use, copy, modify, and/or distribute this software for any
+    purpose with or without fee is hereby granted, provided that the above
+    copyright notice and this permission notice appear in all copies.
+
+    THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+    WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+    MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+    ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+    WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+    ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+    OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+-------------------------------------------------------------------------------
+
+
+This two little programs can be used to convert between simple ASCII files and
+the RIGOL *.rdf format used by RIGOL DG1000 Arbitrary Waveform Generators.
+
+This programs have been tested under Linux. However, they only use ANSI-C
+features and therefore should be trivial to port to other architectures.
+
+Simply run "make" in this directory to build the programs.
+
+
+Example usage:
+==============
+
+
+	Step 1: Create waveform data as ASCII file
+	------------------------------------------
+
+	The ASCII file should contain 4096 decimal numbers in the range
+	from 0 to 16383. Text from a # to the end of the line (comments)
+	is ignored.
+
+	For example, the following GNU octave commands will create
+	such an ASCII file containing a sine wave:
+
+	octave> samples = floor((sin([0:4095]*2*pi/4096)+1)*8191)
+	octave> save("samples.txt", "samples")
+
+
+	Step 2: Convert ASCII to RDF
+	----------------------------
+
+	Use the 'ascii2rdf' tool from this directory to convert the ASCII
+	file to an RDF file. The tools read from stdin and write to stdout:
+
+	sh$ ./ascii2rdf < samples.txt > samples.rdf
+
+
+	Step 3: Transfer to device
+	--------------------------
+
+	Copy the waveform data to a USB stick. And use the "Store/Recall"
+	function on the desvice to load the data from the stick.
+
+
+About the RDF file format:
+==========================
+
+This is what I have learned about the RDF format. It is not much, but it is enough
+for my purposes.
+
+The file contains 2 bytes per sample and no extra bytes. I.e. a file with 4096
+samples is exactly 8 kB (8192 bytes) big. The samples have 14 bits resolution.
+
+The first byte contains the 8 LSB of the sample. The second byte contains
+the 6 MSB of the sample in its 6 LSB. The both MSB of the second byte contain
+flags of some kind. It seams to work fine if both MSBs are always cleared.
+
+Or in other words: An RDF file is a sequence of 4096 16-bit words in little endian
+encoding and the values must be in the range 0 to 16383.
+
