@@ -1,0 +1,20 @@
+
+pi := 3.1416
+
+r1 = 12756/2
+r2 = r1+300
+alpha = 10
+
+x = cos(pi*alpha/180)*s
+y = sin(pi*alpha/180)*s+r1
+
+x = sin(pi*phi/180)*r2
+y = cos(pi*phi/180)*r2
+
+beta = phi+alpha
+
+$range:x:0:
+$range:y:0:
+$range:s:0:
+$range:phi:0:90
+

@@ -1,0 +1,25 @@
+
+alpha      =   10.00000
+beta       =   19.85303
+phi        =    9.85303
+r1         =       6378
+r2         =       6678
+s          =       1160
+x          =       1143
+y          =       6579
+
+alpha = pi*alpha/180;
+beta = pi*beta/180;
+phi = pi*phi/180;
+
+plot(sin(pi*[0:0.005:2])*r1, cos(pi*[0:0.005:2])*r1,
+		sin(pi*[0:0.005:2])*r2, cos(pi*[0:0.005:2])*r2,
+		[0 0], [0 r1], [0 sin(phi)*r2], [0 cos(phi)*r2],
+		[0 cos(alpha)*s], [r1 r1+sin(alpha)*s],
+		[x-cos(alpha-beta)*1000 x+cos(alpha-beta)*1000],
+		[y-sin(alpha-beta)*1000 y+sin(alpha-beta)*1000],
+		[-1000 +1000], [r1 r1], x, y, "x");
+
+window = max([x y-r1]);
+axis([x/2-window x/2+window (y+r1)/2-window (y+r1)/2+window]);
+

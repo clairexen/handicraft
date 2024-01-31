@@ -1,0 +1,358 @@
+#!/usr/bin/env splrun
+
+load "file";
+
+var pi = 3.1416;
+
+var w = 8;
+var h = 8;
+
+var grid = 10.0;
+var xyoff = sin(pi/4) * 2.54 ./ 2;
+var smallpinrad = 0.2;
+var mediumpinrad = 0.4;
+var bigpinrad = 0.7;
+var wall = 1;
+
+var channel_size = 1.0;
+var up_channel_size = 1.5;
+var material_thikness = 5.0;
+var spacing = 10.0;
+
+var layer_step_x = grid*w + wall;
+var layer_step_y = grid*h + wall;
+
+var dxfdata = <:>
+	: 999
+	: http://svn.clifford.at/handicraft/2009/ledmatkit
+	:   0
+	: SECTION
+	:   2
+	: ENTITIES
+</>;
+
+var current_layer;
+var transform_flip_xy;
+var offset_x, offset_y;
+
+function newlayer(layer)
+{
+	current_layer = layer;
+	transform_flip_xy = 0;
+	offset_x = ((layer-1)%3) * layer_step_x;
+	offset_y = ((layer-1)#/3) * layer_step_y;
+}
+
+function dxf_line(x1, y1, x2, y2)
+{
+	if (transform_flip_xy) {
+		x1 <=> y1;
+		x2 <=> y2;
+	}
+	x1 += offset_x;
+	y1 += offset_y;
+	x2 += offset_x;
+	y2 += offset_y;
+	dxfdata ~= <:>
+		:   0
+		: LINE
+		:   8
+		: $current_layer
+		:  10
+		: $x1
+		:  11
+		: $x2
+		:  20
+		: ${-y1}
+		:  21
+		: ${-y2}
+	</>;
+}
+
+var dxf_cursor_x = 0;
+var dxf_cursor_y = 0;
+
+var dxf_path_begin_x = 0;
+var dxf_path_begin_y = 0;
+
+function dxf_move(x, y)
+{
+	dxf_cursor_x = x;
+	dxf_cursor_y = y;
+	dxf_path_begin_x = x;
+	dxf_path_begin_y = y;
+}
+
+function dxf_line_p(x, y)
+{
+	dxf_line(dxf_cursor_x, dxf_cursor_y, x, y);
+	dxf_cursor_x = x;
+	dxf_cursor_y = y;
+}
+
+function dxf_line_h(x)
+{
+	dxf_line(dxf_cursor_x, dxf_cursor_y, x, dxf_cursor_y);
+	dxf_cursor_x = x;
+}
+
+function dxf_line_v(y)
+{
+	dxf_line(dxf_cursor_x, dxf_cursor_y, dxf_cursor_x, y);
+	dxf_cursor_y = y;
+}
+
+function dxf_line_r(x, y)
+{
+	dxf_line(dxf_cursor_x, dxf_cursor_y, dxf_cursor_x + x, dxf_cursor_y + y);
+	dxf_cursor_x += x;
+	dxf_cursor_y += y;
+}
+
+function dxf_close_path()
+{
+	dxf_line_p(dxf_path_begin_x, dxf_path_begin_y);
+}
+
+function dxf_circle(x, y, r)
+{
+	if (transform_flip_xy) {
+		x <=> y;
+	}
+	x += offset_x;
+	y += offset_y;
+	dxfdata ~= <:>
+		:   0
+		: CIRCLE
+		:   8
+		: $current_layer
+		:  10
+		: $x
+		:  20
+		: ${-y}
+		:  40
+		: $r
+	</>;
+}
+
+function gen_common_outlines()
+{
+	dxf_move(0, 0);
+	dxf_line_h(grid*w);
+	dxf_line_v(grid*h);
+	dxf_line_h(0);
+	dxf_close_path();
+
+	function cutout_at(x, y) {
+		dxf_move(x - material_thikness./2, y - material_thikness./2);
+		dxf_line_r(material_thikness, 0);
+		dxf_line_r(0, material_thikness);
+		dxf_line_r(-material_thikness, 0);
+		dxf_close_path();
+	}
+
+	for (var x = 1; x < w; x += 1)
+		cutout_at(x*grid - xyoff, grid + xyoff);
+
+	for (var y = 2; y < h; y += 1)
+		cutout_at((w-1)*grid - xyoff, y*grid + xyoff);
+
+	cutout_at(1*grid - xyoff, grid*(h-1) + xyoff);
+	cutout_at(1*grid - xyoff, grid*(h-2) + xyoff);
+	cutout_at(2*grid - xyoff, grid*(h-1) + xyoff);
+}
+
+function gen_spikes(n, mode)
+{
+	var pin_to_channel = (grid - material_thikness - channel_size) ./ 2;
+	dxf_move(grid - xyoff - pin_to_channel + material_thikness*0.5, grid + xyoff - spacing - material_thikness);
+	if (mode == 0) {
+		dxf_line_r(0, material_thikness);
+		dxf_line_r(-material_thikness, 0);
+	} else {
+		dxf_line_r(-material_thikness, 0);
+		dxf_line_r(0, material_thikness);
+	}
+	for (var x = 0.5; x < n; x += 1) {
+		if (x > 1)
+			dxf_line_r(channel_size, 0);
+		dxf_line_r(0, spacing);
+		dxf_line_r(pin_to_channel, 0);
+		if (mode == 2 && x > n-1) {
+			dxf_line_r(0, -spacing);
+			dxf_line_r(material_thikness, 0);
+			dxf_line_r(0, +spacing);
+		} else {
+			dxf_line_r(0, 4.5*material_thikness);
+			dxf_line_r(material_thikness, 0);
+			dxf_line_r(0, -4.5*material_thikness);
+		}
+		dxf_line_r(pin_to_channel, 0);
+		dxf_line_r(0, -spacing);
+	}
+	if (mode == 0) {
+		dxf_line_r(-material_thikness, 0);
+		dxf_line_r(0, -material_thikness);
+	} else {
+		dxf_line_r(0, -material_thikness);
+		if (mode == 1) {
+			dxf_line_r(-pin_to_channel, 0);
+			dxf_line_r(0, material_thikness);
+			dxf_line_r(-material_thikness, 0);
+			dxf_line_r(0, -material_thikness);
+		}
+	}
+	dxf_close_path();
+}
+
+newlayer(1);
+gen_common_outlines();
+for (var x = 0.5; x < w; x += 1)
+for (var y = 0.5; y < h; y += 1) {
+	dxf_circle(x*grid + xyoff, y*grid + xyoff, smallpinrad);
+	dxf_circle(x*grid - xyoff, y*grid - xyoff, mediumpinrad);
+}
+
+newlayer(2);
+gen_common_outlines();
+for (var x = 0.5; x < w; x += 1)
+for (var y = 0.5; y < h; y += 1) {
+	dxf_circle(x*grid + xyoff, y*grid + xyoff, smallpinrad);
+}
+for (var x = 0.5; x < w; x += 1) {
+	dxf_move(x*grid - xyoff - channel_size / 2.0, wall);
+	dxf_line_v(h*grid - wall);
+	dxf_line_r(channel_size, 0);
+	dxf_line_v(wall + up_channel_size);
+	dxf_line_r(up_channel_size - channel_size, 0);
+	dxf_line_v(wall);
+	dxf_close_path();
+}
+
+newlayer(3);
+gen_common_outlines();
+for (var x = 0.5; x < w; x += 1)
+for (var y = 0.5; y < h; y += 1) {
+	dxf_circle(x*grid + xyoff, y*grid + xyoff, mediumpinrad);
+	dxf_circle(x*grid - xyoff, y*grid - xyoff, bigpinrad);
+}
+for (var x = 0.5; x < w; x += 1) {
+	dxf_move(x*grid - xyoff - channel_size / 2.0, wall);
+	dxf_line_r(up_channel_size, 0);
+	dxf_line_r(0, up_channel_size);
+	dxf_line_r(-up_channel_size, 0);
+	dxf_close_path();
+}
+
+newlayer(4);
+gen_common_outlines();
+for (var x = 0.5; x < w; x += 1)
+for (var y = 0.5; y < h; y += 1) {
+	dxf_circle(x*grid - xyoff, y*grid - xyoff, bigpinrad);
+}
+for (var y = 0.5; y < h; y += 1) {
+	dxf_move(w*grid - wall, y*grid + xyoff + channel_size / 2.0);
+	dxf_line_h(wall);
+	dxf_line_r(0, -channel_size);
+	dxf_line_h(w*grid - wall - up_channel_size);
+	dxf_line_r(0, -up_channel_size + channel_size);
+	dxf_line_h(w*grid - wall);
+	dxf_close_path();
+}
+for (var x = 0.5; x < w; x += 1) {
+	dxf_move(x*grid - xyoff - channel_size / 2.0, wall);
+	dxf_line_r(up_channel_size, 0);
+	dxf_line_r(0, up_channel_size);
+	dxf_line_r(-up_channel_size, 0);
+	dxf_close_path();
+}
+
+newlayer(5);
+gen_common_outlines();
+for (var x = 0.5; x < w; x += 1)
+for (var y = 0.5; y < h; y += 1) {
+	dxf_circle(x*grid + xyoff, y*grid + xyoff, bigpinrad);
+	dxf_circle(x*grid - xyoff, y*grid - xyoff, bigpinrad);
+}
+for (var y = 0.5; y < h; y += 1) {
+	dxf_move(w*grid - wall, y*grid + xyoff + channel_size / 2.0);
+	dxf_line_r(-up_channel_size, 0);
+	dxf_line_r(0, -up_channel_size);
+	dxf_line_r(up_channel_size, 0);
+	dxf_close_path();
+}
+for (var x = 0.5; x < w; x += 1) {
+	dxf_move(x*grid - xyoff - channel_size / 2.0, wall);
+	dxf_line_r(up_channel_size, 0);
+	dxf_line_r(0, up_channel_size);
+	dxf_line_r(-up_channel_size, 0);
+	dxf_close_path();
+}
+
+newlayer(6);
+gen_spikes(w-1, 0);
+
+newlayer(7);
+transform_flip_xy = 1;
+gen_spikes(h-2, 0);
+
+newlayer(8);
+gen_spikes(2, 1);
+offset_x += 2*grid;
+gen_spikes(2, 2);
+
+newlayer(9);
+dxf_move(0, 0);
+dxf_line_h(grid*w);
+dxf_line_v(grid*h);
+dxf_line_h(grid*w - grid*2);
+dxf_line_v(grid*2);
+dxf_line_h(0);
+dxf_close_path();
+var pin_to_channel = (grid - material_thikness - channel_size) ./ 2;
+{
+	var y1 = grid + xyoff - material_thikness./2;
+	var y2 = grid + xyoff + material_thikness./2;
+	var x1 = grid - xyoff - pin_to_channel + material_thikness./2;
+	var x2 = grid*(w-1) - xyoff + pin_to_channel - material_thikness./2;
+	dxf_move(x1, y1);
+	dxf_line_h(x2);
+	dxf_line_v(y2);
+	dxf_line_h(x1);
+	dxf_close_path();
+}
+{
+	var y1 = grid*2 + xyoff - pin_to_channel + material_thikness./2;
+	var y2 = grid*(h-1) + xyoff + pin_to_channel - material_thikness./2;
+	var x1 = grid*(w-1) - xyoff - material_thikness./2;
+	var x2 = grid*(w-1) - xyoff + material_thikness./2;
+	dxf_move(x1, y1);
+	dxf_line_h(x2);
+	dxf_line_v(y2);
+	dxf_line_h(x1);
+	dxf_close_path();
+}
+for (var y = 0.5; y < h; y += 1) {
+	dxf_move(w*grid - wall, y*grid + xyoff + channel_size / 2.0);
+	dxf_line_r(-up_channel_size, 0);
+	dxf_line_r(0, -up_channel_size);
+	dxf_line_r(up_channel_size, 0);
+	dxf_close_path();
+}
+for (var x = 0.5; x < w; x += 1) {
+	dxf_move(x*grid - xyoff - channel_size / 2.0, wall);
+	dxf_line_r(up_channel_size, 0);
+	dxf_line_r(0, up_channel_size);
+	dxf_line_r(-up_channel_size, 0);
+	dxf_close_path();
+}
+
+dxfdata ~= <:>
+	:   0
+	: ENDSEC
+	:   0
+	: EOF
+</>;
+
+file_write("design.dxf", dxfdata);
+

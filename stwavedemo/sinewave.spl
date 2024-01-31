@@ -1,0 +1,38 @@
+#!/usr/bin/env splrun
+
+var pi = 3.1416;
+
+var w = 140/2, h = 10;
+var step = 0.5;
+
+write(<:>
+	:   0
+	: SECTION
+	:   2
+	: ENTITIES
+	<?spl for (var i = 0; i < w; i += step) { ?>
+	:   0
+	: LINE
+	:  10
+	: ${i}
+	:  20
+	: ${sin(i*pi*2 / w) * h}
+	<spl:if code="i + step*1.5 < w">
+	:  11
+	: ${i+step}
+	:  21
+	: ${sin((i+step)*pi*2 / w) * h}
+	</spl:if>
+	<spl:else>
+	:  11
+	: ${i+step}
+	:  21
+	: 0
+	</spl:else>
+	<?spl } ?>
+	:   0
+	: ENDSEC
+	:   0
+	: EOF
+</>);
+

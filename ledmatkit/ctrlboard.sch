@@ -1,0 +1,577 @@
+EESchema Schematic File Version 2  date Wed Mar  3 20:22:25 2010
+LIBS:power
+LIBS:device
+LIBS:transistors
+LIBS:conn
+LIBS:linear
+LIBS:regul
+LIBS:74xx
+LIBS:cmos4000
+LIBS:adc-dac
+LIBS:memory
+LIBS:xilinx
+LIBS:special
+LIBS:microcontrollers
+LIBS:dsp
+LIBS:microchip
+LIBS:analog_switches
+LIBS:motorola
+LIBS:texas
+LIBS:intel
+LIBS:audio
+LIBS:interface
+LIBS:digital-audio
+LIBS:philips
+LIBS:display
+LIBS:cypress
+LIBS:siliconi
+LIBS:opto
+LIBS:atmel
+LIBS:contrib
+LIBS:valves
+EELAYER 43  0
+EELAYER END
+$Descr A4 11700 8267
+Sheet 1 1
+Title ""
+Date "3 mar 2010"
+Rev ""
+Comp ""
+Comment1 ""
+Comment2 ""
+Comment3 ""
+Comment4 ""
+$EndDescr
+Wire Wire Line
+	1200 1950 1200 2150
+Wire Wire Line
+	1200 2150 1450 2150
+Wire Wire Line
+	2400 1400 2300 1400
+Wire Wire Line
+	2300 1400 2300 1450
+Wire Wire Line
+	2400 4350 2400 4500
+Wire Wire Line
+	10550 1350 10550 1500
+Wire Wire Line
+	10100 750  10200 750 
+Wire Wire Line
+	9450 750  9600 750 
+Wire Wire Line
+	9450 1150 9600 1150
+Wire Wire Line
+	10100 1150 10250 1150
+Wire Wire Line
+	10550 950  10550 750 
+Wire Wire Line
+	10550 750  10700 750 
+Wire Wire Line
+	8550 750  8400 750 
+Wire Wire Line
+	8400 750  8400 950 
+Wire Wire Line
+	7950 1150 8100 1150
+Wire Wire Line
+	7300 1150 7450 1150
+Wire Wire Line
+	7300 750  7450 750 
+Wire Wire Line
+	7950 750  8050 750 
+Wire Wire Line
+	8400 1350 8400 1500
+Wire Wire Line
+	8400 2400 8400 2550
+Wire Wire Line
+	7950 1800 8050 1800
+Wire Wire Line
+	7300 1800 7450 1800
+Wire Wire Line
+	7300 2200 7450 2200
+Wire Wire Line
+	7950 2200 8100 2200
+Wire Wire Line
+	8400 2000 8400 1800
+Wire Wire Line
+	8400 1800 8550 1800
+Wire Wire Line
+	10700 1800 10550 1800
+Wire Wire Line
+	10550 1800 10550 2000
+Wire Wire Line
+	10100 2200 10250 2200
+Wire Wire Line
+	9450 2200 9600 2200
+Wire Wire Line
+	9450 1800 9600 1800
+Wire Wire Line
+	10100 1800 10200 1800
+Wire Wire Line
+	10550 2400 10550 2550
+Wire Wire Line
+	10550 4500 10550 4650
+Wire Wire Line
+	10100 3900 10200 3900
+Wire Wire Line
+	9450 3900 9600 3900
+Wire Wire Line
+	9450 4300 9600 4300
+Wire Wire Line
+	10100 4300 10250 4300
+Wire Wire Line
+	10550 4100 10550 3900
+Wire Wire Line
+	10550 3900 10700 3900
+Wire Wire Line
+	8550 3900 8400 3900
+Wire Wire Line
+	8400 3900 8400 4100
+Wire Wire Line
+	7950 4300 8100 4300
+Wire Wire Line
+	7300 4300 7450 4300
+Wire Wire Line
+	7300 3900 7450 3900
+Wire Wire Line
+	7950 3900 8050 3900
+Wire Wire Line
+	8400 4500 8400 4650
+Wire Wire Line
+	8400 3450 8400 3600
+Wire Wire Line
+	7950 2850 8050 2850
+Wire Wire Line
+	7300 2850 7450 2850
+Wire Wire Line
+	7300 3250 7450 3250
+Wire Wire Line
+	7950 3250 8100 3250
+Wire Wire Line
+	8400 3050 8400 2850
+Wire Wire Line
+	8400 2850 8550 2850
+Wire Wire Line
+	10700 2850 10550 2850
+Wire Wire Line
+	10550 2850 10550 3050
+Wire Wire Line
+	10100 3250 10250 3250
+Wire Wire Line
+	9450 3250 9600 3250
+Wire Wire Line
+	9450 2850 9600 2850
+Wire Wire Line
+	10100 2850 10200 2850
+Wire Wire Line
+	10550 3450 10550 3600
+Wire Wire Line
+	2300 4350 2300 4400
+Wire Wire Line
+	2300 4400 2400 4400
+Connection ~ 2400 4400
+Wire Wire Line
+	2400 1450 2400 1250
+Connection ~ 2400 1400
+Wire Wire Line
+	1450 1950 1300 1950
+Wire Wire Line
+	1300 1950 1300 2000
+$Comp
+L GND #PWR?
+U 1 1 4B8EB696
+P 1300 2000
+F 0 "#PWR?" H 1300 2000 30  0001 C CNN
+F 1 "GND" H 1300 1930 30  0001 C CNN
+	1    1300 2000
+	1    0    0    -1  
+$EndComp
+$Comp
+L VCC #PWR?
+U 1 1 4B8EB687
+P 1200 1950
+F 0 "#PWR?" H 1200 2050 30  0001 C CNN
+F 1 "VCC" H 1200 2050 30  0000 C CNN
+	1    1200 1950
+	1    0    0    -1  
+$EndComp
+$Comp
+L VCC #PWR?
+U 1 1 4B8EB657
+P 2400 1250
+F 0 "#PWR?" H 2400 1350 30  0001 C CNN
+F 1 "VCC" H 2400 1350 30  0000 C CNN
+	1    2400 1250
+	1    0    0    -1  
+$EndComp
+$Comp
+L GND #PWR?
+U 1 1 4B8EB63E
+P 2400 4500
+F 0 "#PWR?" H 2400 4500 30  0001 C CNN
+F 1 "GND" H 2400 4430 30  0001 C CNN
+	1    2400 4500
+	1    0    0    -1  
+$EndComp
+Text GLabel 10700 2850 2    60   UnSpc ~ 0
+ROW6
+$Comp
+L NPN Q?
+U 1 1 4B8EB54D
+P 10450 3250
+F 0 "Q?" H 10450 3100 50  0000 R CNN
+F 1 "NPN" H 10450 3400 50  0000 R CNN
+	1    10450 3250
+	1    0    0    -1  
+$EndComp
+$Comp
+L GND #PWR?
+U 1 1 4B8EB54C
+P 10550 3600
+F 0 "#PWR?" H 10550 3600 30  0001 C CNN
+F 1 "GND" H 10550 3530 30  0001 C CNN
+	1    10550 3600
+	1    0    0    -1  
+$EndComp
+$Comp
+L R R?
+U 1 1 4B8EB54B
+P 9850 3250
+F 0 "R?" V 9930 3250 50  0000 C CNN
+F 1 "4k7" V 9850 3250 50  0000 C CNN
+	1    9850 3250
+	0    1    1    0   
+$EndComp
+Text GLabel 9450 3250 0    60   UnSpc ~ 0
+CTRLR6
+Text GLabel 9450 2850 0    60   UnSpc ~ 0
+CTRLC6
+$Comp
+L R R?
+U 1 1 4B8EB54A
+P 9850 2850
+F 0 "R?" V 9930 2850 50  0000 C CNN
+F 1 "100" V 9850 2850 50  0000 C CNN
+	1    9850 2850
+	0    1    1    0   
+$EndComp
+Text GLabel 10200 2850 2    60   UnSpc ~ 0
+COL6
+Text GLabel 8050 2850 2    60   UnSpc ~ 0
+COL5
+$Comp
+L R R?
+U 1 1 4B8EB549
+P 7700 2850
+F 0 "R?" V 7780 2850 50  0000 C CNN
+F 1 "100" V 7700 2850 50  0000 C CNN
+	1    7700 2850
+	0    1    1    0   
+$EndComp
+Text GLabel 7300 2850 0    60   UnSpc ~ 0
+CTRLC5
+Text GLabel 7300 3250 0    60   UnSpc ~ 0
+CTRLR5
+$Comp
+L R R?
+U 1 1 4B8EB548
+P 7700 3250
+F 0 "R?" V 7780 3250 50  0000 C CNN
+F 1 "4k7" V 7700 3250 50  0000 C CNN
+	1    7700 3250
+	0    1    1    0   
+$EndComp
+$Comp
+L GND #PWR?
+U 1 1 4B8EB547
+P 8400 3600
+F 0 "#PWR?" H 8400 3600 30  0001 C CNN
+F 1 "GND" H 8400 3530 30  0001 C CNN
+	1    8400 3600
+	1    0    0    -1  
+$EndComp
+$Comp
+L NPN Q?
+U 1 1 4B8EB546
+P 8300 3250
+F 0 "Q?" H 8300 3100 50  0000 R CNN
+F 1 "NPN" H 8300 3400 50  0000 R CNN
+	1    8300 3250
+	1    0    0    -1  
+$EndComp
+Text GLabel 8550 2850 2    60   UnSpc ~ 0
+ROW5
+Text GLabel 8550 3900 2    60   UnSpc ~ 0
+ROW7
+$Comp
+L NPN Q?
+U 1 1 4B8EB545
+P 8300 4300
+F 0 "Q?" H 8300 4150 50  0000 R CNN
+F 1 "NPN" H 8300 4450 50  0000 R CNN
+	1    8300 4300
+	1    0    0    -1  
+$EndComp
+$Comp
+L GND #PWR?
+U 1 1 4B8EB544
+P 8400 4650
+F 0 "#PWR?" H 8400 4650 30  0001 C CNN
+F 1 "GND" H 8400 4580 30  0001 C CNN
+	1    8400 4650
+	1    0    0    -1  
+$EndComp
+$Comp
+L R R?
+U 1 1 4B8EB543
+P 7700 4300
+F 0 "R?" V 7780 4300 50  0000 C CNN
+F 1 "4k7" V 7700 4300 50  0000 C CNN
+	1    7700 4300
+	0    1    1    0   
+$EndComp
+Text GLabel 7300 4300 0    60   UnSpc ~ 0
+CTRLR7
+Text GLabel 7300 3900 0    60   UnSpc ~ 0
+CTRLC7
+$Comp
+L R R?
+U 1 1 4B8EB542
+P 7700 3900
+F 0 "R?" V 7780 3900 50  0000 C CNN
+F 1 "100" V 7700 3900 50  0000 C CNN
+	1    7700 3900
+	0    1    1    0   
+$EndComp
+Text GLabel 8050 3900 2    60   UnSpc ~ 0
+COL7
+Text GLabel 10200 3900 2    60   UnSpc ~ 0
+COL7
+$Comp
+L R R?
+U 1 1 4B8EB541
+P 9850 3900
+F 0 "R?" V 9930 3900 50  0000 C CNN
+F 1 "100" V 9850 3900 50  0000 C CNN
+	1    9850 3900
+	0    1    1    0   
+$EndComp
+Text GLabel 9450 3900 0    60   UnSpc ~ 0
+CTRLC7
+Text GLabel 9450 4300 0    60   UnSpc ~ 0
+CTRLR7
+$Comp
+L R R?
+U 1 1 4B8EB540
+P 9850 4300
+F 0 "R?" V 9930 4300 50  0000 C CNN
+F 1 "4k7" V 9850 4300 50  0000 C CNN
+	1    9850 4300
+	0    1    1    0   
+$EndComp
+$Comp
+L GND #PWR?
+U 1 1 4B8EB53F
+P 10550 4650
+F 0 "#PWR?" H 10550 4650 30  0001 C CNN
+F 1 "GND" H 10550 4580 30  0001 C CNN
+	1    10550 4650
+	1    0    0    -1  
+$EndComp
+$Comp
+L NPN Q?
+U 1 1 4B8EB53E
+P 10450 4300
+F 0 "Q?" H 10450 4150 50  0000 R CNN
+F 1 "NPN" H 10450 4450 50  0000 R CNN
+	1    10450 4300
+	1    0    0    -1  
+$EndComp
+Text GLabel 10700 3900 2    60   UnSpc ~ 0
+ROW7
+Text GLabel 10700 1800 2    60   UnSpc ~ 0
+ROW4
+$Comp
+L NPN Q?
+U 1 1 4B8EB534
+P 10450 2200
+F 0 "Q?" H 10450 2050 50  0000 R CNN
+F 1 "NPN" H 10450 2350 50  0000 R CNN
+	1    10450 2200
+	1    0    0    -1  
+$EndComp
+$Comp
+L GND #PWR?
+U 1 1 4B8EB533
+P 10550 2550
+F 0 "#PWR?" H 10550 2550 30  0001 C CNN
+F 1 "GND" H 10550 2480 30  0001 C CNN
+	1    10550 2550
+	1    0    0    -1  
+$EndComp
+$Comp
+L R R?
+U 1 1 4B8EB532
+P 9850 2200
+F 0 "R?" V 9930 2200 50  0000 C CNN
+F 1 "4k7" V 9850 2200 50  0000 C CNN
+	1    9850 2200
+	0    1    1    0   
+$EndComp
+Text GLabel 9450 2200 0    60   UnSpc ~ 0
+CTRLR4
+Text GLabel 9450 1800 0    60   UnSpc ~ 0
+CTRLC4
+$Comp
+L R R?
+U 1 1 4B8EB531
+P 9850 1800
+F 0 "R?" V 9930 1800 50  0000 C CNN
+F 1 "100" V 9850 1800 50  0000 C CNN
+	1    9850 1800
+	0    1    1    0   
+$EndComp
+Text GLabel 10200 1800 2    60   UnSpc ~ 0
+COL4
+Text GLabel 8050 1800 2    60   UnSpc ~ 0
+COL3
+$Comp
+L R R?
+U 1 1 4B8EB530
+P 7700 1800
+F 0 "R?" V 7780 1800 50  0000 C CNN
+F 1 "100" V 7700 1800 50  0000 C CNN
+	1    7700 1800
+	0    1    1    0   
+$EndComp
+Text GLabel 7300 1800 0    60   UnSpc ~ 0
+CTRLC3
+Text GLabel 7300 2200 0    60   UnSpc ~ 0
+CTRLR3
+$Comp
+L R R?
+U 1 1 4B8EB52F
+P 7700 2200
+F 0 "R?" V 7780 2200 50  0000 C CNN
+F 1 "4k7" V 7700 2200 50  0000 C CNN
+	1    7700 2200
+	0    1    1    0   
+$EndComp
+$Comp
+L GND #PWR?
+U 1 1 4B8EB52E
+P 8400 2550
+F 0 "#PWR?" H 8400 2550 30  0001 C CNN
+F 1 "GND" H 8400 2480 30  0001 C CNN
+	1    8400 2550
+	1    0    0    -1  
+$EndComp
+$Comp
+L NPN Q?
+U 1 1 4B8EB52D
+P 8300 2200
+F 0 "Q?" H 8300 2050 50  0000 R CNN
+F 1 "NPN" H 8300 2350 50  0000 R CNN
+	1    8300 2200
+	1    0    0    -1  
+$EndComp
+Text GLabel 8550 1800 2    60   UnSpc ~ 0
+ROW3
+Text GLabel 8550 750  2    60   UnSpc ~ 0
+ROW1
+$Comp
+L NPN Q?
+U 1 1 4B8EB523
+P 8300 1150
+F 0 "Q?" H 8300 1000 50  0000 R CNN
+F 1 "NPN" H 8300 1300 50  0000 R CNN
+	1    8300 1150
+	1    0    0    -1  
+$EndComp
+$Comp
+L GND #PWR?
+U 1 1 4B8EB522
+P 8400 1500
+F 0 "#PWR?" H 8400 1500 30  0001 C CNN
+F 1 "GND" H 8400 1430 30  0001 C CNN
+	1    8400 1500
+	1    0    0    -1  
+$EndComp
+$Comp
+L R R?
+U 1 1 4B8EB521
+P 7700 1150
+F 0 "R?" V 7780 1150 50  0000 C CNN
+F 1 "4k7" V 7700 1150 50  0000 C CNN
+	1    7700 1150
+	0    1    1    0   
+$EndComp
+Text GLabel 7300 1150 0    60   UnSpc ~ 0
+CTRLR1
+Text GLabel 7300 750  0    60   UnSpc ~ 0
+CTRLC1
+$Comp
+L R R?
+U 1 1 4B8EB520
+P 7700 750
+F 0 "R?" V 7780 750 50  0000 C CNN
+F 1 "100" V 7700 750 50  0000 C CNN
+	1    7700 750 
+	0    1    1    0   
+$EndComp
+Text GLabel 8050 750  2    60   UnSpc ~ 0
+COL1
+Text GLabel 10200 750  2    60   UnSpc ~ 0
+COL2
+$Comp
+L R R?
+U 1 1 4B8EB4D2
+P 9850 750
+F 0 "R?" V 9930 750 50  0000 C CNN
+F 1 "100" V 9850 750 50  0000 C CNN
+	1    9850 750 
+	0    1    1    0   
+$EndComp
+Text GLabel 9450 750  0    60   UnSpc ~ 0
+CTRLC2
+Text GLabel 9450 1150 0    60   UnSpc ~ 0
+CTRLR2
+$Comp
+L R R?
+U 1 1 4B8EB48C
+P 9850 1150
+F 0 "R?" V 9930 1150 50  0000 C CNN
+F 1 "4k7" V 9850 1150 50  0000 C CNN
+	1    9850 1150
+	0    1    1    0   
+$EndComp
+$Comp
+L GND #PWR?
+U 1 1 4B8EB440
+P 10550 1500
+F 0 "#PWR?" H 10550 1500 30  0001 C CNN
+F 1 "GND" H 10550 1430 30  0001 C CNN
+	1    10550 1500
+	1    0    0    -1  
+$EndComp
+$Comp
+L NPN Q?
+U 1 1 4B8EB436
+P 10450 1150
+F 0 "Q?" H 10450 1000 50  0000 R CNN
+F 1 "NPN" H 10450 1300 50  0000 R CNN
+	1    10450 1150
+	1    0    0    -1  
+$EndComp
+Text GLabel 10700 750  2    60   UnSpc ~ 0
+ROW2
+$Comp
+L ATMEGA8-AI IC?
+U 1 1 4B8EB0EE
+P 2350 2750
+F 0 "IC?" H 1650 3900 50  0000 L BNN
+F 1 "ATMEGA8-AI" H 2600 1250 50  0000 L BNN
+F 2 "TQFP32" H 2875 1175 50  0001 C CNN
+	1    2350 2750
+	1    0    0    -1  
+$EndComp
+$EndSCHEMATC
