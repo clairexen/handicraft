@@ -1,0 +1,2 @@
+There is a bug in cbmc-5-8 that makes this test fail. But cbmc-5-7 and current
+git head (988b818) work fine. So I guess they fixed the issue already in git head.

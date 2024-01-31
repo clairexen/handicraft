@@ -1,0 +1,130 @@
+// Tested with orbit.craft (aka "Deathtrap Mk 1")
+
+function LaunchToOrbit {
+	print "Launching " + ship:name + ".".
+	lights on. rcs off. sas off. stage.
+
+	print "Rotating east (target pitch=60).".
+	set x to 0.
+	lock steering to heading(90, 90-x).
+	until x > 30 {
+		set x to x + 1.
+		wait 0.5.
+	}
+	lock steering to heading(90, 60).
+
+	print "Waiting until solid fuel runs out.".
+	for r in stage:resources {
+		if r:name = "SolidFuel" {
+			wait until r:amount = 0.
+		}
+	}
+
+	print "Bye bye solid boosters.".
+	stage.
+
+	print "Burning until apoapsis is 300 km.".
+	function get_throttle_apoapsis_300km {
+		set a to ship:orbit:apoapsis.
+		if a < 280000 {
+			return 1.0.
+		}
+		if a >= 300000 {
+			return 0.0.
+		}
+		return 1.0 - 0.9*((a - 280000) / 20000).
+	}
+	lock throttle to get_throttle_apoapsis_300km().
+	wait until ship:orbit:apoapsis >= 300000.
+	lock throttle to 0.
+
+	print "Waiting for vessel to get of atmosphere.".
+	wait until ship:altitude > 80000.
+
+	print "Warping until apoapsis minus 30 seconds.".
+	unlock steering.
+	kuniverse:timewarp:warpto(time:seconds + eta:apoapsis - 30).
+	wait until eta:apoapsis < 30.
+
+	print "Reorienting vessel in prograde direction.".
+	lock steering to heading(90, 0).
+	rcs on. wait 5. rcs off.
+	wait until eta:apoapsis < 5.
+
+	print "Circularizing orbit.".
+	set I to 0.
+	set last_t to time:seconds - 0.01.
+	function get_signed_eta_apoapsis {
+		set a to eta:apoapsis.
+		set p to eta:periapsis.
+		if a > p {
+			set a to -(2*(a-p)-a).
+		}
+		return a.
+	}
+	function get_circularize_pitch {
+		set dt to last_t - time:seconds.
+		set last_t to time:seconds.
+		set I to I + dt*(get_signed_eta_apoapsis()-5).
+		return -2*(get_signed_eta_apoapsis()-5) + I.
+	}
+	function get_circularize_throttle {
+		if ship:orbit:eccentricity > 0.1 {
+			return 1.0.
+		}
+		return 0.01 + 9.9*ship:orbit:eccentricity.
+	}
+	function get_increasing_eccentricity {
+		if ship:orbit:eccentricity > last_eccentricity {
+			return 1.
+		}
+		set last_eccentricity to ship:orbit:eccentricity.
+		return 0.
+	}
+	lock steering to heading(90, get_circularize_pitch()).
+	lock throttle to get_circularize_throttle().
+	wait until ship:orbit:eccentricity < 0.1.
+	lock steering to heading(90, 0).
+	set last_eccentricity to ship:orbit:eccentricity.
+	wait until get_increasing_eccentricity().
+	lock throttle to 0.
+
+	print "Reorienting vessel in retrograde direction.".
+	lock steering to heading(-90, 0).
+	wait 40.
+
+	print "In orbit with eccentricity " + ship:orbit:eccentricity + ".".
+	print "Final apoapsis: " + ship:orbit:apoapsis.
+	print "Final periapsis: " + ship:orbit:periapsis.
+	wait 5.
+
+	print "Breaking orbit (target periapsis=50km).".
+	lock throttle to 1.
+	wait until ship:orbit:periapsis < 50000.
+	lock throttle to 0.
+	wait 5. stage. wait 5.
+
+	print "Warping until close to periapsis.".
+	kuniverse:timewarp:warpto(time:seconds + eta:periapsis - 60).
+
+	print "Waiting until periapsis minus 90 seconds.".
+	lock steering to ship:retrograde.
+	wait until eta:periapsis < 90.
+
+	print "Re-entry burn (small solid booster).".
+	stage.
+	for r in stage:resources {
+		if r:name = "SolidFuel" {
+			wait until r:amount = 0.
+		}
+	}
+	stage.
+
+	print "Waiting for altitude to drop below 2km.".
+	wait until ship:altitude < 2000.
+	unlock steering.
+	unlock throttle.
+	stage.
+}
+
+LaunchToOrbit.

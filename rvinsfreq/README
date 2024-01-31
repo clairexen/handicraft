@@ -1,0 +1,22 @@
+Count instrustions in riscv64 debian packages
+=============================================
+
+Usage:
+
+1. Make sure you have a working riscv64-unknown-elf-objdump in your PATH
+
+2. Count instructions in base image
+
+	bash base.sh
+
+3. Create large Makefile for packages
+
+	bash packages.sh
+
+4. Analyze individual packages
+
+	make -k -j$(nproc)
+
+5. Combine results into one file
+
+	python3 combine.py database/* | sort -n > combined.txt

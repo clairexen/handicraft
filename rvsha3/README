@@ -1,0 +1,31 @@
+Reference implementation of Keccak-f[1600] (SHA-3, SHAKE) optimized for RV64B
+(RISC-V 64 bit with B-extension) using ROT-Immediate and AND-Complement.
+
+This implementation of Keccak-p requires 28 64-bit registers, i.e. all RISC-V
+registers except zero, sp, gp, and tp. 25 of those registers are used to hold
+the 1600-bit state and 3 registers are used as temporaries. We also need 5
+words on the stack.
+
+This implementation executes 145 instructions per round (Keccak-p is one round,
+Keccak-f is 24 rounds for SHA-3). The exact instruction mix is as follows.
+
+     1    0.7%   AUIPC
+     1    0.7%   MV
+     5    3.5%   SD
+     8    5.5%   LD
+    25   17.2%   ANDC
+    29   20.0%   ROLI
+    76   52.4%   XOR
+
+This corresponds to the following instructions-per-byte payload (IPB) numbers
+for the different SHA-3 instances:
+
+    Instance   Block size    IPB
+
+    SHA3-224   144 Bytes    24.2
+    SHA3-256   136 Bytes    25.6
+    SHA3-384   104 Bytes    33.5
+    SHA3-512    72 Bytes    48.3
+
+The test vectors in "expected.txt" are from this source:
+https://github.com/XKCP/XKCP/blob/master/tests/TestVectors/KeccakF-1600-IntermediateValues.txt

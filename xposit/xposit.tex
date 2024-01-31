@@ -1,0 +1,71 @@
+\documentclass[twoside,11pt]{book}
+
+\input{preamble}
+\usepackage[nottoc,notlot,notlof]{tocbibind}
+\usepackage[normalem]{ulem}
+\usepackage{multicol}
+\usepackage{tikz}
+\usetikzlibrary{calc}
+\usetikzlibrary{patterns}
+
+\DeclareRobustCommand{\hsout}[1]{\texorpdfstring{\sout{#1}}{#1}}
+
+\newcommand{\specrev}{0.0-draft}
+
+\begin{document}
+
+\title{\vspace{-0.7in}\Large {\bf RISC-V XPosit Extension} \\
+    Document Version \specrev \vspace{-0.1in}
+}
+
+% \author{Editors: Clifford Wolf$^{1}$, Rex McCrary $^{2}$ \\
+%     $^{1}$Symbiotic GmbH, $^{2}$Advanced Micro Devices, Inc. \\
+%     {\tt clifford@symbioticeda.com}, {\tt rmccrary@amd.com} \\
+%     \today
+% }
+\author{Editor: Clifford Wolf \\
+    Symbiotic GmbH \\
+    {\tt clifford@symbioticeda.com} \\
+    \today
+}
+\date{}
+\maketitle
+
+% Contributors to all versions of the spec in
+% alphabetical order (please contact editors to suggest
+% corrections):
+% %
+% John Gustafson,
+% and Clifford Wolf.
+
+This document is released under a Creative Commons Attribution 4.0
+International License.
+
+\markboth{RISC-V XPosit Extension V\specrev}
+{RISC-V XPosit Extension V\specrev}
+\thispagestyle{empty}
+
+\frontmatter
+
+\tableofcontents
+
+\mainmatter
+
+\input{intro}
+
+\chapter*{Change History}\label{change-history}
+\addcontentsline{toc}{chapter}{Change History}
+
+\begin{center}
+\begin{tabular}{lll}
+Date & Rev & Changes \\
+\hline
+????-??-?? & 0.0  & Initial Draft \\
+\end{tabular}
+\end{center}
+
+% \nocite{*} % get all entries from the bib data file
+\bibliographystyle{plain}
+\bibliography{xposit}
+
+\end{document}

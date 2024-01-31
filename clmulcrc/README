@@ -1,0 +1,57 @@
+Example code for calculating CRCs using the CLMUL "folding" method
+==================================================================
+
+Running this example code:
+
+	python3 crcfold.py
+	gcc -o clmulcrc -Wall -Os clmulcrc.c -lz
+	./clmulcrc
+
+Or simply:
+
+	bash run.sh
+
+For example for CRC32Q the CRC main loop would look like this (using 64-bit RISC-V XBitmanip instructions):
+
+	; Registers:
+	; a0   upper half of state
+	; a1   lower half of state
+	; a2   next 64-bit word
+	; t0   data pointer
+	; t1   upper half os clmul result
+	; t2   lower half of clmul result
+	; t3   folding constant (0xA1FA6BEC)
+
+	; load next word, increment ptr
+	ld a2, 0(t0)
+	addi t0, t0, 8
+
+	; calc shifted values
+	clmulh t1, a0, t3
+	clmul t2, a0, t3
+
+	; fold into new state
+	xor a0, a1, t1
+	xor a1, a2, t2
+
+a0 must be initialized with the first 8 bytes of the message
+
+a1 must be initialized with the second 8 bytes of the message
+
+After running the above 6 instructions for each consecutive 8 bytes block,
+a0:a1 contains a 16 bytes long message with the same CRC32Q as the original
+message.
+
+Note that this code expects all 8-bytes blocks already in machine endian format
+in memory! (RISC-V uses little endian, the way messages are usually stored is
+a big endian format. So you might need one additional bswap instruction in
+each iteration to fix the endianness of the loaded word.)
+
+
+References:
+
+Fast CRC Computation Using PCLMULQDQ Instruction
+https://www.intel.com/content/dam/www/public/us/en/documents/white-papers/fast-crc-computation-generic-polynomials-pclmulqdq-paper.pdf
+
+CRC Catalogue
+http://reveng.sourceforge.net/crc-catalogue/legend.htm

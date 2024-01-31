@@ -1,0 +1,26 @@
+[tasks]
+boolector
+boolector_syn
+yices
+yices_syn
+abc
+
+[options]
+mode bmc
+depth 22
+
+[engines]
+boolector: smtbmc boolector
+boolector_syn: smtbmc --syn boolector
+yices: smtbmc yices
+yices_syn: smtbmc --syn yices
+abc: abc bmc3
+
+[script]
+# verific -sv test.sv
+# verific -import top
+read_verilog -sv test.sv
+prep -flatten -top top
+
+[files]
+test.sv

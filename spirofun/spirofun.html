@@ -1,0 +1,109 @@
+<html>
+<head>
+  <title>Drawing some fun spirals</title>
+  <!-- <link rel="shortcut icon" href="favicon.ico" /> -->
+</head>
+<body style="background:#aaa; color:#000;" onload="draw()">
+
+<pre style="background:#eee;">
+
+  spirofun.html - Drawing some fun spirals
+  Copyright (C) 2018  Clifford Wolf &lt;clifford@clifford.at&gt;
+
+  Permission to use, copy, modify, and/or distribute this software for any
+  purpose with or without fee is hereby granted, provided that the above
+  copyright notice and this permission notice appear in all copies.
+  
+  ---------------------------------------------------------------------
+  
+  Tested with Chromium. A browser with canvas support is needed to use
+  this script.
+
+</pre>
+
+<p><canvas id="display" width="600" height="600"></canvas></p>
+
+<p><form><textarea cols="80" rows="15" id="code">
+setAmpl("x", 80); setPhase("x", 10);  setFreq("x", 60);  setDamp("x", 50);
+setAmpl("y", 80); setPhase("y", 50);  setFreq("y", 50);  setDamp("y", 50);
+setAmpl("p",  0); setPhase("p", 70);  setFreq("p", 10);  setDamp("p", 50);
+setAmpl("q",  0); setPhase("q", 90);  setFreq("q", 12);  setDamp("q", 50);
+run(200);
+
+setAmpl("x", 50); setPhase("x", 10);  setFreq("x", 20);  setDamp("x", 50);
+setAmpl("y", 60); setPhase("y", 30);  setFreq("y", 20);  setDamp("y", 50);
+setAmpl("p", 55); setPhase("p", 70);  setFreq("p", 30);  setDamp("p", 90);
+setAmpl("q", 65); setPhase("q", 75);  setFreq("q", 35);  setDamp("q", 90);
+run(500);
+</textarea><br/>
+<input type="button" value="Draw!" onClick="draw()"/></form></p>
+
+<script language="JavaScript"><!--
+var canvas = document.getElementById("display");
+var ctx = canvas.getContext('2d');
+
+var styleIdx = 0;
+var styles = [
+	"rgb(0,0,0)",
+	"rgb(255,0,0)",
+	"rgb(0,255,0)",
+	"rgb(0,0,255)",
+	"rgb(255,255,0)",
+	"rgb(255,0,255)",
+	"rgb(0,255,255)"
+];
+
+config = {
+	xa: 0, xp: 0, xf: 0, xd: 0,
+	ya: 0, yp: 0, yf: 0, yd: 0,
+	pa: 0, pp: 0, pf: 0, pd: 0,
+	qa: 0, qp: 0, qf: 0, qd: 0,
+}
+
+function setAmpl(n, v) {
+	config[n + "a"] = +v;
+}
+
+function setPhase(n, v) {
+	config[n + "p"] = +v;
+}
+
+function setFreq(n, v) {
+	config[n + "f"] = +v;
+}
+
+function setDamp(n, v) {
+	config[n + "d"] = +v;
+}
+
+function getPos(t) {
+	var x = config.xa * Math.sin(2*Math.PI*(t * config.xf + config.xp)/100) * Math.exp(-(t * config.xd / 10000));
+	var y = config.ya * Math.sin(2*Math.PI*(t * config.yf + config.yp)/100) * Math.exp(-(t * config.yd / 10000));
+	var p = config.pa * Math.sin(2*Math.PI*(t * config.pf + config.pp)/100) * Math.exp(-(t * config.pd / 10000));
+	var q = config.qa * Math.sin(2*Math.PI*(t * config.qf + config.qp)/100) * Math.exp(-(t * config.qd / 10000));
+
+	return [x + 0.7*p - 0.7*q, y + 0.7*p + 0.7*q];
+}
+
+function run(maxtime) {
+	ctx.strokeStyle = styles[styleIdx];
+	styleIdx = (styleIdx + 1) % styles.length;
+
+	ctx.beginPath();
+	for (var t = 0; t < maxtime; t += 0.001) {
+		xy = getPos(t);
+		ctx.lineTo(300 + 2*xy[0], 300 + 2*xy[1]);
+	}
+	ctx.stroke();
+}
+
+function draw() {
+	styleIdx = 0;
+	ctx.fillStyle = "rgb(255,255,255)";
+	ctx.fillRect(0, 0, 600, 600);
+	window.eval(document.getElementById("code").textContent);
+}
+//--></script>
+
+</body>
+</html>

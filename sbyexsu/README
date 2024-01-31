@@ -1,0 +1,14 @@
+SymbiYosys example based on https://github.com/makaimann/Stanford-FAST
+
+Results (on one random hardware platform, software versions from 2018-11-27):
+
+	| engine     |    default | 2x FIFO_DWIDTH | with ARBITER |
+	|------------|------------|----------------|--------------|
+	| boolector  | 12 seconds |     17 seconds |   28 seconds |
+	| cvc4x      | 15 seconds |     22 seconds |   24 seconds |
+	| bmc3       | 19 seconds |     28 seconds |   31 seconds |
+	| yices      | 43 seconds |     51 seconds |   77 seconds |
+	|------------|------------|----------------|--------------|
+	| pdr        | 33 seconds |    105 seconds |   46 seconds |
+
+Using the regular "cvc4" engine (without cadical) did not finish within a day.

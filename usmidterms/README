@@ -1,0 +1,5 @@
+2018 Midterm election data set from politico.com.
+Last updated 2018-11-15 at 12:20 UTC.
+Scripts: download.sh, extract.py, collect.py.
+
+See data.json and data.txt for extracted data.

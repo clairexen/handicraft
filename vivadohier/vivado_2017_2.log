@@ -1,0 +1,36 @@
+#-----------------------------------------------------------
+# Vivado v2017.2 (64-bit)
+# SW Build 1909853 on Thu Jun 15 18:39:10 MDT 2017
+# IP Build 1909766 on Thu Jun 15 19:58:00 MDT 2017
+# Start of session at: Thu Oct 18 16:49:57 2018
+# Process ID: 15458
+# Current directory: /home/clifford/Work/handicraft/2018/vivadohier
+# Command line: vivado -mode batch -source test.tcl -nojournal -log vivado_2017_2.log
+# Log file: /home/clifford/Work/handicraft/2018/vivadohier/vivado_2017_2.log
+# Journal file: 
+#-----------------------------------------------------------
+source test.tcl
+# read_verilog test.sv
+# synth_design -top test -part xc7a15tcsg325-1
+Command: synth_design -top test -part xc7a15tcsg325-1
+Starting synth_design
+Attempting to get a license for feature 'Synthesis' and/or device 'xc7a15t-csg325'
+INFO: [Common 17-349] Got license for feature 'Synthesis' and/or device 'xc7a15t-csg325'
+INFO: Launching helper process for spawning children vivado processes
+INFO: Helper process launched with PID 15473 
+---------------------------------------------------------------------------------
+Starting Synthesize : Time (s): cpu = 00:00:05 ; elapsed = 00:00:05 . Memory (MB): peak = 1179.645 ; gain = 75.996 ; free physical = 149 ; free virtual = 4207
+---------------------------------------------------------------------------------
+INFO: [Synth 8-638] synthesizing module 'test' [/home/clifford/Work/handicraft/2018/vivadohier/test.sv:1]
+INFO: [Synth 8-638] synthesizing module 'sub' [/home/clifford/Work/handicraft/2018/vivadohier/test.sv:11]
+INFO: [Synth 8-256] done synthesizing module 'sub' (1#1) [/home/clifford/Work/handicraft/2018/vivadohier/test.sv:11]
+ERROR: [Synth 8-146] cannot resolve hierarchical name [/home/clifford/Work/handicraft/2018/vivadohier/test.sv:8]
+ERROR: [Synth 8-285] failed synthesizing module 'test' [/home/clifford/Work/handicraft/2018/vivadohier/test.sv:1]
+---------------------------------------------------------------------------------
+Finished Synthesize : Time (s): cpu = 00:00:06 ; elapsed = 00:00:06 . Memory (MB): peak = 1220.145 ; gain = 116.496 ; free physical = 201 ; free virtual = 4230
+---------------------------------------------------------------------------------
+synthesize failed
+4 Infos, 0 Warnings, 0 Critical Warnings and 3 Errors encountered.
+synth_design failed
+ERROR: [Common 17-69] Command failed: Vivado Synthesis failed
+INFO: [Common 17-206] Exiting Vivado at Thu Oct 18 16:50:15 2018...

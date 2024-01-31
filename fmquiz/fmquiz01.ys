@@ -1,0 +1,12 @@
+# See https://twitter.com/zipcpu/status/1035542314725400576
+# This proves that both properties are equivalent
+
+verific -formal fmquiz01.sv
+verific -import test1 test2
+prep
+miter -assert -flatten test1 test1_miter
+miter -assert -flatten test2 test2_miter
+miter -equiv -flatten -make_outputs test1_miter test2_miter miter
+hierarchy -top miter
+opt_clean
+sat -seq 10 -prove trigger 0 -dump_vcd tests.vcd -show-public
