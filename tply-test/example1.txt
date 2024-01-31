@@ -1,0 +1,117 @@
+
+signal output(10) SensorPower_o;
+signal output(11) SensorStart_o;
+signal output(12) AdcStart_o;
+signal output(13) CpuIntr_o;
+
+signal input(20) Enable_i;
+signal input(21) SensorReady_i;
+signal input(22) AdcDone_i;
+
+word input(47:32) AdcValue_i;
+word output(31:16) CpuValue_o;
+
+signal Store_o;
+signal TimerPreset_o;
+signal TimerEnable_o;
+
+signal TimerOvfl_i;
+signal DiffTooLarge_i;
+
+word parameter AbsDiffMax_p;
+word parameter CounterPreset_p;
+
+word AbsDiff_t;
+
+unit WordReg U1 begin
+	D: AdcValue_i;
+	Q: CpuValue_o;
+	EN: Store_o;
+end
+
+unit AbsDiff U2 begin
+	A: AdcValue_i;
+	B: CpuValue_o;
+	Y: AbsDiff_t;
+end
+
+unit CompareGT U3 begin
+	A: AbsDiff_t;
+	B: AbsDiffMax_p;
+	Y: DiffTooLarge_i;
+end
+
+unit Counter U4 begin
+	INIT: CounterPreset_p;
+	RST: TimerPreset_o;
+	EN: TimerEnable_o;
+	OF: TimerOvfl_i;
+end
+
+fsm FSM1 begin
+	TimerPreset_o := 0;
+	TimerEnable_o := 1;
+	SensorPower_o := 0;
+	SensorStart_o := 0;
+	AdcStart_o := 0;
+	Store_o := 0;
+	CpuIntr_o := 0;
+	goto Off if not Enable_i and not @Off;
+
+Off:
+	TimerPreset_o := 1;
+	TimerEnable_o := 0;
+	goto Idle if Enable_i;
+
+Idle:
+	if TimerOvf_i begin
+		TimerPreset_o := 1;
+		SensorPower_o := 1;
+		next;
+	end
+
+Power:
+	SensorPower_o := 1;
+	SensorStart_o := 1;
+	next;
+
+Settle:
+	SensorPower_o := 1;
+	SensorStart_o := 1;
+	if SensorReady_i begin
+		AdcStart_o := 1;
+		next;
+	end
+
+Measure:
+	AdcStart_o := 1;
+	SensorPower_o := 1;
+	SensorStart_o := 1;
+	if AdcDone_i begin
+		if DiffTooLarge_i begin
+			Store_o := 1;
+			next;
+		end
+		goto Idle;
+	end
+
+Notify:
+	CpuIntr_o := 1;
+	goto Idle;
+end
+
+signal FooWaiting_o;
+signal BarWaiting_o;
+
+fsm FSM2 begin
+		BarWaiting_o := 0;
+		FooWaiting_o := 0;
+	Foo:
+		goto Bar if DiffTooLarge_i or SensorReady_i;
+		goto Bar if TimerOvf_i and Enable_i;
+		FooWaiting_o := 1;
+	Bar:
+		goto Foo if AdcDone_i;
+		BarWaiting_o := 1;
+end
+

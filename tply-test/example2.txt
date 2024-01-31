@@ -1,0 +1,63 @@
+
+signal output(10) SensorPower_o;
+signal output(11) SensorStart_o;
+signal output(12) AdcStart_o;
+signal output(13) CpuIntr_o;
+
+signal input(20) Enable_i;
+signal input(21) SensorReady_i;
+signal input(22) AdcDone_i;
+
+word input(47:32) AdcValue_i;
+word reg output(31:16) CpuValue_o;
+
+word parameter AbsDiffMax_p;
+word parameter CounterPreset_p;
+
+unit Counter Timer;
+
+fsm FSM1 begin
+	AdcStart_o := 0;
+	CpuIntr_o := 0;
+	goto Off if !Enable_i;
+
+Off:
+	SensorPower_o := 0;
+	SensorStart_o := 0;
+	Timer.set(CounterPreset_p);
+	goto Idle if Enable_i;
+
+Idle:
+	if Timer.overflow() begin
+		Timer.set(CounterPreset_p);
+		SensorPower_o := 1;
+		next;
+	end
+
+Power:
+	SensorStart_o := 1;
+	next;
+
+Settle:
+	if SensorReady_i begin
+		AdcStart_o := 1;
+		next;
+	end
+
+Measure:
+	AdcStart_o := 1;
+	if AdcDone_i begin
+		SensorPower_o := 0;
+		SensorStart_o := 0;
+		if IsGT(AbsDiff(AdcValue_i, CpuValue_o), AbsDiffMax_p) begin
+			CpuValue_o <= AdcValue_i;
+			next;
+		end
+		goto Idle;
+	end
+
+Notify:
+	CpuIntr_o := 1;
+	goto Idle;
+end
+

@@ -1,0 +1,122 @@
+<html>
+<head><!--
+/*
+ *  WtcSim - a quick&dirty simulator regarding discussion point 5 in [1]
+ *
+ *  Copyright (C) 2012  Clifford Wolf <clifford@clifford.at>
+ *
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU Lesser General Public License as published by
+ *  the Free Software Foundation; either version 3 of the License, or
+ *  (at your option) any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU Lesser General Public License for more details.
+ *
+ *  You should have received a copy of the GNU Lesser General Public License
+ *  along with this program; if not, write to the Free Software
+ *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ *
+ *  [1] http://www.benthamscience.com/open/tociej/articles/V002/35TOCIEJ.htm
+ */
+-->
+  <title>WtcSim by Clifford Wolf &lt;http://www.clifford.at/&gt;</title>
+  <script src="springjs.js" type="text/javascript"></script>
+</head>
+<body style="background:#aaa; color:#000;" onLoad="main()">
+<center>
+<p><b>WtcSim - a quick&dirty simulator regarding discussion point 5 in [1]</b><br/>
+<small>Copyright (C) 2012  Clifford Wolf &lt;clifford@clifford.at&gt;</small></p>
+<canvas id="screen" width="400" height="400"></canvas><br/>
+</center>
+<p/>
+<small>[<a href="http://www.benthamscience.com/open/tociej/articles/V002/35TOCIEJ.htm">1</a>]
+Fourteen Points of Agreement with Official Government Reports on the World Trade Center Destruction<br/>
+Steven E. Jones, Frank M. Legge, Kevin R. Ryan, Anthony F. Szamboti and James R. Gourley</small>
+
+<script language="JavaScript"><!--
+
+var grav = 9.81, timed = 0.1;
+var time;
+
+// .y = position from ground (m), .v = velocity towards ground (m/s), .m = relative mass, .f = falling (boolean)
+var masses = [];
+
+// .y and .v for the reference ball
+var ball_y, ball_v;
+
+function reset()
+{
+	time = 0;
+	ball_y = 300;
+	ball_v = 0;
+
+	masses = [];
+	for (var i = 0; i < 100; i++) {
+		var mass = { y: i*3, v: 0, m: 1, f: i > 70 };
+		masses.push(mass);
+	}
+}
+
+function update()
+{
+	ctx = document.getElementById("screen").getContext('2d');
+	ctx.fillStyle = "rgb(0,0,0)";
+	ctx.fillRect(0, 0, 400, 400);
+
+	ctx.strokeStyle = "rgb(200,200,200)";
+	ctx.fillStyle = "rgb(200,200,200)";
+
+	for (var i = 0; i < masses.length; i++) {
+		ctx.lineWidth = Math.sqrt(masses[i].m);
+		ctx.beginPath();
+		ctx.moveTo(100, 380-masses[i].y);
+		ctx.lineTo(200, 380-masses[i].y);
+		ctx.stroke();
+	}
+
+	ctx.beginPath();
+	ctx.moveTo(300, 380-ball_y);
+	ctx.arc(300, 380-ball_y, 10, 0, 2*Math.PI);
+	ctx.fill();
+
+	ball_y = ball_y - ball_v*timed - grav*timed*timed/2;
+	ball_v = ball_v + grav*timed;
+
+	for (var i = 0; i < masses.length; i++) {
+		if (masses[i].f) {
+			masses[i].y = masses[i].y - masses[i].v*timed - grav*timed*timed/2;
+			masses[i].v = masses[i].v + grav*timed;
+		}
+	}
+
+	for (var i = 0; i < masses.length-1; i++) {
+		while (i < masses.length-1 && masses[i].y >= masses[i+1].y) {
+			masses[i].v = masses[i].v*masses[i].m + masses[i+1].v*masses[i+1].m;
+			masses[i].m = masses[i].m + masses[i+1].m;
+			masses[i].v /= masses[i].m;
+			masses[i].f = true;
+			masses.splice(i+1, 1);
+		}
+	}
+
+	time += timed;
+	if (time > 10) {
+		// return;
+		reset();
+	}
+
+	window.setTimeout(update, 1000*timed);
+}
+
+function main()
+{
+	reset();
+	update();
+}
+
+//--></script>
+
+</body></html>

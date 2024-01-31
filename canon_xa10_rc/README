@@ -1,0 +1,12 @@
+
+Simple IR Sender and Receiver Arduino programs for simulating/testing
+the Canon XA10 HD infrared remote control.
+
+Arduino Pinout:
+---------------
+
+Button 1: PIN 15
+Button 2: PIN 16
+IR LED:  PIN 3
+IR RECV: PIN 2
+

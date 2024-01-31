@@ -1,0 +1,4 @@
+vcd dumpfile example_tb.vcd
+vcd dumpvars -m example_tb -l 0
+vcd dumpon
+run all

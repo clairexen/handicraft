@@ -1,0 +1,7 @@
+
+A simple CUDA example: Calculating LU decomposition of a
+dense matrix (without pivoting) and solve for a given rhs.
+
+For comparison this directory also contains an example app
+that is using CULA to solve the same random linear systems.
+

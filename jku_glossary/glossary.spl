@@ -1,0 +1,29 @@
+
+load "xml";
+load "file";
+load "array";
+
+var xmldoc = xml_parse(file_read("glossary.xml"));
+var lines, files, html;
+
+foreach[] i (xmldoc["//item"].nodes) {
+	// write("====\n");
+	// write("Q: ${xmldoc["$i/term"]}\n");
+	// write("A: ${xmldoc["$i/description"] =~ s/\n//Rg}\n");
+	html ~= "<h3>${xml::xmldoc["$i/term"]}</h3>\n";
+	html ~= "<tt>${xml::xmldoc["$i/description"]}</tt>\n";
+	push lines, "${1000 + rand(9000)}\t${xmldoc["$i/term"] =~ s/[\t\n]/ /Rg}\t${xmldoc["$i/description"] =~ s/[\t\n]/ /Rg}";
+}
+
+array_sort_by_values(lines, function(a,b) { return a > b; });
+array_reindex(lines);
+
+foreach i (lines)
+	files[i#/20] ~= "${lines[i] =~ s/^[0-9]+\t//Rg}\n";
+
+foreach i (files)
+	file_write(fmt("glossary_deck%02d.txt", i), files[i]);
+
+html =~ e/[^\000-\177]/g "&#${ord($0)};";
+file_write("glossary.html", html);
+

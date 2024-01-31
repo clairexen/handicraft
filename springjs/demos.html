@@ -1,0 +1,207 @@
+<html>
+<head><!--
+/*
+ *  Demo for SpringJS - A JavaScript library for mass-spring-system simulation
+ *
+ *  Copyright (C) 2012  Clifford Wolf <clifford@clifford.at>
+ *
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU Lesser General Public License as published by
+ *  the Free Software Foundation; either version 3 of the License, or
+ *  (at your option) any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU Lesser General Public License for more details.
+ *
+ *  You should have received a copy of the GNU Lesser General Public License
+ *  along with this program; if not, write to the Free Software
+ *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ *
+ */
+-->
+  <title>SpringJS by Clifford Wolf &lt;http://www.clifford.at/&gt;</title>
+  <script src="springjs.js" type="text/javascript"></script>
+</head>
+<body style="background:#aaa; color:#000;">
+
+<p><b>Demo for SpringJS - A JavaScript library for mass-spring-system simulation</b><br/>
+<small>Copyright (C) 2012  Clifford Wolf &lt;clifford@clifford.at&gt;</small></p>
+
+<table border="1" cellpadding="10"><tr>
+<!-- ======================================================================== -->
+<tr><td>
+
+<b>Demo #1: Orbits</b><br/>
+<canvas id="scr_orbit" width="400" height="400" onclick="sim_orbit.startstop()"></canvas>
+<script language="JavaScript"><!--
+
+var sim_orbit = (function()
+{
+	var sim = new SpringJS(document.getElementById("scr_orbit"), -110, 110, -110, 110);
+
+	sim.trace_alpha = 0.1;
+	sim.trace(1);
+
+	sim.setup = function() {
+		this.addMass(0, 0, 10, 0);
+		this.masses[0].fx = 0;
+		this.masses[0].fy = 0;
+
+		this.addMass(20, 50, 10, 0);
+		this.masses[1].vx = 15;
+		this.masses[1].vy = -15;
+
+		this.addMass(20, -50, 100, 0);
+		this.masses[2].vx = -5;
+		this.masses[2].vy = -5;
+
+		this.addMass(-80, 0, 3, 0);
+		this.masses[3].vx = 0;
+		this.masses[3].vy = 10;
+
+		this.addSpring(0, 1, 1, 0);
+		this.addSpring(0, 2, 1, 0);
+		this.addSpring(0, 3, 1, 0);
+	};
+
+	sim.init();
+	return sim;
+})();
+
+//--></script>
+
+</td>
+<!-- ======================================================================== -->
+<td>
+
+<b>Demo #2: Spring pendulum</b><br/>
+<canvas id="scr_pendulum" width="400" height="400" onclick="sim_pendulum.startstop()"></canvas>
+<script language="JavaScript"><!--
+
+var sim_pendulum = (function()
+{
+	var sim = new SpringJS(document.getElementById("scr_pendulum"), -110, 110, -110, 110);
+	var M = 10, D = 0.1;
+	var lamda = Math.PI*Math.sqrt(2*M/D);
+
+	sim.trace_alpha = 0.1;
+	sim.trace(1);
+
+	sim.setup = function()
+	{
+		for (var i = -1; i <= 1; i++) {
+			var x = i*50;
+			var y = 50 * Math.cos(2*Math.PI*x/lamda);
+			var v = -100*Math.PI*Math.sin(2*Math.PI*x/lamda)/lamda;
+			var m1 = this.addMass(x, +y, M, 0);
+			var m2 = this.addMass(x, -y, M, 0);
+			this.addSpring(m1, m2, D, 0);
+			this.masses[m1].vx = 1;
+			this.masses[m2].vx = 1;
+			this.masses[m1].vy = +v;
+			this.masses[m2].vy = -v;
+		}
+	};
+
+	sim.update = function()
+	{
+		var delta = 240 + (lamda - 240 % lamda);
+		for (var i = 0; i < this.masses.length; i += 2)
+			if (this.masses[i].x > 120) {
+				this.masses[i+0].x -= delta;
+				this.masses[i+1].x -= delta;
+			}
+	}
+
+	sim.init();
+	return sim;
+})();
+
+//--></script>
+
+</td></tr>
+<!-- ======================================================================== -->
+<tr><td>
+
+<b>Demo #3: Step on string</b><br/>
+<canvas id="scr_string" width="400" height="400" onclick="sim_string.startstop()"></canvas>
+<script language="JavaScript"><!--
+
+var sim_string = (function()
+{
+	var sim = new SpringJS(document.getElementById("scr_string"), -110, 110, -110, 110);
+
+	sim.setup = function()
+	{
+		var last_mass = -1;
+		for (var i = 0; i < 100; i++) {
+			var this_mass = this.addMass(2*i-100, -30, 1, 0);
+			if (last_mass >= 0)
+				this.addSpring(last_mass, this_mass, 1, 0);
+			last_mass = this_mass;
+		}
+		sim.masses[0].fx = sim.masses[0].x;
+		sim.masses[last_mass].fx = sim.masses[last_mass].x;
+		sim.masses[0].fy = -30;
+	};
+
+	sim.update = function()
+	{
+		if (this.time < 10)
+			sim.masses[0].fy = 3*this.time - 30;
+	};
+
+	sim.init();
+	return sim;
+})();
+
+//--></script>
+
+</td>
+<!-- ======================================================================== -->
+<td>
+
+<b>Demo #4: Random Network</b><br/>
+<canvas id="scr_random" width="400" height="400" onclick="sim_random.startstop()"></canvas>
+<script language="JavaScript"><!--
+
+var sim_random = (function()
+{
+	var sim = new SpringJS(document.getElementById("scr_random"), -110, 110, -110, 110);
+
+	sim.trace(0);
+	sim.show_energy = true;
+
+	sim.setup = function()
+	{
+		for (var i = 0; i < 20; i++) {
+			var this_mass = this.addMass(Math.random()*100-50, Math.random()*100-50, 1 + Math.random()*9, 0);
+			if (i == 0) {
+				this.masses[this_mass].fx = this.masses[this_mass].x = 0;
+				this.masses[this_mass].fy = this.masses[this_mass].y = 0;
+			} else {
+				this.masses[this_mass].vx = Math.random() - 0.5;
+				this.masses[this_mass].vy = Math.random() - 0.5;
+			}
+		}
+		for (var i = 0; i < 50; i++) {
+			var m1 = Math.floor(Math.random()*this.masses.length);
+			var m2 = Math.floor(Math.random()*this.masses.length);
+			if (m1 != m2)
+				this.addSpring(m1, m2, 0.05 + Math.random()*0.1, Math.random()*50);
+		}
+	};
+
+	sim.init();
+	return sim;
+})();
+
+//--></script>
+
+</td></tr>
+<!-- ======================================================================== -->
+</table>
+
+</body></html>
