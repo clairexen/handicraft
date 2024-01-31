@@ -1,0 +1,12 @@
+#-----------------------------------------------------------
+# Vivado v2016.4 (64-bit)
+# SW Build 1733598 on Wed Dec 14 22:35:42 MST 2016
+# IP Build 1731160 on Wed Dec 14 23:47:21 MST 2016
+# Start of session at: Wed Dec 21 11:21:24 2016
+# Process ID: 12325
+# Current directory: /home/clifford/Work/handicraft/2016/vivadosig11
+# Command line: vivado -mode batch -source synth.tcl
+# Log file: /home/clifford/Work/handicraft/2016/vivadosig11/vivado.log
+# Journal file: /home/clifford/Work/handicraft/2016/vivadosig11/vivado.jou
+#-----------------------------------------------------------
+source synth.tcl

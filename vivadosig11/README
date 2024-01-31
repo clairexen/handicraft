@@ -1,0 +1,83 @@
+
+Copy&paste from the email exchange with Xilinx support:
+
+-----------------------------------------------------------------------------
+
+It does not look like the problem is related to the ubuntu version, but rather
+to the number of cores in the machine Vivado is running on. The bug is located
+in code that forks off worker processes, and when vivado runs on only a single
+core then it instead runs the worker as part of the main process.
+
+I can reproduce the problem with every Ubuntu version I have tried, including a
+fresh install from the 16.04 image you pointed me to (with all automatic
+updates disabled). It is always the same behavior: If I run my test case in a
+VM with only a single core then everything looks fine, but if I run it in a VM
+with two or more cores, then it crashes.
+
+The zip file I uploaded when opening the SR contained the stack trace generated
+by the vivado fault handler (hs_err_pid12325.log). From there it can easily be
+seen that the segfault happens in a libc routine launched by HUTEnv::setEnv().
+
+	Stack:
+	/lib/x86_64-linux-gnu/libc.so.6(+0x354b0) [0x7f0fe6eff4b0]
+	/lib/x86_64-linux-gnu/libc.so.6(strlen+0x26) [0x7f0fe6f54b96]
+	/lib/x86_64-linux-gnu/libc.so.6(+0x39bb9) [0x7f0fe6f03bb9]
+	/opt/Xilinx/Vivado/2016.4/lib/lnx64.o/librdi_common.so(HUTEnv::setEnv(char const*, char const*)+0xe) [0x7f0fe8037bde]
+	...
+
+Looking at this code location reveals that this function is just a thin wrapper
+for the libc setenv() function:
+
+	$ objdump -Cd /opt/Xilinx/Vivado/2016.4/lib/lnx64.o/librdi_common.so
+	...
+	000000000066dbd0 <HUTEnv::setEnv(char const*, char const*)@@Base>:
+	  66dbd0:       48 83 ec 08             sub    $0x8,%rsp
+	  66dbd4:       ba 01 00 00 00          mov    $0x1,%edx
+	  66dbd9:       e8 e2 cc bc ff          callq  23a8c0 <setenv@plt>
+	  66dbde:       85 c0                   test   %eax,%eax
+	  66dbe0:       0f 94 c0                sete   %al
+	  66dbe3:       48 83 c4 08             add    $0x8,%rsp
+	  66dbe7:       c3                      retq
+	  66dbe8:       0f 1f 84 00 00 00 00    nopl   0x0(%rax,%rax,1)
+	  66dbef:       00
+	...
+
+So I wrote a simple LD_PRELOAD library to intercept and debug this call (see
+attached setenvwrap.c). With that we can easily debug the problem:
+
+	$ LD_PRELOAD=$PWD/setenvwrap.so vivado -mode batch -source synth.tcl
+	...
+	Phase 3 Resynthesis
+	getenv("RDI_VERBOSE") = NULL
+	setenv("RDI_VERBOSE", "False", 1) = 0
+	...
+	WARNING: Calling setenv() with a NULL value has undefined behavior! (name=RDI_VERBOSE, overwrite=1)
+	...
+
+So it seems like the code is trying to first get and save the original value of
+RDI_VERBOSE, then set it to "False", fork the worker processes, and then set it
+back to the original value.
+
+However, the getenv() call for the original value returned NULL, meaning the
+variable was not set at all. This causes the code to call setenv() with NULL as
+value parameter when trying to restore the original value. This is a bug! The
+behavior of setenv() is undefined for a NULL value pointer. Instead, the code
+should call unsetenv() to restore the environment to its original state.
+
+The solution is obvious: Add a check for a NULL value pointer to
+HUTEnv::setEnv() and call unsetenv() instead of setenv() when the value
+argument is a NULL pointer.
+
+The root cause of this problem however seems to be that the "export" command is
+missing when setting RDI_VERBOSE in rdiArgs.sh in the first place. The attached
+"rdiArgs_sh.patch" file contains a fix for this issue.
+
+However, I must strongly advise against only fixing the missing "export"
+command! The use pattern of get-old-value, set-new-value, do-something,
+set-old-value is an intuitive one and therefore it seems not unlikely that it
+is also used elsewhere in vivado. Thus handling setEnv() with a NULL value by
+calling unsetenv() seems like the sane thing to do.
+
+Can you now please finally create a CR with this information so that there is
+at least a slight chance this gets fixed within the next 1-2 years?
+

@@ -1,0 +1,253 @@
+EESchema Schematic File Version 2
+LIBS:kicadtut-rescue
+LIBS:power
+LIBS:device
+LIBS:transistors
+LIBS:conn
+LIBS:linear
+LIBS:regul
+LIBS:74xx
+LIBS:cmos4000
+LIBS:adc-dac
+LIBS:memory
+LIBS:xilinx
+LIBS:microcontrollers
+LIBS:dsp
+LIBS:microchip
+LIBS:analog_switches
+LIBS:motorola
+LIBS:texas
+LIBS:intel
+LIBS:audio
+LIBS:interface
+LIBS:digital-audio
+LIBS:philips
+LIBS:display
+LIBS:cypress
+LIBS:siliconi
+LIBS:opto
+LIBS:atmel
+LIBS:contrib
+LIBS:valves
+LIBS:microchip_pic12mcu
+LIBS:mylib
+LIBS:kicadtut-cache
+EELAYER 25 0
+EELAYER END
+$Descr A4 11693 8268
+encoding utf-8
+Sheet 1 1
+Title ""
+Date ""
+Rev ""
+Comp ""
+Comment1 ""
+Comment2 ""
+Comment3 ""
+Comment4 ""
+$EndDescr
+$Comp
+L R-RESCUE-kicadtut R1
+U 1 1 569E0902
+P 7250 4450
+F 0 "R1" V 7330 4450 40  0000 C CNN
+F 1 "100" V 7257 4451 40  0000 C CNN
+F 2 "" V 7180 4450 30  0001 C CNN
+F 3 "" H 7250 4450 30  0000 C CNN
+	1    7250 4450
+	0    1    1    0   
+$EndComp
+$Comp
+L R-RESCUE-kicadtut R2
+U 1 1 569E0E9C
+P 8450 3100
+F 0 "R2" V 8530 3100 40  0000 C CNN
+F 1 "1k" V 8457 3101 40  0000 C CNN
+F 2 "" V 8380 3100 30  0001 C CNN
+F 3 "" H 8450 3100 30  0000 C CNN
+	1    8450 3100
+	0    1    1    0   
+$EndComp
+$Comp
+L PIC12C508A-I/SN-RESCUE-kicadtut U1
+U 1 1 569E106A
+P 6700 3700
+F 0 "U1" H 6250 4100 50  0000 C CNN
+F 1 "PIC12C508A-I/SN" H 6900 3300 50  0000 C CNN
+F 2 "" H 6700 3700 60  0001 C CNN
+F 3 "" H 6700 3700 60  0000 C CNN
+	1    6700 3700
+	1    0    0    -1  
+$EndComp
+$Comp
+L LED-RESCUE-kicadtut D1
+U 1 1 569E1167
+P 7800 3100
+F 0 "D1" H 7800 3200 50  0000 C CNN
+F 1 "LED" H 7800 3000 50  0000 C CNN
+F 2 "LEDs:LED-5MM" H 7800 3100 60  0001 C CNN
+F 3 "" H 7800 3100 60  0000 C CNN
+	1    7800 3100
+	-1   0    0    1   
+$EndComp
+$Comp
+L MYCONN3 J1
+U 1 1 569E8D5E
+P 5700 4800
+F 0 "J1" H 5650 4450 60  0000 C CNN
+F 1 "MYCONN3" H 5650 5050 60  0000 C CNN
+F 2 "" H 5800 5050 60  0001 C CNN
+F 3 "" H 5800 5050 60  0000 C CNN
+	1    5700 4800
+	1    0    0    -1  
+$EndComp
+$Comp
+L VCC #PWR3
+U 1 1 569E8EFB
+P 6200 4600
+F 0 "#PWR3" H 6200 4700 30  0001 C CNN
+F 1 "VCC" H 6200 4700 30  0000 C CNN
+F 2 "" H 6200 4600 60  0000 C CNN
+F 3 "" H 6200 4600 60  0000 C CNN
+	1    6200 4600
+	1    0    0    -1  
+$EndComp
+$Comp
+L GND-RESCUE-kicadtut #PWR4
+U 1 1 569E8F0F
+P 6200 5150
+F 0 "#PWR4" H 6200 5150 30  0001 C CNN
+F 1 "GND" H 6200 5080 30  0001 C CNN
+F 2 "" H 6200 5150 60  0000 C CNN
+F 3 "" H 6200 5150 60  0000 C CNN
+	1    6200 5150
+	1    0    0    -1  
+$EndComp
+$Comp
+L VCC #PWR1
+U 1 1 569E8F5A
+P 5950 3400
+F 0 "#PWR1" H 5950 3500 30  0001 C CNN
+F 1 "VCC" H 5950 3500 30  0000 C CNN
+F 2 "" H 5950 3400 60  0000 C CNN
+F 3 "" H 5950 3400 60  0000 C CNN
+	1    5950 3400
+	1    0    0    -1  
+$EndComp
+$Comp
+L GND-RESCUE-kicadtut #PWR2
+U 1 1 569E8F6E
+P 5950 4000
+F 0 "#PWR2" H 5950 4000 30  0001 C CNN
+F 1 "GND" H 5950 3930 30  0001 C CNN
+F 2 "" H 5950 4000 60  0000 C CNN
+F 3 "" H 5950 4000 60  0000 C CNN
+	1    5950 4000
+	1    0    0    -1  
+$EndComp
+$Comp
+L VCC #PWR7
+U 1 1 569E8FA5
+P 8850 3000
+F 0 "#PWR7" H 8850 3100 30  0001 C CNN
+F 1 "VCC" H 8850 3100 30  0000 C CNN
+F 2 "" H 8850 3000 60  0000 C CNN
+F 3 "" H 8850 3000 60  0000 C CNN
+	1    8850 3000
+	1    0    0    -1  
+$EndComp
+Wire Wire Line
+	7600 3100 7600 3450
+Wire Wire Line
+	7600 3450 7350 3450
+Wire Wire Line
+	8000 3100 8200 3100
+Wire Wire Line
+	8700 3100 8850 3100
+Wire Wire Line
+	8850 3100 8850 3000
+Wire Wire Line
+	6050 3950 5950 3950
+Wire Wire Line
+	5950 3950 5950 4000
+Wire Wire Line
+	6050 3450 5950 3450
+Wire Wire Line
+	5950 3450 5950 3400
+Wire Wire Line
+	6200 4600 6200 4700
+Wire Wire Line
+	6200 4700 6100 4700
+Wire Wire Line
+	6100 5000 6200 5000
+Wire Wire Line
+	6200 5000 6200 5150
+Wire Wire Line
+	6100 4850 6750 4850
+Wire Wire Line
+	6750 4850 6750 4450
+Wire Wire Line
+	6750 4450 7000 4450
+Wire Wire Line
+	7350 3550 7950 3550
+Wire Wire Line
+	7500 4450 7950 4450
+Text Label 7750 3550 0    60   ~ 0
+INPUT
+Text Label 7800 4450 0    60   ~ 0
+INPUT
+NoConn ~ 7350 3650
+NoConn ~ 7350 3750
+NoConn ~ 7350 3850
+NoConn ~ 7350 3950
+$Comp
+L PWR_FLAG #FLG1
+U 1 1 569E9110
+P 7150 4950
+F 0 "#FLG1" H 7150 5045 30  0001 C CNN
+F 1 "PWR_FLAG" H 7150 5130 30  0000 C CNN
+F 2 "" H 7150 4950 60  0000 C CNN
+F 3 "" H 7150 4950 60  0000 C CNN
+	1    7150 4950
+	1    0    0    -1  
+$EndComp
+$Comp
+L PWR_FLAG #FLG2
+U 1 1 569E9124
+P 7500 4950
+F 0 "#FLG2" H 7500 5045 30  0001 C CNN
+F 1 "PWR_FLAG" H 7500 5130 30  0000 C CNN
+F 2 "" H 7500 4950 60  0000 C CNN
+F 3 "" H 7500 4950 60  0000 C CNN
+	1    7500 4950
+	1    0    0    -1  
+$EndComp
+$Comp
+L GND-RESCUE-kicadtut #PWR5
+U 1 1 569E9138
+P 7150 5100
+F 0 "#PWR5" H 7150 5100 30  0001 C CNN
+F 1 "GND" H 7150 5030 30  0001 C CNN
+F 2 "" H 7150 5100 60  0000 C CNN
+F 3 "" H 7150 5100 60  0000 C CNN
+	1    7150 5100
+	1    0    0    -1  
+$EndComp
+$Comp
+L VCC #PWR6
+U 1 1 569E914C
+P 7500 5100
+F 0 "#PWR6" H 7500 5200 30  0001 C CNN
+F 1 "VCC" H 7500 5200 30  0000 C CNN
+F 2 "" H 7500 5100 60  0000 C CNN
+F 3 "" H 7500 5100 60  0000 C CNN
+	1    7500 5100
+	-1   0    0    1   
+$EndComp
+Wire Wire Line
+	7500 4950 7500 5100
+Wire Wire Line
+	7150 4950 7150 5100
+Text Notes 7050 4700 0    60   ~ 0
+Power flags are strange..
+$EndSCHEMATC

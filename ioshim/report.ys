@@ -1,0 +1,20 @@
+read_verilog ioshim_cpu.v
+read_verilog ioshim_imem.v
+read_verilog ioshim_regs.v
+read_verilog ioshim_alu.v
+
+synth -top ioshim_cpu
+dfflibmap -liberty vsclib013.lib
+
+# flatten
+tee -o timer.abc abc -liberty vsclib013.lib -D 1000 -constr vsclib013.constr
+clean
+
+tee -o report.new stat -liberty vsclib013.lib
+
+flatten
+splitnets -ports
+clean -purge
+
+write_verilog -noattr timer.v
+

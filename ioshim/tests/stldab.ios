@@ -1,0 +1,71 @@
+# expect-io0 42
+# expect-io0 23
+# expect-io0 52
+# expect-io0 33
+
+  ldi r15, 0
+  ldi r14, 1
+  ldi r13, 2
+  ldi r12, 3
+
+  # load A with 23
+  ldi r0, 23
+  ldi r9, 99 # dummy op
+  seta r0
+
+  # load B with 42
+  ldi r0, 42
+  ldi r9, 99 # dummy op
+  setb r0
+
+  # delay
+  nop
+
+  # store in memory at 257:256
+  stab r14, r15
+
+  # load A with 33
+  ldi r0, 33
+  # no dummy op
+  seta r0
+
+  # load B with 52
+  ldi r0, 52
+  # no dummy op
+  setb r0
+
+  # delay
+  nop
+
+  # store in memory at 259:258 (swapped)
+  stab r14, r12
+
+  # load from memory 257:256 (swapped)
+  ldab r14, r14
+
+  # print 42
+  geta r1
+  ldi r9, 99 # dummy op
+  io0 r1
+
+  # print 23
+  getb r1
+  ldi r9, 99 # dummy op
+  io0 r1
+
+  # load from memory 257:256
+  ldab r14, r13
+
+  # print 52
+  geta r1
+  # no dummy op
+  io0 r1
+
+  # print 33
+  getb r1
+  # no dummy op
+  io0 r1
+
+mystop:
+  b mystop
+  nop

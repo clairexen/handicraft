@@ -1,0 +1,55 @@
+  # constants
+  ldi r15, 100  # buffer 0 cnt address
+  ldi r14, 101  # buffer 1 cnt address
+  ldi r13, 0    # high byte of buffer address
+  ldi r11, 2    # step size in address increment
+  ldi r10, 42   # endpoint command
+
+begin:
+
+  # wait for buffer 0, store data size in r1
+wait_buf0:
+  ld r1, r15
+  bz wait_buf0
+  nop
+
+  # use r13:r2 as pointer to buffer 0 data
+  ldi r2, 128
+
+  # copy loop
+  ldab r13, r2      # load first 16 bits from buffer
+copy_buf0:
+  add r2, r11       # increment buffer pointer
+  io23 r0, r10      # xfer word
+  sub r1, r11       # decrement word counter
+  bnz copy_buf0     # loop until word counter is zero
+  ldab r13, r2      # load next 16 bits from buffer
+
+  # mark buffer 0 as finished
+  st r13, r15
+
+  # wait for buffer 1, store data size in r1
+wait_buf1:
+  ld r1, r14
+  bz wait_buf1
+  nop
+
+  # use r13:r2 as pointer to buffer 1 data
+  ldi r2, 192
+
+  # copy loop
+  ldab r13, r2      # load first 16 bits from buffer
+copy_buf1:
+  add r2, r11       # increment buffer pointer
+  io23 r0, r10      # xfer word
+  sub r1, r11       # decrement word counter
+  bnz copy_buf1     # loop until word counter is zero
+  ldab r13, r2      # load next 16 bits from buffer
+
+  # mark buffer 1 as finished
+  st r13, r14
+
+  # restart
+  b begin
+  nop
+

@@ -1,0 +1,101 @@
+
+IO Shim ISA
+-----------
+
+All instructions are 16 bits wide. There is a branch delay slot for conditional
+and unconditional branches.
+
+The CPU core has 16 8-bit registers (r0 .. r15) and two additional registers A
+and B that form a 16 bit word (high byte in A, low byte in B). The core
+provides control flow for the attached IO peripherals.
+
++----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+
+| 15 | 14 | 13 | 12 | 11 | 10 |  9 |  8 |  7 |  6 |  5 |  4 |  3 |  2 |  1 |  0 |
++----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+
+|  0 |  REG 2a |               ALU INSN | R2b|        REG 1 |             REG 3 | ALU 3-Op
++----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+
+|  1 |  0 |  0 |               ALU INSN |  1 :        REG 1 |             REG 2 | ALU 2-Op
++----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+
+|  1 |  0 |  0 |                        |  0 |                                  | Reserved
++----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+
+|  1 |  0 |  1 |               Endpoint |             REG 1 |             REG 2 | IO Op
++----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+
+|  1 |  1 |  0 |  0 |          IMM[7:4] |               REG |          IMM[3:0] | Load Imm
++----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+
+|  1 |  1 |  0 |  1 |                                              Tick Counter | Sync
++----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+
+|  1 |  1 |  1 |  0 |  0 |                                       Target Address | Branch
++----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+
+|  1 |  1 |  1 |  0 |  1 |                                       Target Address | Branch Z
++----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+
+|  1 |  1 |  1 |  1 |  0 |                                       Target Address | Branch NZ
++----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+
+|  1 |  1 |  1 |  1 |  1 |  0 |  0 |  0 |             REG 1 |             REG 2 | ld
++----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+
+|  1 |  1 |  1 |  1 |  1 |  0 |  0 |  1 |             REG 1 |             REG 2 | st
++----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+
+|  1 |  1 |  1 |  1 |  1 |  0 |  1 |  0 |             REG 1 |             REG 2 | ldab
++----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+
+|  1 |  1 |  1 |  1 |  1 |  0 |  1 |  1 |             REG 1 |             REG 2 | stab
++----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+
+|  1 |  1 |  1 |  1 |  1 |  1 |  0 |  0 |             REG 1 |  0 |  0 |  0 |  0 | seta
++----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+
+|  1 |  1 |  1 |  1 |  1 |  1 |  0 |  0 |             REG 1 |  0 |  0 |  0 |  1 | setb
++----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+
+|  1 |  1 |  1 |  1 |  1 |  1 |  0 |  0 |             REG 1 |  0 |  0 |  1 |  0 | geta
++----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+
+|  1 |  1 |  1 |  1 |  1 |  1 |  0 |  0 |             REG 1 |  0 |  0 |  1 |  1 | getb
++----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+
+|  1 |  1 |  1 |  1 |  1 |  1 |  0 |  0 |                   |   0100 ... 1111   | Reserved
++----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+
+|  1 |  1 |  1 |  1 |  1 |  101 .. 110  |                                       | Reserved
++----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+
+|  1 |  1 |  1 |  1 |  1 |  1 |  1 |  1 |  0 |  0 |  0 |  0 |  0 |  0 |  0 |  0 | jab
++----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+
+|  1 |  1 |  1 |  1 |  1 |  1 |  1 |  1 |  0 |  0 |  0 |  0 |  0 |  0 |  0 |  1 | lab
++----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+
+|  1 |  1 |  1 |  1 |  1 |  1 |  1 |  1 |         00000010 ... 11111111         | Reserved
++----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+----+
+
+ALU 3-Op: ALU Op with three registers. REG 1 is the destination, REG 2 and
+REG 3 are the source registers. REG 1 and REG 2 can only address the first
+8 register (r0 .. r7) in this opcode.
+
+ALU 2-OP: ALU Op with two register. REG 1 is the destination and the first
+source register. REG 2 is the second source register. This encoding is only
+used when REG 1 is in r8 .. r15, i.e. insn bit 7 is always set.
+
+IO Op: Primary interface to IO peripherals. Sends REG 1 and REG 2 to the IO
+device. IO device may write to REG 1. The IO device may also read and write the
+A and B registers. IO devices can block the execution for an arbitrary number
+of cycles.
+
+Load Imm: Load an immediate value into a register. Notice that there are no ALU
+opcodes that use immediate values. All immediates must be loaded into registers
+first.
+
+Sync: Subtract the number of ticks encoded in this opcode from the built-in
+timer counter. Block execution until timer counter becomes non-negative.
+
+Branch, Branch Z, Branch NZ: Jump to the specified address unconditionally,
+if the last register write was zero, or when it was non-zero. The instruction
+following the branch instruction will always be executed (branch delay slot).
+
+ld, st: load (store) a byte from the memory location addressed by REG 2 using
+REG 1 as destination (source). Only the first 256 bytes of memory can be
+accessed by this instructions.
+
+ldab, stab: load (store) a 16 bit value from the 16 bit memory location
+addressed by REG 1 and REG 2 (high byte in REG 1, low byte in REG 2). The
+destination (source) is the AB register. If the address LSB is set, then the
+role of A and B will be swapped and the address with cleared LSB is used.
+
+seta, setb, geta, getb: transfer bytes between the A/B register and regular
+registers.
+
+jab: Jump to the address stored in the AB register.
+
+lab: Store the address of the next instruction in the AB register. If this
+is used in a branch delay slot, then this is the address of the next
+instruction with the branch not taken.
+

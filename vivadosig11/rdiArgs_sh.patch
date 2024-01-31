@@ -1,0 +1,11 @@
+--- /opt/Xilinx/Vivado/2016.4/bin/rdiArgs.sh.orig	2017-01-15 10:26:32.229107874 +0100
++++ /opt/Xilinx/Vivado/2016.4/bin/rdiArgs.sh	2017-01-15 10:27:01.697128473 +0100
+@@ -61,7 +61,7 @@
+ done
+ 
+ if [ -z "$RDI_VERBOSE" ]; then
+-    RDI_VERBOSE=False
++    export RDI_VERBOSE=False
+ fi
+ 
+ # Default don't check TclDebug by

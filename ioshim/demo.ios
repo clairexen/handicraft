@@ -1,0 +1,12 @@
+  ldi r1, 4
+  ldi r2, 1
+myloop:
+  sync 10
+  io0 r0, r1
+  sub r1, r2
+  bnz myloop
+  nop
+mystop:
+  b mystop
+  nop
+

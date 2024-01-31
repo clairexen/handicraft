@@ -1,0 +1,35 @@
+# expect-io0 1
+# expect-io0 2
+# expect-io0 3
+
+  b sub1
+  lab
+
+  b sub2
+  lab
+
+  b sub3
+  lab
+
+mystop:
+  b mystop
+  nop
+
+sub1:
+  ldi r1, 1
+  io0 r1
+  jab
+  nop
+
+sub2:
+  ldi r1, 2
+  io0 r1
+  jab
+  nop
+
+sub3:
+  ldi r1, 3
+  io0 r1
+  jab
+  nop
+

@@ -1,0 +1,100 @@
+set_io CLK12MHZ R9
+set_io DEBUG0 P14
+set_io DEBUG1 E16
+
+set_io LED1 C8
+set_io LED2 F7
+set_io LED3 K9
+
+set_io SPI_FLASH_CS   R12
+set_io SPI_FLASH_SCLK R11
+set_io SPI_FLASH_MOSI P12
+set_io SPI_FLASH_MISO P11
+
+set_io RASPI_11 A5
+set_io RASPI_12 F9
+set_io RASPI_15 E9
+set_io RASPI_16 E10
+set_io RASPI_19 A6
+set_io RASPI_21 A7
+set_io RASPI_24 H6
+set_io RASPI_35 D10
+set_io RASPI_36 D9
+set_io RASPI_38 C9
+set_io RASPI_40 C10
+
+set_io SRAM_A0  L7
+set_io SRAM_A1  L5
+set_io SRAM_A2  L6
+set_io SRAM_A3  K3
+set_io SRAM_A4  L4
+set_io SRAM_A5  L3
+set_io SRAM_A6  M4
+set_io SRAM_A7  N4
+set_io SRAM_A8  N3
+set_io SRAM_A9  P6
+set_io SRAM_A10 P4
+set_io SRAM_A11 M1
+set_io SRAM_A12 M2
+set_io SRAM_A13 L1
+set_io SRAM_A14 K1
+set_io SRAM_A15 J2
+
+set_io SRAM_D0  N2
+set_io SRAM_D1  P1
+set_io SRAM_D2  P2
+set_io SRAM_D3  R1
+set_io SRAM_D4  N5
+set_io SRAM_D5  P7
+set_io SRAM_D6  P5
+set_io SRAM_D7  R4
+set_io SRAM_D8  J4
+set_io SRAM_D9  J3
+set_io SRAM_D10 P8
+set_io SRAM_D11 R6
+set_io SRAM_D12 R5
+set_io SRAM_D13 M8
+set_io SRAM_D14 N7
+set_io SRAM_D15 M7
+
+set_io SRAM_CE  M3
+set_io SRAM_WE  R3
+set_io SRAM_OE  M5
+set_io SRAM_LB  N6
+set_io SRAM_UB  M6
+
+set_io PMOD1_1  D8
+set_io PMOD1_2  C7
+set_io PMOD1_3  C6
+set_io PMOD1_4  B3
+set_io PMOD1_7  A1
+set_io PMOD1_8  A2
+set_io PMOD1_9  B1
+set_io PMOD1_10 B2
+
+set_io PMOD2_1  A9
+set_io PMOD2_2  B9
+set_io PMOD2_3  A10
+set_io PMOD2_4  B10
+set_io PMOD2_7  A11
+set_io PMOD2_8  B11
+set_io PMOD2_9  A16
+set_io PMOD2_10 A15
+
+set_io PMOD3_1  T8
+set_io PMOD3_2  T7
+set_io PMOD3_3  T6
+set_io PMOD3_4  T5
+set_io PMOD3_7  T3
+set_io PMOD3_8  T2
+set_io PMOD3_9  T1
+set_io PMOD3_10 R2
+
+set_io PMOD4_1  R14
+set_io PMOD4_2  T14
+set_io PMOD4_3  T13
+set_io PMOD4_4  T11
+set_io PMOD4_7  T10
+set_io PMOD4_8  T9
+set_io PMOD4_9  T16
+set_io PMOD4_10 T15

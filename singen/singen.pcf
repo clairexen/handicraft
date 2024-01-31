@@ -1,0 +1,4 @@
+set_io clk 21
+set_io out_sq 44
+set_io out_pwm 45
+set_io out_dm 47

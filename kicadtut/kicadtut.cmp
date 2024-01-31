@@ -1,0 +1,38 @@
+Cmp-Mod V01 Created by Cvpcb (2014-07-15 BZR 5005)-product   date = Tue 19 Jan 2016 09:13:16 PM CET
+
+BeginCmp
+TimeStamp = /569E1167;
+Reference = D1;
+ValeurCmp = LED;
+IdModule  = LEDs:LED-5MM;
+EndCmp
+
+BeginCmp
+TimeStamp = /569E8D5E;
+Reference = J1;
+ValeurCmp = MYCONN3;
+IdModule  = Connect:Banana_Jack_3Pin;
+EndCmp
+
+BeginCmp
+TimeStamp = /569E0902;
+Reference = R1;
+ValeurCmp = 100;
+IdModule  = Discret:R1;
+EndCmp
+
+BeginCmp
+TimeStamp = /569E0E9C;
+Reference = R2;
+ValeurCmp = 1k;
+IdModule  = Discret:R1;
+EndCmp
+
+BeginCmp
+TimeStamp = /569E106A;
+Reference = U1;
+ValeurCmp = PIC12C508A-I/SN;
+IdModule  = Housings_DIP:DIP-8_W7.62mm;
+EndCmp
+
+EndListe

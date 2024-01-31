@@ -1,0 +1,17 @@
+C 0.1uF                 8x 490-1532-1-ND           0.21 EUR  C10 C12 C15 C2 C3 C4 C6 C8
+C 10uF                  7x 490-10474-1-ND          0.42 EUR  C1 C11 C13 C14 C5 C7 C9
+D D                     1x 641-1332-1-ND           0.43 EUR  D4
+D LED                   3x 511-1292-1-ND           0.78 EUR  D1 D2 D3
+P CONN_02X06            6x S5559-ND                6.66 EUR  P1 P2 P3 P4 P5 P6
+P USB_B                 1x 609-4618-1-ND           0.42 EUR  P7
+R 100                   2x P100BYCT-ND             0.10 EUR  R1 R9
+R 10k                   5x P10KBYCT-ND             0.25 EUR  R4 R5 R6 R7 R8
+R 12k                   1x P12KBYCT-ND             0.05 EUR  R3
+R 1k                    3x P1.0KBYCT-ND            0.15 EUR  R10 R11 R12
+R 2k2                   1x P2.2KBYCT-ND            0.05 EUR  R2
+U FT232H                1x 768-1101-1-ND           3.88 EUR  U1
+U MIC5355_6             1x 576-3880-5-ND           0.46 EUR  U5
+U SPI_FLASH             1x 1274-1134-ND            0.57 EUR  U3
+U TCXO                  1x 535-11724-1-ND          1.12 EUR  U4
+U iCE40_1K4K_TQ144      1x 220-1572-ND             6.37 EUR  U2
+Total: 21.91 EUR

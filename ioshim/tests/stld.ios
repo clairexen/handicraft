@@ -1,0 +1,20 @@
+# expect-io0 42
+# expect-io0 23
+
+  ldi r14, 200
+  ldi r15, 201
+
+  ldi r0, 23
+  st r0, r14
+
+  ldi r0, 42
+  st r0, r15
+
+  ld r1, r14
+  ld r2, r15
+  io0 r2
+  io0 r1
+
+mystop:
+  b mystop
+  nop

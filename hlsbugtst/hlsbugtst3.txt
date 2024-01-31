@@ -1,0 +1,23 @@
+
+This test case (hlsbugtst3.cc, hlsbugtst3.h, hlsbugtst3_tb.cc, hlsbugtst3.tcl)
+demonstrates a common issue with Vivado HLS C/RTL cosimulation.
+
+The synthesis top function (hlsbugtst3) uses hls::stream<> interfaces only. The
+generated HDL code seems to be correct, the problem seems to be that wrapc
+thinks that the core consumes one input word each cycle, resulting in incorrect
+transaction numbers in the generated cdatafiles. The first 4 output words are
+correct because the first 4 inputs words are read without pausing the stream.
+After that some input words are skipped and the output is incorrect. (see
+hlsbugtst3.png)
+
+Problems like this are to be expected whenever Vivado HLS creates the following
+warning message:
+
+@W [SIM-384] This design has internal non-blocking FIFO/Stream accesses, which
+may result in mismatches or simulation hanging.
+
+(Note that calling stream.empty() and/or stream.full() is a non-blocking
+FIFO/Stream accesses.)
+
+In this case it is possible to work-around the issue by using empty() and
+full() in simulation only, as demonstrated in hlsbugtst3a.cc.

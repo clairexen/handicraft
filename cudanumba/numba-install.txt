@@ -1,0 +1,6 @@
+
+Installing Numba on Ubuntu 16.04 LTS:
+
+sudo apt install libedit-dev llvm-3.7-dev
+sudo -H LLVM_CONFIG=`which llvm-config-3.7` pip3 install numba
+

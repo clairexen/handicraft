@@ -1,0 +1,15 @@
+# expect-io0 4
+# expect-io0 3
+# expect-io0 2
+# expect-io0 1
+
+  ldi r1, 4
+  ldi r2, 1
+myloop:
+  io0 r0, r1
+  sub r1, r2
+  bnz myloop
+  nop
+mystop:
+  b mystop
+  nop

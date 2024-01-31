@@ -1,0 +1,53 @@
+set_io CLK12MHZ R9
+
+set_io LED1 C8
+set_io LED2 F7
+set_io LED3 K9
+
+set_io RASPI_11 A5
+set_io RASPI_12 F9
+set_io RASPI_15 E9
+set_io RASPI_16 E10
+set_io RASPI_19 A6
+set_io RASPI_21 A7
+set_io RASPI_24 H6
+set_io RASPI_35 D10
+set_io RASPI_36 D9
+set_io RASPI_38 C9
+set_io RASPI_40 C10
+
+set_io PMOD1_1  A1
+set_io PMOD1_2  A2
+set_io PMOD1_3  B1
+set_io PMOD1_4  B2
+set_io PMOD1_7  D8
+set_io PMOD1_8  C7
+set_io PMOD1_9  C6
+set_io PMOD1_10 B3
+
+set_io PMOD2_1  A11
+set_io PMOD2_2  B11
+set_io PMOD2_3  A16
+set_io PMOD2_4  A15
+set_io PMOD2_7  A9
+set_io PMOD2_8  B9
+set_io PMOD2_9  A10
+set_io PMOD2_10 B10
+
+set_io PMOD3_1  T3
+set_io PMOD3_2  T2
+set_io PMOD3_3  T1
+set_io PMOD3_4  R2
+set_io PMOD3_7  T8
+set_io PMOD3_8  T7
+set_io PMOD3_9  T6
+set_io PMOD3_10 T5
+
+set_io PMOD4_1  T10
+set_io PMOD4_2  T9
+set_io PMOD4_3  T16
+set_io PMOD4_4  T15
+set_io PMOD4_7  R14
+set_io PMOD4_8  T14
+set_io PMOD4_9  T13
+set_io PMOD4_10 T11

@@ -1,0 +1,48 @@
+
+This test case (hlsbugtst1.cc and hlsbugtst1.tcl) demonstrate a bug in Vivado HLS
+bind effort: When bind effort is set to "high" then Vivado HLS sometimes
+creates RTL output that does not meet timing (by about a factor two [!]), even
+though Vivado HLS reports a timing estimate that is within the set constraints.
+
+Run Vivado HLS with:
+
+	vivado_hls -f hlsbugtst1.tcl
+
+Timing estimate produced by Vivado HLS:
+
+	+ Timing (ns): 
+	    * Summary: 
+	    +--------+-------+----------+------------+
+	    |  Clock | Target| Estimated| Uncertainty|
+	    +--------+-------+----------+------------+
+	    |ap_clk  |  10.00|      9.08|        1.25|
+	    +--------+-------+----------+------------+
+
+	(from hlsbugtst1/solution/syn/report/hlsbugtst1_csynth.rpt)
+
+Timing report produced by Vivado synthesis:
+
+	#=== Final timing ===
+	CP required:    10.000
+	CP achieved:    20.586
+	Timing not met
+
+	(from hlsbugtst1/solution/impl/report/verilog/hlsbugtst1_export.rpt)
+
+To reiterate: The problem here is *NOT* that Vivado HLS is not capable to
+satisfy the contraints! The problem is that Vivado HLS thinks that it does
+satisfy the constraints and therefore keeps optimizing the design and sharing
+resources, instead of stopping before the timing constraints are violated.
+
+If I set the bind effort to "medium" instead of "high" then I get a (much
+larger) result that satisfies the timing constraints! So Vivado HLS is
+perfectly capable of producing something for that designs that meets timing!
+But because something is wrong with the internal timing estimater in Vivado
+HLS, it produces incorrect results when run with higher bind effort.
+
+Is there a way to work around this bug in Vivado HLS without simply falling
+back to "medium" bind effort?
+
+Can you verify that this is indeed a bug in Vivado HLS and can you give us an
+estimate until when a release will come out that fixes the issue?
+
