@@ -19,14 +19,27 @@ Various unsorted experiments. One branch per year:
 
 Checking out one year:
 ```sh
-git clone --single-branch --no-tags -b "handicraft-YYYY" \
-    "git@github.com:clairexen/handicraft.git" "handicraft-YYYY"
+bash -ex clone-year.sh YYYY
 ```
 
 Checking out all years:
 ```sh
-for ((year=2008; year<=2024; year++)); do
-  git clone --single-branch --no-tags -b "handicraft-${year}" \
-      "git@github.com:clairexen/handicraft.git" "handicraft-${year}"
-done
+bash -ex clone-year.sh {2008..2024}
+```
+
+Creating a new year:
+```sh
+create_handicraft_year() { year="$1"; (
+	set -ex
+	git clone --reference "$PWD" git@github.com:clairexen/handicraft.git handicraft-${year}
+	cd handicraft-${year}
+	git checkout --orphan handicraft-${year}
+	rm *; touch .gitignore; git add -u .gitignore
+	git commit -sm "Create handicraft-${year}"
+	git push --set-upstream origin handicraft-${year}
+	cd ..
+	rm -rf handicraft-${year}
+	bash -ex clone-year.sh ${year}
+); }
+create_handicraft_year 2024
 ```
