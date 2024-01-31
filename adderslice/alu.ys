@@ -1,0 +1,13 @@
+read_verilog alu.v
+read_verilog slice.v
+hierarchy -check
+proc; opt
+
+copy alu_gate alu
+cd alu
+splitnets -ports
+show -format svg -prefix alu x:* %n
+cd ..
+
+miter -equiv -flatten alu_gold alu_gate miter
+sat -prove trigger 0 miter

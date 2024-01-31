@@ -1,0 +1,14 @@
+
+Building riscv32-unknown-elf-gdb
+--------------------------------
+
+git clone https://github.com/riscv/riscv-binutils-gdb.git
+cd riscv-binutils-gdb
+git checkout riscv-rebase-2015.10.08   # 3d29d2a
+
+mkdir build
+cd build
+../configure --target=riscv32-unknown-elf --prefix=/opt/riscv32gdb
+make -j4
+make install
+

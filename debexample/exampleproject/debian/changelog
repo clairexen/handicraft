@@ -1,0 +1,17 @@
+exampleproject (1.1) UNRELEASED; urgency=medium
+
+  * Various changes
+    details about those changes
+    note: your can use the "dch" command to add entries to this file
+
+  * More changes
+    more details, btw: use "date -R" for the timestamp below
+    (also btw: the two blanks before the date are part of the format)
+
+ -- Johnny Example <joe@example.com>  Thu, 15 Jan 2015 09:42:08 +0100
+
+exampleproject (1.0) stable; urgency=medium
+
+  * Initial release.
+
+ -- Johnny Example <joe@example.com>  Mon, 12 Jan 2015 10:58:55 +0100

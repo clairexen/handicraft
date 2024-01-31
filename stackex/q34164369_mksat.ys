@@ -1,0 +1,2 @@
+read_verilog q34164369_model.v; prep
+sat -dump_cnf q34164369_out.cnf -show-inputs -set q 1

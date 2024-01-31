@@ -1,0 +1,7 @@
+OPTION board hx8kdev
+OPTION spi_type slow
+
+CORE echo_test my_echo
+
+CORE servo_pwm my_pwm
+  PMODS A B C D

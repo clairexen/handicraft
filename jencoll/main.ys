@@ -1,0 +1,7 @@
+read_verilog -formal main.v
+read_verilog jenkins.v
+prep -top main
+flatten
+# synth; abc; opt; stat
+write_smt2 -bv main.smt2
+! yosys-smtbmc -s yices -c output.vcd -S 5 main.smt2

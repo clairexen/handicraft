@@ -1,0 +1,3 @@
+read_verilog -formal demo03.v
+hierarchy; proc; opt -keepdc
+sat -enable_undef -prove-asserts -show-public

@@ -1,0 +1,38 @@
+
+This directory contains a small example for using emscripten in a web worker.
+The example calulates the sum and product of an array of integers in the C++
+environment. It is ment to be used as a template for offloading expensive
+calculations to an emscripten-based web worker.
+
+Note: You will need to open this via a local web server because the security
+model for file:// URLs does not allow launching the web worker.
+
+
+Makefile
+~~~~~~~~
+
+builds emscripten (emcc) and example.js
+
+warning: building emscripten will take a while, depending
+on the speed of your machine.
+
+example.cc
+~~~~~~~~~~
+
+this is the file we compile to javascript
+
+in this example I am already using the newer "embind"
+mechanism to create bindings between javascript and c++.
+
+worker.js
+~~~~~~~~~
+
+a small javascript worker that calls the c code on incoming
+messages and sends the (modified) request object back.
+
+demo.html
+~~~~~~~~~
+
+a very simple web-app that is using the emscripten based
+worker.
+

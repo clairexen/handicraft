@@ -1,0 +1,39 @@
+[*]
+[*] GTKWave Analyzer v3.3.64 (w)1999-2014 BSI
+[*] Sat Dec 19 18:53:18 2015
+[*]
+[dumpfile] "/home/clifford/Work/handicraft/2015/jencoll/example.vcd"
+[dumpfile_mtime] "Sat Dec 19 18:51:46 2015"
+[dumpfile_size] 1448
+[savefile] "/home/clifford/Work/handicraft/2015/jencoll/example.gtkw"
+[timestart] 0
+[size] 1000 600
+[pos] 193 -142
+*-1.597278 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
+[sst_width] 223
+[signals_width] 126
+[sst_expanded] 1
+[sst_vpaned_height] 160
+@28
+smt_clock
+@200
+-
+@28
+sample_1
+@820
+value_1[7:0]
+@200
+-
+@28
+sample_2
+@820
+value_2[7:0]
+@200
+-
+@29
+done
+@22
+hash_1[31:0]
+hash_2[31:0]
+[pattern_trace] 1
+[pattern_trace] 0

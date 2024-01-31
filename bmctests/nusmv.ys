@@ -1,0 +1,12 @@
+read_verilog -sv example_true.v
+hierarchy; proc; opt; memory; opt
+write_smv nusmv_true.smv
+design -reset
+
+read_verilog -sv example_false.v
+hierarchy; proc; opt; memory; opt
+write_smv nusmv_false.smv
+design -reset
+
+! NuSMV -dynamic nusmv_true.smv
+! NuSMV -dynamic nusmv_false.smv

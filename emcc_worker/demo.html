@@ -1,0 +1,49 @@
+<html><head>
+<script type="text/javascript">
+
+function msg(t) {
+	var out = document.getElementById("out");
+	out.value += t + "\n";
+}
+
+function MyWorker() {
+	msg("Launching worker.");
+
+	var worker = new Worker('worker.js');
+	var callback_queue = [ ];
+
+	worker.onmessage = (function(e){
+		msg("Got response from worker.");
+		var callback = callback_queue.shift();
+		var response = e.data[0];
+		callback(response);
+	});
+
+	this.run = (function(request, callback){
+		msg("Sending request to worker.");
+		callback_queue.push(callback);
+		worker.postMessage([request]);
+	});
+}
+
+function main() {
+	var w = new MyWorker();
+
+	var request = {
+		"function": "sum_prod",
+		"numbers": [1, 2, 3, 4],
+	};
+
+	w.run(request, (function(resp){ msg("Results #1: " + resp.results); }));
+
+	request.numbers = [5, 6, 7, 8, 9];
+	w.run(request, (function(resp){ msg("Results #2: " + resp.results); }));
+
+	request.numbers = [11, 22, 33, 44, 55, 66];
+	w.run(request, (function(resp){ msg("Results #3: " + resp.results); }));
+}
+
+</script>
+</head><body onload="main()">
+<textarea cols="80" rows="25" id="out"></textarea>
+</body></html>

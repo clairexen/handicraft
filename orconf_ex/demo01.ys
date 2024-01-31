@@ -1,0 +1,3 @@
+read_verilog -formal demo01.v
+hierarchy; proc; opt
+sat -tempinduct -prove-asserts -show-regs

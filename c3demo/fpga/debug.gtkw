@@ -1,0 +1,49 @@
+[*]
+[*] GTKWave Analyzer v3.3.65 (w)1999-2015 BSI
+[*] Tue Dec 22 13:37:53 2015
+[*]
+[dumpfile] "/home/clifford/Work/handicraft/2015/c3demo/fpga/debug.vcd"
+[dumpfile_mtime] "Tue Dec 22 13:29:30 2015"
+[dumpfile_size] 55879
+[savefile] "/home/clifford/Work/handicraft/2015/c3demo/fpga/debug.gtkw"
+[timestart] 89
+[size] 1511 483
+[pos] -322 -44
+*-3.275350 99 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1
+[sst_width] 223
+[signals_width] 220
+[sst_expanded] 1
+[sst_vpaned_height] 120
+@28
+cpu_trap
+@200
+-
+@28
+mem_valid
+mem_ready
+mem_instr
+@200
+-
+@28
+mem_wstrb_0
+mem_wstrb_1
+mem_wstrb_2
+mem_wstrb_3
+@200
+-
+@28
+addr_hi
+@800022
+#{addr_[31:28]} addr_31 addr_30 addr_29 addr_28
+@1001200
+-group_end
+@800022
+#{addr_[17:0]} addr_16 addr_15 addr_14 addr_13 addr_12 addr_11 addr_10 addr_9 addr_8 addr_7 addr_6 addr_5 addr_4 addr_3 addr_2 addr_1 addr_0
+@1001200
+-group_end
+@200
+-
+@28
+clock
+[pattern_trace] 1
+[pattern_trace] 0

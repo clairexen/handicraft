@@ -1,0 +1,6 @@
+read_verilog slice.v
+read_liberty -lib cells.lib
+synth
+abc -liberty cells.lib
+clean
+show -stretch -format svg -prefix slice

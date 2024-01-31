@@ -1,0 +1,13 @@
+
+Installing MyHDL (Ubuntu 14.04 LTS):
+------------------------------------
+
+sudo apt-get install python3-pip
+sudo pip3 install myhdl
+
+
+Running the Demo:
+-----------------
+
+python3 myhdemo.py
+

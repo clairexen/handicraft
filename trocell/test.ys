@@ -1,0 +1,5 @@
+read_verilog test.v
+synth -top test
+abc -liberty mycells.lib;;
+# dump
+stat

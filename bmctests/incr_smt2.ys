@@ -1,0 +1,12 @@
+read_verilog -sv example_true.v
+hierarchy; proc; opt; memory -nordff -nomap; opt
+write_smt2 -bv -mem incr_smt2_true.smt2
+design -reset
+
+read_verilog -sv example_false.v
+hierarchy; proc; opt; memory -nordff -nomap; opt
+write_smt2 -bv -mem incr_smt2_false.smt2
+design -reset
+
+! python3 incr_smt2.py incr_smt2_true.smt2
+! python3 incr_smt2.py incr_smt2_false.smt2

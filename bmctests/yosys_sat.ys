@@ -1,0 +1,14 @@
+read_verilog -sv example_true.v
+hierarchy; proc; opt; memory; opt
+sat -verify -tempinduct -prove-asserts -show-ports
+design -reset
+
+read_verilog -sv example_false.v
+hierarchy; proc; opt; memory; opt
+sat -falsify -tempinduct -prove-asserts -show-ports
+design -reset
+
+log
+log +------------------------+
+log | OK - All tests passed. |
+log +------------------------+

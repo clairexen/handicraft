@@ -1,0 +1,14 @@
+read_verilog -sv example_true.v
+hierarchy; proc; opt; memory; opt
+miter -assert main; techmap; opt
+write_blif abc_pdr_true.blif
+design -reset
+
+read_verilog -sv example_false.v
+hierarchy; proc; opt; memory; opt
+miter -assert main; techmap; opt
+write_blif abc_pdr_false.blif
+design -reset
+
+! yosys-abc -c 'read_blif abc_pdr_true.blif; strash; pdr'
+! yosys-abc -c 'read_blif abc_pdr_false.blif; strash; pdr'

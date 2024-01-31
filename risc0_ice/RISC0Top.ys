@@ -1,0 +1,9 @@
+read_verilog Divider.v
+read_verilog DRAM.v
+read_verilog Multiplier.v
+read_verilog PROM.v
+read_verilog RISC0Top.v
+read_verilog RISC0.v
+read_verilog RS232R.v
+read_verilog RS232T.v
+synth_ice40 -top RISC0Top -blif output.blif

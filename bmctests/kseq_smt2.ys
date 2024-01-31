@@ -1,0 +1,12 @@
+read_verilog -sv example_true.v
+hierarchy; proc; opt; memory -nordff -nomap; opt
+write_smt2 -bv -mem -tpl kseq_smt2.tpl kseq_smt2_true.smt2
+design -reset
+
+read_verilog -sv example_false.v
+hierarchy; proc; opt; memory -nordff -nomap; opt
+write_smt2 -bv -mem -tpl kseq_smt2.tpl kseq_smt2_false.smt2
+design -reset
+
+! yices-smt2 kseq_smt2_true.smt2
+! yices-smt2 kseq_smt2_false.smt2

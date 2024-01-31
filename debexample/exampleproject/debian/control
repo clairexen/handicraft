@@ -1,0 +1,11 @@
+Source: exampleproject
+Maintainer: Johnny Example <joe@example.com>
+Standards-Version: 3.9.5
+Build-Depends: debhelper (>=9)
+
+Package: exampleproject
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: example project
+ the program just prints a simple message.
+ build and install it to see it in action..

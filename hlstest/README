@@ -1,0 +1,36 @@
+
+A test case for timing problems I see with Vivado HLS 2015.1.
+
+For this HLS core the timing estimate given by Vivado HLS 2015.1 is <6ns.
+But the final timing reported by Vivado 2015.1 after synthesis is >12ns.
+So the estimate is off by more than a factor of 2.
+
+For me the output of "bash run.sh" is:
+
+--snip--
+Vivado HLS Timing Estimate
+==========================
+
++ Timing (ns):
+    * Summary:
+    +---------+-------+----------+------------+
+    |  Clock  | Target| Estimated| Uncertainty|
+    +---------+-------+----------+------------+
+    |default  |   6.00|      5.87|        0.75|
+    +---------+-------+----------+------------+
+
+Vivado Synthesis Timing
+=======================
+
+Slack (VIOLATED) :        -6.384ns  (required time - arrival time)
+  Source:                 grp_mycore_my_cordic_fu_368/ap_CS_fsm_reg[31]_replica/C
+                            (rising edge-triggered cell FDRE clocked by ap_clk  {rise@0.000ns fall@3.000ns period=6.000ns})
+  Destination:            grp_mycore_my_cordic_fu_368/tmp_75_10_reg_4074_reg[0]/D
+                            (rising edge-triggered cell FDRE clocked by ap_clk  {rise@0.000ns fall@3.000ns period=6.000ns})
+  Path Group:             ap_clk
+  Path Type:              Setup (Max at Slow Process Corner)
+  Requirement:            6.000ns  (ap_clk rise@6.000ns - ap_clk rise@0.000ns)
+  Data Path Delay:        12.382ns  (logic 2.788ns (22.516%)  route 9.594ns (77.484%))
+  Logic Levels:           24  (CARRY4=5 LUT2=1 LUT4=3 LUT5=5 LUT6=10)
+--snap--
+
