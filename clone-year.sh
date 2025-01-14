@@ -1,7 +1,7 @@
 #!/bin/bash
 for year; do
 	case "$year" in
-		200[89]|201[0-9]|202[01234])
+		200[89]|201[0-9]|202[012345])
 			if test -d "handicraft-$year"; then
 				echo "directory handicraft-$year already exists"
 				continue
