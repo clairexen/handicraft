@@ -6,6 +6,8 @@ import re
 import sys
 import copy
 
+shuffle=True
+
 class Wordle:
     def __init__(self, pattern=None):
         self.clues = [
@@ -134,7 +136,7 @@ def main():
         out.append("...")
     print(f"{len(wordle.candidates)} remaining candidates: {" ".join(out)}")
 
-    print(f"-------   avg   msr   max")
+    print(f"- GUESS    AVG    MSR    MAX")
     for guess in wordle.candidates:
         print(f"- {guess}", end="", flush=True)
         results = list()
@@ -142,14 +144,14 @@ def main():
             # print(f".", end="", flush=True)
             w = wordle.assumeCase(guess, secret)
             results.append(len(w.candidates))
-        print(f" {avg(results):5.1f} {msr(results):5.1f} {max(results):5.1f}", end="")
-        print(f"   {results}" if len(results) < 15 else "({len(results)})")
+        print(f" {avg(results):6.1f} {msr(results):6.1f} {max(results):6.1f}", end="")
+        print(f"   {results}" if len(results) < 15 else "")
 
 def avg(data):
     return sum(data)/len(data)
 
 def msr(data):
-    return sum([x*x for x in data])**0.5
+    return avg([x*x for x in data])**0.5
 
 words="""
 abaci aback abaft abase abash abate abbey abbot abeam abets abhor abide
@@ -535,6 +537,10 @@ yacks yahoo yanks yards yarns yawed yawls yawns yeahs yearn years yeast
 yells yelps yeses yield yocks yodel yogin yogis yoked yokel yokes yolks
 young yours youth yowls yucca yucks yucky yummy yuppy zebra zebus zeros
 zests zilch zincs zings zippy zombi zonal zoned zones zooms""".split()
+
+if shuffle:
+    import numpy as np
+    np.random.shuffle(words)
 
 if __name__ == "__main__":
     main()
