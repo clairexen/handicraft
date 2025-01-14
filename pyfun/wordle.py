@@ -7,6 +7,8 @@ import sys
 import copy
 
 shuffle=True
+subexpand=False
+subsample=100
 
 class Wordle:
     def __init__(self, pattern=None):
@@ -113,12 +115,48 @@ class Wordle:
         w.findCandidates()
         return w
 
+def analyze(wordle, batch):
+    print(f"+ GUESS    AVG    MSR    MAX")
+    secrets = wordle.candidates
+    if subsample and len(secrets) > subsample:
+        secrets = list(np.random.choice(secrets, subsample, False))
+    for guess in batch:
+        print(f"- {guess}", end="", flush=True)
+        results = list()
+        for secret in secrets:
+            # print(f".", end="", flush=True)
+            w = wordle.assumeCase(guess, secret)
+            results.append(len(w.candidates))
+        print(f" {avg(results):6.1f} {msr(results):6.1f} {max(results):6.1f}", end="")
+        print(f"   {results}" if len(results) < 15 else "")
+
 def main():
+    global subsample
+
     if len(sys.argv) < 2 or sys.argv[1].startswith("-"):
-            print("Usage examples:")
-            print("  python3 worldle.py s/a/s/_/_/AShrugmsy")
-            print("  python3 worldle.py / shrug/s____ massy/_as__ ideas/___AS novas/___AS")
-            sys.exit(1)
+        print("Usage examples:")
+        print("  python3 wordle.py plate")
+        print("  python3 wordle.py s/a/s/_/_/AShrugmsy")
+        print("  python3 wordle.py / shrug/s____ massy/_as__ ideas/___AS novas/___AS")
+        print()
+        subsample=0
+        wordle = Wordle()
+        wordle.findCandidates()
+        analyze(wordle, goodwords)
+        sys.exit(0)
+
+    if "/" not in sys.argv[1]:
+        wordle = Wordle()
+        wordle.findCandidates()
+        analyze(wordle, sys.argv[1:])
+        if subexpand and subsample:
+            for step in (50, 100, 200, 400, 800, 1600, 3200):
+                if subsample < step:
+                    subsample = step
+                    print()
+                    print(f"with n={subsample}:")
+                    analyze(wordle, sys.argv[1:])
+        sys.exit(0)
 
     wordle = Wordle()
     wordle.loadPattern(sys.argv[1])
@@ -136,16 +174,7 @@ def main():
         out.append("...")
     print(f"{len(wordle.candidates)} remaining candidates: {" ".join(out)}")
 
-    print(f"- GUESS    AVG    MSR    MAX")
-    for guess in wordle.candidates:
-        print(f"- {guess}", end="", flush=True)
-        results = list()
-        for secret in wordle.candidates:
-            # print(f".", end="", flush=True)
-            w = wordle.assumeCase(guess, secret)
-            results.append(len(w.candidates))
-        print(f" {avg(results):6.1f} {msr(results):6.1f} {max(results):6.1f}", end="")
-        print(f"   {results}" if len(results) < 15 else "")
+    analyze(wordle, wordle.candidates)
 
 def avg(data):
     return sum(data)/len(data)
@@ -538,9 +567,47 @@ yells yelps yeses yield yocks yodel yogin yogis yoked yokel yokes yolks
 young yours youth yowls yucca yucks yucky yummy yuppy zebra zebus zeros
 zests zilch zincs zings zippy zombi zonal zoned zones zooms""".split()
 
-if shuffle:
+goodwords = """
+aches acmes acres aegis aeons aides aisle alert aloes alter altos anise
+antes areas arise arose arson aspen aster avers axles bales banes bares
+barns baser bates beads beans bears beats beaus betas biers boars boles
+boner bones bores cages cakes canes capes cares caret caste cites coals
+comes cones copes cores cotes cries cures dales dames dares darns dates
+deals deans dears delis dials diets doers doles dotes dries earls earns
+euros faces fades false fares fates fears ferns fires floes fores fries
+gales games gapes gates gears goals gores hakes haler hales hares hates
+heads heals hears heirs heros hires holes hones ideas idles iotas irate
+irons laces lades lager lairs lakes lamer lames lands lanes lapse lards
+laser later layer lazes leads leafs leaks leans leaps learn leash least
+lends liars limes lines liras loads loans lobes lodes loges loner lopes
+loser lures lutes lyres maces males manes manse mares mates meals means
+meats miles mires miser mites moles mores motes nails names napes narcs
+naves nears nerds nites nodes noels noise nosed nosey notes oared oases
+oasis oaten ogles ogres onset orals orate osier paces pages pairs paler
+pales panel panes pares parse paste pates peals pears peons piers piles
+pleas plies poise poles pones pores poser pries races rages raids rails
+rains raise rakes rants rapes rares rates raves razes reads reals reams
+reaps rears reins renal rends rents resin rheas rices rides riles rimes
+rinse risen rites roads roans robes roils roles ropes roses rouse roves
+rules runes saber sable sabre safer sager sales salon salve saner saree
+sated sauce saver scale scare score seals sears sedan sepal sepia septa
+shade shale share shear shire shore sidle sired siren sires sitar skate
+skier slake slant slate slave slice slide slier slyer smear snake snare
+snarl snore sober solar soled sonar sorer sores sorta sower spade spare
+spate spear spiel spire spore stage stair stake stale stare stave stead
+steal stern stile stole stone store strep style swear tails takes tales
+tames tapes tares taros taser taxes teals teams tears tenor terms terns
+tiers tiles times tines tires toads tokes tomes toner tones tries trues
+tunes vales vanes wales wanes wares weals weans wears weirs wires yarns
+yearn years
+""".split()
+
+if shuffle or subsample:
     import numpy as np
+
+if shuffle:
     np.random.shuffle(words)
+    np.random.shuffle(goodwords)
 
 if __name__ == "__main__":
     main()
