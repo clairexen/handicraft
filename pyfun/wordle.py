@@ -6,9 +6,33 @@ import re
 import sys
 import copy
 
-shuffle=True
-subexpand=False
-subsample=100
+shuffle = True
+usegood = False
+subexpand = False
+subsample = 100
+args = sys.argv[1:]
+
+while True:
+    match args[0]:
+        case "-s": # sort
+            del args[0]
+            shuffle = False
+            continue
+        case "-g":
+            del args[0]
+            usegood = True
+            continue
+        case "-e":
+            del args[0]
+            subexpand = True
+            continue
+        case "-n":
+            del args[0]
+            subsample = int(args[0])
+            del args[0]
+            continue
+        case _:
+            break
 
 class Wordle:
     def __init__(self, pattern=None):
@@ -133,36 +157,31 @@ def analyze(wordle, batch):
 def main():
     global subsample
 
-    if len(sys.argv) < 2 or sys.argv[1].startswith("-"):
+    if not args or args[0].startswith("-"):
         print("Usage examples:")
-        print("  python3 wordle.py plate")
         print("  python3 wordle.py s/a/s/_/_/AShrugmsy")
         print("  python3 wordle.py / shrug/s____ massy/_as__ ideas/___AS novas/___AS")
-        print()
-        subsample=0
-        wordle = Wordle()
-        wordle.findCandidates()
-        analyze(wordle, goodwords)
-        sys.exit(0)
+        print("  python3 wordle.py aloes reals tales tares saner stare plate")
+        sys.exit(1)
 
-    if "/" not in sys.argv[1]:
+    if "/" not in args[0]:
         wordle = Wordle()
         wordle.findCandidates()
-        analyze(wordle, sys.argv[1:])
+        analyze(wordle, args)
         if subexpand and subsample:
             for step in (50, 100, 200, 400, 800, 1600, 3200):
                 if subsample < step:
                     subsample = step
                     print()
                     print(f"with n={subsample}:")
-                    analyze(wordle, sys.argv[1:])
+                    analyze(wordle, args)
         sys.exit(0)
 
     wordle = Wordle()
-    wordle.loadPattern(sys.argv[1])
+    wordle.loadPattern(args[0])
     print(wordle)
 
-    for guessResult in sys.argv[2:]:
+    for guessResult in args[1:]:
         guess, result = guessResult.split("/")
         wordle.processGuess(guess, result)
         print(f"Guess: {guess}/{result} -> {wordle}")
@@ -174,7 +193,10 @@ def main():
         out.append("...")
     print(f"{len(wordle.candidates)} remaining candidates: {" ".join(out)}")
 
-    analyze(wordle, wordle.candidates)
+    if usegood:
+        analyze(wordle, [c for c in wordle.candidates if c in goodwords])
+    else:
+        analyze(wordle, wordle.candidates)
 
 def avg(data):
     return sum(data)/len(data)
@@ -182,7 +204,7 @@ def avg(data):
 def msr(data):
     return avg([x*x for x in data])**0.5
 
-words="""
+words = """
 abaci aback abaft abase abash abate abbey abbot abeam abets abhor abide
 abler abode abort about above abuse abuts abuzz abyss ached aches achoo
 acids acing acmes acorn acres acrid acted actor acute adage adapt added
@@ -567,47 +589,24 @@ yells yelps yeses yield yocks yodel yogin yogis yoked yokel yokes yolks
 young yours youth yowls yucca yucks yucky yummy yuppy zebra zebus zeros
 zests zilch zincs zings zippy zombi zonal zoned zones zooms""".split()
 
-goodwords = """
-aches acmes acres aegis aeons aides aisle alert aloes alter altos anise
-antes areas arise arose arson aspen aster avers axles bales banes bares
-barns baser bates beads beans bears beats beaus betas biers boars boles
-boner bones bores cages cakes canes capes cares caret caste cites coals
-comes cones copes cores cotes cries cures dales dames dares darns dates
-deals deans dears delis dials diets doers doles dotes dries earls earns
-euros faces fades false fares fates fears ferns fires floes fores fries
-gales games gapes gates gears goals gores hakes haler hales hares hates
-heads heals hears heirs heros hires holes hones ideas idles iotas irate
-irons laces lades lager lairs lakes lamer lames lands lanes lapse lards
-laser later layer lazes leads leafs leaks leans leaps learn leash least
-lends liars limes lines liras loads loans lobes lodes loges loner lopes
-loser lures lutes lyres maces males manes manse mares mates meals means
-meats miles mires miser mites moles mores motes nails names napes narcs
-naves nears nerds nites nodes noels noise nosed nosey notes oared oases
-oasis oaten ogles ogres onset orals orate osier paces pages pairs paler
-pales panel panes pares parse paste pates peals pears peons piers piles
-pleas plies poise poles pones pores poser pries races rages raids rails
-rains raise rakes rants rapes rares rates raves razes reads reals reams
-reaps rears reins renal rends rents resin rheas rices rides riles rimes
-rinse risen rites roads roans robes roils roles ropes roses rouse roves
-rules runes saber sable sabre safer sager sales salon salve saner saree
-sated sauce saver scale scare score seals sears sedan sepal sepia septa
-shade shale share shear shire shore sidle sired siren sires sitar skate
-skier slake slant slate slave slice slide slier slyer smear snake snare
-snarl snore sober solar soled sonar sorer sores sorta sower spade spare
-spate spear spiel spire spore stage stair stake stale stare stave stead
-steal stern stile stole stone store strep style swear tails takes tales
-tames tapes tares taros taser taxes teals teams tears tenor terms terns
-tiers tiles times tines tires toads tokes tomes toner tones tries trues
-tunes vales vanes wales wanes wares weals weans wears weirs wires yarns
-yearn years
-""".split()
+goodwords = set("""
+acres aegis aeons aides aisle aloes antes arise arose bales bares bates
+canes cares cores cotes cries dales dares dates deals deans dears doles
+earls earns fares gales gates hales hares hates holes ideas laces lades
+lairs lames lanes laser leads leans least liars lines liras loser lures
+males manes mares mates names napes nears notes oases orals pales panes
+pares pates pears pores races rages rails raise rakes rapes rates reads
+reals reams reaps reins rents rices riles rites roles rules saber sabre
+safer sager saner sated scare score sepia share shear siren slate slier
+smear snare snore solar spare spear stale stare stead stile stole store
+tales tames tapes tares taros taser teals tears terns tiers tiles tires
+tones tries wares""".split())
 
 if shuffle or subsample:
     import numpy as np
 
 if shuffle:
     np.random.shuffle(words)
-    np.random.shuffle(goodwords)
 
 if __name__ == "__main__":
     main()
