@@ -30,7 +30,6 @@ class Wordle:
         s += "".join(sorted(self.stops))
         return s + "\")"
 
-
     def loadPattern(self, pattern):
         A = (pattern+"////////").split("/")
         for i in range(5):
@@ -135,12 +134,22 @@ def main():
         out.append("...")
     print(f"{len(wordle.candidates)} remaining candidates: {" ".join(out)}")
 
+    print(f"-------   avg   msr   max")
     for guess in wordle.candidates:
+        print(f"- {guess}", end="", flush=True)
         results = list()
         for secret in wordle.candidates:
+            # print(f".", end="", flush=True)
             w = wordle.assumeCase(guess, secret)
             results.append(len(w.candidates))
-        print(guess, max(results))
+        print(f" {avg(results):5.1f} {msr(results):5.1f} {max(results):5.1f}", end="")
+        print(f"   {results}" if len(results) < 15 else "({len(results)})")
+
+def avg(data):
+    return sum(data)/len(data)
+
+def msr(data):
+    return sum([x*x for x in data])**0.5
 
 words="""
 abaci aback abaft abase abash abate abbey abbot abeam abets abhor abide
