@@ -12,7 +12,7 @@ subexpand = False
 subsample = 100
 args = sys.argv[1:]
 
-while True:
+while len(args):
     match args[0]:
         case "-s": # sort
             del args[0]
@@ -161,7 +161,7 @@ def main():
         print("Usage examples:")
         print("  python3 wordle.py s/a/s/_/_/AShrugmsy")
         print("  python3 wordle.py / shrug/s____ massy/_as__ ideas/___AS novas/___AS")
-        print("  python3 wordle.py aloes reals tales tares saner stare plate")
+        print("  python3 wordle.py -n 0 aloes reals tales tares saner stare plate")
         sys.exit(1)
 
     if "/" not in args[0]:
