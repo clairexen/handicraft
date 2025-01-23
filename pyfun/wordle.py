@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 
+import numpy as np
 from collections import defaultdict
-import random
-import re
-import sys
-import copy
+from types import SimpleNamespace
+import sys, copy
 
 shuffle = True
 usegood = False
 subexpand = False
 subsample = 100
+autoplaysecret = None
 args = sys.argv[1:]
 
 while len(args):
@@ -29,6 +29,11 @@ while len(args):
         case "-n":
             del args[0]
             subsample = int(args[0])
+            del args[0]
+            continue
+        case "-a":
+            del args[0]
+            autoplaysecret = args[0]
             del args[0]
             continue
         case _:
@@ -62,7 +67,7 @@ class Wordle:
         A = (pattern+"////////").split("/")
         for i in range(5):
             c = A[i]
-            if c == "" or c == "_":
+            if c in ("", "_", "."):
                 pass
             elif c == c.upper():
                 self.clues[i] &= set(c.lower())
@@ -115,44 +120,110 @@ class Wordle:
                 if len(letters) == 0:
                     self.candidates.append(word)
 
-    def assumeCase(self, guess, secret):
+    def resultCase(self, guess, secret):
         assert guess in self.candidates
         assert secret in self.candidates
 
         result = list("_____")
         secretCopy = list(secret)
+
         for i in range(5):
             g, s = guess[i], secret[i]
             if g == s:
                 result[i] = g.upper()
                 secretCopy[i] = None
+
         for i in range(5):
             g, s = guess[i], secret[i]
             if g == s or g not in secretCopy: continue
             k = secretCopy.index(g)
             secretCopy[k] = None
             result[i] = g
-        result = "".join(result)
 
+        return "".join(result)
+
+    def assumeCase(self, guess, secret):
         w = copy.deepcopy(self)
+        result = w.resultCase(guess, secret)
         w.processGuess(guess, result)
         w.findCandidates()
         return w
 
-def analyze(wordle, batch):
-    print(f"+ GUESS    AVG    MSR    MAX")
+def analyze(wordle, batch, quiet=False, progress=False):
+    andat = SimpleNamespace(
+                guesses=set(),
+                avgdata=dict(),
+                msrdata=dict(),
+                maxdata=dict(),
+            )
+
+    if not quiet and not progress:
+        batchsizedigits = len(f"{len(batch):d}")
+        print(f"+ {' '*(2*batchsizedigits+1)} GUESS    AVG    MSR    MAX")
+
     secrets = wordle.candidates
     if subsample and len(secrets) > subsample:
         secrets = list(np.random.choice(secrets, subsample, False))
-    for guess in batch:
-        print(f"- {guess}", end="", flush=True)
+
+    for i, guess in enumerate(batch):
+        if progress:
+            print(f".", end="", flush=True)
+
+        if not quiet and not progress:
+            print(f"- {i+1:{batchsizedigits}d}/{len(batch):d} {guess}", end="", flush=True)
+
         results = list()
         for secret in secrets:
-            # print(f".", end="", flush=True)
             w = wordle.assumeCase(guess, secret)
             results.append(len(w.candidates))
-        print(f" {avg(results):6.1f} {msr(results):6.1f} {max(results):6.1f}", end="")
-        print(f"   {results}" if len(results) < 15 else "")
+
+        if not quiet and not progress:
+            print(f" {avg(results):6.1f} {msr(results):6.1f} {max(results):6.1f}", end="")
+            print(f"   {results}" if len(results) < 15 else "")
+
+        andat.guesses.add(guess)
+        andat.avgdata[guess] = avg(results)
+        andat.msrdata[guess] = msr(results)
+        andat.maxdata[guess] = max(results)
+
+    avgmax = avg(andat.maxdata.values())
+    g1 = set([g for g, v in andat.maxdata.items() if v <= avgmax])
+    minmsr = min([andat.msrdata[g] for g in g1])
+    g2 = set([g for g in g1 if andat.msrdata[g] <= minmsr+0.05])
+    minavg = min([andat.avgdata[g] for g in g2])
+    g3 = set([g for g in g2 if andat.avgdata[g] <= minavg+0.05])
+    minmax = min([andat.maxdata[g] for g in g2])
+    andat.best = set([g for g in g2 if andat.maxdata[g] <= minmax+0.05])
+
+    return andat
+
+def autoplay(wordle, secret):
+    while len(wordle.candidates) > 1:
+        if len(wordle.candidates) == len(words):
+            andat = None
+            guess = np.random.choice(list(goodwords))
+        else:
+            n = len(wordle.candidates)
+            print(f"Analyzing {n} remaining candidates..", end="")
+            andat = analyze(wordle, wordle.candidates, progress=True)
+            print()
+            guess = np.random.choice(list(andat.best))
+
+        result = wordle.resultCase(guess, secret)
+        wordle.processGuess(guess, result)
+        wordle.findCandidates()
+
+        if andat is None:
+            print(f"Guess: {guess}/{result} -> {wordle}")
+        else:
+            print(f"Guess: {guess}/{result} ({andat.avgdata[guess]:.1f}/" +
+                  f"{andat.msrdata[guess]:.1f}/{andat.maxdata[guess]:.1f}) -> {wordle}")
+
+    if len(wordle.candidates) == 0:
+        print("[NO REMAINIG CANDIDATES!]")
+    else:
+        guess = wordle.candidates[0]
+        print(f"Remaining Candidate: {guess}  " + ("\\o/" if guess == secret else "[NOT THE SECRET!]"))
 
 def main():
     global subsample
@@ -189,11 +260,13 @@ def main():
     wordle.findCandidates()
     out = wordle.candidates
     if len(wordle.candidates) > 100:
-        out = sorted(random.sample(wordle.candidates, 100))
+        out = sorted(np.random.choice(wordle.candidates, 100))
         out.append("...")
     print(f"{len(wordle.candidates)} remaining candidates: {" ".join(out)}")
 
-    if usegood:
+    if autoplaysecret is not None:
+        autoplay(wordle, autoplaysecret)
+    elif usegood:
         analyze(wordle, [c for c in wordle.candidates if c in goodwords])
     else:
         analyze(wordle, wordle.candidates)
@@ -601,9 +674,6 @@ safer sager saner sated scare score sepia share shear siren slate slier
 smear snare snore solar spare spear stale stare stead stile stole store
 tales tames tapes tares taros taser teals tears terns tiers tiles tires
 tones tries wares""".split())
-
-if shuffle or subsample:
-    import numpy as np
 
 if shuffle:
     np.random.shuffle(words)
