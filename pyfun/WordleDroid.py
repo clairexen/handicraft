@@ -31,10 +31,11 @@ hardmode = True
 playmode = False
 autoplaysecret = None
 wordledump = False
+wordledumpfwd = False
 cmdname = sys.argv[0]
 args = sys.argv[1:]
 
-def getWordleWordOfTheDay(pastDays=0, quiet=False):
+def getWordleWordOfTheDay(pastDays=0, mayfail=False, quiet=False):
     global totalOfficialWordles
     import requests, datetime
 
@@ -43,6 +44,7 @@ def getWordleWordOfTheDay(pastDays=0, quiet=False):
 
     response = requests.get(url)
     if response.status_code != 200:
+        if mayfail: return None
         print(f"Failed to retrieve Wordle solution. Status code: {response.status_code}")
         assert False
 
@@ -119,6 +121,10 @@ while len(args):
         case "-W": # produce list of (new) wordle words (hidden from help())
             del args[0]
             wordledump = True
+            continue
+        case "-F": # produce list of future wordle words (hidden from help())
+            del args[0]
+            wordledumpfwd = True
             continue
         case _:
             break
@@ -433,13 +439,13 @@ def help():
 def main():
     global subsample
 
-    if not args and not playmode and not wordledump and autoplaysecret is None:
+    if not args and not playmode and not wordledump and not wordledumpfwd and autoplaysecret is None:
         help()
 
     if args and args[0].startswith("-"):
         help()
 
-    # create/download the list of all official wordle words
+    # create/download the list of all official wordle words so far
     if wordledump:
         print()
         print(f"Wordlist Stats:")
@@ -463,6 +469,25 @@ def main():
         print()
         print(f"Got {len(xtrawords)} new Wordle words{':' if xtrawords else '.'}")
         xtrawords = list(reversed(xtrawords))
+        for i in range(0, len(xtrawords), 12):
+            print(" ".join(xtrawords[i:i+12]))
+        print()
+        sys.exit(0)
+
+    # create/download the list official wordle words in the near future
+    if wordledumpfwd:
+        print()
+        i = 0
+        xtrawords = list()
+        while True:
+            i -= 1
+            w = getWordleWordOfTheDay(i, mayfail=True)
+            if w is None: break
+            print(f"+ {w}", flush=True)
+            xtrawords.append(w)
+        print()
+        print(f"Got {len(xtrawords)} new Wordle words{':' if xtrawords else '.'}")
+        # xtrawords = list(reversed(xtrawords))
         for i in range(0, len(xtrawords), 12):
             print(" ".join(xtrawords[i:i+12]))
         print()
@@ -1098,7 +1123,8 @@ dogma mauve guile shaky crypt endow shove hilly hyena flung patio plumb
 vying boxer drool funky boast scowl hefty stray flash blade brawn sauna
 eagle share affix grain decry mambo stare lemur nerve chose cheap relax
 cyber sprig atlas draft wafer crawl dingy total cloak fancy knack flint
-prose silly rower squid icing reach upper""".split())
+prose silly rower squid icing reach upper crepe crisp sunny shunt fever
+udder false toast rivet chore revue tooth pedal pupil swath steep bonus""".split())
 
 goodwords = set("""
 acres aegis aeons aides aisle aloes antes arise arose bales bares bates
