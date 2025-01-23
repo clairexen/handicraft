@@ -98,6 +98,13 @@ while len(args):
             playmode = True
             autoplaysecret = getWordleWordOfTheDay()
             continue
+        case "-w": # play (using the given arg as secret word)
+            assert not playmode and autoplaysecret is None
+            del args[0]
+            playmode = True
+            autoplaysecret = args[0]
+            del args[0]
+            continue
         case "-a": # auto-play (using the given arg as secret word)
             assert not playmode and autoplaysecret is None
             del args[0]
@@ -342,7 +349,10 @@ class Wordle:
             print("[NO REMAINIG CANDIDATES!]")
         else:
             guess = self.candidates[0]
-            print(f"Success: {guess}  " + ("\\o/" if guess == secret else "[NOT THE SECRET!]"))
+            if guess == secret:
+                print(f"Success: {guess}  \\o/")
+            else:
+                print(f"Fail: {guess}  [NOT THE SECRET!]")
 
 def help():
     print()
@@ -365,8 +375,9 @@ def help():
     print(f"  -N N  ......  use at most N total samples for creating a guess")
     print(f"  -e  ........  expand number of subsamples in pre-defined steps")
     print()
-    print(f"Play and Autoplay Options:")
+    print(f"Play and Autoplay Options (use max. 1):")
     print(f"  -p .........  no analysis, just play a normal game of wordl")
+    print(f"  -w word  ...  play (using the given arg as secret word)")
     print(f"  -a word  ...  auto-play (using the given arg as secret word)")
     print(f"  -P .........  play todays official (NYT) Wordle")
     print(f"  -A .........  auto-play todays official (NYT) Wordle")
