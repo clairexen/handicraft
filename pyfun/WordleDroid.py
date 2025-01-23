@@ -9,7 +9,10 @@ shuffle = True
 usegood = False
 subexpand = False
 subsample = 100
+hardmode = True
+playmode = False
 autoplaysecret = None
+cmdname = sys.argv[0]
 args = sys.argv[1:]
 
 while len(args):
@@ -17,6 +20,14 @@ while len(args):
         case "-s": # sort word lists
             del args[0]
             shuffle = False
+            continue
+        case "-H": # disable "hard mode"
+            del args[0]
+            hardmode = False
+            continue
+        case "-p": # no analysis, just play a normal game of wordl
+            del args[0]
+            playmode = True
             continue
         case "-g": # use pre-generated "good" (first) words
             del args[0]
@@ -141,7 +152,8 @@ class Wordle:
                     self.candidates.append(word)
 
     def resultCase(self, guess, secret):
-        if self.candidates is not None:
+        if hardmode:
+            self.findCandidates()
             assert guess in self.candidates
             assert secret in self.candidates
 
@@ -164,6 +176,11 @@ class Wordle:
         return "".join(result)
 
     def assumeCase(self, guess, secret):
+        if hardmode:
+            self.findCandidates()
+            assert guess in self.candidates
+            assert secret in self.candidates
+
         w = copy.deepcopy(self)
         result = w.resultCase(guess, secret)
         w.processGuess(guess, result)
@@ -227,6 +244,10 @@ class Wordle:
         return andat
 
     def autoplay(self, secret):
+        if hardmode:
+            self.findCandidates()
+            assert secret in self.candidates
+
         while len(self.candidates) > 1:
             if len(self.candidates) == len(words):
                 andat = None
@@ -257,17 +278,42 @@ class Wordle:
 def main():
     global subsample
 
-    if not args or args[0].startswith("-"):
-        print("Usage examples:")
-        print("  python3 wordle.py /s/a/s/_/_/AShrugmsy")
-        print("  python3 wordle.py shrug/s____ massy/_as__ ideas/___AS novas/___AS")
-        print("  python3 wordle.py -n 0 aloes reals tales tares saner stare plate")
-        print("  python3 wordle.py fraud/___uD upend/u___D squid")
-        print("  python3 wordle.py -s //t//it//ITadelrs joint")
-        print("  python3 wordle.py -a point stair delta")
+    if (not args and not playmode and autoplaysecret is None) or (args and args[0].startswith("-")):
+        print()
+        print(f"Usage:")
+        print(f"  {cmdname} [options...] args...")
+        print()
+        print(f"Usage examples:")
+        print(f"  {cmdname} /s/a/s/_/_/AShrugmsy")
+        print(f"  {cmdname} shrug/s____ massy/_as__ ideas/___AS novas/___AS")
+        print(f"  {cmdname} -n 0 aloes reals tales tares saner stare plate")
+        print(f"  {cmdname} fraud/___uD upend/u___D squid")
+        print(f"  {cmdname} -s //t//it//ITadelrs joint")
+        print(f"  {cmdname} -H -a point stair delta")
+        print()
+        print(f"Options:")
+        print(f"  -s  ........  sort (do not shuffle) word lists")
+        print(f"  -H  ........  disable \"hard mode\" (allow all guess words)")
+        print(f"  -g  ........  use pre-generated set of \"good\" (first) words")
+        print(f"  -n N  ......  use N random samples when len(candidates) > N")
+        print(f"  -e  ........  expand number of subsamples in pre-defined steps")
+        print()
+        print(f"Play and Autoplay Options:")
+        print(f"  -p .........  no analysis, just play a normal game of wordl")
+        print(f"  -a word  ...  auto-play (using the given arg as secret word)")
+        print()
+        print(f"State Arg (only valid as first arg):")
+        print(f"  [...TBD...]")
+        print()
+        print(f"Guess Arg (encodes a single guess and the results it produced):")
+        print(f"  [...TBD...]")
+        print()
+        print(f"Query Arg (a single 5-letter word wthout results):")
+        print(f"  [...TBD...]")
+        print()
         sys.exit(1)
 
-    if "/" not in args[0] and autoplaysecret is None:
+    if len(args) and "/" not in args[0] and autoplaysecret is None:
         wordle = Wordle()
         wordle.findCandidates()
         wordle.analyze(args)
@@ -281,7 +327,7 @@ def main():
         sys.exit(0)
 
     wordle = Wordle()
-    if args[0].startswith("/"):
+    if len(args) and args[0].startswith("/"):
         wordle.loadPattern(args[0])
         print(wordle)
         del args[0]
@@ -310,6 +356,65 @@ def main():
         print(f"Guess: {guess}/{result} -> {wordle}")
 
     if lastquery:
+        return
+
+    if playmode:
+        wordle.findCandidates()
+        secret = np.random.choice(wordle.candidates)
+
+        for i in range(1, 7):
+            while True:
+                guess = input(f"guess {i}> ")
+                print("\033[F\033[2K", end="", flush=True) # Go up and clear line
+
+                # cheat code
+                if guess == "?":
+                    hints = sorted(wordle.candidates)
+                    if len(hints) > 10:
+                        short = sorted(np.random.choice(hints, 10, False))
+                        input(f"hints> {' '.join(short)} (+{len(hints)-len(short)})")
+                    else:
+                        input(f"hints> {' '.join(hints)}")
+                    print("\033[F\033[2K", end="", flush=True) # Go up and clear line
+                    continue
+
+                if len(guess) != 5 or not guess.islower():
+                    input(f"error> guess \"{guess}\" is malformed (must be 5 lower case chars)")
+                    print("\033[F\033[2K", end="", flush=True) # Go up and clear line
+                    continue
+
+                if hardmode:
+                    if guess not in words:
+                        input(f"error> guess \"{guess}\" not found in word list (hard mode)")
+                        print("\033[F\033[2K", end="", flush=True) # Go up and clear line
+                        continue
+                    if guess not in wordle.candidates:
+                        input(f"error> guess \"{guess}\" is not allowed in this game anymore (hard mode)")
+                        print("\033[F\033[2K", end="", flush=True) # Go up and clear line
+                        continue
+
+                break
+
+            result = wordle.resultCase(guess, secret)
+            wordle.processGuess(guess, result)
+            wordle.findCandidates()
+
+            print(f"guess {i}> ", end="")
+            for j in range(5):
+                if guess[j].upper() == result[j]:
+                    print("\033[37m\033[42m", end="") # White text, green background
+                elif guess[j] == result[j]:
+                    print("\033[37m\033[43m", end="") # White text, yellow background
+                else:
+                    print("\033[37m\033[100m", end="") # White text, gray background
+                print(guess[j].upper(), end="")
+            print("\033[0m") # Reset both foreground and background to default
+
+            if guess == secret:
+                print("[YOU HAVE WON!]")
+                break
+        else:
+            print("[GAME OVER!]")
         return
 
     wordle.findCandidates()
