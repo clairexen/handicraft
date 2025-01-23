@@ -39,6 +39,11 @@ while len(args):
         case _:
             break
 
+# This class is not very efficient, but it gets the job done.
+# TODO: Re-implement this class using a faster approach.
+# For example, .clues[idx] and .stops could be 26-bit wide bitmaps,
+# and each letter could be represented by such a bitmap with exactly
+# one bit set.
 class Wordle:
     def __init__(self, pattern=None):
         self.clues = [
@@ -48,8 +53,8 @@ class Wordle:
                 set("abcdefghijklmnopqrstuvwxyz"),
                 set("abcdefghijklmnopqrstuvwxyz")
         ]
-        self.letters = list()
         self.stops = set()
+        self.letters = list()
 
     def __str__(self):
         s = "Wordle(\""
@@ -86,7 +91,9 @@ class Wordle:
         oldLettersCnt = defaultdict(int)
         for c in self.letters:
             oldLettersCnt[c] += 1
+
         self.letters.clear()
+
         for i in range(5):
             g, r = guess[i], result[i]
             assert g == g.lower()
@@ -100,6 +107,7 @@ class Wordle:
                 self.clues[i].discard(g)
             else:
                 self.stops.add(g)
+
         for c in oldLettersCnt:
             for i in range(oldLettersCnt[c]):
                 self.letters.append(c)
