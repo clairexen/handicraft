@@ -346,13 +346,13 @@ class Wordle:
                       f"{andat.msrdata[guess]:.1f}/{andat.maxdata[guess]:.1f}) -> {self}")
 
         if len(self.candidates) == 0:
-            print("[NO REMAINIG CANDIDATES!]")
+            print(f"[NO REMAINIG CANDIDATES!]  (secret word was \"{secret}\")")
         else:
             guess = self.candidates[0]
             if guess == secret:
                 print(f"Success: {guess}  \\o/")
             else:
-                print(f"Fail: {guess}  [NOT THE SECRET!]")
+                print(f"Fail: {guess}  [NOT THE SECRET!]  (secret word was \"{secret}\")")
 
 def help():
     print()
@@ -543,7 +543,7 @@ def main():
                 print("[YOU HAVE WON!]")
                 break
         else:
-            print("[GAME OVER!]")
+            print(f"[GAME OVER!]  (secret word was \"{secret}\")")
         return
 
     wordle.findCandidates()
