@@ -14,24 +14,24 @@ args = sys.argv[1:]
 
 while len(args):
     match args[0]:
-        case "-s": # sort
+        case "-s": # sort word lists
             del args[0]
             shuffle = False
             continue
-        case "-g":
+        case "-g": # use pre-generated "good" (first) words
             del args[0]
             usegood = True
             continue
-        case "-e":
-            del args[0]
-            subexpand = True
-            continue
-        case "-n":
+        case "-n": # use N random samples when len(candidates) > N
             del args[0]
             subsample = int(args[0])
             del args[0]
             continue
-        case "-a":
+        case "-e": # expand number of subsamples in pre-defined steps
+            del args[0]
+            subexpand = True
+            continue
+        case "-a": # auto-play (using the given arg as secret word)
             del args[0]
             autoplaysecret = args[0]
             del args[0]
@@ -40,10 +40,12 @@ while len(args):
             break
 
 # This class is not very efficient, but it gets the job done.
+#
 # TODO: Re-implement this class using a faster approach.
 # For example, .clues[idx] and .stops could be 26-bit wide bitmaps,
 # and each letter could be represented by such a bitmap with exactly
 # one bit set.
+#
 class Wordle:
     def __init__(self, pattern=None):
         self.clues = [
@@ -58,7 +60,7 @@ class Wordle:
         self.candidates = None
 
     def __str__(self):
-        s = "Wordle(\""
+        s = "Wordle(\"/"
         for i in range(5):
             if len(self.clues[i]) < 14:
                 s += "".join(sorted(self.clues[i])).upper()
@@ -70,7 +72,9 @@ class Wordle:
         return s + "\")"
 
     def loadPattern(self, pattern):
-        A = (pattern+"////////").split("/")
+        assert pattern.startswith("/")
+        A = (pattern[1:]+"////////").split("/")
+
         for i in range(5):
             c = A[i]
             if c in ("", "_", "."):
@@ -87,6 +91,8 @@ class Wordle:
                 self.letters += c.lower()
             else:
                 self.stops.add(c)
+
+        self.candidates = None
 
     def processGuess(self, guess, result):
         oldLettersCnt = defaultdict(int)
@@ -113,7 +119,12 @@ class Wordle:
             for i in range(oldLettersCnt[c]):
                 self.letters.append(c)
 
+        self.candidates = None
+
     def findCandidates(self):
+        if self.candidates is not None:
+            return
+
         self.candidates = list()
         for word in words:
             letters = self.letters.copy()
@@ -157,123 +168,149 @@ class Wordle:
         result = w.resultCase(guess, secret)
         w.processGuess(guess, result)
         w.findCandidates()
-        return w
+        return w, result
 
-def analyze(wordle, batch, quiet=False, progress=False):
-    andat = SimpleNamespace(
-                guesses=set(),
-                avgdata=dict(),
-                msrdata=dict(),
-                maxdata=dict(),
-            )
-
-    if not quiet and not progress:
-        batchsizedigits = len(f"{len(batch):d}")
-        print(f"+ {' '*(2*batchsizedigits+1)} GUESS    AVG    MSR    MAX")
-
-    secrets = wordle.candidates
-    if subsample and len(secrets) > subsample:
-        secrets = list(np.random.choice(secrets, subsample, False))
-
-    for i, guess in enumerate(batch):
-        if progress:
-            print(f".", end="", flush=True)
+    def analyze(self, batch, quiet=False, progress=False):
+        progsnippets = [
+                "1\b", "2\b", "3\b", "4\b", "5\b",
+                "6\b", "7\b", "8\b", "9\b", "."
+        ]
+        andat = SimpleNamespace(
+                    guesses=set(),
+                    avgdata=dict(),
+                    msrdata=dict(),
+                    maxdata=dict(),
+                )
 
         if not quiet and not progress:
-            print(f"- {i+1:{batchsizedigits}d}/{len(batch):d} {guess}", end="", flush=True)
+            batchsizedigits = len(f"{len(batch):d}")
+            print(f"+ {' '*(2*batchsizedigits+1)} GUESS    AVG    MSR    MAX")
 
-        results = list()
-        for secret in secrets:
-            w = wordle.assumeCase(guess, secret)
-            results.append(len(w.candidates))
+        secrets = self.candidates
+        if subsample and len(secrets) > subsample:
+            secrets = list(np.random.choice(secrets, subsample, False))
+
+        for i, guess in enumerate(batch):
+            if progress:
+                print(progsnippets[0], end="", flush=True)
+                progsnippets = progsnippets[1:] + progsnippets[:1]
+
+            if not quiet and not progress:
+                print(f"- {i+1:{batchsizedigits}d}/{len(batch):d} {guess}", end="", flush=True)
+
+            results = list()
+            for secret in secrets:
+                w, _ = self.assumeCase(guess, secret)
+                results.append(len(w.candidates))
+
+            if not quiet and not progress:
+                print(f" {avg(results):6.1f} {msr(results):6.1f} {max(results):6.1f}", end="")
+                print(f"   {results}" if len(results) < 15 else "")
+
+            andat.guesses.add(guess)
+            andat.avgdata[guess] = avg(results)
+            andat.msrdata[guess] = msr(results)
+            andat.maxdata[guess] = max(results)
+
+        avgmax = avg(andat.maxdata.values())
+        g1 = set([g for g, v in andat.maxdata.items() if v <= avgmax])
+        minmsr = min([andat.msrdata[g] for g in g1])
+        g2 = set([g for g in g1 if andat.msrdata[g] <= minmsr+0.05])
+        minavg = min([andat.avgdata[g] for g in g2])
+        g3 = set([g for g in g2 if andat.avgdata[g] <= minavg+0.05])
+        minmax = min([andat.maxdata[g] for g in g2])
+        andat.best = set([g for g in g2 if andat.maxdata[g] <= minmax+0.05])
 
         if not quiet and not progress:
-            print(f" {avg(results):6.1f} {msr(results):6.1f} {max(results):6.1f}", end="")
-            print(f"   {results}" if len(results) < 15 else "")
+            print(f"Best guesses: {' '.join(sorted(andat.best))}")
 
-        andat.guesses.add(guess)
-        andat.avgdata[guess] = avg(results)
-        andat.msrdata[guess] = msr(results)
-        andat.maxdata[guess] = max(results)
+        return andat
 
-    avgmax = avg(andat.maxdata.values())
-    g1 = set([g for g, v in andat.maxdata.items() if v <= avgmax])
-    minmsr = min([andat.msrdata[g] for g in g1])
-    g2 = set([g for g in g1 if andat.msrdata[g] <= minmsr+0.05])
-    minavg = min([andat.avgdata[g] for g in g2])
-    g3 = set([g for g in g2 if andat.avgdata[g] <= minavg+0.05])
-    minmax = min([andat.maxdata[g] for g in g2])
-    andat.best = set([g for g in g2 if andat.maxdata[g] <= minmax+0.05])
+    def autoplay(self, secret):
+        while len(self.candidates) > 1:
+            if len(self.candidates) == len(words):
+                andat = None
+                guess = np.random.choice(list(goodwords))
+            else:
+                n = len(self.candidates)
+                print(f"Analyzing {n} remaining candidates..", end="")
+                andat = self.analyze(self.candidates, progress=True)
+                print(".")
+                guess = np.random.choice(list(andat.best))
 
-    if not quiet and not progress:
-        print(f"Best guesses: {' '.join(sorted(andat.best))}")
+            result = self.resultCase(guess, secret)
+            self.processGuess(guess, result)
+            self.findCandidates()
 
-    return andat
+            if andat is None:
+                print(f"Guess: {guess}/{result} -> {self}")
+            else:
+                print(f"Guess: {guess}/{result} ({andat.avgdata[guess]:.1f}/" +
+                      f"{andat.msrdata[guess]:.1f}/{andat.maxdata[guess]:.1f}) -> {self}")
 
-def autoplay(wordle, secret):
-    while len(wordle.candidates) > 1:
-        if len(wordle.candidates) == len(words):
-            andat = None
-            guess = np.random.choice(list(goodwords))
+        if len(self.candidates) == 0:
+            print("[NO REMAINIG CANDIDATES!]")
         else:
-            n = len(wordle.candidates)
-            print(f"Analyzing {n} remaining candidates..", end="")
-            andat = analyze(wordle, wordle.candidates, progress=True)
-            print()
-            guess = np.random.choice(list(andat.best))
-
-        result = wordle.resultCase(guess, secret)
-        wordle.processGuess(guess, result)
-        wordle.findCandidates()
-
-        if andat is None:
-            print(f"Guess: {guess}/{result} -> {wordle}")
-        else:
-            print(f"Guess: {guess}/{result} ({andat.avgdata[guess]:.1f}/" +
-                  f"{andat.msrdata[guess]:.1f}/{andat.maxdata[guess]:.1f}) -> {wordle}")
-
-    if len(wordle.candidates) == 0:
-        print("[NO REMAINIG CANDIDATES!]")
-    else:
-        guess = wordle.candidates[0]
-        print(f"Remaining Candidate: {guess}  " + ("\\o/" if guess == secret else "[NOT THE SECRET!]"))
+            guess = self.candidates[0]
+            print(f"Remaining Candidate: {guess}  " + ("\\o/" if guess == secret else "[NOT THE SECRET!]"))
 
 def main():
     global subsample
 
     if not args or args[0].startswith("-"):
         print("Usage examples:")
-        print("  python3 wordle.py s/a/s/_/_/AShrugmsy")
-        print("  python3 wordle.py / shrug/s____ massy/_as__ ideas/___AS novas/___AS")
+        print("  python3 wordle.py /s/a/s/_/_/AShrugmsy")
+        print("  python3 wordle.py shrug/s____ massy/_as__ ideas/___AS novas/___AS")
         print("  python3 wordle.py -n 0 aloes reals tales tares saner stare plate")
+        print("  python3 wordle.py fraud/___uD upend/u___D squid")
+        print("  python3 wordle.py -s //t//it//ITadelrs joint")
+        print("  python3 wordle.py -a point stair delta")
         sys.exit(1)
 
-    if "/" not in args[0]:
+    if "/" not in args[0] and autoplaysecret is None:
         wordle = Wordle()
         wordle.findCandidates()
-        analyze(wordle, args)
+        wordle.analyze(args)
         if subexpand and subsample:
             for step in (50, 100, 200, 400, 800, 1600, 3200):
                 if subsample < step:
                     subsample = step
                     print()
                     print(f"with n={subsample}:")
-                    analyze(wordle, args)
+                    wordle.analyze(args)
         sys.exit(0)
 
     wordle = Wordle()
-    wordle.loadPattern(args[0])
-    print(wordle)
+    if args[0].startswith("/"):
+        wordle.loadPattern(args[0])
+        print(wordle)
+        del args[0]
 
-    for guess in args[1:]:
+    lastquery = False
+    for guess in args:
+        assert not guess.startswith("/")
         if "/" in guess:
             guess, result = guess.split("/")
             wordle.processGuess(guess, result)
-        else:
-            assert autoplaysecret is not None
+        elif autoplaysecret is not None:
             result = wordle.resultCase(guess, autoplaysecret)
             wordle.processGuess(guess, result)
+        else:
+            print("_"*50)
+            print(f"+       {guess}")
+            wordle.findCandidates()
+            for secret in wordle.candidates:
+                w, r = wordle.assumeCase(guess, secret)
+                print(f"- {secret}/{r} -> {' '.join(sorted(w.candidates))}")
+            lastquery = True
+            continue
+        if lastquery:
+            print("_"*50)
+            lastquery = False
         print(f"Guess: {guess}/{result} -> {wordle}")
+
+    if lastquery:
+        return
 
     wordle.findCandidates()
     out = wordle.candidates
@@ -283,11 +320,11 @@ def main():
     print(f"{len(wordle.candidates)} remaining candidates: {" ".join(out)}")
 
     if autoplaysecret is not None:
-        autoplay(wordle, autoplaysecret)
+        wordle.autoplay(autoplaysecret)
     elif usegood:
-        analyze(wordle, [c for c in wordle.candidates if c in goodwords])
+        wordle.analyze([c for c in wordle.candidates if c in goodwords])
     else:
-        analyze(wordle, wordle.candidates)
+        wordle.analyze(wordle.candidates)
 
 def avg(data):
     return sum(data)/len(data)
