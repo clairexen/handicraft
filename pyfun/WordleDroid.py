@@ -274,7 +274,7 @@ class Wordle:
 
         if not quiet and not progress:
             batchsizedigits = len(f"{len(batch):d}")
-            print(f"+ {' '*(2*batchsizedigits+1)} GUESS    AVG    MSR    MAX")
+            print(f"+ {' '*(2*batchsizedigits+1)} GUESS   AVG    MSR    MAX")
 
         N = subsample if not tgsamples else int(math.ceil(min(subsample, tgsamples/len(batch))))
 
