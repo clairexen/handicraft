@@ -30,14 +30,16 @@ tgsamples = 1000
 hardmode = True
 playmode = False
 autoplaysecret = None
+wordledump = False
 cmdname = sys.argv[0]
 args = sys.argv[1:]
 
-def getWordleWordOfTheDay():
+def getWordleWordOfTheDay(pastDays=0, quiet=False):
+    global totalOfficialWordles
     import requests, datetime
 
-    current_date = datetime.datetime.now().strftime('%Y-%m-%d')
-    url = f'https://www.nytimes.com/svc/wordle/v2/{current_date}.json'
+    date = (datetime.datetime.today() - datetime.timedelta(days=pastDays)).strftime('%Y-%m-%d')
+    url = f'https://www.nytimes.com/svc/wordle/v2/{date}.json'
 
     response = requests.get(url)
     if response.status_code != 200:
@@ -45,7 +47,16 @@ def getWordleWordOfTheDay():
         assert False
 
     data = response.json()
-    print(f"Using official NYT Wordle word for {data['print_date']}, edited by {data['editor']}.")
+    if "editor" not in data:
+        data["editor"] = "Unknown"
+    if "days_since_launch" not in data:
+        data["days_since_launch"] = 0
+    if pastDays == 0:
+        totalOfficialWordles = data['days_since_launch']
+
+    if not quiet:
+        print(f"Using official NYT Wordle word #{data['days_since_launch']+1} " +
+              f"for {data['print_date']}, edited by {data['editor']}.")
     return data['solution']
 
 while len(args):
@@ -97,6 +108,10 @@ while len(args):
             assert not playmode and autoplaysecret is None
             del args[0]
             autoplaysecret = getWordleWordOfTheDay()
+            continue
+        case "-W": # produce list of (new) wordle words (hidden from help())
+            del args[0]
+            wordledump = True
             continue
         case _:
             break
@@ -297,11 +312,12 @@ class Wordle:
         return andat
 
     def autoplay(self, secret):
+        self.findCandidates()
         if hardmode:
-            self.findCandidates()
             assert secret in self.candidates
 
-        while len(self.candidates) > 1:
+        guess = None
+        while len(self.candidates) > 1 or guess != secret:
             if len(self.candidates) == len(words):
                 andat = None
                 guess = np.random.choice(list(goodwords))
@@ -317,57 +333,92 @@ class Wordle:
             self.findCandidates()
 
             if andat is None:
-                print(f"Guess: {guess}/{result} -> {self}")
+                print(f"Automatic Guess: {guess}/{result} -> {self}")
             else:
-                print(f"Guess: {guess}/{result} ({andat.avgdata[guess]:.1f}/" +
+                print(f"Automatic Guess: {guess}/{result} ({andat.avgdata[guess]:.1f}/" +
                       f"{andat.msrdata[guess]:.1f}/{andat.maxdata[guess]:.1f}) -> {self}")
 
         if len(self.candidates) == 0:
             print("[NO REMAINIG CANDIDATES!]")
         else:
             guess = self.candidates[0]
-            print(f"Remaining Candidate: {guess}  " + ("\\o/" if guess == secret else "[NOT THE SECRET!]"))
+            print(f"Success: {guess}  " + ("\\o/" if guess == secret else "[NOT THE SECRET!]"))
+
+def help():
+    print()
+    print(f"Usage:")
+    print(f"  {cmdname} [options...] args...")
+    print()
+    print(f"Usage examples:")
+    print(f"  {cmdname} /s/a/s/_/_/AShrugmsy")
+    print(f"  {cmdname} shrug/s____ massy/_as__ ideas/___AS novas/___AS")
+    print(f"  {cmdname} -n 0 aloes reals tales tares saner stare plate")
+    print(f"  {cmdname} fraud/___uD upend/u___D squid")
+    print(f"  {cmdname} -s //t//it//ITadelrs joint")
+    print(f"  {cmdname} -H -a point stair delta")
+    print()
+    print(f"Options:")
+    print(f"  -s  ........  sort (do not shuffle) word lists")
+    print(f"  -H  ........  disable \"hard mode\" (allow all guess words)")
+    print(f"  -g  ........  use pre-generated set of \"good\" (first) words")
+    print(f"  -n N  ......  use N random samples when len(candidates) > N")
+    print(f"  -N N  ......  use at most N total samples for creating a guess")
+    print(f"  -e  ........  expand number of subsamples in pre-defined steps")
+    print()
+    print(f"Play and Autoplay Options:")
+    print(f"  -p .........  no analysis, just play a normal game of wordl")
+    print(f"  -a word  ...  auto-play (using the given arg as secret word)")
+    print(f"  -P .........  play todays official (NYT) Wordle")
+    print(f"  -A .........  auto-play todays official (NYT) Wordle")
+    print()
+    print(f"State Arg (only valid as first arg):")
+    print(f"  [...TBD...]")
+    print()
+    print(f"Guess Arg (encodes a single guess and the results it produced):")
+    print(f"  [...TBD...]")
+    print()
+    print(f"Query Arg (a single 5-letter word wthout results):")
+    print(f"  [...TBD...]")
+    print()
+    sys.exit(1)
 
 def main():
     global subsample
 
-    if (not args and not playmode and autoplaysecret is None) or (args and args[0].startswith("-")):
+    if not args and not playmode and not wordledump and autoplaysecret is None:
+        help()
+
+    if args and args[0].startswith("-"):
+        help()
+
+    # create/download the list of all official wordle words
+    if wordledump:
         print()
-        print(f"Usage:")
-        print(f"  {cmdname} [options...] args...")
+        print(f"Wordlist Stats:")
+        print(f"    {len(words)=:4d}")
+        print(f"    {len(words)-len(dictwords  )=:4d}, {len(wordlewords)=:4d}")
+        print(f"    {len(words)-len(wordlewords)=:4d}, {len(dictwords  )=:4d}")
         print()
-        print(f"Usage examples:")
-        print(f"  {cmdname} /s/a/s/_/_/AShrugmsy")
-        print(f"  {cmdname} shrug/s____ massy/_as__ ideas/___AS novas/___AS")
-        print(f"  {cmdname} -n 0 aloes reals tales tares saner stare plate")
-        print(f"  {cmdname} fraud/___uD upend/u___D squid")
-        print(f"  {cmdname} -s //t//it//ITadelrs joint")
-        print(f"  {cmdname} -H -a point stair delta")
+        print(f"Wordle-Only Words:")
+        outwords = sorted(wordlewords-dictwords)
+        for i in range(0, len(outwords), 12):
+            print(" ".join(outwords[i:i+12]))
         print()
-        print(f"Options:")
-        print(f"  -s  ........  sort (do not shuffle) word lists")
-        print(f"  -H  ........  disable \"hard mode\" (allow all guess words)")
-        print(f"  -g  ........  use pre-generated set of \"good\" (first) words")
-        print(f"  -n N  ......  use N random samples when len(candidates) > N")
-        print(f"  -N N  ......  use at most N total samples for creating a guess")
-        print(f"  -e  ........  expand number of subsamples in pre-defined steps")
+        i = 0
+        xtrawords = list()
+        while i == 0 or i <= totalOfficialWordles:
+            w = getWordleWordOfTheDay(i)
+            print(f"+ {w}", flush=True)
+            if w in wordlewords: break
+            xtrawords.append(w)
+            i += 1
         print()
-        print(f"Play and Autoplay Options:")
-        print(f"  -p .........  no analysis, just play a normal game of wordl")
-        print(f"  -a word  ...  auto-play (using the given arg as secret word)")
-        print(f"  -P .........  play todays official (NYT) Wordle")
-        print(f"  -A .........  auto-play todays official (NYT) Wordle")
+        print(f"Got {len(xtrawords)} new Wordle words{':' if xtrawords else '.'}")
+        xtrawords = list(reversed(xtrawords))
+        for i in range(0, len(xtrawords), 12):
+            print(" ".join(xtrawords[i:i+12]))
         print()
-        print(f"State Arg (only valid as first arg):")
-        print(f"  [...TBD...]")
-        print()
-        print(f"Guess Arg (encodes a single guess and the results it produced):")
-        print(f"  [...TBD...]")
-        print()
-        print(f"Query Arg (a single 5-letter word wthout results):")
-        print(f"  [...TBD...]")
-        print()
-        sys.exit(1)
+        sys.exit(0)
 
     if len(args) and "/" not in args[0] and autoplaysecret is None:
         wordle = Wordle()
@@ -409,7 +460,7 @@ def main():
         if lastquery:
             print("_"*50)
             lastquery = False
-        print(f"Guess: {guess}/{result} -> {wordle}")
+        print(f"Cmdline Guess: {guess}/{result} -> {wordle}")
 
     if lastquery:
         return
@@ -504,7 +555,7 @@ def avg(data):
 def msr(data):
     return avg([x*x for x in data])**0.5
 
-words = """
+dictwords = set("""
 abaci aback abaft abase abash abate abbey abbot abeam abets abhor abide
 abler abode abort about above abuse abuts abuzz abyss ached aches achoo
 acids acing acmes acorn acres acrid acted actor acute adage adapt added
@@ -887,7 +938,119 @@ wrist write writs wrong wrote wroth wrung wryer wryly xenon xylem yacht
 yacks yahoo yanks yards yarns yawed yawls yawns yeahs yearn years yeast
 yells yelps yeses yield yocks yodel yogin yogis yoked yokel yokes yolks
 young yours youth yowls yucca yucks yucky yummy yuppy zebra zebus zeros
-zests zilch zincs zings zippy zombi zonal zoned zones zooms""".split()
+zests zilch zincs zings zippy zombi zonal zoned zones zooms""".split())
+
+wordlewords = set("""
+cigar rebut sissy humph awake blush focal evade naval serve heath dwarf
+model karma stink grade quiet bench abate feign major death fresh crust
+stool colon abase marry react batty pride floss helix croak staff paper
+unfed whelp trawl outdo adobe crazy sower repay digit crate cluck spike
+mimic pound maxim linen unmet flesh booby forth first stand belly ivory
+seedy print yearn drain bribe stout panel crass flume offal agree error
+swirl argue bleed delta flick totem wooer front shrub parry biome lapel
+start greet goner golem lusty loopy round audit lying gamma labor islet
+civic forge corny moult basic salad agate spicy spray essay fjord spend
+kebab guild aback motor alone hatch hyper thumb dowry ought belch dutch
+pilot tweed comet jaunt enema steed abyss growl fling dozen boozy erode
+world gouge click briar great altar pulpy blurt coast duchy groin fixer
+group rogue badly smart pithy gaudy chill heron vodka finer surer radio
+rouge perch retch wrote clock tilde store prove bring solve cheat grime
+exult usher epoch triad break rhino viral conic masse sonic vital trace
+using peach champ baton brake pluck craze gripe weary picky acute ferry
+aside tapir troll unify rebus boost truss siege tiger banal slump crank
+gorge query drink favor abbey tangy panic solar shire proxy point robot
+prick wince crimp knoll sugar whack mount perky could wrung light those
+moist shard pleat aloft skill elder frame humor pause ulcer ultra robin
+cynic aroma caulk shake dodge swill tacit other thorn trove bloke vivid
+spill chant choke rupee nasty mourn ahead brine cloth hoard sweet month
+lapse watch today focus smelt tease cater movie saute allow renew their
+slosh purge chest depot epoxy nymph found shall stove lowly snout trope
+fewer shawl natal comma foray scare stair black squad royal chunk mince
+shame cheek ample flair foyer cargo oxide plant olive inert askew heist
+shown zesty trash larva forgo story hairy train homer badge midst canny
+shine gecko farce slung tipsy metal yield delve being scour glass gamer
+scrap money hinge album vouch asset tiara crept bayou atoll manor creak
+showy phase froth depth gloom flood trait girth piety goose float donor
+atone primo apron blown cacao loser input gloat awful brink smite beady
+rusty retro droll gawky hutch pinto egret lilac sever field fluff agape
+voice stead berth madam night bland liver wedge roomy wacky flock angry
+trite aphid tryst midge power elope cinch motto stomp upset bluff cramp
+quart coyly youth rhyme buggy alien smear unfit patty cling glean label
+hunky khaki poker gruel twice twang shrug treat waste merit woven needy
+clown irony ruder gauze chief onset prize fungi charm gully inter whoop
+taunt leery class theme lofty tibia booze alpha thyme doubt parer chute
+stick trice alike recap saint glory grate admit brisk soggy usurp scald
+scorn leave twine sting bough marsh sloth dandy vigor howdy enjoy valid
+ionic equal floor catch spade stein exist quirk denim grove spiel mummy
+fault foggy flout carry sneak libel waltz aptly piney inept aloud photo
+dream stale begin spell rainy unite medal valet inane maple snarl baker
+there glyph avert brave axiom prime drive feast itchy clean happy tepid
+undue study eject chafe torso adore woken amber joust infer braid knock
+naive apply spoke usual rival probe chord taper slate third lunar excel
+aorta poise extra judge condo impel havoc molar manly whine skirt antic
+layer sleek belie lemon opera pixie grimy sedan leapt human koala spire
+frock adopt chard mucky alter blurb matey elude count maize beefy worry
+flirt fishy crave cross scold shirk tasty unlit dance ninth apple flail
+stage heady debug giant usage sound salsa magic cache avail kiosk sweat
+ruddy riper vague arbor fifty syrup worse polka moose above squat trend
+toxic pinky horse regal where revel email birth blame surly sweep cider
+mealy yacht credo glove tough duvet staid grout voter untie guano hurry
+beset bread every march stock flora ratio smash leafy locus ledge snafu
+under qualm borax carat thief agony dwelt whiff hound thump plate kayak
+broke unzip ditto joker metro logic circa cedar plaza range sulky horde
+guppy below anger ghoul aglow cocoa ethic broom snack acrid scarf canoe
+latte plank shorn grief flask brash igloo clerk utter bagel swine ramen
+skimp mouse kneel agile jazzy humid nanny beast ennui scout hater crumb
+balsa again guard wrong plunk crime maybe strap ranch shyly kazoo frost
+crane taste covet grand rodeo guest about tract diner straw bleep mossy
+hotel irate venom windy donut cower enter folly earth whirl barge fiend
+crone topaz droop flyer tonic flank burly froze whale hobby wheel heart
+disco ethos curly bathe style tenth beget party chart anode polyp brook
+bully lover empty hello quick wrath snaky index scrub amiss exact magma
+quest beach spice verve wordy ocean choir peace write caper audio bride
+space onion await giddy birch gnash dwell rouse lucky quote older whisk
+clear rayon exert angel music frank close snare stone brush carol right
+rocky loyal smile coach azure daddy beret merry while spurt bunch chime
+viola binge truth snail skunk knelt uncle agent leaky graph adult mercy
+splat occur smirk given tempo cause retry pique noble mason phony grail
+bleak noise until ardor mania flare trade limit ninja glaze leash actor
+meant green sassy sight trust tardy think queue candy piano pixel queen
+throw guide solid tawny scope sushi resin taken genre adapt worst young
+woman sleep sharp shift chain house these spent would topic globe bacon
+funny table small built touch slope grace evoke phone daisy learn child
+three salty mural aging twirl scant lunge cable stony final liner threw
+brief route heard doing lunch blond court stole thing large north tweak
+still relic block aloof snake ember leggy expel bulky alive cleft micro
+verge repel which after place stiff fried never pasta scram talon ascot
+stash psalm ridge price match build heavy apart piper smith often sense
+devil image forty urban state flame hunch teary clone early cheer grasp
+pesky heave local since erupt toxin snort spelt abide lingo shade decay
+risen towel sally mayor stung speak realm force taboo frond serum plait
+climb wrist finch voila breed merge broth louse whiny steel blimp equip
+shank tithe facet raise lucid jolly laser rover overt intro vapid gleam
+prune craft prowl diary slice ebony value decal shave musty pious jerky
+media tidal outer cumin amass pinch stall tutor briny hitch nicer dingo
+exalt swish glide titan bevel skier minus papal gummy chaos basin bravo
+stark groom organ ether melon hence crowd manga swung deter angst vault
+proud grind prior cover terse scent paint edict bugle dolly savor knead
+order drove zebra buddy adage inlay thigh debut crush scoff canon shape
+blare gaunt cameo jiffy enact video swoon decoy quite nerdy refer shaft
+speck cadet prong forte porch awash juice smock super feral penne chalk
+flake scale lower ensue anvil macaw saucy ounce medic scone skiff neigh
+shore acorn brace storm lanky meter delay mulch brute leech filet skate
+stake crown lithe flunk knave spout mushy camel faint stern widen rerun
+owner drawn debit rebel aisle brass harsh broad recur honey beaut fully
+press smoke seven teach steam handy torch thank faith brain rider cloud
+modem shell wagon title miner lager flour joint mommy carve gusty stain
+prone gamut corer grant halve stint fiber dicey spoon shout goofy bossy
+frown wreak sandy bawdy tunic easel weird sixth snoop blaze vinyl octet
+truly event ready swell inner stoic flown primp uvula tacky visor tally
+frail going niche spine pearl jelly twist brown witch slang chock hippo
+dogma mauve guile shaky crypt endow shove hilly hyena flung patio plumb
+vying boxer drool funky boast scowl hefty stray flash blade brawn sauna
+eagle share affix grain decry mambo stare lemur nerve chose cheap relax
+cyber sprig atlas draft wafer crawl dingy total cloak fancy knack flint
+prose silly rower squid icing reach upper""".split())
 
 goodwords = set("""
 acres aegis aeons aides aisle aloes antes arise arose bales bares bates
@@ -901,6 +1064,8 @@ safer sager saner sated scare score sepia share shear siren slate slier
 smear snare snore solar spare spear stale stare stead stile stole store
 tales tames tapes tares taros taser teals tears terns tiers tiles tires
 tones tries wares""".split())
+
+words = sorted(dictwords | wordlewords)
 
 if shuffle:
     np.random.shuffle(words)
