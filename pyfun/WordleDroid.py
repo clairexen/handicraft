@@ -20,17 +20,33 @@
 import numpy as np
 from collections import defaultdict
 from types import SimpleNamespace
-import sys, copy
+import sys, copy, math
 
 shuffle = True
 usegood = False
 subexpand = False
 subsample = 100
+tgsamples = 1000
 hardmode = True
 playmode = False
 autoplaysecret = None
 cmdname = sys.argv[0]
 args = sys.argv[1:]
+
+def getWordleWordOfTheDay():
+    import requests, datetime
+
+    current_date = datetime.datetime.now().strftime('%Y-%m-%d')
+    url = f'https://www.nytimes.com/svc/wordle/v2/{current_date}.json'
+
+    response = requests.get(url)
+    if response.status_code != 200:
+        print(f"Failed to retrieve Wordle solution. Status code: {response.status_code}")
+        assert False
+
+    data = response.json()
+    print(f"Using official NYT Wordle word for {data['print_date']}, edited by {data['editor']}.")
+    return data['solution']
 
 while len(args):
     match args[0]:
@@ -42,10 +58,6 @@ while len(args):
             del args[0]
             hardmode = False
             continue
-        case "-p": # no analysis, just play a normal game of wordl
-            del args[0]
-            playmode = True
-            continue
         case "-g": # use pre-generated "good" (first) words
             del args[0]
             usegood = True
@@ -55,14 +67,36 @@ while len(args):
             subsample = int(args[0])
             del args[0]
             continue
+        case "-N": # use a total of N random samples for each guess
+            del args[0]
+            tgsamples = int(args[0])
+            del args[0]
+            continue
         case "-e": # expand number of subsamples in pre-defined steps
             del args[0]
             subexpand = True
             continue
+        case "-p": # no analysis, just play a normal game of wordl
+            assert not playmode and autoplaysecret is None
+            del args[0]
+            playmode = True
+            continue
+        case "-P": # play todays official (NYT) Wordle
+            assert not playmode and autoplaysecret is None
+            del args[0]
+            playmode = True
+            autoplaysecret = getWordleWordOfTheDay()
+            continue
         case "-a": # auto-play (using the given arg as secret word)
+            assert not playmode and autoplaysecret is None
             del args[0]
             autoplaysecret = args[0]
             del args[0]
+            continue
+        case "-A": # auto-play todays official (NYT) Wordle
+            assert not playmode and autoplaysecret is None
+            del args[0]
+            autoplaysecret = getWordleWordOfTheDay()
             continue
         case _:
             break
@@ -220,9 +254,11 @@ class Wordle:
             batchsizedigits = len(f"{len(batch):d}")
             print(f"+ {' '*(2*batchsizedigits+1)} GUESS    AVG    MSR    MAX")
 
+        N = subsample if not tgsamples else int(math.ceil(min(subsample, tgsamples/len(batch))))
+
         secrets = self.candidates
-        if subsample and len(secrets) > subsample:
-            secrets = list(np.random.choice(secrets, subsample, False))
+        if N and len(secrets) > N:
+            secrets = list(np.random.choice(secrets, N, False))
 
         for i, guess in enumerate(batch):
             if progress:
@@ -313,11 +349,14 @@ def main():
         print(f"  -H  ........  disable \"hard mode\" (allow all guess words)")
         print(f"  -g  ........  use pre-generated set of \"good\" (first) words")
         print(f"  -n N  ......  use N random samples when len(candidates) > N")
+        print(f"  -N N  ......  use at most N total samples for creating a guess")
         print(f"  -e  ........  expand number of subsamples in pre-defined steps")
         print()
         print(f"Play and Autoplay Options:")
         print(f"  -p .........  no analysis, just play a normal game of wordl")
         print(f"  -a word  ...  auto-play (using the given arg as secret word)")
+        print(f"  -P .........  play todays official (NYT) Wordle")
+        print(f"  -A .........  auto-play todays official (NYT) Wordle")
         print()
         print(f"State Arg (only valid as first arg):")
         print(f"  [...TBD...]")
@@ -387,7 +426,7 @@ def main():
                 guess = input(f"guess {i}> ")
                 print("\033[F\033[2K", end="", flush=True) # Go up and clear line
 
-                # cheat code
+                # cheat codes
                 if guess == "?":
                     hints = sorted(wordle.candidates)
                     if len(hints) > 10:
@@ -395,6 +434,14 @@ def main():
                         input(f"hints> {' '.join(short)} (+{len(hints)-len(short)})")
                     else:
                         input(f"hints> {' '.join(hints)}")
+                    print("\033[F\033[2K", end="", flush=True) # Go up and clear line
+                    continue
+                if guess == "??":
+                    input(f"state> {wordle}")
+                    print("\033[F\033[2K", end="", flush=True) # Go up and clear line
+                    continue
+                if guess == "???":
+                    input(f"secret> {secret}")
                     print("\033[F\033[2K", end="", flush=True) # Go up and clear line
                     continue
 
