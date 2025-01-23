@@ -55,6 +55,7 @@ class Wordle:
         ]
         self.stops = set()
         self.letters = list()
+        self.candidates = None
 
     def __str__(self):
         s = "Wordle(\""
@@ -129,8 +130,9 @@ class Wordle:
                     self.candidates.append(word)
 
     def resultCase(self, guess, secret):
-        assert guess in self.candidates
-        assert secret in self.candidates
+        if self.candidates is not None:
+            assert guess in self.candidates
+            assert secret in self.candidates
 
         result = list("_____")
         secretCopy = list(secret)
@@ -203,6 +205,9 @@ def analyze(wordle, batch, quiet=False, progress=False):
     minmax = min([andat.maxdata[g] for g in g2])
     andat.best = set([g for g in g2 if andat.maxdata[g] <= minmax+0.05])
 
+    if not quiet and not progress:
+        print(f"Best guesses: {' '.join(sorted(andat.best))}")
+
     return andat
 
 def autoplay(wordle, secret):
@@ -260,9 +265,14 @@ def main():
     wordle.loadPattern(args[0])
     print(wordle)
 
-    for guessResult in args[1:]:
-        guess, result = guessResult.split("/")
-        wordle.processGuess(guess, result)
+    for guess in args[1:]:
+        if "/" in guess:
+            guess, result = guess.split("/")
+            wordle.processGuess(guess, result)
+        else:
+            assert autoplaysecret is not None
+            result = wordle.resultCase(guess, autoplaysecret)
+            wordle.processGuess(guess, result)
         print(f"Guess: {guess}/{result} -> {wordle}")
 
     wordle.findCandidates()
