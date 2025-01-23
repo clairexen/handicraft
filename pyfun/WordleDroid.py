@@ -360,7 +360,10 @@ def main():
 
     if playmode:
         wordle.findCandidates()
-        secret = np.random.choice(wordle.candidates)
+        if autoplaysecret is not None:
+            secret = autoplaysecret
+        else:
+            secret = np.random.choice(wordle.candidates)
 
         for i in range(1, 7):
             while True:
