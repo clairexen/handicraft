@@ -18,7 +18,7 @@ with open("words.cc", "w") as f:
     for N in (4, 5, 6):
         words = "".join(sorted([w for w in all_words if len(w) == N and
                                 w.isalpha() and w.islower() and w.isascii()]))
-        print(f"extern const char WordleDroidWords{N}[];", end="", file=f)
+        print(f"extern const char WordleDroidWords{N}[];", file=f)
         print(f"const char WordleDroidWords{N}[] = // {len(words)//N} words", end="", file=f)
         for k in range(0, len(words), 60):
             print(f"\n\"{words[k:k+60]}\"", end="", file=f)
