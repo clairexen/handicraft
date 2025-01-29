@@ -9,15 +9,15 @@ int main(int argc, const char **argv)
 {
 	WordleDroidEngine4 engine4;
 	engine4.loadDefaultDict();
-	printf("4 %d>\n", engine4.numWords-1);
+	printf("[WordleDroidEngine4] %5d>\n", engine4.numWords-1);
 
 	WordleDroidEngine5 engine5;
 	engine5.loadDefaultDict();
-	printf("5 %d>\n", engine5.numWords-1);
+	printf("[WordleDroidEngine5] %5d>\n", engine5.numWords-1);
 
 	WordleDroidEngine6 engine6;
 	engine6.loadDefaultDict();
-	printf("6 %d>\n", engine6.numWords-1);
+	printf("[WordleDroidEngine6] %5d>\n", engine6.numWords-1);
 
 	return 0;
 }
