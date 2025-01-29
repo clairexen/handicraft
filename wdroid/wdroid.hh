@@ -4,9 +4,11 @@
 #include <map>
 #include <array>
 #include <vector>
+#include <string>
 #include <cstdint>
 #include <cassert>
 #include <cstdio>
+#include <cstring>
 #include <cstdlib>
 
 extern const char WordleDroidWords4[];
@@ -20,6 +22,12 @@ template <> inline const char *getWordleDroidWords<6>() { return WordleDroidWord
 
 struct AbstractWordleDroidEngine
 {
+	virtual ~AbstractWordleDroidEngine() { }
+	virtual int vGetWordLen() const { return 0; };
+	virtual int vGetCurNumWords() const { return 0; };
+	virtual bool vExecuteCommand(const char *p, const char *arg) { return false; };
+	AbstractWordleDroidEngine* executeCommand(const char *p, const char *arg, bool noprompt=false);
+	static int main(int argc, const char **argv);
 };
 
 template <int WordLen, int MaxCnt, int MaxWords>
@@ -30,15 +38,21 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 	static constexpr char Green = 64;
 	static constexpr char White = 96;
 
+	static constexpr int32_t FullMskVal = (1 << 27) - 2;
+
 	struct Tok : public std::array<char, WordLen>
 	{
-		Tok() { }
-		~Tok() { }
+		Tok() {
+			for (int i=0; i<WordLen; i++)
+				(*this)[i] = 0;
+		}
 
 		Tok(const char *p) {
 			for (int i=0; i<WordLen; i++)
 				(*this)[i] = p[i];
 		}
+
+		~Tok() { }
 
 		char val(int idx) const { return (*this)[idx] & 31; }
 		char col(int idx) const { return (*this)[idx] & 96; }
@@ -86,6 +100,15 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 	{
 		WordMsk() { }
 		~WordMsk() { }
+
+		static WordMsk fullMsk() {
+			WordMsk w;
+			for (int i=0; i<WordLen; i++)
+				w.posBits(i) = FullMskVal;
+			for (int k=0; k<MaxCnt; k++)
+				w.cntBits(k) = FullMskVal;
+			return w;
+		}
 
 		WordMsk(const Tok &w) {
 			// w.print();
@@ -166,30 +189,54 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 		auto it = wordIndex.find(w);
 		assert(it == wordIndex.end());
 		assert(numWords < MaxWords);
+		dictWords.push_back(numWords);
 		words[numWords] = w;
 		wordIndex[w] = numWords;
 		return words[numWords++];
 	}
 
 	void loadDict(const char *p) {
+		assert(dictWords.empty());
 		while (*p) {
 			dictWord(p);
 			p += WordLen;
 		}
+		curWords = dictWords;
 	}
 
-	void loadDefaultDict() {
-		loadDict(getWordleDroidWords<WordLen>());
+	void loadDictFile(const char *p) {
+		if (p == nullptr) {
+			loadDict(getWordleDroidWords<WordLen>());
+			return;
+		}
+		abort();
 	}
 
-	int numWords;
+	int numWords = 0;
 	std::vector<int> dictWords;
 	std::map<Tok, int> wordIndex;
 	std::array<WordMsk, MaxWords> words;
 
+	std::vector<int> curWords;
+	WordMsk curWordMsk;
+
 	WordleDroidEngine()
 	{
 		word(Tok()); // zero word
+		curWordMsk = WordMsk::fullMsk();
+	}
+
+	virtual int vGetWordLen() const final override { return WordLen; };
+
+	virtual int vGetCurNumWords() const final override { return int(curWords.size()); };
+
+	bool vExecuteCommand(const char *p, const char *arg) final override
+	{
+		using namespace std::string_literals;
+
+		// if (p == "-D"s) { return true; }
+
+		return false;
 	}
 };
 
@@ -201,5 +248,95 @@ using WordleDroidEngine5 = WordleDroidEngine<5, 3, 20000>;
 
 extern template struct WordleDroidEngine<6, 4, 40000>;
 using WordleDroidEngine6 = WordleDroidEngine<6, 4, 40000>;
+
+AbstractWordleDroidEngine* AbstractWordleDroidEngine::executeCommand(const char *p, const char *arg, bool noprompt)
+{
+	using namespace std::string_literals;
+
+	if (p == nullptr) {
+		char buffer[1024];
+		printf("[wdroid-%d] %5d> ", vGetWordLen(), vGetCurNumWords());
+		fflush(stdout);
+		if (fgets(buffer, 1024, stdin) == nullptr) {
+			printf("-exit\n");
+			return nullptr;
+		}
+		if (char *cursor = strchr(buffer, '\n'); cursor != nullptr)
+			*cursor = 0;
+		return executeCommand(buffer, nullptr, true);
+	}
+
+	if (arg == nullptr) {
+		if (const char *s = strchr(p, '='); s != nullptr) {
+			char *buffer = strdup(p);
+			char *cursor = buffer + (s - p);
+			*(cursor++) = 0;
+			AbstractWordleDroidEngine *ne = executeCommand(buffer, cursor, noprompt);
+			free(buffer);
+			return ne;
+		}
+	}
+
+	if (vGetWordLen() == 0) {
+		if (p != "-4"s && p != "-5"s && p != "-6"s && p != "-exit"s) {
+			AbstractWordleDroidEngine *ne = executeCommand("-5", nullptr);
+			return ne->executeCommand(p, arg);
+		}
+	}
+
+	if (!noprompt)
+		printf("[wdroid-%d] %5d> %s\n", vGetWordLen(), vGetCurNumWords(), p);
+
+	if (p == "-4"s) {
+		WordleDroidEngine4 *ne = new WordleDroidEngine4;
+		ne->loadDictFile(arg);
+		return ne;
+	}
+
+	if (p == "-5"s) {
+		WordleDroidEngine5 *ne = new WordleDroidEngine5;
+		ne->loadDictFile(arg);
+		return ne;
+	}
+
+	if (p == "-6"s) {
+		WordleDroidEngine6 *ne = new WordleDroidEngine6;
+		ne->loadDictFile(arg);
+		return ne;
+	}
+
+	if (p == "-exit"s) return nullptr;
+
+	if (!vExecuteCommand(p, arg)) {
+		if (arg == nullptr)
+			printf("Error executing command '%s'! Try -h for help.\n", p);
+		else
+			printf("Error executing command '%s' with arg '%s'! Try -h for help.\n", p, arg);
+	}
+
+	return this;
+}
+
+int AbstractWordleDroidEngine::main(int argc, const char **argv)
+{
+	AbstractWordleDroidEngine *e = new AbstractWordleDroidEngine;
+
+	for (int i=1; e != nullptr && i<argc; i++) {
+		if (AbstractWordleDroidEngine *ne = e->executeCommand(argv[i], nullptr);
+				ne != e) { delete e; e = ne; }
+	}
+
+	while (e != nullptr) {
+		if (AbstractWordleDroidEngine *ne = e->executeCommand(nullptr, nullptr);
+				ne != e) { delete e; e = ne; }
+	}
+
+	while (e != nullptr) {
+		if (AbstractWordleDroidEngine *ne = e->executeCommand("-exit", nullptr);
+				ne != e) { delete e; e = ne; }
+	}
+
+	return 0;
+}
 
 #endif

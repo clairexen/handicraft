@@ -1,12 +1,12 @@
 CXX = clang++
-CXXFLAGS = -Os -Wall -MD
+CXXFLAGS = -O2 -ggdb -std=c++26 -Wall -MD
 CC = $(CXX)
 CCFLAGS = $(CXXFLAGS)
 
 wdroid: wdroid.o words.o
 
 run: wdroid
-	./wdroid
+	./wdroid -4 -5 -6 -exit
 
 words.cc: words.py
 	python3 words.py
