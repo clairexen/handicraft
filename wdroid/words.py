@@ -14,6 +14,10 @@ with open(dictfile) as f:
 
 all_words = all_en_words | all_wordnet_lemmas | all_dict_words
 
+blacklist="mmmm oooo xxxix".split()
+for w in blacklist:
+    if w in all_words: all_words.remove(w)
+
 with open("words.cc", "w") as f:
     for N in (4, 5, 6):
         words = "".join(sorted([w for w in all_words if len(w) == N and

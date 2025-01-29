@@ -5,6 +5,9 @@ CCFLAGS = $(CXXFLAGS)
 
 wdroid: wdroid.o words.o
 
+run: wdroid
+	./wdroid
+
 words.cc: words.py
 	python3 words.py
 
