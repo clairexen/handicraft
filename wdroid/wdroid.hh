@@ -105,7 +105,9 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 				if (msk != 0 && msk != 1) {
 					w.print();
 					printf("\n");
-					//assert(msk == 0 || msk == 1);
+					print();
+					printf("\n");
+					assert(msk == 0 || msk == 1);
 				}
 			}
 			int32_t msk = cntBits(MaxCnt-1);
@@ -113,9 +115,41 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 				cntBits(k) &= ~msk;
 				msk |= cntBits(k);
 			}
+			// w.print();
+			// printf(" ");
+			// print();
+			// printf("\n");
 		}
+
 		int32_t &posBits(int idx) { return (*this)[idx]; }
 		int32_t &cntBits(int idx) { return (*this)[WordLen+idx]; }
+
+		void printSingleMask(int32_t msk) {
+			int popcnt = 0;
+			for (int i = 1; i <= 26; i++)
+				if (((msk >> i) & 1) != 0)
+					popcnt++;
+			if (popcnt <= 13) {
+				for (int i = 1; i <= 26; i++)
+					if (((msk >> i) & 1) != 0)
+						printf("%c", 64 + i);
+			} else {
+				for (int i = 1; i <= 26; i++)
+					if (((msk >> i) & 1) == 0)
+						printf("%c", 96 + i);
+			}
+		}
+
+		void print() {
+			for (int i=0; i<WordLen; i++) {
+				printf("/");
+				printSingleMask(posBits(i));
+			}
+			for (int k=0; k<MaxCnt; k++) {
+				printf(":");
+				printSingleMask(cntBits(k));
+			}
+		}
 	};
 
 	const WordMsk &word(const Tok &w) {
