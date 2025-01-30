@@ -53,6 +53,7 @@ struct AbstractWordleDroidEngine
 
 	void pr(char c) const;
 	void pr(const std::string &s) const;
+	void prFlush() const;
 
 	void prReplaceLastLine() const { pr("\033[F\033[2K"); }
 	void prResetColors() const { pr("\033[0m"); }
@@ -66,6 +67,16 @@ struct AbstractWordleDroidEngine
 	void prYellowFg() const { pr("\033[33m"); } // Yellow text
 	void prGreenFg()  const { pr("\033[32m"); } // Green text
 	void prWhiteFg()  const { pr("\033[37m"); } // White text
+
+	void prNl() const {
+		pr('\n');
+		prFlush();
+	}
+
+	void prPrompt() const {
+		pr(std::format("[wdroid-{}] {:5}> ", vGetWordLen(), vGetCurNumWords()));
+		prFlush();
+	}
 };
 
 struct WordleDroidGlobalState
@@ -97,6 +108,13 @@ void AbstractWordleDroidEngine::pr(const std::string &s) const {
 		globalState->outfile << s;
 	else
 		std::cout << s;
+}
+
+void AbstractWordleDroidEngine::prFlush() const {
+	if (globalState && globalState->outfile.is_open())
+		globalState->outfile << std::flush;
+	else
+		std::cout << std::flush;
 }
 
 template <int WordLen, int MaxCnt>
@@ -207,25 +225,17 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 		}
 
 		WordMsk(const Tok &w) {
-			// w.print();
-			// printf("\n");
 			for (int k=0; k<MaxCnt; k++)
 				cntBits(k) = 0;
 			for (int i=0; i<WordLen; i++) {
 				int32_t msk = 1 << w.val(i);
 				posBits(i) = msk;
-				// printf(" %d: 0x%x\n", i, msk);
 				for (int k=0; k<MaxCnt; k++) {
 					int32_t tmp = cntBits(k) & msk;
-					// printf(" +: 0x%x 0x%x\n", cntBits(k), tmp);
 					cntBits(k) |= msk;
 					msk = tmp;
 				}
 				if (msk != 0 && msk != 1) {
-					w.print();
-					printf("\n");
-					print();
-					printf("\n");
 					assert(msk == 0 || msk == 1);
 				}
 			}
@@ -234,42 +244,41 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 				cntBits(k) &= ~msk;
 				msk |= cntBits(k);
 			}
-			// w.print();
-			// printf(" ");
-			// print();
-			// printf("\n");
 		}
+
+		int32_t posBits(int idx) const { return (*this)[idx]; }
+		int32_t cntBits(int idx) const { return (*this)[WordLen+idx]; }
 
 		int32_t &posBits(int idx) { return (*this)[idx]; }
 		int32_t &cntBits(int idx) { return (*this)[WordLen+idx]; }
+	};
 
-		void printSingleMask(int32_t msk) {
-			int popcnt = 0;
+	void prSingleMask(int32_t msk) const {
+		int popcnt = 0;
+		for (int i = 1; i <= 26; i++)
+			if (((msk >> i) & 1) != 0)
+				popcnt++;
+		if (popcnt <= 13) {
 			for (int i = 1; i <= 26; i++)
 				if (((msk >> i) & 1) != 0)
-					popcnt++;
-			if (popcnt <= 13) {
-				for (int i = 1; i <= 26; i++)
-					if (((msk >> i) & 1) != 0)
-						printf("%c", 64 + i);
-			} else {
-				for (int i = 1; i <= 26; i++)
-					if (((msk >> i) & 1) == 0)
-						printf("%c", 96 + i);
-			}
+					pr(64 + i);
+		} else {
+			for (int i = 1; i <= 26; i++)
+				if (((msk >> i) & 1) == 0)
+					pr(96 + i);
 		}
+	}
 
-		void print() {
-			for (int i=0; i<WordLen; i++) {
-				printf("/");
-				printSingleMask(posBits(i));
-			}
-			for (int k=0; k<MaxCnt; k++) {
-				printf(":");
-				printSingleMask(cntBits(k));
-			}
+	void prWordMsk(const WordMsk &w) const {
+		for (int i=0; i<WordLen; i++) {
+			pr('/');
+			prSingleMask(w.posBits(i));
 		}
-	};
+		for (int k=0; k<MaxCnt; k++) {
+			pr(':');
+			prSingleMask(w.cntBits(k));
+		}
+	}
 
 	struct DictWordData {
 		int idx;
@@ -283,7 +292,7 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 	std::vector<int> curWords;
 	WordMsk curWordMsk;
 
-	int findDictWord(const Tok &w) {
+	int findDictWord(const Tok &w) const {
 		auto it = dictWordIndex.find(w);
 		if (it == dictWordIndex.end())
 			return 0;
@@ -355,10 +364,9 @@ bool WordleDroidGlobalState::executeCommand(const char *p, const char *arg, bool
 
 	if (p == nullptr) {
 		char buffer[1024];
-		printf("[wdroid-%d] %5d> ", engine->vGetWordLen(), engine->vGetCurNumWords());
-		fflush(stdout);
+		engine->prPrompt();
 		if (fgets(buffer, 1024, stdin) == nullptr) {
-			printf("-exit\n");
+			engine->pr("-exit\n");
 			delete engine;
 			engine = nullptr;
 			return true;
@@ -386,8 +394,11 @@ bool WordleDroidGlobalState::executeCommand(const char *p, const char *arg, bool
 		}
 	}
 
-	if (!noprompt)
-		printf("[wdroid-%d] %5d> %s\n", engine->vGetWordLen(), engine->vGetCurNumWords(), p);
+	if (!noprompt) {
+		engine->prPrompt();
+		engine->pr(p);
+		engine->prNl();
+	}
 
 	if (p == "-4"s) {
 		delete engine;
