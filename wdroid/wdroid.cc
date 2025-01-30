@@ -7,5 +7,6 @@ template struct WordleDroidEngine<6, 4, 40000>; // WordleDroidEngine6
 
 int main(int argc, const char **argv)
 {
-	return AbstractWordleDroidEngine::main(argc, argv);
+	WordleDroidGlobalState state;
+	return state.main(argc, argv);
 }
