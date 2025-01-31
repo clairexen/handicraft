@@ -17,9 +17,9 @@
 
 #include "wdroid.hh"
 
-template struct WordleDroidEngine<4, 3>; // WordleDroidEngine4
-template struct WordleDroidEngine<5, 3>; // WordleDroidEngine5
-template struct WordleDroidEngine<6, 4>; // WordleDroidEngine6
+template struct WordleDroidEngine<4, 4>; // WordleDroidEngine4
+template struct WordleDroidEngine<5, 4>; // WordleDroidEngine5
+template struct WordleDroidEngine<6, 5>; // WordleDroidEngine6
 
 int main(int argc, const char **argv)
 {

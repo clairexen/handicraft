@@ -77,6 +77,20 @@ struct AbstractWordleDroidEngine
 		pr(std::format("[wdroid-{}] {:5}> ", vGetWordLen(), vGetCurNumWords()));
 		prFlush();
 	}
+
+	int scanWord(const char *p) const {
+		int n = 0;
+		while ('a' <= *p && *p <= 'z') n++, p++;
+		return n;
+	}
+
+	int scanTag(const char *p, const char *q) const {
+		int n = 0;
+		while (('a' <= *q && *q <= 'z') && (('0' <= *p && *p <= '2') || (*p == '.') ||
+				(*p == '_') || ('A' <= *p && *p <= 'Z') || (*p == *q)))
+			n++, p++, q++;
+		return n;
+	}
 };
 
 struct WordleDroidGlobalState
@@ -137,6 +151,30 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 		Tok(const char *p) {
 			for (int i=0; i<WordLen; i++)
 				(*this)[i] = p[i];
+		}
+
+		Tok(const char *p, const char *q) {
+			std::vector<int> freeChars;
+			for (int i=0; i<WordLen; i++) {
+				(*this)[i] = p[i] & 31;
+				if (q[i] == '1') (*this)[i] += 32;
+				if (q[i] == '2') (*this)[i] += 64;
+				if ('a' <= q[i] && q[i] <= 'z') (*this)[i] += 32;
+				if ('A' <= q[i] && q[i] <= 'Z') {
+					if (((p[i] ^ q[i]) & 31) == 0)
+						(*this)[i] += 64;
+					else
+						freeChars.push_back(i);
+				}
+			}
+			for (int idx : freeChars) {
+				char ch = q[idx] & 31;
+				for (int i=0; i<WordLen; i++)
+					if ((*this)[i] == ch) {
+						(*this)[i] += 32;
+						break;
+					}
+			}
 		}
 
 		~Tok() { }
@@ -229,11 +267,10 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 			for (int i=0; i<WordLen; i++)
 				posBits(i) = FullMskVal;
 			for (int k=0; k<MaxCnt; k++)
-				cntBits(k) = 0;
+				cntBits(k) = k ? 0 : FullMskVal;
 
-			int32_t gymsk = 0;
-			int32_t graymsk = 0;
 			int numgray = 0;
+			int32_t graymsk = 0;
 			for (int i=0; i<WordLen; i++)
 			{
 				int32_t msk = (1 << w.val(i)) & FullMskVal;
@@ -245,13 +282,11 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 					if (0)
 				case Yellow:
 						posBits(i) &= ~msk;
-					gymsk |= msk;
-					for (int k=0; k<MaxCnt; k++) {
-						int32_t tmp = cntBits(k) & msk;
-						cntBits(k) |= msk;
-						msk = tmp;
+					assert((cntBits(MaxCnt-1) & msk) == 0);
+					for (int k=MaxCnt-1; k > 0; k--) {
+						cntBits(k) |= cntBits(k-1) & msk;
+						cntBits(k-1) &= ~msk;
 					}
-					assert(msk == 0);
 					break;
 				case Gray:
 					graymsk |= msk;
@@ -263,22 +298,10 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 				}
 			}
 
-			// clear lower-than min cntbits
-			int32_t msk = cntBits(MaxCnt-1);
-			for (int k=MaxCnt-2; k >= 0; k--) {
-				cntBits(k) &= ~msk;
-				msk |= cntBits(k);
-			}
-
-			// mask of letters that may appear zero or more times
-			msk = ~(graymsk | gymsk) & FullMskVal;
-
-			// set cntbits for gray places
+			// grow cntbits upwards as appropiate
 			for (int i = 0; i < numgray; i++) {
-				for (int k=0; k<MaxCnt; k++) {
-					int32_t tmp = cntBits(k);
-					cntBits(k) |= msk;
-					msk = tmp & ~graymsk;
+				for (int k=MaxCnt-1; k > 0; k--) {
+					cntBits(k) |= cntBits(k-1) & ~graymsk;
 				}
 			}
 		}
@@ -288,6 +311,22 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 
 		int32_t &posBits(int idx) { return (*this)[idx]; }
 		int32_t &cntBits(int idx) { return (*this)[WordLen+idx]; }
+
+		void intersect(const WordMsk &other) {
+			for (int i=0; i<WordLen; i++)
+				posBits(i) &= other.posBits(i);
+			for (int k=0; k<MaxCnt; k++)
+				cntBits(k) &= other.cntBits(k);
+		}
+
+		bool match(const WordMsk &other) const {
+			int32_t failBits = 0;
+			for (int i=0; i<WordLen; i++)
+				failBits |= (posBits(i) & other.posBits(i)) ^ other.posBits(i);
+			for (int k=0; k<MaxCnt; k++)
+				failBits |= (cntBits(k) & other.cntBits(k)) ^ other.cntBits(k);
+			return failBits == 0;
+		}
 	};
 
 	void prSingleMask(int32_t msk) const {
@@ -295,15 +334,19 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 		for (int i = 1; i <= 26; i++)
 			if (((msk >> i) & 1) != 0)
 				popcnt++;
+		if (popcnt == 26) {
+			pr('*');
+			return;
+		}
 		if (popcnt <= 13) {
 			for (int i = 1; i <= 26; i++)
 				if (((msk >> i) & 1) != 0)
 					pr(64 + i);
-		} else {
-			for (int i = 1; i <= 26; i++)
-				if (((msk >> i) & 1) == 0)
-					pr(96 + i);
+			return;
 		}
+		for (int i = 1; i <= 26; i++)
+			if (((msk >> i) & 1) == 0)
+				pr(96 + i);
 	}
 
 	void prWordMsk(const WordMsk &w) const {
@@ -367,6 +410,17 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 		abort();
 	}
 
+	std::vector<int> filterWords(const std::vector<int> oldWords, const WordMsk &msk)
+	{
+		std::vector<int> newWords;
+		newWords.reserve(oldWords.size());
+		for (int idx : oldWords) {
+			if (msk.match(dictWords[idx].msk))
+				newWords.push_back(idx);
+		}
+		return newWords;
+	}
+
 	WordleDroidEngine(WordleDroidGlobalState *st, const char *arg) : AbstractWordleDroidEngine(st)
 	{
 		addDictWord(Tok()); // zero word
@@ -378,24 +432,69 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 
 	virtual int vGetCurNumWords() const final override { return int(curWords.size()); };
 
+	bool tryExecuteHintCommand(const char *p, const char *arg)
+	{
+		const char *p1 = p;
+		const char *p2 = p1 + WordLen;
+		const char *p3 = p2 + 1;
+		const char *p4 = p3 + WordLen;
+
+		if (scanWord(p1) != WordLen) return false;
+		if (*p2 != '/') return false;
+		if (scanTag(p3, p1) != WordLen) return false;
+		if (*p4 != 0) return false;
+
+		Tok hint(p, p+WordLen+1);
+		prReplaceLastLine();
+		prPrompt();
+		prTok(hint);
+		pr(' ');
+
+		WordMsk msk(hint);
+		// prWordMsk(msk);
+		// pr(' ');
+
+		curWordMsk.intersect(msk);
+		prWordMsk(curWordMsk);
+		prNl();
+
+		curWords = filterWords(curWords, curWordMsk);
+
+		return true;
+	}
+
 	bool vExecuteCommand(const char *p, const char *arg) final override
 	{
 		using namespace std::string_literals;
 
-		// if (p == "-D"s) { return true; }
+		if (p == "-l"s) {
+			int cnt = 0;
+			for (auto idx : curWords) {
+				pr(cnt % 16 ? " " : cnt ? "\n  " : "  ");
+				Tok tok = dictWords[idx].tok;
+				tok.setCol(White);
+				prTok(tok);
+				cnt++;
+			}
+			prNl();
+			return true;
+		}
+
+		if (tryExecuteHintCommand(p, arg))
+			return true;
 
 		return false;
 	}
 };
 
-extern template struct WordleDroidEngine<4, 3>;
-using WordleDroidEngine4 = WordleDroidEngine<4, 3>;
+extern template struct WordleDroidEngine<4, 4>;
+using WordleDroidEngine4 = WordleDroidEngine<4, 4>;
 
-extern template struct WordleDroidEngine<5, 3>;
-using WordleDroidEngine5 = WordleDroidEngine<5, 3>;
+extern template struct WordleDroidEngine<5, 4>;
+using WordleDroidEngine5 = WordleDroidEngine<5, 4>;
 
-extern template struct WordleDroidEngine<6, 4>;
-using WordleDroidEngine6 = WordleDroidEngine<6, 4>;
+extern template struct WordleDroidEngine<6, 5>;
+using WordleDroidEngine6 = WordleDroidEngine<6, 5>;
 
 bool WordleDroidGlobalState::executeCommand(const char *p, const char *arg, bool noprompt)
 {
