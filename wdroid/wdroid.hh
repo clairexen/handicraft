@@ -224,25 +224,62 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 			return w;
 		}
 
-		WordMsk(const Tok &w) {
+		WordMsk(const Tok &w)
+		{
+			for (int i=0; i<WordLen; i++)
+				posBits(i) = FullMskVal;
 			for (int k=0; k<MaxCnt; k++)
 				cntBits(k) = 0;
-			for (int i=0; i<WordLen; i++) {
-				int32_t msk = 1 << w.val(i);
-				posBits(i) = msk;
-				for (int k=0; k<MaxCnt; k++) {
-					int32_t tmp = cntBits(k) & msk;
-					cntBits(k) |= msk;
-					msk = tmp;
-				}
-				if (msk != 0 && msk != 1) {
-					assert(msk == 0 || msk == 1);
+
+			int32_t gymsk = 0;
+			int32_t graymsk = 0;
+			int numgray = 0;
+			for (int i=0; i<WordLen; i++)
+			{
+				int32_t msk = (1 << w.val(i)) & FullMskVal;
+
+				switch (w.col(i))
+				{
+				case Green:
+					posBits(i) = msk;
+					if (0)
+				case Yellow:
+						posBits(i) &= ~msk;
+					gymsk |= msk;
+					for (int k=0; k<MaxCnt; k++) {
+						int32_t tmp = cntBits(k) & msk;
+						cntBits(k) |= msk;
+						msk = tmp;
+					}
+					assert(msk == 0);
+					break;
+				case Gray:
+					graymsk |= msk;
+					numgray++;
+					break;
+				case White:
+				default:
+					abort();
 				}
 			}
+
+			// clear lower-than min cntbits
 			int32_t msk = cntBits(MaxCnt-1);
 			for (int k=MaxCnt-2; k >= 0; k--) {
 				cntBits(k) &= ~msk;
 				msk |= cntBits(k);
+			}
+
+			// mask of letters that may appear zero or more times
+			msk = ~(graymsk | gymsk) & FullMskVal;
+
+			// set cntbits for gray places
+			for (int i = 0; i < numgray; i++) {
+				for (int k=0; k<MaxCnt; k++) {
+					int32_t tmp = cntBits(k);
+					cntBits(k) |= msk;
+					msk = tmp & ~graymsk;
+				}
 			}
 		}
 
@@ -292,14 +329,16 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 	std::vector<int> curWords;
 	WordMsk curWordMsk;
 
-	int findDictWord(const Tok &w) const {
+	int findDictWord(Tok w) const {
+		w.setCol(Green);
 		auto it = dictWordIndex.find(w);
 		if (it == dictWordIndex.end())
 			return 0;
 		return it->second;
 	}
 
-	bool addDictWord(const Tok &w) {
+	bool addDictWord(Tok w) {
+		w.setCol(Green);
 		auto it = dictWordIndex.find(w);
 		if (it != dictWordIndex.end())
 			return false;
