@@ -63,12 +63,12 @@ struct AbstractWordleDroidEngine
 	void prResetColors() const { pr("\033[0m"); }
 
 	void prGrayTok()   const { pr("\033[30m\033[100m"); } // Black text, gray background
-	void prYellowTok() const { pr("\033[30m\033[43m");  } // Black text, yellow background
+	void prYellowTok() const { pr("\033[30m\033[103m");  } // Black text, yellow background
 	void prGreenTok()  const { pr("\033[37m\033[42m");  } // White text, green background
 	void prWhiteTok()  const { pr("\033[30m\033[47m");  } // Black text, white background
 
 	void prGrayFg()   const { pr("\033[90m"); } // Gray text
-	void prYellowFg() const { pr("\033[33m"); } // Yellow text
+	void prYellowFg() const { pr("\033[93m"); } // Yellow text
 	void prGreenFg()  const { pr("\033[32m"); } // Green text
 	void prWhiteFg()  const { pr("\033[37m"); } // White text
 
@@ -93,9 +93,36 @@ struct AbstractWordleDroidEngine
 				if (*p == ' ') {
 					pr("  ");
 				} else {
-					pr(" <");
+					pr(' ');
+					int32_t bitsMask = 1 << (*p & 31);
+					if ((greenKeyStatusBits & bitsMask) != 0)
+						prGreenFg();
+					else if ((yellowKeyStatusBits & bitsMask) != 0)
+						prYellowFg();
+					else if ((grayKeyStatusBits & bitsMask) != 0)
+						prGrayFg();
+					else
+						prWhiteFg();
+					pr("▐");
+					if ((greenKeyStatusBits & bitsMask) != 0)
+						prGreenTok();
+					else if ((yellowKeyStatusBits & bitsMask) != 0)
+						prYellowTok();
+					else if ((grayKeyStatusBits & bitsMask) != 0)
+						prGrayTok();
+					else
+						prWhiteTok();
 					pr(*p - 32);
-					pr('>');
+					if ((greenKeyStatusBits & bitsMask) != 0)
+						prGreenFg();
+					else if ((yellowKeyStatusBits & bitsMask) != 0)
+						prYellowFg();
+					else if ((grayKeyStatusBits & bitsMask) != 0)
+						prGrayFg();
+					else
+						prWhiteFg();
+					pr("▌");
+					prResetColors();
 				}
 			}
 			pr('\n');
