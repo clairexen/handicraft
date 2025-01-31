@@ -77,6 +77,38 @@ struct AbstractWordleDroidEngine
 		prFlush();
 	}
 
+	int32_t grayKeyStatusBits = 0;
+	int32_t yellowKeyStatusBits = 0;
+	int32_t greenKeyStatusBits = 0;
+
+	void prShowKeyboard() const {
+		static const char *keysMap[3] = {
+			"qwertyuiop",
+			" asdfghjkl",
+			"  zxcvbnm"
+		};
+		pr('\n');
+		for (int i = 0; i < 3; i++) {
+			for (const char *p = keysMap[i]; *p; p++) {
+				if (*p == ' ') {
+					pr("  ");
+				} else {
+					pr(" <");
+					pr(*p - 32);
+					pr('>');
+				}
+			}
+			pr('\n');
+		}
+		pr('\n');
+	}
+
+	void prHideKeyboard() const {
+		// pr("\n\033[2K");
+		// pr("\n\033[2K");
+		// pr("\033[F\033[F");
+	}
+
 	void prPrompt() const {
 		pr(std::format("[wdroid-{}] {:5}> ", vGetWordLen(), vGetCurNumWords()));
 		prFlush();
@@ -479,6 +511,20 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 		prPrompt();
 		prTok(hint);
 
+		for (int i=0; i < WordLen; i++)
+			switch (hint.col(i))
+			{
+			case Gray:
+				grayKeyStatusBits |= 1 << hint.val(i);
+				break;
+			case Yellow:
+				yellowKeyStatusBits |= 1 << hint.val(i);
+				break;
+			case Green:
+				greenKeyStatusBits |= 1 << hint.val(i);
+				break;
+			}
+
 		WordMsk msk(hint);
 		// prWordMsk(msk);
 		// pr(' ');
@@ -605,6 +651,7 @@ bool WordleDroidGlobalState::executeCommand(const char *p, const char *arg, bool
 #endif
 
 	if (p == "-exit"s) {
+		// engine->prShowKeyboard();
 		delete engine;
 		engine = nullptr;
 		return true;
