@@ -169,6 +169,7 @@ struct WordleDroidGlobalState
 {
 	AbstractWordleDroidEngine *engine = nullptr;
 	std::ofstream outfile;
+	bool refineMasks = false;
 	bool showMasks = false;
 	int showLists = 0;
 
@@ -386,6 +387,13 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 		int32_t &posBits(int idx) { return (*this)[idx]; }
 		int32_t &cntBits(int idx) { return (*this)[WordLen+idx]; }
 
+		void add(const WordMsk &other) {
+			for (int i=0; i<WordLen; i++)
+				posBits(i) |= other.posBits(i);
+			for (int k=0; k<MaxCnt; k++)
+				cntBits(k) |= other.cntBits(k);
+		}
+
 		void intersect(const WordMsk &other) {
 			for (int i=0; i<WordLen; i++)
 				posBits(i) &= other.posBits(i);
@@ -444,8 +452,56 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 	std::vector<DictWordData> dictWords;
 	std::map<Tok, int> dictWordIndex;
 
-	std::vector<int> curWords;
 	WordMsk curWordMsk;
+	std::vector<int> curWords;
+
+	std::vector<int> filterWords(const std::vector<int> oldWords,
+			WordMsk msk, WordMsk *newMskPtr = nullptr)
+	{
+		if (newMskPtr)
+			*newMskPtr = WordMsk();
+		std::vector<int> newWords;
+		newWords.reserve(oldWords.size());
+		for (int idx : oldWords) {
+			if (msk.match(dictWords[idx].msk)) {
+				if (newMskPtr)
+					newMskPtr->add(dictWords[idx].msk);
+				newWords.push_back(idx);
+			}
+		}
+		return newWords;
+	}
+
+	void applyHintToCurWordMsk(const Tok &hint)
+	{
+		prReplaceLastLine();
+		prPrompt();
+		prTok(hint);
+
+		for (int i=0; i < WordLen; i++)
+			switch (hint.col(i))
+			{
+			case Gray:
+				grayKeyStatusBits |= 1 << hint.val(i);
+				break;
+			case Yellow:
+				yellowKeyStatusBits |= 1 << hint.val(i);
+				break;
+			case Green:
+				greenKeyStatusBits |= 1 << hint.val(i);
+				break;
+			}
+
+		WordMsk msk(hint);
+		curWordMsk.intersect(msk);
+		curWords = filterWords(curWords, curWordMsk,
+				globalState->refineMasks ? &curWordMsk : nullptr);
+
+		if (globalState->showMasks)
+			pr(' '), prWordMsk(curWordMsk);
+
+		prNl();
+	}
 
 	int findDictWord(Tok w) const {
 		w.setCol(Green);
@@ -483,17 +539,6 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 			return;
 		}
 		abort();
-	}
-
-	std::vector<int> filterWords(const std::vector<int> oldWords, const WordMsk &msk)
-	{
-		std::vector<int> newWords;
-		newWords.reserve(oldWords.size());
-		for (int idx : oldWords) {
-			if (msk.match(dictWords[idx].msk))
-				newWords.push_back(idx);
-		}
-		return newWords;
 	}
 
 	struct HintWordData {
@@ -534,36 +579,7 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 		if (*p4 != 0) return false;
 
 		Tok hint(p, p+WordLen+1);
-		prReplaceLastLine();
-		prPrompt();
-		prTok(hint);
-
-		for (int i=0; i < WordLen; i++)
-			switch (hint.col(i))
-			{
-			case Gray:
-				grayKeyStatusBits |= 1 << hint.val(i);
-				break;
-			case Yellow:
-				yellowKeyStatusBits |= 1 << hint.val(i);
-				break;
-			case Green:
-				greenKeyStatusBits |= 1 << hint.val(i);
-				break;
-			}
-
-		WordMsk msk(hint);
-		// prWordMsk(msk);
-		// pr(' ');
-
-		curWordMsk.intersect(msk);
-		if (globalState->showMasks) {
-			pr(' ');
-			prWordMsk(curWordMsk);
-		}
-		prNl();
-
-		curWords = filterWords(curWords, curWordMsk);
+		applyHintToCurWordMsk(hint);
 
 		return true;
 	}
@@ -686,6 +702,11 @@ bool WordleDroidGlobalState::executeCommand(const char *p, const char *arg, bool
 
 	if (p == "-M"s) {
 		showMasks = engine->boolArg(arg);
+		return true;
+	}
+
+	if (p == "-R"s) {
+		refineMasks = engine->boolArg(arg);
 		return true;
 	}
 
