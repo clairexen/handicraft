@@ -56,20 +56,13 @@ template <int WordLen> struct WordleDroidEngine;
 struct AbstractWordleDroidEngine
 {
 	WordleDroidGlobalState *globalState = nullptr;
-	AbstractWordleDroidEngine *nextEngine = nullptr;
 
 	AbstractWordleDroidEngine(WordleDroidGlobalState *st) : globalState(st) { }
 	virtual ~AbstractWordleDroidEngine() { }
 	virtual int vGetWordLen() const { return 0; };
 	virtual int vGetCurNumWords() const { return 0; };
-	virtual bool vExecuteCommand(const char *p, const char *arg) { return false; };
-
-	bool executeCommand(const char *p, const char *arg);
-
-	void setNextEngine(AbstractWordleDroidEngine *ne) {
-		assert(nextEngine == nullptr);
-		nextEngine = ne;
-	}
+	virtual bool vExecuteCommand(const char *p, const char *arg,
+			AbstractWordleDroidEngine* &nextEngine) { return false; };
 
 	void pr(char c) const;
 	void pr(const std::string &s) const;
@@ -600,11 +593,11 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 		for (auto &wdata : parent->words()) {
 			if (!msk.match(wdata.msk))
 				continue;
-			refinedMsk.add(wdata.msk);
 			int idx = wordsList.size();
 			wordsList.emplace_back(idx, wdata.tok, wdata.msk);
 			wordsIndex[wdata.tok] = idx;
 			allWords.push_back(idx);
+			refinedMsk.add(wdata.msk);
 		}
 
 		wordsMsk = globalState->refineMasks ? refinedMsk : msk;
@@ -622,7 +615,8 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 
 	virtual int vGetCurNumWords() const final override { return int(wordsList.size()-1); };
 
-	bool tryExecuteHintCommand(const char *p, const char *arg)
+	bool tryExecuteHintCommand(const char *p, const char *arg,
+			AbstractWordleDroidEngine* &nextEngine)
 	{
 		const char *p1 = p;
 		const char *p2 = p1 + WordLen;
@@ -642,7 +636,7 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 		prTok(hint);
 
 		auto ne = new WordleDroidEngine(this, hint);
-		setNextEngine(ne);
+		nextEngine = ne;
 
 		if (globalState->showMasks)
 			pr(' '), prWordMsk(ne->wordsMsk);
@@ -652,7 +646,8 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 		return true;
 	}
 
-	bool vExecuteCommand(const char *p, const char *arg) final override
+	bool vExecuteCommand(const char *p, const char *arg,
+			AbstractWordleDroidEngine *&nextEngine) override
 	{
 		using namespace std::string_literals;
 
@@ -669,7 +664,7 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 			return true;
 		}
 
-		if (tryExecuteHintCommand(p, arg))
+		if (tryExecuteHintCommand(p, arg, nextEngine))
 			return true;
 
 		return false;
@@ -704,13 +699,18 @@ bool WordleDroidGlobalState::executeCommand(const char *p, const char *arg, bool
 	using namespace std::string_literals;
 
 	if (p == nullptr) {
-		char buffer[1024];
+		char buffer[1024], *p = buffer;
 		engine->prPrompt();
 		if (fgets(buffer, 1024, stdin) == nullptr) {
+			engine->pr('\r');
 			return executeCommand("-exit", nullptr, false);
 		}
 		if (char *cursor = strchr(buffer, '\n'); cursor != nullptr)
 			*cursor = 0;
+		if (p[0] == '-' && p[1] == '-') {
+			engine->prReplaceLastLine();
+			return executeCommand(p+1, nullptr, true);
+		}
 		return executeCommand(buffer, nullptr, true);
 	}
 
@@ -791,9 +791,9 @@ bool WordleDroidGlobalState::executeCommand(const char *p, const char *arg, bool
 		return executeCommand(p, arg);
 	}
 
-	if (!engine->vExecuteCommand(p, arg)) {
-		delete engine->nextEngine;
-		engine->nextEngine = nullptr;
+	AbstractWordleDroidEngine *nextEngine = nullptr;
+	if (!engine->vExecuteCommand(p, arg, nextEngine)) {
+		delete nextEngine;
 		if (arg == nullptr)
 			printf("Error executing command '%s'! Try -h for help.\n", p);
 		else
@@ -801,10 +801,9 @@ bool WordleDroidGlobalState::executeCommand(const char *p, const char *arg, bool
 		return false;
 	}
 
-	if (auto p = engine->nextEngine; p != nullptr) {
-		engine->nextEngine = nullptr;
+	if (nextEngine) {
 		delete engine;
-		engine = p;
+		engine = nextEngine;
 	}
 
 	return true;
