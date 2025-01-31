@@ -18,6 +18,10 @@
 #ifndef WDROID_HH
 #define WDROID_HH
 
+#define ENABLE_WDROID_ENGINE_4
+#define ENABLE_WDROID_ENGINE_5
+#define ENABLE_WDROID_ENGINE_6
+
 #include <map>
 #include <array>
 #include <vector>
@@ -91,12 +95,23 @@ struct AbstractWordleDroidEngine
 			n++, p++, q++;
 		return n;
 	}
+
+	bool boolArg(const char *arg) {
+		using namespace std::string_literals;
+		if (arg == nullptr) return true;
+		if (*arg == 0) return false;
+		if (*arg == '0') return false;
+		if (arg == "off"s) return false;
+		return true;
+	}
 };
 
 struct WordleDroidGlobalState
 {
 	AbstractWordleDroidEngine *engine = nullptr;
 	std::ofstream outfile;
+	bool showMasks = false;
+	int showLists = 0;
 
 	WordleDroidGlobalState() {
 		engine = new AbstractWordleDroidEngine(this);
@@ -448,14 +463,16 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 		prReplaceLastLine();
 		prPrompt();
 		prTok(hint);
-		pr(' ');
 
 		WordMsk msk(hint);
 		// prWordMsk(msk);
 		// pr(' ');
 
 		curWordMsk.intersect(msk);
-		prWordMsk(curWordMsk);
+		if (globalState->showMasks) {
+			pr(' ');
+			prWordMsk(curWordMsk);
+		}
 		prNl();
 
 		curWords = filterWords(curWords, curWordMsk);
@@ -487,14 +504,20 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 	}
 };
 
+#ifdef ENABLE_WDROID_ENGINE_4
 extern template struct WordleDroidEngine<4, 4>;
 using WordleDroidEngine4 = WordleDroidEngine<4, 4>;
+#endif
 
+#ifdef ENABLE_WDROID_ENGINE_5
 extern template struct WordleDroidEngine<5, 4>;
 using WordleDroidEngine5 = WordleDroidEngine<5, 4>;
+#endif
 
+#ifdef ENABLE_WDROID_ENGINE_6
 extern template struct WordleDroidEngine<6, 5>;
 using WordleDroidEngine6 = WordleDroidEngine<6, 5>;
+#endif
 
 bool WordleDroidGlobalState::executeCommand(const char *p, const char *arg, bool noprompt)
 {
@@ -535,30 +558,45 @@ bool WordleDroidGlobalState::executeCommand(const char *p, const char *arg, bool
 	if (!noprompt) {
 		engine->prPrompt();
 		engine->pr(p);
+		if (arg) {
+			engine->pr('=');
+			engine->pr(arg);
+		}
 		engine->prNl();
 	}
 
+#ifdef ENABLE_WDROID_ENGINE_4
 	if (p == "-4"s) {
 		delete engine;
 		engine = new WordleDroidEngine4(this, arg);
 		return true;
 	}
+#endif
 
+#ifdef ENABLE_WDROID_ENGINE_5
 	if (p == "-5"s) {
 		delete engine;
 		engine = new WordleDroidEngine5(this, arg);
 		return true;
 	}
+#endif
 
+#ifdef ENABLE_WDROID_ENGINE_6
 	if (p == "-6"s) {
 		delete engine;
 		engine = new WordleDroidEngine6(this, arg);
 		return true;
 	}
+#endif
 
 	if (p == "-exit"s) {
 		delete engine;
 		engine = nullptr;
+		return true;
+	}
+
+	if (p == "-M"s) {
+		showMasks = engine->boolArg(arg);
 		return true;
 	}
 
