@@ -18,15 +18,15 @@
 #include "wdroid.hh"
 
 #ifdef ENABLE_WDROID_ENGINE_4
-template struct WordleDroidEngine<4, 4>;
+template struct WordleDroidEngine<4>;
 #endif
 
 #ifdef ENABLE_WDROID_ENGINE_5
-template struct WordleDroidEngine<5, 4>;
+template struct WordleDroidEngine<5>;
 #endif
 
 #ifdef ENABLE_WDROID_ENGINE_6
-template struct WordleDroidEngine<6, 5>;
+template struct WordleDroidEngine<6>;
 #endif
 
 int main(int argc, const char **argv)

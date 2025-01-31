@@ -24,6 +24,7 @@
 
 #include <map>
 #include <array>
+#include <ranges>
 #include <vector>
 #include <string>
 #include <format>
@@ -45,25 +46,37 @@ template <> inline const char *getWordleDroidWords<5>() { return WordleDroidWord
 template <> inline const char *getWordleDroidWords<6>() { return WordleDroidWords6; }
 
 struct WordleDroidGlobalState;
+struct AbstractWordleDroidEngine;
+template <int WordLen> struct WordleDroidEngine;
+
+
+// =========================================================
+// AbstractWordleDroidEngine with virtual interfaces and utility methods
 
 struct AbstractWordleDroidEngine
 {
 	WordleDroidGlobalState *globalState = nullptr;
+	AbstractWordleDroidEngine *nextEngine = nullptr;
+
 	AbstractWordleDroidEngine(WordleDroidGlobalState *st) : globalState(st) { }
 	virtual ~AbstractWordleDroidEngine() { }
 	virtual int vGetWordLen() const { return 0; };
 	virtual int vGetCurNumWords() const { return 0; };
 	virtual bool vExecuteCommand(const char *p, const char *arg) { return false; };
 
+	bool executeCommand(const char *p, const char *arg);
+
+	void setNextEngine(AbstractWordleDroidEngine *ne) {
+		assert(nextEngine == nullptr);
+		nextEngine = ne;
+	}
+
 	void pr(char c) const;
 	void pr(const std::string &s) const;
 	void prFlush() const;
 
-	void prReplaceLastLine() const { pr("\033[F\033[2K"); }
-	void prResetColors() const { pr("\033[0m"); }
-
 	void prGrayTok()   const { pr("\033[30m\033[100m"); } // Black text, gray background
-	void prYellowTok() const { pr("\033[30m\033[103m");  } // Black text, yellow background
+	void prYellowTok() const { pr("\033[30m\033[103m"); } // Black text, yellow background
 	void prGreenTok()  const { pr("\033[37m\033[42m");  } // White text, green background
 	void prWhiteTok()  const { pr("\033[30m\033[47m");  } // Black text, white background
 
@@ -71,6 +84,9 @@ struct AbstractWordleDroidEngine
 	void prYellowFg() const { pr("\033[93m"); } // Yellow text
 	void prGreenFg()  const { pr("\033[32m"); } // Green text
 	void prWhiteFg()  const { pr("\033[37m"); } // White text
+
+	void prResetColors() const { pr("\033[0m"); }
+	void prReplaceLastLine() const { pr("\033[F\033[2K"); }
 
 	void prNl() const {
 		pr('\n');
@@ -163,7 +179,17 @@ struct AbstractWordleDroidEngine
 		if (arg == "off"s) return false;
 		return true;
 	}
+
+	int intArg(const char *arg, int onVal=1, int offVal=0) {
+		if (arg == nullptr) return onVal;
+		if (*arg == 0) return offVal;
+		return atoi(arg);
+	}
 };
+
+
+// =========================================================
+// WordleDroidGlobalState and impl. of basic print helpers
 
 struct WordleDroidGlobalState
 {
@@ -172,6 +198,7 @@ struct WordleDroidGlobalState
 	bool refineMasks = false;
 	bool showMasks = false;
 	int showLists = 0;
+	int showKeys = 0;
 
 	WordleDroidGlobalState() {
 		engine = new AbstractWordleDroidEngine(this);
@@ -206,15 +233,28 @@ void AbstractWordleDroidEngine::prFlush() const {
 		std::cout << std::flush;
 }
 
-template <int WordLen, int MaxCnt>
+
+// =========================================================
+// Main WordleDroidEngine template class
+
+template <int WordLen>
 struct WordleDroidEngine : public AbstractWordleDroidEngine
 {
+	static constexpr char MaxCnt =
+			WordLen == 4 ? 4 :
+			WordLen == 5 ? 4 :
+			WordLen == 6 ? 5 : -1;
+
 	static constexpr char Gray = 0;
 	static constexpr char Yellow = 32;
 	static constexpr char Green = 64;
 	static constexpr char White = 96;
 
 	static constexpr int32_t FullMskVal = (1 << 27) - 2;
+
+
+	// =========================================================
+	// Word/Guess/Hint Token Data Structure
 
 	struct Tok : public std::array<char, WordLen>
 	{
@@ -322,6 +362,29 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 			}
 		prResetColors();
 	}
+
+	void applyHintToKeyStatusBits(const Tok &hint)
+	{
+		for (int i=0; i < WordLen; i++)
+		{
+			switch (hint.col(i))
+			{
+			case Gray:
+				grayKeyStatusBits |= 1 << hint.val(i);
+				break;
+			case Yellow:
+				yellowKeyStatusBits |= 1 << hint.val(i);
+				break;
+			case Green:
+				greenKeyStatusBits |= 1 << hint.val(i);
+				break;
+			}
+		}
+	}
+
+
+	// =========================================================
+	// Word BitMasks Data Structure
 
 	struct WordMsk : public std::array<int32_t, WordLen + MaxCnt>
 	{
@@ -442,93 +505,69 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 		}
 	}
 
-	struct DictWordData {
-		int idx; // dictIDx
-		// int curIdx
+
+	// =========================================================
+	// Main State (wordsMsk and wordsList) and related helper functions
+
+	struct WordData {
+		int idx;
 		Tok tok;
 		WordMsk msk;
 	};
 
-	std::vector<DictWordData> dictWords;
-	std::map<Tok, int> dictWordIndex;
+	WordMsk wordsMsk;
+	std::vector<int> allWords;
+	std::map<Tok, int> wordsIndex;
+	std::vector<WordData> wordsList;
 
-	WordMsk curWordMsk;
-	std::vector<int> curWords;
+	auto words() const { return wordsList | std::views::drop(1); }
 
-	std::vector<int> filterWords(const std::vector<int> oldWords,
-			WordMsk msk, WordMsk *newMskPtr = nullptr)
-	{
-		if (newMskPtr)
-			*newMskPtr = WordMsk();
-		std::vector<int> newWords;
-		newWords.reserve(oldWords.size());
-		for (int idx : oldWords) {
-			if (msk.match(dictWords[idx].msk)) {
-				if (newMskPtr)
-					newMskPtr->add(dictWords[idx].msk);
-				newWords.push_back(idx);
-			}
-		}
-		return newWords;
-	}
-
-	void applyHintToCurWordMsk(const Tok &hint)
-	{
-		prReplaceLastLine();
-		prPrompt();
-		prTok(hint);
-
-		for (int i=0; i < WordLen; i++)
-			switch (hint.col(i))
-			{
-			case Gray:
-				grayKeyStatusBits |= 1 << hint.val(i);
-				break;
-			case Yellow:
-				yellowKeyStatusBits |= 1 << hint.val(i);
-				break;
-			case Green:
-				greenKeyStatusBits |= 1 << hint.val(i);
-				break;
-			}
-
-		WordMsk msk(hint);
-		curWordMsk.intersect(msk);
-		curWords = filterWords(curWords, curWordMsk,
-				globalState->refineMasks ? &curWordMsk : nullptr);
-
-		if (globalState->showMasks)
-			pr(' '), prWordMsk(curWordMsk);
-
-		prNl();
-	}
-
-	int findDictWord(Tok w) const {
+	int findWord(Tok w) const {
 		w.setCol(Green);
-		auto it = dictWordIndex.find(w);
-		if (it == dictWordIndex.end())
+		auto it = wordsIndex.find(w);
+		if (it == wordsIndex.end())
 			return 0;
 		return it->second;
 	}
 
-	bool addDictWord(Tok w) {
+	std::pair<std::vector<int>, WordMsk>
+	filterWords(const std::vector<int> &oldWords, const WordMsk &msk)
+	{
+		std::pair<std::vector<int>, WordMsk> ret;
+		auto& [newWords, newMsk] = ret;
+
+		newWords.reserve(oldWords.size());
+		for (int idx : oldWords) {
+			if (msk.match(wordsList[idx].msk)) {
+				newWords.push_back(idx);
+				newMsk.add(wordsList[idx].msk);
+			}
+		}
+		return ret;
+	}
+
+
+	// =========================================================
+	// Constructors and related helper functions
+
+	bool addWord(Tok w) {
 		w.setCol(Green);
-		auto it = dictWordIndex.find(w);
-		if (it != dictWordIndex.end())
+		auto it = wordsIndex.find(w);
+		if (it != wordsIndex.end())
 			return false;
-		int idx = dictWords.size();
-		dictWords.emplace_back(idx, w, w);
+		int idx = wordsList.size();
+		wordsList.emplace_back(idx, w, w);
 		if (idx == 0)
 			return true;
-		curWords.push_back(idx);
-		dictWordIndex[w] = idx;
+		allWords.push_back(idx);
+		wordsIndex[w] = idx;
 		return true;
 	}
 
 	void loadDict(const char *p) {
-		assert(dictWords.size() == 1);
+		assert(wordsList.size() == 1);
 		while (*p) {
-			addDictWord(p);
+			addWord(p);
 			p += WordLen;
 		}
 	}
@@ -541,30 +580,47 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 		abort();
 	}
 
-	struct HintWordData {
-		int idx;
-		Tok tok;
-		WordMsk msk;
-		std::vector<int> sources;
-	};
-
-	std::vector<HintWordData> hintWords;
-	std::map<Tok, int> hintWordIndex;
-	std::vector<int> hintWordTable;
-
-	// call whenever curWords/curWordMsk changes
-	void clearHintWordData();
-
 	WordleDroidEngine(WordleDroidGlobalState *st, const char *arg) : AbstractWordleDroidEngine(st)
 	{
-		addDictWord(Tok()); // zero word
+		addWord(Tok()); // zero word
+		wordsMsk = WordMsk::fullMsk();
 		loadDictFile(arg);
-		curWordMsk = WordMsk::fullMsk();
 	}
+
+	WordleDroidEngine(WordleDroidEngine *parent, WordMsk msk) :
+		AbstractWordleDroidEngine(parent->globalState)
+	{
+		wordsList.reserve(parent->wordsList.size());
+		allWords.reserve(parent->wordsList.size());
+		addWord(Tok()); // zero word
+
+		WordMsk refinedMsk;
+		msk.intersect(parent->wordsMsk);
+
+		for (auto &wdata : parent->words()) {
+			if (!msk.match(wdata.msk))
+				continue;
+			refinedMsk.add(wdata.msk);
+			int idx = wordsList.size();
+			wordsList.emplace_back(idx, wdata.tok, wdata.msk);
+			wordsIndex[wdata.tok] = idx;
+			allWords.push_back(idx);
+		}
+
+		wordsMsk = globalState->refineMasks ? refinedMsk : msk;
+
+		grayKeyStatusBits = parent->grayKeyStatusBits;
+		yellowKeyStatusBits = parent->yellowKeyStatusBits;
+		greenKeyStatusBits = parent->greenKeyStatusBits;
+	}
+
+
+	// =========================================================
+	// Command executer and other virtual methods
 
 	virtual int vGetWordLen() const final override { return WordLen; };
 
-	virtual int vGetCurNumWords() const final override { return int(curWords.size()); };
+	virtual int vGetCurNumWords() const final override { return int(wordsList.size()-1); };
 
 	bool tryExecuteHintCommand(const char *p, const char *arg)
 	{
@@ -579,7 +635,19 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 		if (*p4 != 0) return false;
 
 		Tok hint(p, p+WordLen+1);
-		applyHintToCurWordMsk(hint);
+		applyHintToKeyStatusBits(hint);
+
+		prReplaceLastLine();
+		prPrompt();
+		prTok(hint);
+
+		auto ne = new WordleDroidEngine(this, hint);
+		setNextEngine(ne);
+
+		if (globalState->showMasks)
+			pr(' '), prWordMsk(ne->wordsMsk);
+
+		prNl();
 
 		return true;
 	}
@@ -590,9 +658,9 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 
 		if (p == "-l"s) {
 			int cnt = 0;
-			for (auto idx : curWords) {
+			for (auto &wdata : words()) {
 				pr(cnt % 16 ? " " : cnt ? "\n  " : "  ");
-				Tok tok = dictWords[idx].tok;
+				Tok tok = wdata.tok;
 				tok.setCol(White);
 				prTok(tok);
 				cnt++;
@@ -608,20 +676,28 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 	}
 };
 
+
+// =========================================================
+// Explicit engine declarations (see wdroid.cc for instantiations)
+
 #ifdef ENABLE_WDROID_ENGINE_4
-extern template struct WordleDroidEngine<4, 4>;
-using WordleDroidEngine4 = WordleDroidEngine<4, 4>;
+extern template struct WordleDroidEngine<4>;
+using WordleDroidEngine4 = WordleDroidEngine<4>;
 #endif
 
 #ifdef ENABLE_WDROID_ENGINE_5
-extern template struct WordleDroidEngine<5, 4>;
-using WordleDroidEngine5 = WordleDroidEngine<5, 4>;
+extern template struct WordleDroidEngine<5>;
+using WordleDroidEngine5 = WordleDroidEngine<5>;
 #endif
 
 #ifdef ENABLE_WDROID_ENGINE_6
-extern template struct WordleDroidEngine<6, 5>;
-using WordleDroidEngine6 = WordleDroidEngine<6, 5>;
+extern template struct WordleDroidEngine<6>;
+using WordleDroidEngine6 = WordleDroidEngine<6>;
 #endif
+
+
+// =========================================================
+// Engine main() and static part of executeCommand
 
 bool WordleDroidGlobalState::executeCommand(const char *p, const char *arg, bool noprompt)
 {
@@ -631,15 +707,15 @@ bool WordleDroidGlobalState::executeCommand(const char *p, const char *arg, bool
 		char buffer[1024];
 		engine->prPrompt();
 		if (fgets(buffer, 1024, stdin) == nullptr) {
-			engine->pr("-exit\n");
-			delete engine;
-			engine = nullptr;
-			return true;
+			return executeCommand("-exit", nullptr, false);
 		}
 		if (char *cursor = strchr(buffer, '\n'); cursor != nullptr)
 			*cursor = 0;
 		return executeCommand(buffer, nullptr, true);
 	}
+
+	if (p[0] == '-' && p[1] == '-')
+		return executeCommand(p+1, arg, true);
 
 	if (arg == nullptr) {
 		if (const char *s = strchr(p, '='); s != nullptr) {
@@ -649,13 +725,6 @@ bool WordleDroidGlobalState::executeCommand(const char *p, const char *arg, bool
 			bool ret = executeCommand(buffer, cursor, noprompt);
 			free(buffer);
 			return ret;
-		}
-	}
-
-	if (engine->vGetWordLen() == 0) {
-		if (p != "-4"s && p != "-5"s && p != "-6"s && p != "-exit"s) {
-			executeCommand("-5", nullptr);
-			return executeCommand(p, arg);
 		}
 	}
 
@@ -694,9 +763,15 @@ bool WordleDroidGlobalState::executeCommand(const char *p, const char *arg, bool
 #endif
 
 	if (p == "-exit"s) {
-		// engine->prShowKeyboard();
+		if (showKeys)
+			engine->prShowKeyboard();
 		delete engine;
 		engine = nullptr;
+		return true;
+	}
+
+	if (p == "-K"s) {
+		showKeys = engine->boolArg(arg);
 		return true;
 	}
 
@@ -710,12 +785,26 @@ bool WordleDroidGlobalState::executeCommand(const char *p, const char *arg, bool
 		return true;
 	}
 
+	if (engine->vGetWordLen() == 0) {
+		engine->prReplaceLastLine();
+		executeCommand("-5", nullptr);
+		return executeCommand(p, arg);
+	}
+
 	if (!engine->vExecuteCommand(p, arg)) {
+		delete engine->nextEngine;
+		engine->nextEngine = nullptr;
 		if (arg == nullptr)
 			printf("Error executing command '%s'! Try -h for help.\n", p);
 		else
 			printf("Error executing command '%s' with arg '%s'! Try -h for help.\n", p, arg);
 		return false;
+	}
+
+	if (auto p = engine->nextEngine; p != nullptr) {
+		engine->nextEngine = nullptr;
+		delete engine;
+		engine = p;
 	}
 
 	return true;
