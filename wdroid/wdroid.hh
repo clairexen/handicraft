@@ -376,7 +376,8 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 	}
 
 	struct DictWordData {
-		int idx;
+		int idx; // dictIDx
+		// int curIdx
 		Tok tok;
 		WordMsk msk;
 	};
@@ -435,6 +436,20 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 		}
 		return newWords;
 	}
+
+	struct HintWordData {
+		int idx;
+		Tok tok;
+		WordMsk msk;
+		std::vector<int> sources;
+	};
+
+	std::vector<HintWordData> hintWords;
+	std::map<Tok, int> hintWordIndex;
+	std::vector<int> hintWordTable;
+
+	// call whenever curWords/curWordMsk changes
+	void clearHintWordData();
 
 	WordleDroidEngine(WordleDroidGlobalState *st, const char *arg) : AbstractWordleDroidEngine(st)
 	{
