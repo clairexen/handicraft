@@ -28,6 +28,7 @@
 #include <vector>
 #include <string>
 #include <format>
+#include <algorithm>
 #include <functional>
 #include <iostream>
 #include <fstream>
@@ -361,7 +362,13 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 
 	struct WordMsk : public std::array<int32_t, WordLen + MaxCnt>
 	{
-		WordMsk() { }
+		WordMsk() {
+			for (int i=0; i<WordLen; i++)
+				posBits(i) = 0;
+			for (int k=0; k<MaxCnt; k++)
+				cntBits(k) = 0;
+		}
+
 		~WordMsk() { }
 
 		static constexpr WordMsk fullMsk() {

@@ -24,9 +24,102 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 
 	using Base = WordleDroidEngine<WordLen>;
 	using Base::pr;
+	using Base::prFlush;
+	using typename Base::Tok;
+	using typename Base::WordMsk;
+	using Base::wordsList;
+	using Base::filterWords;
+
+	struct StateData
+	{
+		int idx;
+		WordMsk msk;
+		std::vector<int> words;
+
+		// children[guessWordIdx] = { unique_sorted_next_states }
+		std::vector<std::vector<int>> children;
+	};
+
+	std::vector<StateData> stateList;
+	std::map<WordMsk, int> stateIndex;
+	std::vector<std::vector<WordMsk>> hintMskTab;
+
+	int getStateIdx(const std::vector<int> &srcWords, const WordMsk &srcMsk)
+	{
+		if (auto it = stateIndex.find(srcMsk); it != stateIndex.end())
+			return it->second;
+
+		auto [wl, msk] = filterWords(srcWords, srcMsk);
+
+		if (auto it = stateIndex.find(msk); it != stateIndex.end()) {
+			int idx = it->second;
+			stateIndex[srcMsk] = idx;
+			return idx;
+		}
+
+		int idx = stateList.size();
+		stateList.emplace_back(idx, msk, wl);
+		stateIndex[srcMsk] = idx;
+		stateIndex[msk] = idx;
+		return idx;
+	}
+
+	void expandState(int idx)
+	{
+		auto src = [this,idx]() -> auto& { return stateList[idx]; };
+		src().children.resize(src().words.size());
+
+		for (int i = 0; i < src().words.size(); i++)
+		{
+			std::vector<int> vec;
+
+			int ki = src().words[i];
+			for (int j = 0; j < src().words.size(); j++) {
+				int kj = src().words[j];
+				const WordMsk &msk = hintMskTab[ki][kj];
+				vec.push_back(getStateIdx(src().words, msk));
+			}
+
+			std::ranges::sort(vec);
+			auto subrange = std::ranges::unique(vec);
+			vec.erase(subrange.begin(), subrange.end());
+			std::swap(src().children[i], vec);
+		}
+	}
 
 	WordleDroidMinMax(Base *parent) : Base(parent)
 	{
+		pr("Creating hintMskTab...\n");
+		hintMskTab.resize(wordsList.size());
+		for (int i = 1; i < wordsList.size(); i++) {
+			const char *p = wordsList[i].tok.begin();
+			hintMskTab[i].resize(wordsList.size());
+			for (int j = 1; j < wordsList.size(); j++) {
+				const char *q = wordsList[j].tok.begin();
+				hintMskTab[i][j] = Tok(p, q);
+			}
+		}
+
+		pr("Creating root state...\n");
+		std::vector<int> rootWordsList;
+		rootWordsList.reserve(wordsList.size());
+		for (int i = 1; i < wordsList.size(); i++)
+			rootWordsList.push_back(i);
+		assert(getStateIdx(rootWordsList, WordMsk::fullMsk()) == 0);
+		pr(std::format("  number of states in database: {}\n", stateList.size()));
+
+		pr("Creating depth=1 states...\n");
+		// int cur1 = stateList.size();
+		expandState(0);
+		pr(std::format("  number of states in database: {}\n", stateList.size()));
+
+	#if 0
+		pr("Creating depth=2 states...\n");
+		int cur2 = stateList.size();
+		for (int i = cur1; i < cur2; i++)
+			expandState(i);
+		pr(std::format("  number of states in database: {}\n", stateList.size()));
+	#endif
 	}
 
 	bool vExecuteCommand(const char *p, const char *arg,
@@ -34,7 +127,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 	{
 		using namespace std::string_literals;
 
-		if (p == "-use-minmax"s) {
+		if (p == "-minmax"s) {
 			pr(".. minmax ..\n");
 			return true;
 		}
@@ -43,4 +136,4 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 	}
 };
 
-REG_WDROID_CMDS(WordleDroidMinMax, "-use-minmax")
+REG_WDROID_CMDS(WordleDroidMinMax, "-minmax")
