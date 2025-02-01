@@ -22,8 +22,10 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 {
 	const char *vGetShortName() const override { return "minmax"; }
 
-	WordleDroidMinMax(WordleDroidEngine<WordLen> *parent) :
-			WordleDroidEngine<WordLen>(parent)
+	using Base = WordleDroidEngine<WordLen>;
+	using Base::pr;
+
+	WordleDroidMinMax(Base *parent) : Base(parent)
 	{
 	}
 
@@ -33,7 +35,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		using namespace std::string_literals;
 
 		if (p == "-use-minmax"s) {
-			WordleDroidEngine<WordLen>::pr(".. minmax ..\n");
+			pr(".. minmax ..\n");
 			return true;
 		}
 
