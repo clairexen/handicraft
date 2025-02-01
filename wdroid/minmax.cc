@@ -69,16 +69,18 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		return idx;
 	}
 
-	void expandState(int idx)
+	void expandState(int idx, int guessWordIdx = 0)
 	{
 		auto src = [this,idx]() -> auto& { return stateList[idx]; };
 		src().children.resize(src().words.size());
 
 		for (int i = 0; i < src().words.size(); i++)
 		{
-			std::vector<int> vec;
-
 			int ki = src().words[i];
+			if (guessWordIdx && guessWordIdx != ki)
+				continue;
+
+			std::vector<int> vec;
 			for (int j = 0; j < src().words.size(); j++) {
 				int kj = src().words[j];
 				const WordMsk &msk = hintMskTab[ki][kj];
@@ -115,7 +117,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 			pr(std::format("  size of largest queued state: {:5}\n", stateQueue.top().first));
 		pr(std::format("  total number of (new) states: {:5}\n", stateList.size()));
 
-		pr("Creating depth=1 states...\n");
+		pr("Creating all first-level child states...\n");
 		int prevNumStates = stateList.size();
 		assert(stateQueue.top().second == 0);
 		stateQueue.pop();
@@ -132,11 +134,14 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 	{
 		int batchSize = 10000;
 		if (!stateQueue.empty()) {
-			if (stateQueue.top().first >   50) batchSize = 10000;
-			if (stateQueue.top().first >  100) batchSize = 1000;
-			if (stateQueue.top().first >  200) batchSize = 500;
+			if (stateQueue.top().first >   25) batchSize = 5000;
+			if (stateQueue.top().first >   50) batchSize = 2000;
+			if (stateQueue.top().first >   75) batchSize = 1000;
+			if (stateQueue.top().first >  100) batchSize = 500;
+			if (stateQueue.top().first >  250) batchSize = 200;
 			if (stateQueue.top().first >  500) batchSize = 100;
-			if (stateQueue.top().first > 1000) batchSize = 50;
+			if (stateQueue.top().first >  750) batchSize = 50;
+			if (stateQueue.top().first > 1000) batchSize = 20;
 			if (stateQueue.top().first > 2000) batchSize = 10;
 			if (stateQueue.top().first > 3000) batchSize = 5;
 			if (stateQueue.top().first > 4000) batchSize = 2;
