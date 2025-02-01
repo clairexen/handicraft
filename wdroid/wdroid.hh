@@ -28,6 +28,7 @@
 #include <vector>
 #include <string>
 #include <format>
+#include <functional>
 #include <iostream>
 #include <fstream>
 #include <cstdint>
@@ -180,10 +181,6 @@ struct AbstractWordleDroidEngine
 	}
 };
 
-
-// =========================================================
-// WordleDroidGlobalState and impl. of basic print helpers
-
 struct WordleDroidGlobalState
 {
 	AbstractWordleDroidEngine *engine = nullptr;
@@ -204,27 +201,6 @@ struct WordleDroidGlobalState
 	int main(int argc, const char **argv);
 	bool executeCommand(const char *p, const char *arg, bool noprompt=false);
 };
-
-void AbstractWordleDroidEngine::pr(char c) const {
-	if (globalState && globalState->outfile.is_open())
-		globalState->outfile << c;
-	else
-		std::cout << c;
-}
-
-void AbstractWordleDroidEngine::pr(const std::string &s) const {
-	if (globalState && globalState->outfile.is_open())
-		globalState->outfile << s;
-	else
-		std::cout << s;
-}
-
-void AbstractWordleDroidEngine::prFlush() const {
-	if (globalState && globalState->outfile.is_open())
-		globalState->outfile << std::flush;
-	else
-		std::cout << std::flush;
-}
 
 
 // =========================================================
@@ -384,7 +360,7 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 		WordMsk() { }
 		~WordMsk() { }
 
-		static WordMsk fullMsk() {
+		static constexpr WordMsk fullMsk() {
 			WordMsk w;
 			for (int i=0; i<WordLen; i++)
 				w.posBits(i) = FullMskVal;
@@ -580,7 +556,7 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 		loadDictFile(arg);
 	}
 
-	WordleDroidEngine(WordleDroidEngine *parent, WordMsk msk) :
+	WordleDroidEngine(WordleDroidEngine *parent, WordMsk msk = WordMsk::fullMsk()) :
 		AbstractWordleDroidEngine(parent->globalState)
 	{
 		wordsList.reserve(parent->wordsList.size());
@@ -605,6 +581,24 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 		grayKeyStatusBits = parent->grayKeyStatusBits;
 		yellowKeyStatusBits = parent->yellowKeyStatusBits;
 		greenKeyStatusBits = parent->greenKeyStatusBits;
+	}
+
+
+	// =========================================================
+	// Command and Extension Registry
+
+	typedef std::function<AbstractWordleDroidEngine*(WordleDroidEngine*)> cmdLoad_t;
+
+	static std::map<std::string, cmdLoad_t>& cmdTable() {
+		static std::map<std::string, cmdLoad_t> staticData;
+		return staticData;
+	}
+
+	static int regCmd(std::initializer_list<std::string> names, cmdLoad_t func) {
+		auto &db = cmdTable();
+		for (auto &n : names)
+			db[n] = func;
+		return db.size();
 	}
 
 
@@ -675,151 +669,42 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 // =========================================================
 // Explicit engine declarations (see wdroid.cc for instantiations)
 
+#define REG_WDROID_N_CMDS(extType_, wordLen_, ...) \
+static int REG_WDROID_CMDS_ ## extType_ ## _ ## wordLen_ = \
+WordleDroidEngine ## wordLen_::regCmd({__VA_ARGS__}, \
+[](WordleDroidEngine ## wordLen_* parent_) -> AbstractWordleDroidEngine* \
+{ return new extType_<wordLen_>(parent_); });
+
 #ifdef ENABLE_WDROID_ENGINE_4
 extern template struct WordleDroidEngine<4>;
 using WordleDroidEngine4 = WordleDroidEngine<4>;
+#define REG_WDROID4_CMDS(extType_, ...) \
+  REG_WDROID_N_CMDS(extType_, 4, __VA_ARGS__)
+#else
+#define REG_WDROID4_CMDS(extType_, ...)
 #endif
 
 #ifdef ENABLE_WDROID_ENGINE_5
 extern template struct WordleDroidEngine<5>;
 using WordleDroidEngine5 = WordleDroidEngine<5>;
+#define REG_WDROID5_CMDS(extType_, ...) \
+  REG_WDROID_N_CMDS(extType_, 5, __VA_ARGS__)
+#else
+#define REG_WDROID5_CMDS(extType_, ...)
 #endif
 
 #ifdef ENABLE_WDROID_ENGINE_6
 extern template struct WordleDroidEngine<6>;
 using WordleDroidEngine6 = WordleDroidEngine<6>;
+#define REG_WDROID6_CMDS(extType_, ...) \
+  REG_WDROID_N_CMDS(extType_, 6, __VA_ARGS__)
+#else
+#define REG_WDROID6_CMDS(extType_, ...)
 #endif
 
-
-// =========================================================
-// Engine main() and static part of executeCommand
-
-bool WordleDroidGlobalState::executeCommand(const char *p, const char *arg, bool noprompt)
-{
-	using namespace std::string_literals;
-
-	if (p == nullptr) {
-		char buffer[1024], *p = buffer;
-		engine->prPrompt();
-		if (fgets(buffer, 1024, stdin) == nullptr) {
-			engine->pr('\r');
-			return executeCommand("-exit", nullptr, false);
-		}
-		if (char *cursor = strchr(buffer, '\n'); cursor != nullptr)
-			*cursor = 0;
-		if (p[0] == '-' && p[1] == '-') {
-			engine->prReplaceLastLine();
-			return executeCommand(p+1, nullptr, true);
-		}
-		return executeCommand(buffer, nullptr, true);
-	}
-
-	if (p[0] == '-' && p[1] == '-')
-		return executeCommand(p+1, arg, true);
-
-	if (arg == nullptr) {
-		if (const char *s = strchr(p, '='); s != nullptr) {
-			char *buffer = strdup(p);
-			char *cursor = buffer + (s - p);
-			*(cursor++) = 0;
-			bool ret = executeCommand(buffer, cursor, noprompt);
-			free(buffer);
-			return ret;
-		}
-	}
-
-	if (!noprompt) {
-		engine->prPrompt();
-		engine->pr(p);
-		if (arg) {
-			engine->pr('=');
-			engine->pr(arg);
-		}
-		engine->prNl();
-	}
-
-#ifdef ENABLE_WDROID_ENGINE_4
-	if (p == "-4"s) {
-		delete engine;
-		engine = new WordleDroidEngine4(this, arg);
-		return true;
-	}
-#endif
-
-#ifdef ENABLE_WDROID_ENGINE_5
-	if (p == "-5"s) {
-		delete engine;
-		engine = new WordleDroidEngine5(this, arg);
-		return true;
-	}
-#endif
-
-#ifdef ENABLE_WDROID_ENGINE_6
-	if (p == "-6"s) {
-		delete engine;
-		engine = new WordleDroidEngine6(this, arg);
-		return true;
-	}
-#endif
-
-	if (p == "-exit"s) {
-		if (showKeys)
-			engine->prShowKeyboard();
-		delete engine;
-		engine = nullptr;
-		return true;
-	}
-
-	if (p == "-K"s) {
-		showKeys = engine->boolArg(arg);
-		return true;
-	}
-
-	if (p == "-M"s) {
-		showMasks = engine->boolArg(arg);
-		return true;
-	}
-
-	if (p == "-R"s) {
-		refineMasks = engine->boolArg(arg);
-		return true;
-	}
-
-	if (engine->vGetWordLen() == 0) {
-		engine->prReplaceLastLine();
-		executeCommand("-5", nullptr);
-		return executeCommand(p, arg);
-	}
-
-	AbstractWordleDroidEngine *nextEngine = nullptr;
-	if (!engine->vExecuteCommand(p, arg, nextEngine)) {
-		delete nextEngine;
-		if (arg == nullptr)
-			printf("Error executing command '%s'! Try -h for help.\n", p);
-		else
-			printf("Error executing command '%s' with arg '%s'! Try -h for help.\n", p, arg);
-		return false;
-	}
-
-	if (nextEngine) {
-		delete engine;
-		engine = nextEngine;
-	}
-
-	return true;
-}
-
-int WordleDroidGlobalState::main(int argc, const char **argv)
-{
-	for (int i=1; engine != nullptr && i<argc; i++) {
-		if (!executeCommand(argv[i], nullptr))
-			return 1;
-	}
-
-	while (engine != nullptr)
-		executeCommand(nullptr, nullptr);
-
-	return 0;
-}
+#define REG_WDROID_CMDS(extType_, ...) \
+  REG_WDROID4_CMDS(extType_, __VA_ARGS__) \
+  REG_WDROID5_CMDS(extType_, __VA_ARGS__) \
+  REG_WDROID6_CMDS(extType_, __VA_ARGS__)
 
 #endif

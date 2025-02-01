@@ -3,7 +3,7 @@ CXXFLAGS = -O2 -ggdb -std=c++26 -Wall -MD
 CC = $(CXX)
 CCFLAGS = $(CXXFLAGS)
 
-wdroid: wdroid.o words.o
+wdroid: wdroid.o wd_minmax.o words.o
 
 run: wdroid
 	./wdroid -4 -5 -6 -exit
