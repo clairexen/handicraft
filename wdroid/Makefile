@@ -7,8 +7,7 @@ wdroid: wdroid.o minmax.o words.o
 
 run: wdroid
 	./wdroid -4 -5 -6 -exit
-	./wdroid -M float/00112 magot/BOAST -l -exit
-	./wdroid --5 --K --R --M float/00112 magot/BOAST --l --exit
+	./wdroid -M float/00112 magot/BOAST -l -i --K --exit
 
 words.cc: words.py wordledb.json
 	python3 words.py

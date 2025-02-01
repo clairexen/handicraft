@@ -480,7 +480,7 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 
 
 	// =========================================================
-	// Main State (wordsMsk and wordsList) and related helper functions
+	// Main State (wordsList etc) and related helper functions
 
 	struct WordData {
 		int idx;
@@ -488,8 +488,8 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 		WordMsk msk;
 	};
 
-	WordMsk wordsMsk;
-	std::vector<int> allWords;
+	WordMsk hintsWordsMsk;
+	WordMsk refinedWordsMsk;
 	std::map<Tok, int> wordsIndex;
 	std::vector<WordData> wordsList;
 
@@ -532,8 +532,8 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 		wordsList.emplace_back(idx, w, w);
 		if (idx == 0)
 			return true;
-		allWords.push_back(idx);
 		wordsIndex[w] = idx;
+		refinedWordsMsk.add(w);
 		return true;
 	}
 
@@ -556,7 +556,8 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 	WordleDroidEngine(WordleDroidGlobalState *st, const char *arg) : AbstractWordleDroidEngine(st)
 	{
 		addWord(Tok()); // zero word
-		wordsMsk = WordMsk::fullMsk();
+		hintsWordsMsk = WordMsk::fullMsk();
+		refinedWordsMsk = WordMsk();
 		loadDictFile(arg);
 	}
 
@@ -564,11 +565,10 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 		AbstractWordleDroidEngine(parent->globalState)
 	{
 		wordsList.reserve(parent->wordsList.size());
-		allWords.reserve(parent->wordsList.size());
 		addWord(Tok()); // zero word
 
 		WordMsk refinedMsk;
-		msk.intersect(parent->wordsMsk);
+		msk.intersect(parent->hintsWordsMsk);
 
 		for (auto &wdata : parent->words()) {
 			if (!msk.match(wdata.msk))
@@ -576,11 +576,11 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 			int idx = wordsList.size();
 			wordsList.emplace_back(idx, wdata.tok, wdata.msk);
 			wordsIndex[wdata.tok] = idx;
-			allWords.push_back(idx);
 			refinedMsk.add(wdata.msk);
 		}
 
-		wordsMsk = globalState->refineMasks ? refinedMsk : msk;
+		hintsWordsMsk = msk;
+		refinedWordsMsk = refinedMsk;
 
 		grayKeyStatusBits = parent->grayKeyStatusBits;
 		yellowKeyStatusBits = parent->yellowKeyStatusBits;
@@ -640,7 +640,7 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 		nextEngine = ne;
 
 		if (globalState->showMasks)
-			pr(' '), prWordMsk(ne->wordsMsk);
+			pr(' '), prWordMsk(ne->hintsWordsMsk);
 
 		prNl();
 
@@ -661,6 +661,16 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 				prTok(tok);
 				cnt++;
 			}
+			prNl();
+			return true;
+		}
+
+		if (p == "-i"s) {
+			pr("hintsWordsMsk   ");
+			prWordMsk(hintsWordsMsk);
+			prNl();
+			pr("refinedWordsMsk ");
+			prWordMsk(refinedWordsMsk);
 			prNl();
 			return true;
 		}
