@@ -585,25 +585,28 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 
 
 	// =========================================================
-	// Command and Extension Registry
+	// Command executer and various virtual methods
 
-	typedef std::function<AbstractWordleDroidEngine*(WordleDroidEngine*)> cmdLoad_t;
+	typedef AbstractWordleDroidEngine* (*cmdLoader_t)(WordleDroidEngine*);
 
-	static std::map<std::string, cmdLoad_t>& cmdTable() {
-		static std::map<std::string, cmdLoad_t> staticData;
+	static std::map<std::string, cmdLoader_t>& cmdTable() {
+		static std::map<std::string, cmdLoader_t> staticData;
 		return staticData;
 	}
 
-	static int regCmd(std::initializer_list<std::string> names, cmdLoad_t func) {
-		auto &db = cmdTable();
-		for (auto &n : names)
-			db[n] = func;
-		return db.size();
+	template <typename T>
+	static AbstractWordleDroidEngine*
+			cmdLoader(WordleDroidEngine *parent) {
+		return new T(parent);
 	}
 
-
-	// =========================================================
-	// Command executer and other virtual methods
+	template <typename T>
+	static int regCmd(std::initializer_list<std::string> names) {
+		auto &db = cmdTable();
+		for (auto &n : names)
+			db[n] = cmdLoader<T>;
+		return db.size();
+	}
 
 	virtual int vGetWordLen() const final override { return WordLen; };
 
@@ -670,10 +673,8 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 // Explicit engine declarations (see wdroid.cc for instantiations)
 
 #define REG_WDROID_N_CMDS(extType_, wordLen_, ...) \
-static int REG_WDROID_CMDS_ ## extType_ ## _ ## wordLen_ = \
-WordleDroidEngine ## wordLen_::regCmd({__VA_ARGS__}, \
-[](WordleDroidEngine ## wordLen_* parent_) -> AbstractWordleDroidEngine* \
-{ return new extType_<wordLen_>(parent_); });
+static int REG_WDROID_ ## wordLen_ ## _CMDS_ ## extType_ = \
+extType_<wordLen_>::regCmd<extType_<wordLen_>>({__VA_ARGS__});
 
 #ifdef ENABLE_WDROID_ENGINE_4
 extern template struct WordleDroidEngine<4>;

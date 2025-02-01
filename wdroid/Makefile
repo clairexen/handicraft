@@ -3,15 +3,18 @@ CXXFLAGS = -O2 -ggdb -std=c++26 -Wall -MD
 CC = $(CXX)
 CCFLAGS = $(CXXFLAGS)
 
-wdroid: wdroid.o wd_minmax.o words.o
+wdroid: wdroid.o minmax.o words.o
 
 run: wdroid
 	./wdroid -4 -5 -6 -exit
 	./wdroid -M float/00112 magot/BOAST -l -exit
 	./wdroid --5 --K --R --M float/00112 magot/BOAST --l --exit
 
-words.cc: words.py
+words.cc: words.py wordledb.json
 	python3 words.py
+
+wordledb.json: wordledb.py
+	python3 wordledb.py
 
 clean:
 	rm -f wdroid words.cc *.o *.d
