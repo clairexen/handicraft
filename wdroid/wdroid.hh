@@ -23,6 +23,7 @@
 #define ENABLE_WDROID_ENGINE_6
 
 #include <map>
+#include <queue>
 #include <array>
 #include <ranges>
 #include <vector>
