@@ -681,7 +681,7 @@ using WordleDroidEngine4 = WordleDroidEngine<4>;
 #define REG_WDROID4_CMDS(extType_, ...) \
   REG_WDROID_N_CMDS(extType_, 4, __VA_ARGS__)
 #else
-#define REG_WDROID4_CMDS(extType_, ...)
+#define REG_WDROID4_CMDS(...)
 #endif
 
 #ifdef ENABLE_WDROID_ENGINE_5
@@ -690,7 +690,7 @@ using WordleDroidEngine5 = WordleDroidEngine<5>;
 #define REG_WDROID5_CMDS(extType_, ...) \
   REG_WDROID_N_CMDS(extType_, 5, __VA_ARGS__)
 #else
-#define REG_WDROID5_CMDS(extType_, ...)
+#define REG_WDROID5_CMDS(...)
 #endif
 
 #ifdef ENABLE_WDROID_ENGINE_6
@@ -699,7 +699,7 @@ using WordleDroidEngine6 = WordleDroidEngine<6>;
 #define REG_WDROID6_CMDS(extType_, ...) \
   REG_WDROID_N_CMDS(extType_, 6, __VA_ARGS__)
 #else
-#define REG_WDROID6_CMDS(extType_, ...)
+#define REG_WDROID6_CMDS(...)
 #endif
 
 #define REG_WDROID_CMDS(extType_, ...) \
