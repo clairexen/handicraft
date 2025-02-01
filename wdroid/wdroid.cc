@@ -148,21 +148,42 @@ bool WordleDroidGlobalState::executeCommand(const char *p, const char *arg, bool
 	}
 
 	AbstractWordleDroidEngine *nextEngine = nullptr;
-	if (!engine->vExecuteCommand(p, arg, nextEngine)) {
-		delete nextEngine;
-		if (arg == nullptr)
-			printf("Error executing command '%s'! Try -h for help.\n", p);
-		else
-			printf("Error executing command '%s' with arg '%s'! Try -h for help.\n", p, arg);
-		return false;
+	if (engine->vExecuteCommand(p, arg, nextEngine)) {
+		if (nextEngine) {
+			delete engine;
+			engine = nextEngine;
+		}
+		return true;
 	}
-
+	assert(nextEngine == nullptr);
+	if (engine->vExecuteBasicCommand(p, arg, nextEngine)) {
+		if (nextEngine) {
+			delete engine;
+			engine = nextEngine;
+		}
+		return true;
+	}
 	if (nextEngine) {
 		delete engine;
 		engine = nextEngine;
+		nextEngine = nullptr;
+
+		if (engine->vExecuteCommand(p, arg, nextEngine)) {
+			if (nextEngine) {
+				delete engine;
+				engine = nextEngine;
+			}
+			return true;
+		}
+		assert(nextEngine == nullptr);
 	}
 
-	return true;
+	if (arg == nullptr)
+		printf("Error executing command '%s'! Try -h for help.\n", p);
+	else
+		printf("Error executing command '%s' with arg '%s'! Try -h for help.\n", p, arg);
+
+	return false;
 }
 
 int WordleDroidGlobalState::main(int argc, const char **argv)

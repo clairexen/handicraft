@@ -55,11 +55,11 @@ while True:
 
     database[date] = response.json()
 
-    database_json = "{\n  " + ",\n  ".join([
-        f'"{k}": {json.dumps(v)}' for k, v in sorted(database.items())
-    ]) + "\n}"
+database_json = "{\n  " + ",\n  ".join([
+    f'"{k}": {json.dumps(v)}' for k, v in sorted(database.items())
+]) + "\n}"
 
-    with open("wordledb.json", "w") as f:
-        print(database_json, file=f)
+with open("wordledb.json", "w") as f:
+    print(database_json, file=f)
 
 print(f"Final database size: {len(database)}")

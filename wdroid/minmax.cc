@@ -20,7 +20,25 @@
 template <int WordLen>
 struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 {
-	using WordleDroidEngine<WordLen>::WordleDroidEngine;
+	const char *vGetShortName() const override { return "minmax"; }
+
+	WordleDroidMinMax(WordleDroidEngine<WordLen> *parent) :
+			WordleDroidEngine<WordLen>(parent)
+	{
+	}
+
+	bool vExecuteCommand(const char *p, const char *arg,
+			AbstractWordleDroidEngine *&nextEngine) override
+	{
+		using namespace std::string_literals;
+
+		if (p == "-use-minmax"s) {
+			WordleDroidEngine<WordLen>::pr(".. minmax ..\n");
+			return true;
+		}
+
+		return false;
+	}
 };
 
 REG_WDROID_CMDS(WordleDroidMinMax, "-use-minmax")

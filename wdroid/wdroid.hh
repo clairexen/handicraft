@@ -60,10 +60,13 @@ struct AbstractWordleDroidEngine
 
 	AbstractWordleDroidEngine(WordleDroidGlobalState *st) : globalState(st) { }
 	virtual ~AbstractWordleDroidEngine() { }
-	virtual int vGetWordLen() const { return 0; };
-	virtual int vGetCurNumWords() const { return 0; };
+	virtual int vGetWordLen() const { return 0; }
+	virtual int vGetCurNumWords() const { return 0; }
+	virtual const char *vGetShortName() const { return "wdroid"; }
 	virtual bool vExecuteCommand(const char *p, const char *arg,
-			AbstractWordleDroidEngine* &nextEngine) { return false; };
+			AbstractWordleDroidEngine* &nextEngine) { return false; }
+	virtual bool vExecuteBasicCommand(const char *p, const char *arg,
+			AbstractWordleDroidEngine* &nextEngine) { return false; }
 
 	void pr(char c) const;
 	void pr(const std::string &s) const;
@@ -147,7 +150,8 @@ struct AbstractWordleDroidEngine
 	}
 
 	void prPrompt() const {
-		pr(std::format("[wdroid-{}] {:5}> ", vGetWordLen(), vGetCurNumWords()));
+		pr(std::format("[{}-{}] {:5}> ", vGetShortName(),
+				vGetWordLen(), vGetCurNumWords()));
 		prFlush();
 	}
 
@@ -643,8 +647,8 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 		return true;
 	}
 
-	bool vExecuteCommand(const char *p, const char *arg,
-			AbstractWordleDroidEngine *&nextEngine) override
+	bool vExecuteBasicCommand(const char *p, const char *arg,
+			AbstractWordleDroidEngine *&nextEngine) override final
 	{
 		using namespace std::string_literals;
 
@@ -664,6 +668,8 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 		if (tryExecuteHintCommand(p, arg, nextEngine))
 			return true;
 
+		if (auto it = cmdTable().find(p); it != cmdTable().end())
+			nextEngine = (*it->second)(this);
 		return false;
 	}
 };
