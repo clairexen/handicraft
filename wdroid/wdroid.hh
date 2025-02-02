@@ -245,6 +245,7 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 
 		Tok(const char *p, const char *q) {
 			std::vector<int> freeChars;
+			freeChars.reserve(WordLen);
 			for (int i=0; i<WordLen; i++) {
 				(*this)[i] = p[i] & 31;
 				if (q[i] == '1') (*this)[i] += 32;
@@ -524,6 +525,7 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 				newMsk.add(wordsList[idx].msk);
 			}
 		}
+		newWords.shrink_to_fit();
 		return ret;
 	}
 
@@ -586,6 +588,8 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 			wordsIndex[wdata.tok] = idx;
 			refinedMsk.add(wdata.msk);
 		}
+
+		wordsList.shrink_to_fit();
 
 		hintsWordsMsk = msk;
 		refinedWordsMsk = refinedMsk;

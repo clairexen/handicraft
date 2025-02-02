@@ -29,6 +29,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 	using typename Base::WordMsk;
 	using Base::wordsList;
 	using Base::filterWords;
+	using Base::intArg;
 
 	struct StateData
 	{
@@ -40,8 +41,10 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		std::vector<std::vector<int>> children;
 	};
 
+	bool setupDone = false;
 	int minStateSize = 0;
 	int maxNumStates = 1000000;
+	int firstGuessIdx = 0;
 
 	std::vector<StateData> stateList;
 	std::map<WordMsk, int> stateIndex;
@@ -81,6 +84,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 				continue;
 
 			std::vector<int> vec;
+			vec.reserve(src().words.size());
 			for (int j = 0; j < src().words.size(); j++) {
 				int kj = src().words[j];
 				const WordMsk &msk = hintMskTab[ki][kj];
@@ -90,12 +94,20 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 			std::ranges::sort(vec);
 			auto subrange = std::ranges::unique(vec);
 			vec.erase(subrange.begin(), subrange.end());
+			vec.shrink_to_fit();
 			std::swap(src().children[i], vec);
 		}
 	}
 
 	WordleDroidMinMax(Base *parent) : Base(parent)
 	{
+	}
+
+	void doSetup()
+	{
+		if (setupDone)
+			return;
+
 		pr("Creating hintMskTab...\n");
 		hintMskTab.resize(wordsList.size());
 		for (int i = 1; i < wordsList.size(); i++) {
@@ -128,9 +140,11 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		pr(std::format("  number of processed states: {:7}\n", 1));
 		pr(std::format("  number of queued states:  {:9}\n", stateQueue.size()));
 		pr(std::format("  total number of states:   {:9}\n", stateList.size()));
+
+		setupDone = true;
 	}
 
-	bool processBatch()
+	bool doBatch()
 	{
 		int batchSize = 10000;
 		if (!stateQueue.empty()) {
@@ -171,7 +185,22 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		using namespace std::string_literals;
 
 		if (p == "-minmax"s) {
-			while (processBatch()) { }
+			return true;
+		}
+
+		if (p == "+minStateSize"s) {
+			minStateSize = intArg(arg);
+			return true;
+		}
+
+		if (p == "+minStateSize"s) {
+			minStateSize = intArg(arg);
+			return true;
+		}
+
+		if (p == "+go"s) {
+			doSetup();
+			while (doBatch()) { }
 			return true;
 		}
 
