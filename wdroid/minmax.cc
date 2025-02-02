@@ -42,8 +42,8 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 	};
 
 	bool setupDone = false;
-	int minStateSize = 0;
-	int maxNumStates = 1000000;
+	int minStateSize = 20;
+	int maxNumStates = 100000000;
 	int firstGuessIdx = 0;
 
 	std::vector<StateData> stateList;
@@ -80,14 +80,15 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		for (int i = 0; i < src().words.size(); i++)
 		{
 			int ki = src().words[i];
-			if (guessWordIdx && guessWordIdx != ki)
+			if (0 < guessWordIdx && ki != guessWordIdx)
 				continue;
 
 			std::vector<int> vec;
 			vec.reserve(src().words.size());
 			for (int j = 0; j < src().words.size(); j++) {
 				int kj = src().words[j];
-				const WordMsk &msk = hintMskTab[ki][kj];
+				WordMsk msk = src().msk;
+				msk.intersect(hintMskTab[ki][kj]);
 				vec.push_back(getStateIdx(src().words, msk));
 			}
 
