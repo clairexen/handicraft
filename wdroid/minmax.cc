@@ -29,6 +29,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 	using typename Base::WordMsk;
 	using Base::refinedWordsMsk;
 	using Base::wordsList;
+	using Base::findWord;
 	using Base::refineWords;
 	using Base::refineMask;
 	using Base::intArg;
@@ -155,7 +156,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		int prevNumStates = stateList.size();
 		assert(stateQueue.top().second == 0);
 		stateQueue.pop();
-		expandState(0);
+		expandState(0, firstGuessIdx);
 		if (!stateQueue.empty())
 			pr(std::format("  size of largest queued state: {:5}\n", stateQueue.top().first));
 		pr(std::format("  number of new states found: {:7}\n", stateList.size()-prevNumStates));
@@ -211,6 +212,11 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		using namespace std::string_literals;
 
 		if (p == "-minmax"s) {
+			return true;
+		}
+
+		if (p == "+firstGuess"s) {
+			firstGuessIdx = findWord(arg);
 			return true;
 		}
 
