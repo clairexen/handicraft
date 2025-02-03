@@ -23,6 +23,7 @@
 #define ENABLE_WDROID_ENGINE_6
 
 #include <map>
+#include <set>
 #include <queue>
 #include <array>
 #include <ranges>
@@ -512,8 +513,20 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 		return it->second;
 	}
 
-	std::pair<std::vector<int>, WordMsk>
+	std::vector<int>
 	filterWords(const std::vector<int> &oldWords, const WordMsk &msk)
+	{
+		std::vector<int> newWords;
+		newWords.reserve(oldWords.size());
+		for (int idx : oldWords)
+			if (msk.match(wordsList[idx].msk))
+				newWords.push_back(idx);
+		newWords.shrink_to_fit();
+		return newWords;
+	}
+
+	std::pair<std::vector<int>, WordMsk>
+	refineWords(const std::vector<int> &oldWords, const WordMsk &msk)
 	{
 		std::pair<std::vector<int>, WordMsk> ret;
 		auto& [newWords, newMsk] = ret;
@@ -527,6 +540,24 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 		}
 		newWords.shrink_to_fit();
 		return ret;
+	}
+
+	WordMsk refineMask(const std::vector<int> &oldWords, const WordMsk &msk)
+	{
+		WordMsk newMsk;
+		for (int idx : oldWords)
+			if (msk.match(wordsList[idx].msk))
+				newMsk.add(wordsList[idx].msk);
+		return newMsk;
+	}
+
+	WordMsk refineMask(const WordMsk &msk)
+	{
+		WordMsk newMsk;
+		for (auto &word : words())
+			if (msk.match(word.msk))
+				newMsk.add(word.msk);
+		return newMsk;
 	}
 
 
