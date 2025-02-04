@@ -80,16 +80,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		int idx = stateList.size();
 		stateIndex[srcMsk] = idx;
 		stateIndex[msk] = idx;
-		if (wl.size() >= std::max(minStateSize, 2))
-			stateQueue.emplace(wl.size(), idx);
-		else
-			terminalStates.push_back(idx);
-		stateList.emplace_back(idx, std::move(msk), std::move(wl));
-		return idx;
-	}
-
-	void expandState(int idx, int guessWordIdx = 0)
-	{
+		stateList.emplace_back(idx, msk, wl);
 		auto *state = &stateList[idx];
 
 		// "trap detection"
@@ -101,9 +92,20 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 			}
 			state->depth = nwords;
 			terminalStates.push_back(idx);
-			return;
+			return idx;
+		not_a_trap:;
 		}
-	not_a_trap:;
+
+		if (wl.size() >= std::max(minStateSize, 2))
+			stateQueue.emplace(wl.size(), idx);
+		else
+			terminalStates.push_back(idx);
+		return idx;
+	}
+
+	void expandState(int idx, int guessWordIdx = 0)
+	{
+		auto *state = &stateList[idx];
 
 		nonTerminalStates.push_back(idx);
 		state->children.resize(state->words.size());
