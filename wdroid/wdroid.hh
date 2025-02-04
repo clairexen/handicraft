@@ -189,12 +189,34 @@ struct AbstractWordleDroidEngine
 		return atoi(arg);
 	}
 
-	static inline uint64_t xorshift64(uint64_t val, int rounds=1)
+	static constexpr inline uint64_t xorshift64(uint64_t val, int rounds=1)
 	{
-		val ^= val << 13;
-		val ^= val >> 7;
-		val ^= val << 17;
+		while (rounds--) {
+			val ^= val << 12;
+			val ^= val >> 25;
+			val ^= val << 27;
+		}
 		return val;
+	}
+
+	uint64_t rngState = xorshift64(42, 7);
+
+	uint64_t rng(uint64_t limit = 0)
+	{
+		if (limit == 1)
+			return 0;
+
+		rngState = xorshift64(rngState);
+		uint64_t val = rngState * 0x2545F4914F6CDD1D;
+
+		if (limit == 0)
+			return val;
+
+		val >>= std::countl_zero(limit-1);
+		if (val < limit)
+			return val;
+
+		return rng(limit);
 	}
 };
 

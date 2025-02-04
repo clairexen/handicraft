@@ -36,6 +36,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 	using Base::refineWords;
 	using Base::refineMask;
 	using Base::intArg;
+	using Base::rng;
 
 	struct StateData
 	{
@@ -106,6 +107,8 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 			vec.reserve(state->words.size());
 			for (int j = 0; j < state->words.size(); j++) {
 				int kj = state->words[j];
+				if (ki == kj && state->words.size() > 1)
+					continue;
 				WordMsk msk = state->msk;
 				msk.intersect(hintMskTab[ki][kj]);
 				vec.push_back(getStateIdx(state->words, msk));
@@ -247,48 +250,58 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		pr(std::format("Maximum depth at optimal play: {}\n", stateList[0].depth));
 	}
 
-	std::vector<int> getTrace()
+	std::vector<std::pair<int,int>> getTrace(int curState = 0)
 	{
-		std::vector<int> traceData;
-		int curState = 0;
+		std::vector<std::pair<int,int>> traceData;
 
 		while (1)
 		{
 			auto &state = stateList[curState];
 			if (state.children.empty()) {
-				traceData.push_back(state.words.front());
-				return traceData;
+				auto &guess = state.words[rng(state.words.size())];
+				traceData.emplace_back(guess, curState);
+				break;
 			}
+			std::vector<std::pair<int, int>> choices;
 			for (int i = 0; i < state.children.size(); i++) {
 				if (state.children.empty())
 					continue;
 				int maxDepth = 0;
-				int bestNext = 0;
-				for (int k : state.children[i]) {
-					if (maxDepth >= stateList[k].depth)
-						continue;
-					maxDepth = stateList[k].depth;
-					bestNext = k;
-				}
-				if (state.depth == maxDepth+1) {
-					traceData.push_back(state.words[i]);
-					curState = bestNext;
-					break;
-				}
+				for (int k : state.children[i])
+					maxDepth = std::max(maxDepth, stateList[k].depth);
+				if (state.depth != maxDepth+1)
+					continue;
+				for (int k : state.children[i])
+					if (state.depth == stateList[k].depth+1)
+						choices.emplace_back(state.words[i], k);
 			}
+			if (choices.empty())
+				break;
+
+			auto &choice = choices[rng(choices.size())];
+			traceData.emplace_back(choice.first, curState);
+			curState = choice.second;
 		}
+
+		return traceData;
 	}
 
 	void doTrace()
 	{
-		std::vector<int> traceData = getTrace();
-		const Tok &secret = wordsList[traceData.back()].tok;
-		pr("Trace:");
-		for (int k : traceData) {
-			pr(' ');
-			prTok(Tok(wordsList[k].tok.data(), secret.data()));
+		std::vector<std::vector<std::pair<int,int>>> traceData;
+		for (int i = 0; i < 10; i++)
+			traceData.push_back(getTrace());
+		pr("Example Traces:\n");
+		for (int k = 0; k < traceData.front().size(); k++) {
+			pr(std::format("  {:2}:", k+1));
+			for (int i = 0; i < traceData.size(); i++) {
+				pr("  ");
+				const Tok &hint = wordsList[traceData[i][k].first].tok;
+				const Tok &secret = wordsList[traceData[i].back().first].tok;
+				prTok(Tok(hint.data(), secret.data()));
+			}
+			prNl();
 		}
-		prNl();
 	}
 
 	bool vExecuteCommand(const char *p, const char *arg,
