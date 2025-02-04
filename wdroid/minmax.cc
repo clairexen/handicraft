@@ -24,6 +24,8 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 
 	using Base = WordleDroidEngine<WordLen>;
 	using Base::pr;
+	using Base::prNl;
+	using Base::prTok;
 	using Base::prFlush;
 	using typename Base::Tok;
 	using typename Base::WordMsk;
@@ -245,6 +247,50 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		pr(std::format("Maximum depth at optimal play: {}\n", stateList[0].depth));
 	}
 
+	std::vector<int> getTrace()
+	{
+		std::vector<int> traceData;
+		int curState = 0;
+
+		while (1)
+		{
+			auto &state = stateList[curState];
+			if (state.children.empty()) {
+				traceData.push_back(state.words.front());
+				return traceData;
+			}
+			for (int i = 0; i < state.children.size(); i++) {
+				if (state.children.empty())
+					continue;
+				int maxDepth = 0;
+				int bestNext = 0;
+				for (int k : state.children[i]) {
+					if (maxDepth >= stateList[k].depth)
+						continue;
+					maxDepth = stateList[k].depth;
+					bestNext = k;
+				}
+				if (state.depth == maxDepth+1) {
+					traceData.push_back(state.words[i]);
+					curState = bestNext;
+					break;
+				}
+			}
+		}
+	}
+
+	void doTrace()
+	{
+		std::vector<int> traceData = getTrace();
+		const Tok &secret = wordsList[traceData.back()].tok;
+		pr("Trace:");
+		for (int k : traceData) {
+			pr(' ');
+			prTok(Tok(wordsList[k].tok.data(), secret.data()));
+		}
+		prNl();
+	}
+
 	bool vExecuteCommand(const char *p, const char *arg,
 			AbstractWordleDroidEngine *&nextEngine) override
 	{
@@ -278,6 +324,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 			doSetup();
 			while (doBatch()) { }
 			doMinMaxSweep();
+			doTrace();
 			return true;
 		}
 
