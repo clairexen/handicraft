@@ -10,7 +10,7 @@ run: wdroid
 	./wdroid -M float/00112 magot/BOAST -l -i --K --exit
 
 run-minmax-aloes: wdroid
-	time ./wdroid -minmax +firstGuess=aloes +minStateSize=20 +go -exit
+	time ./wdroid -minmax +firstGuess=aloes +go -exit
 
 words.cc: words.py wordledb.json
 	python3 words.py

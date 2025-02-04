@@ -47,11 +47,12 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 	};
 
 	bool setupDone = false;
-	int minStateSize = 20;
 	int maxNumStates = 100000000;
+	int minStateSize = 0;
 	int firstGuessIdx = 0;
 
 	std::vector<int> terminalStates;
+	std::vector<int> nonTerminalStates;
 	std::vector<StateData> stateList;
 	std::unordered_map<WordMsk, int, WordMskHash> stateIndex;
 	std::priority_queue<std::pair<int, int>> stateQueue;
@@ -73,7 +74,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		int idx = stateList.size();
 		stateIndex[srcMsk] = idx;
 		stateIndex[msk] = idx;
-		if (wl.size() >= std::max(minStateSize, 1))
+		if (wl.size() >= std::max(minStateSize, 2))
 			stateQueue.emplace(wl.size(), idx);
 		else
 			terminalStates.push_back(idx);
@@ -83,6 +84,8 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 
 	void expandState(int idx, int guessWordIdx = 0)
 	{
+		nonTerminalStates.push_back(idx);
+
 		auto *state = &stateList[idx];
 		state->children.resize(state->words.size());
 
@@ -161,9 +164,9 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		expandState(0, firstGuessIdx);
 		if (!stateQueue.empty())
 			pr(std::format("  size of largest queued state: {:5}\n", stateQueue.top().first));
+		pr(std::format("  number of queued states:  {:9}\n", stateQueue.size()));
 		pr(std::format("  number of new states found: {:7}\n", stateList.size()-prevNumStates));
 		pr(std::format("  number of processed states: {:7}\n", 1));
-		pr(std::format("  number of queued states:  {:9}\n", stateQueue.size()));
 		pr(std::format("  covered terminal states:  {:9}\n", terminalStates.size()));
 		pr(std::format("  total number of states:  {:10}\n", stateList.size()));
 		pr(std::format("  total number of masks:  {:11}\n", stateIndex.size()));
@@ -191,7 +194,6 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		int i, prevNumStates = stateList.size();
 		for (i=0; i<batchSize; i++) {
 			if (stateQueue.empty()) break;
-			if (stateQueue.top().first < minStateSize) break;
 			if (stateList.size() >= maxNumStates) break;
 			int idx = stateQueue.top().second;
 			stateQueue.pop();
@@ -199,9 +201,9 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		}
 		if (!stateQueue.empty())
 			pr(std::format("  size of largest queued state: {:5}\n", stateQueue.top().first));
+		pr(std::format("  number of queued states:  {:9}\n", stateQueue.size()));
 		pr(std::format("  number of new states found: {:7}\n", stateList.size()-prevNumStates));
 		pr(std::format("  number of processed states: {:7}\n", i));
-		pr(std::format("  number of queued states:  {:9}\n", stateQueue.size()));
 		pr(std::format("  covered terminal states:  {:9}\n", terminalStates.size()));
 		pr(std::format("  total number of states:  {:10}\n", stateList.size()));
 		pr(std::format("  total number of masks:  {:11}\n", stateIndex.size()));
