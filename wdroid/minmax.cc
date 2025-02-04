@@ -27,6 +27,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 	using Base::prFlush;
 	using typename Base::Tok;
 	using typename Base::WordMsk;
+	using typename Base::WordMskHash;
 	using Base::refinedWordsMsk;
 	using Base::wordsList;
 	using Base::findWord;
@@ -52,7 +53,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 
 	std::vector<int> terminalStates;
 	std::vector<StateData> stateList;
-	std::map<WordMsk, int> stateIndex;
+	std::unordered_map<WordMsk, int, WordMskHash> stateIndex;
 	std::priority_queue<std::pair<int, int>> stateQueue;
 	std::vector<std::vector<WordMsk>> hintMskTab;
 
@@ -122,8 +123,8 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 
 		pr("Creating hintMskTab...\n");
 		hintMskTab.resize(wordsList.size());
-		std::map<WordMsk, WordMsk> refineCache;
-		std::set<WordMsk> uniqueRefinedMasks;
+		std::unordered_map<WordMsk, WordMsk, WordMskHash> refineCache;
+		std::unordered_set<WordMsk, WordMskHash> uniqueRefinedMasks;
 		for (int i = 1; i < wordsList.size(); i++) {
 			const char *p = wordsList[i].tok.begin();
 			hintMskTab[i].resize(wordsList.size());
@@ -139,8 +140,9 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 				hintMskTab[i][j] = msk;
 			}
 		}
+		pr(std::format("  unique refined masks:    {:10}\n", uniqueRefinedMasks.size()));
 		pr(std::format("  total number of masks:   {:10}\n", refineCache.size()));
-		pr(std::format("  number of unique masks:  {:10}\n", uniqueRefinedMasks.size()));
+		pr(std::format("  total size of table:   {:12}\n", wordsList.size()*wordsList.size()));
 
 		pr("Creating root state...\n");
 		std::vector<int> rootWordsList;

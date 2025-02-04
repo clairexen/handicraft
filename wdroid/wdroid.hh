@@ -24,6 +24,8 @@
 
 #include <map>
 #include <set>
+#include <unordered_map>
+#include <unordered_set>
 #include <queue>
 #include <array>
 #include <ranges>
@@ -186,6 +188,14 @@ struct AbstractWordleDroidEngine
 		if (*arg == 0) return offVal;
 		return atoi(arg);
 	}
+
+	static inline uint64_t xorshift64(uint64_t val, int rounds=1)
+	{
+		val ^= val << 13;
+		val ^= val >> 7;
+		val ^= val << 17;
+		return val;
+	}
 };
 
 struct WordleDroidGlobalState
@@ -310,6 +320,17 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 				default:
 					abort();
 				}
+		}
+	};
+
+	struct TokHash {
+		static inline size_t operator()(const Tok &msk) {
+			uint64_t val = 123456789;
+			for (auto data : msk) {
+				val += data;
+				val = xorshift64(val, 7);
+			}
+			return val;
 		}
 	};
 
@@ -457,6 +478,17 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 		}
 	};
 
+	struct WordMskHash {
+		static inline size_t operator()(const WordMsk &msk) {
+			uint64_t val = 123456789;
+			for (auto data : msk) {
+				val += data;
+				val = xorshift64(val, 7);
+			}
+			return val;
+		}
+	};
+
 	void prSingleMask(int32_t msk) const {
 		int popcnt = 0;
 		for (int i = 1; i <= 26; i++)
@@ -500,7 +532,7 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 
 	WordMsk hintsWordsMsk;
 	WordMsk refinedWordsMsk;
-	std::map<Tok, int> wordsIndex;
+	std::unordered_map<Tok, int, TokHash> wordsIndex;
 	std::vector<WordData> wordsList;
 
 	auto words() const { return wordsList | std::views::drop(1); }
