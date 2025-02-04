@@ -48,7 +48,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		// children[guessWordIdx] = { unique_sorted_next_states }
 		std::vector<std::vector<int>> children;
 
-		// filled in by min-max sweep
+		// filled in by min-max sweep (and expandState() for traps)
 		int depth = 0;
 	};
 
@@ -90,9 +90,22 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 
 	void expandState(int idx, int guessWordIdx = 0)
 	{
-		nonTerminalStates.push_back(idx);
-
 		auto *state = &stateList[idx];
+
+		// "trap detection"
+		if (int nwords = state->words.size(); nwords <= 26) {
+			for (int i = 0; i < WordLen; i++) {
+				int nbits = std::popcount(uint32_t(state->msk.posBits(i)));
+				if (nbits != 1 && nbits != nwords)
+					goto not_a_trap;
+			}
+			state->depth = nwords;
+			terminalStates.push_back(idx);
+			return;
+		}
+	not_a_trap:;
+
+		nonTerminalStates.push_back(idx);
 		state->children.resize(state->words.size());
 
 		for (int i = 0; i < state->words.size(); i++)
@@ -229,6 +242,8 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		pr(std::format("Estimate depth for {} terminal states.\n", terminalStates.size()));
 		for (auto idx : terminalStates) {
 			auto &state = stateList[idx];
+			if (state.depth != 0)
+				continue;
 			state.depth = 1;
 		}
 
@@ -258,8 +273,8 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		{
 			auto &state = stateList[curState];
 			if (state.children.empty()) {
-				auto &guess = state.words[rng(state.words.size())];
-				traceData.emplace_back(guess, curState);
+				for (auto &guess : state.words)
+					traceData.emplace_back(guess, curState);
 				break;
 			}
 			std::vector<std::pair<int, int>> choices;
