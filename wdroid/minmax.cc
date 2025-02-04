@@ -44,6 +44,9 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		// filled in by expandState():
 		// children[guessWordIdx] = { unique_sorted_next_states }
 		std::vector<std::vector<int>> children;
+
+		// filled in by min-max sweep
+		int depth = 0;
 	};
 
 	bool setupDone = false;
@@ -210,6 +213,38 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		return i == batchSize;
 	}
 
+	void doMinMaxSweep()
+	{
+		pr(std::format("Mark remaining {} queued states as terminal.\n", stateQueue.size()));
+		while (!stateQueue.empty()) {
+			terminalStates.push_back(stateQueue.top().second);
+			stateQueue.pop();
+		}
+
+		pr(std::format("Estimate depth for {} terminal states.\n", terminalStates.size()));
+		for (auto idx : terminalStates) {
+			auto &state = stateList[idx];
+			state.depth = 1;
+		}
+
+		pr(std::format("Min-max sweep over {} non-terminal states.\n", nonTerminalStates.size()));
+		// iterate over non-terminal states from smalles to largest
+		for (auto idx : nonTerminalStates | std::views::reverse) {
+			auto &state = stateList[idx];
+			state.depth = stateList.size();
+			// min-max sweep
+			for (auto &guess : state.children) {
+				if (guess.empty())
+					continue;
+				int maxDepth = 0;
+				for (int k : guess)
+					maxDepth = std::max(maxDepth, stateList[k].depth);
+				state.depth = std::min(state.depth, maxDepth+1);
+			}
+		}
+		pr(std::format("Maximum depth at optimal play: {}\n", stateList[0].depth));
+	}
+
 	bool vExecuteCommand(const char *p, const char *arg,
 			AbstractWordleDroidEngine *&nextEngine) override
 	{
@@ -242,6 +277,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		if (p == "+go"s) {
 			doSetup();
 			while (doBatch()) { }
+			doMinMaxSweep();
 			return true;
 		}
 
