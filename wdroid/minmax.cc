@@ -199,8 +199,11 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 
 	bool doBatch()
 	{
-		int batchSize = 10000;
+		int batchSize = 100000;
 		if (!stateQueue.empty()) {
+			if (stateQueue.top().first >    5) batchSize = 50000;
+			if (stateQueue.top().first >    7) batchSize = 20000;
+			if (stateQueue.top().first >   10) batchSize = 10000;
 			if (stateQueue.top().first >   25) batchSize = 5000;
 			if (stateQueue.top().first >   50) batchSize = 2000;
 			if (stateQueue.top().first >   75) batchSize = 1000;
@@ -312,12 +315,16 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		for (int k = 0; k < traceData.front().size(); k++) {
 			pr(std::format("  {:2}:", k+1));
 			for (int i = 0; i < traceData.size(); i++) {
-				pr("  ");
+				auto *state = &stateList[traceData[i][k].second];
+				bool isTerm = state->children.empty();
+				pr(isTerm ? " (" : "  ");
 				const Tok &hint = wordsList[traceData[i][k].first].tok;
 				const Tok &secret = wordsList[traceData[i].back().first].tok;
 				prTok(Tok(hint.data(), secret.data()));
+				pr(isTerm ? ")" : " ");
 			}
-			prNl();
+			auto *state = &stateList[traceData.back()[k].second];
+			pr(std::format(" {:5}\n", state->words.size()));
 		}
 	}
 

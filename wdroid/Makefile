@@ -12,6 +12,9 @@ run: wdroid
 run-minmax-aloes: wdroid
 	time ./wdroid -minmax +firstGuess=aloes +go -exit
 
+run-minmax-store: wdroid
+	time ./wdroid -minmax +firstGuess=store +go -exit
+
 words.cc: words.py wordledb.json
 	python3 words.py
 
