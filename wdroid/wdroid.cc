@@ -199,6 +199,8 @@ int WordleDroidGlobalState::main(int argc, const char **argv)
 	return 0;
 }
 
+REG_WDROID_CMDS(WordleDroidEngine, "-reset")
+
 int main(int argc, const char **argv)
 {
 	WordleDroidGlobalState state;

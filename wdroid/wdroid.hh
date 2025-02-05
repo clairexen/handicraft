@@ -745,6 +745,23 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 		return true;
 	}
 
+	bool vExecuteCommand(const char *p, const char *arg,
+			AbstractWordleDroidEngine* &nextEngine) override
+	{
+		using namespace std::string_literals;
+
+		if (p == "-reset"s) {
+			return true;
+		}
+
+		if (p == "+word"s && arg && strlen(arg) == WordLen) {
+			addWord(arg);
+			return true;
+		}
+
+		return false;
+	}
+
 	bool vExecuteBasicCommand(const char *p, const char *arg,
 			AbstractWordleDroidEngine *&nextEngine) override final
 	{

@@ -53,6 +53,12 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		int depth = -1;
 	};
 
+	bool verbose = true;
+
+	void vPr(char c) const { if (verbose) pr(c); }
+	void vPr(const std::string &s) const { if (verbose) pr(s); }
+	void vPrNl() const { if (verbose) prNl(); }
+
 	bool setupDone = false;
 	int maxNumStates = 100000000;
 	int minStateSize = 0;
@@ -204,7 +210,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		if (setupDone)
 			return;
 
-		pr("Creating hint-mask table...\n");
+		vPr("Creating hint-mask table...\n");
 		hintMskTab.resize(wordsList.size());
 		std::unordered_map<WordMsk, WordMsk, WordMskHash> refineCache;
 		std::unordered_set<WordMsk, WordMskHash> uniqueRefinedMasks;
@@ -223,34 +229,34 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 				hintMskTab[i][j] = msk;
 			}
 		}
-		pr(std::format("  unique refined masks:    {:10}\n", uniqueRefinedMasks.size()));
-		pr(std::format("  total number of masks:   {:10}\n", refineCache.size()));
-		pr(std::format("  total size of table:   {:12}\n", wordsList.size()*wordsList.size()));
+		vPr(std::format("  unique refined masks:    {:10}\n", uniqueRefinedMasks.size()));
+		vPr(std::format("  total number of masks:   {:10}\n", refineCache.size()));
+		vPr(std::format("  total size of table:   {:12}\n", wordsList.size()*wordsList.size()));
 
-		pr("Creating root state...\n");
+		vPr("Creating root state...\n");
 		std::vector<int> rootWordsList;
 		rootWordsList.reserve(wordsList.size());
 		for (int i = 1; i < wordsList.size(); i++)
 			rootWordsList.push_back(i);
 		assert(getStateIdx(rootWordsList, WordMsk::fullMsk()) == 0);
 		if (!stateQueue.empty())
-			pr(std::format("  size of largest queued state: {:5}\n", stateQueue.top().first));
-		pr(std::format("  total number of (new) states: {:5}\n", stateList.size()));
+			vPr(std::format("  size of largest queued state: {:5}\n", stateQueue.top().first));
+		vPr(std::format("  total number of (new) states: {:5}\n", stateList.size()));
 
-		pr("Creating all first-level child states...\n");
+		vPr("Creating all first-level child states...\n");
 		int prevNumStates = stateList.size();
 		assert(stateQueue.top().second == 0);
 		stateQueue.pop();
 		expandState(0, firstGuessIdx);
 
 		if (!stateQueue.empty())
-			pr(std::format("  size of largest queued state: {:5}\n", stateQueue.top().first));
+			vPr(std::format("  size of largest queued state: {:5}\n", stateQueue.top().first));
 		std::string tmpStr = std::format("{}/{}", stateList.size()-prevNumStates, 1);
-		pr(std::format("  new/processed states: {:>13}\n", tmpStr));
-		pr(std::format("  number of queued states:  {:9}\n", stateQueue.size()));
-		pr(std::format("  number of terminal states: {:8}\n", terminalStates.size()));
-		pr(std::format("  total number of states:  {:10}\n", stateList.size()));
-		pr(std::format("  total number of masks:  {:11}\n", stateIndex.size()));
+		vPr(std::format("  new/processed states: {:>13}\n", tmpStr));
+		vPr(std::format("  number of queued states:  {:9}\n", stateQueue.size()));
+		vPr(std::format("  number of terminal states: {:8}\n", terminalStates.size()));
+		vPr(std::format("  total number of states:  {:10}\n", stateList.size()));
+		vPr(std::format("  total number of masks:  {:11}\n", stateIndex.size()));
 
 		setupDone = true;
 	}
@@ -275,7 +281,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 			if (stateQueue.top().first > 4000) batchSize = 2;
 		}
 
-		pr(std::format("Processing next batch of up to {} states...\n", batchSize));
+		vPr(std::format("Processing next batch of up to {} states...\n", batchSize));
 		int i, prevNumStates = stateList.size();
 		for (i=0; i<batchSize; i++) {
 			if (stateQueue.empty()) break;
@@ -286,13 +292,13 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		}
 
 		if (!stateQueue.empty())
-			pr(std::format("  size of largest queued state: {:5}\n", stateQueue.top().first));
+			vPr(std::format("  size of largest queued state: {:5}\n", stateQueue.top().first));
 		std::string tmpStr = std::format("{}/{}", stateList.size()-prevNumStates, i);
-		pr(std::format("  new/processed states: {:>13}\n", tmpStr));
-		pr(std::format("  number of queued states:  {:9}\n", stateQueue.size()));
-		pr(std::format("  number of terminal states: {:8}\n", terminalStates.size()));
-		pr(std::format("  total number of states:  {:10}\n", stateList.size()));
-		pr(std::format("  total number of masks:  {:11}\n", stateIndex.size()));
+		vPr(std::format("  new/processed states: {:>13}\n", tmpStr));
+		vPr(std::format("  number of queued states:  {:9}\n", stateQueue.size()));
+		vPr(std::format("  number of terminal states: {:8}\n", terminalStates.size()));
+		vPr(std::format("  total number of states:  {:10}\n", stateList.size()));
+		vPr(std::format("  total number of masks:  {:11}\n", stateIndex.size()));
 
 		return i == batchSize;
 	}
@@ -339,13 +345,13 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 
 	void doMinMaxSweep()
 	{
-		pr(std::format("Mark remaining {} queued states as terminal.\n", stateQueue.size()));
+		vPr(std::format("Mark remaining {} queued states as terminal.\n", stateQueue.size()));
 		while (!stateQueue.empty()) {
 			terminalStates.push_back(stateQueue.top().second);
 			stateQueue.pop();
 		}
 
-		pr(std::format("Estimate depth for {} terminal states.\n", terminalStates.size()));
+		vPr(std::format("Estimate depth for {} terminal states.\n", terminalStates.size()));
 		for (auto idx : terminalStates) {
 			auto &state = stateList[idx];
 			if (state.depth != 0)
@@ -353,7 +359,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 			state.depth = 1;
 		}
 
-		pr(std::format("Min-max sweep over {} non-terminal states.\n", nonTerminalStates.size()));
+		vPr(std::format("Min-max sweep over {} non-terminal states.\n", nonTerminalStates.size()));
 		// iterate over non-terminal states from smalles to largest
 		for (auto idx : nonTerminalStates | std::views::reverse) {
 			auto &state = stateList[idx];
@@ -438,7 +444,12 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 			return true;
 		}
 
-		if (p == "+firstGuess"s) {
+		if (p == "-minmax-q"s) {
+			verbose = false;
+			return true;
+		}
+
+		if (p == "+first"s || p == "+firstGuess"s) {
 			firstGuessIdx = findWord(arg);
 			return true;
 		}
@@ -461,7 +472,8 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		if (p == "+go"s) {
 			doSetup();
 			while (doBatch()) { }
-			doShowTraps();
+			if (verbose)
+				doShowTraps();
 			doMinMaxSweep();
 			doTrace();
 			return true;
@@ -471,4 +483,4 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 	}
 };
 
-REG_WDROID_CMDS(WordleDroidMinMax, "-minmax")
+REG_WDROID_CMDS(WordleDroidMinMax, "-minmax", "-minmax-q")
