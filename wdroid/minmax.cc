@@ -65,8 +65,8 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 	std::priority_queue<std::pair<int, int>> stateQueue;
 	std::vector<std::vector<WordMsk>> hintMskTab;
 
-	int largestSimpleTrapState = 0;
-	int largestComplexTrapState = 0;
+	int largestSimpleTrapState[WordLen] = { };
+	int largestComplexTrapState[WordLen] = { };
 
 	int getStateIdx(const std::vector<int> &srcWords, const WordMsk &srcMsk)
 	{
@@ -89,20 +89,23 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 
 		// detecting "simple traps"
 		if (int nwords = state->words.size(); nwords <= 26) {
-			int seenBits = 0;
+			int seenBits = 0, lockedCnt = 0;
 			for (int i = 0; i < WordLen; i++) {
 				int bits = state->msk.posBits(i);
 				int nbits = std::popcount(uint32_t(bits));
-				if (nbits == 1) continue;
+				if (nbits == 1) {
+					lockedCnt++;
+					continue;
+				}
 				if (nbits != nwords || (seenBits & bits) != 0)
 					goto not_a_simple_trap;
 				seenBits |= bits;
 			}
 			state->depth = nwords;
 			terminalStates.push_back(idx);
-			if (!largestSimpleTrapState || nwords >
-					stateList[largestSimpleTrapState].depth)
-				largestSimpleTrapState = idx;
+			if (!largestSimpleTrapState[lockedCnt] || nwords >
+					stateList[largestSimpleTrapState[lockedCnt]].depth)
+				largestSimpleTrapState[lockedCnt] = idx;
 			return idx;
 		not_a_simple_trap:;
 		}
@@ -157,13 +160,23 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		}
 
 		// detecting "complex traps"
-		if (trapGuesses.size() == state->words.size()) {
+		if (trapGuesses.size() == state->words.size())
+		{
 			state->depth = state->words.size();
 			state->children.clear();
 			terminalStates.push_back(idx);
-			if (!largestComplexTrapState || state->words.size() >
-					stateList[largestComplexTrapState].depth)
-				largestComplexTrapState = idx;
+
+			int lockedCnt = 0;
+			for (int i = 0; i < WordLen; i++) {
+				int bits = state->msk.posBits(i);
+				int nbits = std::popcount(uint32_t(bits));
+				if (nbits == 1)
+					lockedCnt++;
+			}
+
+			if (!largestComplexTrapState[lockedCnt] || state->words.size() >
+					stateList[largestComplexTrapState[lockedCnt]].depth)
+				largestComplexTrapState[lockedCnt] = idx;
 			return;
 		}
 
@@ -284,28 +297,44 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		return i == batchSize;
 	}
 
-	void showTrapState(int idx)
-	{
-		auto &state = stateList[idx];
-		Tok secret = wordsList[state.words.back()].tok;
-		for (int k : state.words) {
-			pr("  ");
-			const Tok &hint = wordsList[k].tok;
-			prTok(Tok(hint.data(), secret.data()));
-			secret = hint;
-		}
-		prNl();
-	}
-
 	void doShowTraps()
 	{
-		pr(std::format("Largest found simple trap state (N={}):\n",
-				stateList[largestSimpleTrapState].words.size()));
-		showTrapState(largestSimpleTrapState);
+		pr("Largest found simple/complex trap states by number of variable chars:\n");
 
-		pr(std::format("Largest found complex trap state (N={}):\n",
-				stateList[largestComplexTrapState].words.size()));
-		showTrapState(largestComplexTrapState);
+		std::vector<std::vector<int>> data;
+		std::vector<Tok> secrets;
+
+		for (int i=WordLen-1; i >= 0; i--)
+			if (largestSimpleTrapState[i])
+				data.push_back(stateList[largestSimpleTrapState[i]].words);
+
+		for (int i=WordLen-1; i >= 0; i--)
+			if (largestComplexTrapState[i])
+				data.push_back(stateList[largestComplexTrapState[i]].words);
+
+		int numLines = 0;
+		for (int i=0; i<data.size(); i++) {
+			secrets.push_back(wordsList[data[i].back()].tok);
+			numLines = std::max(numLines, int(data[i].size()));
+		}
+
+		for (int k=0; k<numLines; k++) {
+			int nspaces = 2;
+			pr(std::format("  {:2}:", k+1));
+			for (int i=0; i<data.size(); i++) {
+				if (k >= data[i].size()) {
+					nspaces += WordLen + 2;
+					continue;
+				}
+				const Tok &hint = wordsList[data[i][k]].tok;
+				for (int j=0; j<nspaces; j++)
+					pr(" ");
+				prTok(Tok(hint.data(), secrets[i].data()));
+				secrets[i] = hint;
+				nspaces = 2;
+			}
+			prNl();
+		}
 	}
 
 	void doMinMaxSweep()
