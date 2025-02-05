@@ -46,20 +46,20 @@ if True:
     selected_words |= all_en_words.intersection(all_dict_words)
     selected_words |= all_wordnet_lemmas.intersection(all_dict_words)
 
-else:
+if False:
     # select all words
     selected_words |= all_en_words
     selected_words |= all_wordnet_lemmas
     selected_words |= all_dict_words
 
+if True:
+    missing_wordle_words = sorted(all_wordle_words.difference(selected_words))
+    print(f"Found {len(missing_wordle_words)}/{len(all_wordle_words)} additional wordle " +
+          f"words not already selected:\n  {missing_wordle_words}")
+    selected_words |= all_wordle_words
+
 blacklist = set("mmmm oooo xxxix".split())
 selected_words.difference_update(blacklist)
-
-missing_wordle_words = sorted(all_wordle_words.difference(selected_words))
-print(f"Found {len(missing_wordle_words)}/{len(all_wordle_words)} additional wordle " +
-      f"words not already selected:\n  {missing_wordle_words}")
-
-selected_words |= all_wordle_words
 
 with open("words.cc", "w") as f:
     for N in (4, 5, 6):

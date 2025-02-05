@@ -65,6 +65,9 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 	std::priority_queue<std::pair<int, int>> stateQueue;
 	std::vector<std::vector<WordMsk>> hintMskTab;
 
+	int largestSimpleTrapState = 0;
+	int largestComplexTrapState = 0;
+
 	int getStateIdx(const std::vector<int> &srcWords, const WordMsk &srcMsk)
 	{
 		if (auto it = stateIndex.find(srcMsk); it != stateIndex.end())
@@ -97,6 +100,9 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 			}
 			state->depth = nwords;
 			terminalStates.push_back(idx);
+			if (!largestSimpleTrapState || nwords >
+					stateList[largestSimpleTrapState].depth)
+				largestSimpleTrapState = idx;
 			return idx;
 		not_a_simple_trap:;
 		}
@@ -155,6 +161,9 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 			state->depth = state->words.size();
 			state->children.clear();
 			terminalStates.push_back(idx);
+			if (!largestComplexTrapState || state->words.size() >
+					stateList[largestComplexTrapState].depth)
+				largestComplexTrapState = idx;
 			return;
 		}
 
@@ -271,7 +280,32 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		pr(std::format("  number of terminal states: {:8}\n", terminalStates.size()));
 		pr(std::format("  total number of states:  {:10}\n", stateList.size()));
 		pr(std::format("  total number of masks:  {:11}\n", stateIndex.size()));
+
 		return i == batchSize;
+	}
+
+	void showTrapState(int idx)
+	{
+		auto &state = stateList[idx];
+		Tok secret = wordsList[state.words.back()].tok;
+		for (int k : state.words) {
+			pr("  ");
+			const Tok &hint = wordsList[k].tok;
+			prTok(Tok(hint.data(), secret.data()));
+			secret = hint;
+		}
+		prNl();
+	}
+
+	void doShowTraps()
+	{
+		pr(std::format("Largest found simple trap state (N={}):\n",
+				stateList[largestSimpleTrapState].words.size()));
+		showTrapState(largestSimpleTrapState);
+
+		pr(std::format("Largest found complex trap state (N={}):\n",
+				stateList[largestComplexTrapState].words.size()));
+		showTrapState(largestComplexTrapState);
 	}
 
 	void doMinMaxSweep()
@@ -398,6 +432,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		if (p == "+go"s) {
 			doSetup();
 			while (doBatch()) { }
+			doShowTraps();
 			doMinMaxSweep();
 			doTrace();
 			return true;
