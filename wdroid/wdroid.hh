@@ -503,6 +503,15 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 				failBits |= (cntBits(k) & other.cntBits(k)) ^ other.cntBits(k);
 			return failBits == 0;
 		}
+
+		int32_t cleanup() {
+			int32_t allowedChars = 0;
+			for (int k=1; k<MaxCnt; k++)
+				allowedChars |= cntBits(k);
+			for (int i=0; i<WordLen; i++)
+				posBits(i) &= allowedChars;
+			return allowedChars;
+		}
 	};
 
 	struct WordMskHash {
@@ -791,6 +800,28 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 			pr("refinedWordsMsk ");
 			prWordMsk(refinedWordsMsk);
 			prNl();
+			return true;
+		}
+
+		if (p == "-m"s) {
+			WordMsk msk = refinedWordsMsk;
+			int32_t letters = msk.cleanup();
+			assert(msk == refinedWordsMsk);
+			for (int i = 1; i <= 26; i++) {
+				if ((letters & (1 << i)) == 0)
+					continue;
+				pr("  ");
+				pr('A' + i - 1);
+				pr(": ");
+				for (int k = 0; k < WordLen; k++) {
+					char aCh = std::popcount(uint32_t(msk.posBits(k))) == 1 ? 'A' : 'a';
+					pr((msk.posBits(k) & (1 << i)) == 0 ? '-' : aCh + i - 1);
+				}
+				pr(" ");
+				for (int k = 0; k < MaxCnt; k++)
+					pr((msk.cntBits(k) & (1 << i)) == 0 ? '-' : '0' + k);
+				prNl();
+			}
 			return true;
 		}
 

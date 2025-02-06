@@ -55,6 +55,10 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		// filled in by min-max sweep (and expandState() for traps)
 		// (set to depth>=0 when state is queued or marked terminal)
 		int depth = -1;
+
+		int perfectDepth = 0;
+		std::vector<int> perfectParents;
+		std::vector<int> perfectChildren;
 	};
 
 	bool verbose = true;
@@ -163,6 +167,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 					continue;
 				WordMsk msk = state->msk;
 				msk.intersect(hintMskTab[ki][kj]);
+				msk.cleanup();
 				int childIdx = getStateIdx(state->words, msk);
 				state = &stateList[idx]; // invalidated by getStateIdx()
 				const auto &st = stateList[childIdx];
