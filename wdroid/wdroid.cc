@@ -17,6 +17,10 @@
 
 #include "wdroid.hh"
 
+#ifdef ENABLE_WDROID_ENGINE_3
+template struct WordleDroidEngine<3>;
+#endif
+
 #ifdef ENABLE_WDROID_ENGINE_4
 template struct WordleDroidEngine<4>;
 #endif
@@ -93,6 +97,14 @@ bool WordleDroidGlobalState::executeCommand(const char *p, const char *arg, bool
 		}
 		engine->prNl();
 	}
+
+#ifdef ENABLE_WDROID_ENGINE_3
+	if (p == "-3"s) {
+		delete engine;
+		engine = new WordleDroidEngine3(this, arg);
+		return true;
+	}
+#endif
 
 #ifdef ENABLE_WDROID_ENGINE_4
 	if (p == "-4"s) {

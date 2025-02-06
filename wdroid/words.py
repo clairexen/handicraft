@@ -62,8 +62,9 @@ blacklist = set("mmmm oooo xxxix".split())
 selected_words.difference_update(blacklist)
 
 with open("words.cc", "w") as f:
-    for N in (4, 5, 6):
-        words = "".join(sorted([w for w in selected_words if len(w) == N and
+    for N in (3, 4, 5, 6):
+        words = selected_words if N > 3 else set(words.words('en-basic'))
+        words = "".join(sorted([w for w in words if len(w) == N and
                                 w.isalpha() and w.islower() and w.isascii()]))
         print(f"extern const char WordleDroidWords{N}[];", file=f)
         print(f"const char WordleDroidWords{N}[] = // {len(words)//N} words", end="", file=f)

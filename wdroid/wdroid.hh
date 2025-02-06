@@ -18,6 +18,7 @@
 #ifndef WDROID_HH
 #define WDROID_HH
 
+#define ENABLE_WDROID_ENGINE_3
 #define ENABLE_WDROID_ENGINE_4
 #define ENABLE_WDROID_ENGINE_5
 #define ENABLE_WDROID_ENGINE_6
@@ -43,11 +44,13 @@
 #include <cstring>
 #include <cstdlib>
 
+extern const char WordleDroidWords3[];
 extern const char WordleDroidWords4[];
 extern const char WordleDroidWords5[];
 extern const char WordleDroidWords6[];
 
 template <int> static const char *getWordleDroidWords();
+template <> inline const char *getWordleDroidWords<3>() { return WordleDroidWords3; }
 template <> inline const char *getWordleDroidWords<4>() { return WordleDroidWords4; }
 template <> inline const char *getWordleDroidWords<5>() { return WordleDroidWords5; }
 template <> inline const char *getWordleDroidWords<6>() { return WordleDroidWords6; }
@@ -250,6 +253,7 @@ template <int WordLen>
 struct WordleDroidEngine : public AbstractWordleDroidEngine
 {
 	static constexpr char MaxCnt =
+			WordLen == 3 ? 3 :
 			WordLen == 4 ? 4 :
 			WordLen == 5 ? 4 :
 			WordLen == 6 ? 5 : -1;
@@ -807,6 +811,15 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 static int REG_WDROID_ ## wordLen_ ## _CMDS_ ## extType_ = \
 extType_<wordLen_>::regCmd<extType_<wordLen_>>({__VA_ARGS__});
 
+#ifdef ENABLE_WDROID_ENGINE_3
+extern template struct WordleDroidEngine<3>;
+using WordleDroidEngine3 = WordleDroidEngine<3>;
+#define REG_WDROID3_CMDS(extType_, ...) \
+  REG_WDROID_N_CMDS(extType_, 3, __VA_ARGS__)
+#else
+#define REG_WDROID3_CMDS(...)
+#endif
+
 #ifdef ENABLE_WDROID_ENGINE_4
 extern template struct WordleDroidEngine<4>;
 using WordleDroidEngine4 = WordleDroidEngine<4>;
@@ -835,6 +848,7 @@ using WordleDroidEngine6 = WordleDroidEngine<6>;
 #endif
 
 #define REG_WDROID_CMDS(extType_, ...) \
+  REG_WDROID3_CMDS(extType_, __VA_ARGS__) \
   REG_WDROID4_CMDS(extType_, __VA_ARGS__) \
   REG_WDROID5_CMDS(extType_, __VA_ARGS__) \
   REG_WDROID6_CMDS(extType_, __VA_ARGS__)
