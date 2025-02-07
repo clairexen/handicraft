@@ -20,16 +20,16 @@
 template <int WordLen>
 struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 {
-	const char *vGetShortName() const override { return "minmax"; }
-
 	using Base = WordleDroidEngine<WordLen>;
+
+	using typename Base::Tok;
+	using typename Base::WordMsk;
+	using typename Base::WordMskHash;
+
 	using Base::pr;
 	using Base::prNl;
 	using Base::prTok;
 	using Base::prFlush;
-	using typename Base::Tok;
-	using typename Base::WordMsk;
-	using typename Base::WordMskHash;
 	using Base::refinedWordsMsk;
 	using Base::wordsList;
 	using Base::findWord;
@@ -119,8 +119,8 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 			}
 			state->depth = nwords;
 			terminalStates.push_back(idx);
-			if (!largestSimpleTrapState[lockedCnt] || nwords >
-					stateList[largestSimpleTrapState[lockedCnt]].depth)
+			if (lockedCnt < WordLen && (!largestSimpleTrapState[lockedCnt] || nwords >
+					stateList[largestSimpleTrapState[lockedCnt]].depth))
 				largestSimpleTrapState[lockedCnt] = idx;
 			return idx;
 		not_a_simple_trap:;
@@ -206,6 +206,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 					lockedCnt++;
 			}
 
+			assert(lockedCnt < WordLen);
 			if (!largestComplexTrapState[lockedCnt] || state->words.size() >
 					stateList[largestComplexTrapState[lockedCnt]].depth)
 				largestComplexTrapState[lockedCnt] = idx;
@@ -349,8 +350,9 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 				tmp += char(96 + guess.tok.val(i));
 			if (s.empty()) {
 				s = tmp + '/';
+				Tok hint(guess.tok.data(), secret.tok.data());
 				for (int i = 0; i < WordLen; i++)
-					s += char(96 + secret.tok.val(i));
+					s += char('0' + hint.col(i)/32);
 			} else {
 				s = tmp + '/' + s;
 			}
@@ -404,8 +406,11 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 			prNl();
 		}
 		pr("Paths to these trap states:\n");
-		for (int idx : dataStates)
-			pr(std::format("  {}\n", getPath(idx)));
+		for (int idx : dataStates) {
+			pr("  ");
+			pr(getPath(idx));
+			prNl();
+		}
 	}
 
 	void doMinMaxSweep()
@@ -503,6 +508,8 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 			pr(std::format(" {:5}\n", state->words.size()));
 		}
 	}
+
+	const char *vGetShortName() const override { return "minmax"; }
 
 	bool vExecuteCommand(const char *p, const char *arg,
 			AbstractWordleDroidEngine *&nextEngine) override
