@@ -815,22 +815,26 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 		}
 
 		if (p == "-m"s) {
-			WordMsk msk = refinedWordsMsk;
-			int32_t letters = msk.cleanup();
-			assert(msk == refinedWordsMsk);
+			WordMsk msk[2] = {hintsWordsMsk, refinedWordsMsk};
+			int32_t letters = msk[0].cleanup() | msk[1].cleanup();
+			assert(msk[1] == refinedWordsMsk);
 			for (int i = 1; i <= 26; i++) {
 				if ((letters & (1 << i)) == 0)
 					continue;
 				pr("  ");
 				pr('A' + i - 1);
-				pr(": ");
-				for (int k = 0; k < WordLen; k++) {
-					char aCh = std::popcount(uint32_t(msk.posBits(k))) == 1 ? 'A' : 'a';
-					pr((msk.posBits(k) & (1 << i)) == 0 ? '-' : aCh + i - 1);
+				pr(":");
+				for (int j = 0; j < 2; j++) {
+					pr("  ");
+					for (int k = 0; k < WordLen; k++) {
+						char aCh = std::popcount(uint32_t(
+								msk[j].posBits(k))) == 1 ? 'A' : 'a';
+						pr((msk[j].posBits(k) & (1 << i)) == 0 ? '-' : aCh + i - 1);
+					}
+					pr(" ");
+					for (int k = 0; k < MaxCnt; k++)
+						pr((msk[j].cntBits(k) & (1 << i)) == 0 ? '-' : '0' + k);
 				}
-				pr(" ");
-				for (int k = 0; k < MaxCnt; k++)
-					pr((msk.cntBits(k) & (1 << i)) == 0 ? '-' : '0' + k);
 				prNl();
 			}
 			return true;
