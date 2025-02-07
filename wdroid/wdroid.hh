@@ -388,6 +388,15 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 		prResetColors();
 	}
 
+	void prTok012(const Tok &tok)
+	{
+		for (int i=0; i<WordLen; i++)
+			pr(96+tok.val(i));
+		pr('/');
+		for (int i=0; i<WordLen; i++)
+			pr('0'+tok.col(i)/32);
+	}
+
 	void applyHintToKeyStatusBits(const Tok &hint)
 	{
 		for (int i=0; i < WordLen; i++)
@@ -745,6 +754,8 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 
 		prReplaceLastLine();
 		prPrompt();
+		prTok012(hint);
+		pr(' ');
 		prTok(hint);
 
 		auto ne = new WordleDroidEngine(this, hint);
