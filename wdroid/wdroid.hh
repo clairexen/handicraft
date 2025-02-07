@@ -540,7 +540,7 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 			if (((msk >> i) & 1) != 0)
 				popcnt++;
 		if (popcnt == 26) {
-			pr('*');
+			pr('_');
 			return;
 		}
 		if (popcnt <= 13) {
@@ -560,7 +560,7 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 			prSingleMask(w.posBits(i));
 		}
 		for (int k=0; k<MaxCnt; k++) {
-			pr(':');
+			pr('.');
 			prSingleMask(w.cntBits(k));
 		}
 	}
