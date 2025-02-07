@@ -560,7 +560,7 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 			prSingleMask(w.posBits(i));
 		}
 		for (int k=0; k<MaxCnt; k++) {
-			pr('.');
+			pr(k ? '.' : '/');
 			prSingleMask(w.cntBits(k));
 		}
 	}
