@@ -170,11 +170,11 @@ struct AbstractWordleDroidEngine
 		return n;
 	}
 
-	int scanTag(const char *p, const char *q) const {
+	int scanTag(const char *p) const {
 		int n = 0;
-		while (('a' <= *q && *q <= 'z') && (('0' <= *p && *p <= '2') || (*p == '.') ||
-				(*p == '_') || ('A' <= *p && *p <= 'Z') || (*p == *q)))
-			n++, p++, q++;
+		if (int wn = scanWord(p))
+			return wn;
+		while ('0' <= *p && *p <= '2') n++, p++;
 		return n;
 	}
 
@@ -282,27 +282,27 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 		}
 
 		Tok(const char *p, const char *q) {
-			std::vector<int> freeChars;
+			std::vector<char> freeChars;
 			freeChars.reserve(WordLen);
 			for (int i=0; i<WordLen; i++) {
 				(*this)[i] = p[i] & 31;
 				if (q[i] == '1') (*this)[i] += 32;
 				if (q[i] == '2') (*this)[i] += 64;
-				if ('a' <= q[i] && q[i] <= 'z') (*this)[i] += 32;
-				if ('A' <= q[i] && q[i] <= 'Z') {
+				if (('a' <= q[i] && q[i] <= 'z') ||
+						('A' <= q[i] && q[i] <= 'Z')) {
 					if (((p[i] ^ q[i]) & 31) == 0)
 						(*this)[i] += 64;
 					else
-						freeChars.push_back(i);
+						freeChars.push_back(q[i] & 31);
 				}
 			}
-			for (int idx : freeChars) {
-				char ch = q[idx] & 31;
-				for (int i=0; i<WordLen; i++)
+			for (char ch : freeChars) {
+				for (int i=0; i<WordLen; i++) {
 					if ((*this)[i] == ch) {
 						(*this)[i] += 32;
 						break;
 					}
+				}
 			}
 		}
 
@@ -326,27 +326,6 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 				if ((*this)[i] != other[i])
 					return (*this)[i] < other[i];
 			return false;
-		}
-
-		void print() const {
-			for (int i=0; i<WordLen; i++)
-				switch (col(i))
-				{
-				case Gray:
-					printf("_%c", 64+val(i));
-					break;
-				case Yellow:
-					printf(".%c", 64+val(i));
-					break;
-				case Green:
-					printf("%c", 64+val(i));
-					break;
-				case White:
-					printf("%c", 96+val(i));
-					break;
-				default:
-					abort();
-				}
 		}
 	};
 
@@ -467,6 +446,7 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 					}
 					break;
 				case Gray:
+					posBits(i) &= ~msk;
 					graymsk |= msk;
 					numgray++;
 					break;
@@ -739,33 +719,47 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 	bool tryExecuteHintCommand(const char *p, const char *arg,
 			AbstractWordleDroidEngine* &nextEngine)
 	{
-		const char *p1 = p;
-		const char *p2 = p1 + WordLen;
-		const char *p3 = p2 + 1;
-		const char *p4 = p3 + WordLen;
+		WordleDroidEngine *ne = nullptr;
 
-		if (scanWord(p1) != WordLen) return false;
-		if (*p2 != '/') return false;
-		if (scanTag(p3, p1) != WordLen) return false;
-		if (*p4 != 0) return false;
+		while (1) {
+			const char *p1 = p;
+			const char *p2 = p1 + WordLen;
+			const char *p3 = p2 + 1;
+			const char *p4 = p3 + WordLen;
 
-		Tok hint(p, p+WordLen+1);
-		applyHintToKeyStatusBits(hint);
+			if (scanWord(p1) != WordLen) return false;
+			if (*p2 != '/') return false;
+			if (scanTag(p3) != WordLen) return false;
+			if (*p4 != 0 && *p4 != '/') return false;
 
-		prReplaceLastLine();
-		prPrompt();
-		prTok012(hint);
-		pr(' ');
-		prTok(hint);
+			Tok hint(p1, p3);
+			applyHintToKeyStatusBits(hint);
 
-		auto ne = new WordleDroidEngine(this, hint);
+			if (ne == nullptr && *p4 == 0)
+				prReplaceLastLine();
+
+			(ne ? ne : this)->prPrompt();
+			prTok012(hint);
+			pr(' ');
+			prTok(hint);
+
+			if (auto oldNe = ne) {
+				ne = new WordleDroidEngine(oldNe, hint);
+				delete oldNe;
+			} else {
+				ne = new WordleDroidEngine(this, hint);
+			}
+
+			if (globalState->showMasks)
+				pr(' '), prWordMsk(ne->hintsWordsMsk);
+			prNl();
+
+			if (*p4 == 0)
+				break;
+			p = p3;
+		}
+
 		nextEngine = ne;
-
-		if (globalState->showMasks)
-			pr(' '), prWordMsk(ne->hintsWordsMsk);
-
-		prNl();
-
 		return true;
 	}
 
