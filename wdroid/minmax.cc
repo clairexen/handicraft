@@ -31,6 +31,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 	using Base::prTok;
 	using Base::prFlush;
 	using Base::refinedWordsMsk;
+	using Base::White;
 	using Base::wordsList;
 	using Base::findWord;
 	using Base::refineWords;
@@ -73,6 +74,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 	int maxSearchDepth = 0;
 	int maxTraceLength = 0;
 	int firstGuessIdx = 0;
+	std::vector<int> depthSizeLimits;
 
 	std::vector<int> terminalStates;
 	std::vector<int> nonTerminalStates;
@@ -104,7 +106,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		auto *state = &stateList[idx];
 
 		// detecting "simple traps"
-		if (int nwords = state->words.size(); nwords <= 26) {
+		if (int nwords = state->words.size(); idx != 0 && nwords <= 26) {
 			int seenBits = 0, lockedCnt = 0;
 			for (int i = 0; i < WordLen; i++) {
 				int bits = state->msk.posBits(i);
@@ -150,6 +152,11 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 			return;
 		}
 
+		int removedLimitedGuesses = 0;
+		int limit = state->words.size();
+		if (state->pathDepth < depthSizeLimits.size())
+			limit = depthSizeLimits[state->pathDepth];
+
 		state->children.resize(state->words.size());
 		for (int i = 0; i < state->words.size(); i++)
 		{
@@ -161,6 +168,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 
 			std::vector<int> vec;
 			vec.reserve(state->words.size());
+			int maxChildSize = 0;
 			for (int j = 0; j < state->words.size(); j++) {
 				int kj = state->words[j];
 				if (ki == kj && state->words.size() > 1)
@@ -170,15 +178,27 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 				msk.cleanup();
 				int childIdx = getStateIdx(state->words, msk);
 				state = &stateList[idx]; // invalidated by getStateIdx()
-				const auto &st = stateList[childIdx];
+				auto &st = stateList[childIdx];
+				if (st.pathDepth > state->pathDepth+1) {
+					st.pathDepth = state->pathDepth+1;
+					st.pathParent = idx;
+					st.pathGuess = i;
+				}
 				if (maxTraceLength > 0 && st.depth > 0) {
 					int traceLen = state->pathDepth + st.depth + 1;
 					if (traceLen >= maxTraceLength) {
 						j = state->words.size();
+						maxChildSize = 0;
 						vec.clear();
 					}
 				}
+				maxChildSize = std::max(maxChildSize, int(st.words.size()));
 				vec.push_back(childIdx);
+			}
+
+			if (maxChildSize > limit) {
+				removedLimitedGuesses++;
+				continue;
 			}
 
 			std::ranges::sort(vec);
@@ -189,6 +209,12 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 					stateList[vec.front()].words.size())
 				trapGuesses.push_back(i);
 			state->children[i] = std::move(vec);
+		}
+
+		if (removedLimitedGuesses == state->words.size()) {
+			state->children.clear();
+			terminalStates.push_back(idx);
+			return;
 		}
 
 		// detecting "complex traps"
@@ -206,15 +232,15 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 					lockedCnt++;
 			}
 
-			assert(lockedCnt < WordLen);
-			if (!largestComplexTrapState[lockedCnt] || state->words.size() >
-					stateList[largestComplexTrapState[lockedCnt]].depth)
+			if (lockedCnt < WordLen && (!largestComplexTrapState[lockedCnt] ||
+					state->depth > stateList[largestComplexTrapState[lockedCnt]].depth))
 				largestComplexTrapState[lockedCnt] = idx;
 			return;
 		}
 
-		for (int i : trapGuesses)
-			state->children[i].clear();
+		if (trapGuesses.size() + removedLimitedGuesses < state->children.size())
+			for (int i : trapGuesses)
+				state->children[i].clear();
 
 		for (int i = 0; i < state->words.size(); i++)
 			for (int k : state->children[i]) {
@@ -223,11 +249,6 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 					st.depth = 0;
 					stateQueue.emplace(st.words.size(), k);
 				}
-				if (st.pathDepth > state->pathDepth+1) {
-					st.pathDepth = state->pathDepth+1;
-					st.pathParent = idx;
-					st.pathGuess = i;
-				}
 			}
 
 		nonTerminalStates.push_back(idx);
@@ -235,6 +256,30 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 
 	WordleDroidMinMax(Base *parent) : Base(parent)
 	{
+	}
+
+	void doPrintBestGuessesByChildSize(int idx, int maxNum)
+	{
+		auto &state = stateList[idx];
+		std::vector<std::pair<int,int>> guesses;
+		for (int i = 0; i < state.children.size(); i++) {
+			if (state.children[i].empty())
+				continue;
+			int maxSize = 0;
+			for (int k : state.children[i])
+				maxSize = std::max(maxSize, int(stateList[k].words.size()));
+			guesses.emplace_back(maxSize, state.words[i]);
+		}
+		std::sort(guesses.begin(), guesses.end());
+		for (int i = 0; i < guesses.size() && i < maxNum; i++) {
+			if (i != 0 && i % 5 == 0)
+				prNl();
+			pr(std::format("{:6} ", guesses[i].first));
+			Tok t = wordsList[guesses[i].second].tok;
+			t.setCol(White);
+			prTok(t);
+		}
+		prNl();
 	}
 
 	void doSetup()
@@ -550,8 +595,15 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 			return true;
 		}
 
+		if (p == "+limit"s) {
+			depthSizeLimits.push_back(intArg(arg));
+			return true;
+		}
+
 		if (p == "+setup"s) {
 			doSetup();
+			pr("Best first gusses based on first-level child state sizes:\n");
+			doPrintBestGuessesByChildSize(0, 50);
 			return true;
 		}
 
