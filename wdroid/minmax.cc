@@ -76,6 +76,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 	int firstGuessIdx = 0;
 	std::vector<int> depthSizeLimits;
 
+	std::vector<int> trapStates;
 	std::vector<int> terminalStates;
 	std::vector<int> nonTerminalStates;
 	std::vector<StateData> stateList;
@@ -120,6 +121,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 				seenBits |= bits;
 			}
 			state->depth = nwords;
+			trapStates.push_back(idx);
 			terminalStates.push_back(idx);
 			if (lockedCnt < WordLen && (!largestSimpleTrapState[lockedCnt] || nwords >
 					stateList[largestSimpleTrapState[lockedCnt]].depth))
@@ -222,6 +224,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		{
 			state->depth = state->words.size();
 			state->children.clear();
+			trapStates.push_back(idx);
 			terminalStates.push_back(idx);
 
 			int lockedCnt = 0;
@@ -554,6 +557,17 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		}
 	}
 
+	void doWriteDatFileLine(std::ofstream &f, int idx)
+	{
+		const auto &state = stateList[idx];
+		for (int i = 1, j = 0; i < wordsList.size(); i++) {
+			bool val = j < state.words.size() && state.words[j] == i;
+			f << char('0' + val);
+			j += val;
+		}
+		f << std::format(" {:2}\n", state.depth);
+	}
+
 	const char *vGetShortName() const override { return "minmax"; }
 
 	bool vExecuteCommand(const char *p, const char *arg,
@@ -614,6 +628,19 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 				doShowTraps();
 			doMinMaxSweep();
 			doTrace();
+			return true;
+		}
+
+		if (p == "+wrDatFile"s) {
+			std::ofstream f(arg ? arg : "wdroid.out");
+			if (!f.is_open()) {
+				pr("Error: Unable to open file for writing.\n");
+				return true;
+			}
+			for (int idx : nonTerminalStates)
+				doWriteDatFileLine(f, idx);
+			for (int idx : trapStates)
+				doWriteDatFileLine(f, idx);
 			return true;
 		}
 
