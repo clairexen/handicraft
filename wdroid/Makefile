@@ -45,7 +45,7 @@ ptdata.txt: wdroid
 	touch .venv/stamp-requests
 
 .venv/stamp-torch: .venv/stamp
-	.venv/bin/pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+	.venv/bin/pip3 install torch torchvision torchaudio # --index-url https://download.pytorch.org/whl/cpu
 	touch .venv/stamp-torch
 
 clean:

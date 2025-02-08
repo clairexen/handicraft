@@ -6,20 +6,16 @@ import numpy as np
 
 # Define the neural network with a configurable number of hidden layers
 class ConfigurableANN(nn.Module):
-    def __init__(self, input_size=4800, hidden_size=1000, num_hidden_layers=3, output_size=10):
+    def __init__(self, sz):
         super(ConfigurableANN, self).__init__()
 
         layers = []
-        layers.append(nn.Linear(input_size, hidden_size))
-        layers.append(nn.ReLU())
-
-        for _ in range(num_hidden_layers - 1):
-            layers.append(nn.Linear(hidden_size, hidden_size))
-            layers.append(nn.ReLU())
-
-        layers.append(nn.Linear(hidden_size, output_size))  # 10 output classes (1-9, 10+)
-        layers.append(nn.Softmax(dim=1))  # Probability distribution over 10 classes
-
+        for i in range(len(sz)-1):
+            layers.append(nn.Linear(sz[i], sz[i+1]))
+            if i < len(sz)-2:
+                layers.append(nn.ReLU())
+            else:
+                layers.append(nn.Softmax(dim=1))
         self.model = nn.Sequential(*layers)
 
     def forward(self, x):
@@ -32,30 +28,30 @@ def load_dataset(file_path):
         for line in file:
             [fIn, fOut] = line.strip().split()
             data.append(np.array([int(x) for x in fIn], dtype=np.float32))
-            labels.append(min(9, int(fOut)-1))
+            labels.append(int(fOut)-1)
     return torch.tensor(np.array(data)), torch.tensor(np.array(labels), dtype=torch.long)
 
 print("Loading...")
 
 X, y = load_dataset("ptdata.txt")
+dataset = TensorDataset(X, y)
+num_samples = X.shape[0]
 
-# Configuration
+# ANN Configuration
 input_size = X.shape[1]
-hidden_size = 200
-num_hidden_layers = 3  # Can be changed dynamically
-output_size = 10  # 10 categories (1-9 moves + 10 or more)
+output_size = torch.max(y).item()+1
+sz = (input_size, 500, 500, output_size)
+
+# Algorithm Configuration
 batch_size = 64
 epochs = 8
-cycles = 4
+cycles = 400
 learning_rate = 0.001
 train_ratio = 0.8  # 80% training, 20% testing
 
 # Split dataset into training and test sets
-num_samples = X.shape[0]
 train_size = int(train_ratio * num_samples)
 test_size = num_samples - train_size
-
-dataset = TensorDataset(X, y)
 train_dataset, test_dataset = random_split(dataset, [train_size, test_size])
 
 # Data loaders
@@ -66,7 +62,7 @@ test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 device_type = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Requesting Device: {device_type}")
 device = torch.device(device_type)
-model = ConfigurableANN(input_size, hidden_size, num_hidden_layers, output_size).to(device)
+model = ConfigurableANN(sz).to(device)
 criterion = nn.CrossEntropyLoss()  # Loss function for classification
 optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
@@ -120,8 +116,7 @@ def predict_moves(game_state):
     with torch.no_grad():
         output = model(game_state)
         if True:
-            predicted_class = torch.argmax(output, dim=1).item()
-            return predicted_class + 1 if predicted_class < 9 else "10+"
+            return torch.argmax(output, dim=1).item() + 1
         return " ".join([f"{i+1}:{float(v):4.2f}" for i, v in enumerate(output[0])])
 
 print("")
