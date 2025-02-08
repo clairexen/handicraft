@@ -22,19 +22,31 @@ run-hella: wdroid
 run-ptdemo: ptdata.txt .venv/stamp
 	.venv/bin/python3 ptdemo.py
 
-words.cc: words.py wordledb.json
-	python3 words.py
+words.cc: words.py wordledb.json .venv/stamp-nltk
+	# apt install wamerican-english-large
+	.venv/bin/python3 words.py
 
-wordledb.json: wordledb.py
-	python3 wordledb.py
+wordledb.json: wordledb.py .venv/stamp-requests
+	.venv/bin/python3 wordledb.py
 
 ptdata.txt: wdroid
 	./wdroid -3 -minmax +go +wrDatFile=ptdata.txt -exit
 
 .venv/stamp:
 	python3 -m venv .venv
-	.venv/bin/pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 	touch .venv/stamp
+
+.venv/stamp-nltk: .venv/stamp
+	.venv/bin/pip3 install nltk
+	touch .venv/stamp-nltk
+
+.venv/stamp-requests: .venv/stamp
+	.venv/bin/pip3 install requests
+	touch .venv/stamp-requests
+
+.venv/stamp-torch: .venv/stamp
+	.venv/bin/pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+	touch .venv/stamp-torch
 
 clean:
 	rm -f wdroid words.cc *.o *.d
