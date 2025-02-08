@@ -31,8 +31,12 @@ if True:
 else:
     dictfile = "/usr/share/dict/american-english-insane"
 
-with open(dictfile) as f:
-    all_dict_words = {w.strip() for w in f}
+try:
+    with open(dictfile) as f:
+        all_dict_words = {w.strip() for w in f}
+except FileExistsError:
+    with open("/usr/share/dict/words") as f:
+        all_dict_words = {w.strip() for w in f}
 
 with open("wordledb.json") as f:
     all_wordle_words = {record["solution"]
