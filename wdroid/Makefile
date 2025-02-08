@@ -19,7 +19,7 @@ run-hella: wdroid
 	./wdroid aloes/PEDAL learn/PEDAL -l -minmax-q +go \
 		-reset +word=hella -minmax-q +first=hella +go -exit
 
-run-ptdemo: ptdata.txt .venv/stamp
+run-ptdemo: ptdata.txt .venv/stamp-torch
 	.venv/bin/python3 ptdemo.py
 
 words.cc: words.py wordledb.json .venv/stamp-nltk
