@@ -19,11 +19,22 @@ run-hella: wdroid
 	./wdroid aloes/PEDAL learn/PEDAL -l -minmax-q +go \
 		-reset +word=hella -minmax-q +first=hella +go -exit
 
+run-ptdemo: ptdata.txt .venv/stamp
+	.venv/bin/python3 ptdemo.py
+
 words.cc: words.py wordledb.json
 	python3 words.py
 
 wordledb.json: wordledb.py
 	python3 wordledb.py
+
+ptdata.txt: wdroid
+	./wdroid -3 -minmax +go +wrDatFile=ptdata.txt -exit
+
+.venv/stamp:
+	python3 -m venv .venv
+	.venv/bin/pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+	touch .venv/stamp
 
 clean:
 	rm -f wdroid words.cc *.o *.d
