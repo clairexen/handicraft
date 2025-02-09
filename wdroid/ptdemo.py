@@ -5,11 +5,11 @@ from torch.utils.data import DataLoader, TensorDataset, random_split
 import numpy as np
 
 # Configuration
-dataFile = "ptdata.txt"
+dataFile = "ptdata%.txt"
 y_min, y_max = 1, 8
-hiddenLayers = (500,)
+hiddenLayers = (200,)
 batch_size = 1024
-epochs = 8
+epochs = 4
 cycles = 8
 learning_rate = 0.001
 train_ratio = 0.8  # 80% training, 20% testing
@@ -43,7 +43,7 @@ def load_dataset(file_path):
     labels = np.array(bindata[:,recordSize-1] - ord('A'), dtype=np.float32).reshape(-1, 1)
     return torch.tensor(data), torch.tensor(labels)
 
-X, y = load_dataset(dataFile)
+X, y = load_dataset(dataFile.replace("%", "0"))
 if y_min is None: y_min = torch.min(y).item()
 if y_max is None: y_max = torch.max(y).item()
 y = (y - y_min) / (y_max - y_min)
@@ -78,9 +78,20 @@ for cycle in range(cycles):
     print()
     print(f"== CYCLE {cycle+1}/{cycles} ==")
 
+    if cycle > 0:
+        print("Loading...")
+        X, y = load_dataset(dataFile.replace("%", f"{cycle}"))
+        y = (y - y_min) / (y_max - y_min)
+        dataset = TensorDataset(X, y)
+        num_samples = X.shape[0]
+        train_size = int(train_ratio * num_samples)
+        test_size = num_samples - train_size
+        train_dataset, test_dataset = random_split(dataset, [train_size, test_size])
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+        test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+
     print("Training...")
 
-    # Training loop
     for epoch in range(epochs):
         model.train()
         total_loss = 0
@@ -97,12 +108,13 @@ for cycle in range(cycles):
 
     print("Testing...")
 
-    # Evaluation on test data
     model.eval()
     test_loss = 0
     correct02 = 0
     correct05 = 0
     correct08 = 0
+    correct12 = 0
+    correct15 = 0
     deltasum = 0
     total = 0
 
@@ -113,35 +125,35 @@ for cycle in range(cycles):
             loss = criterion(predictions, batch_y)
             test_loss += loss.item()
 
-            # Accuracy calculation
             correct02 += ((predictions - batch_y).abs() < 0.2/(y_max-y_min)).sum().item()
             correct05 += ((predictions - batch_y).abs() < 0.5/(y_max-y_min)).sum().item()
             correct08 += ((predictions - batch_y).abs() < 0.8/(y_max-y_min)).sum().item()
+            correct12 += ((predictions - batch_y).abs() < 1.2/(y_max-y_min)).sum().item()
+            correct15 += ((predictions - batch_y).abs() < 1.5/(y_max-y_min)).sum().item()
+
             deltasum += (predictions - batch_y).abs().sum().item()
             total += batch_y.size(0)
 
     print(f"Test Loss: {test_loss/len(test_loader):.6f}")
     print(f"Test Mean Abs Delta: {(y_max-y_min) * deltasum / total:.2f}")
-    print(f"Test Accuracy: {100 * correct02 / total:.2f}% " +
-          f"{100 * correct05 / total:.2f}% {100 * correct08 / total:.2f}%")
+    print(f"Test Accuracy: {100 * correct02 / total:.2f}% {100 * correct05 / total:.2f}% " +
+          f"({100 * correct08 / total:.2f}% {100 * correct12 / total:.2f}% {100 * correct15 / total:.2f}%)")
 
 print()
 print("Evaluating...")
 
-# Function to make a prediction on a single game state
-def predict_moves(game_state):
-    game_state = torch.tensor(game_state, dtype=torch.float32).unsqueeze(0).to(device)
+def run_model(indata):
+    indata = torch.tensor(indata, dtype=torch.float32).unsqueeze(0).to(device)
     with torch.no_grad():
-        output = model(game_state)
-        return output.item() * (y_max - y_min) + y_min
+        return model(indata).item() * (y_max - y_min) + y_min
 
 deltas = dict()
-with open(dataFile, "r") as file:
+with open(dataFile.replace("%", "0"), "r") as file:
     for line in file:
         line = line.strip()
         fIn = [int(c) for c in line[:-1]]
         fOut = ord(line[-1])-ord('A')
-        out = predict_moves(fIn)
+        out = run_model(fIn)
         if fOut not in deltas:
             deltas[fOut] = list()
         if len(deltas[fOut]) == 200:
