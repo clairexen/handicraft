@@ -1,9 +1,20 @@
 CXX = clang++
 CXXFLAGS = -O2 -ggdb -std=c++26 -Wall -MD
-CC = $(CXX)
-CCFLAGS = $(CXXFLAGS)
+CXXFLAGS_O3 = -O3 -DNDEBUG $(filter-out -O2,$(CXXFLAGS))
 
-wdroid: wdroid.o minmax.o words.o
+OBJS = wdroid.o minmax.o words.o
+
+wdroid: $(OBJS)
+	$(CXX) $(CXXFLAGS) -o $@ $^
+
+%.o: %.cc
+	$(CXX) $(CXXFLAGS) -c -o $@ $<
+
+wdroid_o3: $(OBJS:.o=_o3.o)
+	$(CXX) $(CXXFLAGS_O3) -o $@ $^
+
+%_o3.o: %.cc
+	$(CXX) $(CXXFLAGS_O3) -c -o $@ $<
 
 run: wdroid
 	./wdroid -4 -5 -6 -exit
@@ -30,7 +41,7 @@ wordledb.json: wordledb.py .venv/stamp-requests
 	.venv/bin/python3 wordledb.py
 
 ptdata.txt: wdroid
-	./wdroid -3 -minmax +go +wrDatFile=ptdata.txt -exit
+	./wdroid -5 -minmax +limit=350 +go +wrDatFile=ptdata.txt -exit
 
 .venv/stamp:
 	python3 -m venv .venv
@@ -49,6 +60,7 @@ ptdata.txt: wdroid
 	touch .venv/stamp-torch
 
 clean:
-	rm -f wdroid words.cc *.o *.d
+	rm -f wdroid wdroid_o3 *.o *.d
+	rm -f words.cc ptdata.txt
 
 -include *.d

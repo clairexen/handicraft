@@ -1,5 +1,6 @@
 /.venv/
 /wdroid
+/wdroid_o3
 /words.cc
 /ptdata.txt
 *.o

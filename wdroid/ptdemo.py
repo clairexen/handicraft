@@ -6,7 +6,8 @@ import numpy as np
 
 # Configuration
 doRegression = True
-hiddenLayers = (500, 500)
+dataFile = "ptdata.txt"
+hiddenLayers = (500, 500, 500)
 batch_size = 64
 epochs = 8
 cycles = 2
@@ -35,25 +36,18 @@ class ConfigurableANN(nn.Module):
 
 # Function to load dataset from file
 def load_dataset(file_path):
-    data, labels = [], []
-    with open(file_path, "r") as file:
-        for line in file:
-            [fIn, fOut] = line.strip().split()
-            data.append(np.array([int(x) for x in fIn], dtype=np.float32))
-            if doRegression:
-                labels.append(np.array([int(fOut)], dtype=np.float32))
-            else:
-                labels.append(int(fOut)-1)
-    data = torch.tensor(np.array(data))
+    bindata = np.fromfile(file_path, dtype=np.byte)
+    recordSize = np.where(bindata[:100000] == ord('\n'))[0][0]
+    bindata = bindata.reshape(-1, recordSize+1)
+    data = np.array(bindata[:,:recordSize-1] - ord('0'), dtype=np.float32)
+    labels = np.array(bindata[:,recordSize-1] - ord('A'), dtype=np.float32).reshape(-1, 1)
     if doRegression:
-        labels = torch.tensor(np.array(labels))
-    else:
-        labels = torch.tensor(np.array(labels), dtype=torch.long)
-    return data, labels
+        return torch.tensor(data), torch.tensor(labels)
+    return torch.tensor(data), torch.tensor(labels, dtype=torch.long)
 
 print("Loading...")
 
-X, y = load_dataset("ptdata.txt")
+X, y = load_dataset(dataFile)
 if doRegression:
     y_min = torch.min(y).item()
     y_max = torch.max(y).item()
@@ -114,6 +108,7 @@ for cycle in range(cycles):
     model.eval()
     test_loss = 0
     correct = 0
+    deltasum = 0
     total = 0
 
     with torch.no_grad():
@@ -124,26 +119,40 @@ for cycle in range(cycles):
             test_loss += loss.item()
 
             # Accuracy calculation
-            predicted_classes = torch.argmax(predictions, dim=1)
-            correct += (predicted_classes == batch_y).sum().item()
+            if doRegression:
+                correct += ((predictions - batch_y).abs() < 1/(y_max-y_min)).sum().item()
+                deltasum += (predictions - batch_y).abs().sum().item()
+            else:
+                predicted_classes = torch.argmax(predictions, dim=1)
+                correct += (predicted_classes == batch_y).sum().item()
             total += batch_y.size(0)
 
     print(f"Test Loss: {test_loss/len(test_loader):.6f}")
+    if doRegression:
+        print(f"Test Mean Delta: {(y_max-y_min) * deltasum / total:.2f}")
     print(f"Test Accuracy: {100 * correct / total:.2f}%")
 
-# Function to make a prediction on a single game state
-def predict_moves(game_state):
-    game_state = torch.tensor(game_state, dtype=torch.float32).unsqueeze(0).to(device)
-    with torch.no_grad():
-        output = model(game_state)
-        if doRegression:
-            return output.item() * (y_max - y_min) + y_min
-        if True:
-            return torch.argmax(output, dim=1).item() + 1
-        return " ".join([f"{i+1}:{float(v):4.2f}" for i, v in enumerate(output[0])])
+if False:
+    # Function to make a prediction on a single game state
+    def predict_moves(game_state):
+        game_state = [int(item) for item in game_state]
+        game_state = torch.tensor(game_state, dtype=torch.float32).unsqueeze(0).to(device)
+        with torch.no_grad():
+            output = model(game_state)
+            if doRegression:
+                return output.item() * (y_max - y_min) + y_min
+            if True:
+                return torch.argmax(output, dim=1).item() + 1
+            return " ".join([f"{i+1}:{float(v):4.2f}" for i, v in enumerate(output[0])])
 
-print("")
-x = "100110111100010111011010000011010111000000000110001111001000111001111000001110001011001000"
-print(f"Example Input State: {x}")
-x = [int(c) for c in x]
-print(f"Predicted remaining moves: {predict_moves(x)}")
+    with open(dataFile, "r") as file:
+        for nr, line in enumerate(file):
+            line = line.strip()
+            fIn, fOut = line[:-1], ord(line[-1])-ord('A')
+            out = predict_moves(fIn)
+            if doRegression:
+                print(f"{fIn} -> abs({fOut} - {out:.2f}) = {abs(int(fOut)-out):.2f}")
+            else:
+                print(f"{fIn} -> {fOut} / {out}")
+            if nr == 100:
+                break

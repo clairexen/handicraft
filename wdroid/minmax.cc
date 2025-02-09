@@ -565,7 +565,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 			f << char('0' + val);
 			j += val;
 		}
-		f << std::format(" {:2}\n", state.depth);
+		f << char('A' + state.depth) << char('\n');
 	}
 
 	const char *vGetShortName() const override { return "minmax"; }
@@ -637,10 +637,23 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 				pr("Error: Unable to open file for writing.\n");
 				return true;
 			}
+			std::vector<std::vector<int>> statesBySize;
+			statesBySize.resize(stateList[0].depth+2);
+			auto addStateToStatesBySize = [&](int idx) {
+				const auto &state = stateList[idx];
+				if (0 < state.depth && state.depth-1 < statesBySize.size())
+					statesBySize[state.depth-1].push_back(idx);
+			};
 			for (int idx : nonTerminalStates)
-				doWriteDatFileLine(f, idx);
+				addStateToStatesBySize(idx);
 			for (int idx : trapStates)
-				doWriteDatFileLine(f, idx);
+				addStateToStatesBySize(idx);
+			int maxBucketSize = 0;
+			for (const auto &item : statesBySize)
+				maxBucketSize = std::max(maxBucketSize, int(item.size()));
+			for (int i = 0; i < std::min(maxBucketSize, int(25000000 / wordsList.size())); i++)
+				for (int j = 0; j < std::min(25, int(statesBySize.size())); j++)
+					doWriteDatFileLine(f, statesBySize[j][rng(statesBySize[j].size())]);
 			return true;
 		}
 
