@@ -74,6 +74,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 	int maxSearchDepth = 0;
 	int maxTraceLength = 0;
 	int firstGuessIdx = 0;
+	size_t maxDatSize = 0;
 	std::vector<int> depthSizeLimits;
 
 	std::vector<int> trapStates;
@@ -557,7 +558,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		}
 	}
 
-	void doWriteDatFileLine(std::ofstream &f, int idx)
+	size_t doWriteDatFileLine(std::ofstream &f, int idx)
 	{
 		const auto &state = stateList[idx];
 		for (int i = 1, j = 0; i < wordsList.size(); i++) {
@@ -566,6 +567,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 			j += val;
 		}
 		f << char('A' + state.depth) << char('\n');
+		return wordsList.size()+2;
 	}
 
 	const char *vGetShortName() const override { return "minmax"; }
@@ -631,29 +633,64 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 			return true;
 		}
 
-		if (p == "+wrDatFile"s) {
+		if (p == "+maxDatSize"s) {
+			maxDatSize = intArg(arg);
+			return true;
+		}
+
+		if (p == "+maxDatMBs"s) {
+			maxDatSize = size_t(1024*1024)*intArg(arg);
+			return true;
+		}
+
+		if (p == "+wrDatFile"s)
+		{
 			std::ofstream f(arg ? arg : "wdroid.out");
 			if (!f.is_open()) {
 				pr("Error: Unable to open file for writing.\n");
 				return true;
 			}
-			std::vector<std::vector<int>> statesBySize;
-			statesBySize.resize(stateList[0].depth+2);
-			auto addStateToStatesBySize = [&](int idx) {
+
+			std::vector<std::vector<int>> statesByDepth;
+			statesByDepth.resize(stateList[0].depth+2);
+			auto addStateToStatesByDepth = [&](int idx) {
 				const auto &state = stateList[idx];
-				if (0 < state.depth && state.depth-1 < statesBySize.size())
-					statesBySize[state.depth-1].push_back(idx);
+				if (state.depth < 1)
+					return;
+				if (state.depth-1 < statesByDepth.size())
+					statesByDepth[state.depth-1].push_back(idx);
+				else
+					statesByDepth.back().push_back(idx);
 			};
 			for (int idx : nonTerminalStates)
-				addStateToStatesBySize(idx);
+				addStateToStatesByDepth(idx);
 			for (int idx : trapStates)
-				addStateToStatesBySize(idx);
+				addStateToStatesByDepth(idx);
+
+			std::vector<std::vector<int>> queuesByDepth;
+			queuesByDepth.resize(statesByDepth.size());
+			for (int i : {stateList[0].depth, stateList[0].depth+1})
+				std::swap(statesByDepth[i], queuesByDepth[i]);
+
 			int maxBucketSize = 0;
-			for (const auto &item : statesBySize)
-				maxBucketSize = std::max(maxBucketSize, int(item.size()));
-			for (int i = 0; i < std::min(maxBucketSize, int(25000000 / wordsList.size())); i++)
-				for (int j = 0; j < std::min(25, int(statesBySize.size())); j++)
-					doWriteDatFileLine(f, statesBySize[j][rng(statesBySize[j].size())]);
+			// skip buckets for depth > optimal play for maxBucketSize
+			for (int i = 0; i < stateList[0].depth; i++)
+				maxBucketSize = std::max(maxBucketSize, int(statesByDepth[i].size()));
+
+			size_t fileSize = 0;
+			for (int i = 0; i < maxBucketSize && fileSize < maxDatSize; i++)
+				for (int j = 0; j < int(queuesByDepth.size()); j++) {
+					if (queuesByDepth[j].empty()) {
+						if (statesByDepth[j].empty())
+							continue;
+						queuesByDepth[j] = statesByDepth[j];
+					}
+					int k = rng(queuesByDepth[j].size());
+					int idx = queuesByDepth[j][k];
+					queuesByDepth[j][k] = queuesByDepth[j].back();
+					queuesByDepth[j].pop_back();
+					fileSize += doWriteDatFileLine(f, idx);
+				}
 			return true;
 		}
 

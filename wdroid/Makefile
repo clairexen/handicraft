@@ -41,7 +41,8 @@ wordledb.json: wordledb.py .venv/stamp-requests
 	.venv/bin/python3 wordledb.py
 
 ptdata.txt: wdroid
-	./wdroid -5 -minmax +limit=350 +go +wrDatFile=ptdata.txt -exit
+	time ./wdroid -5 -minmax +limit=350 +go \
+		+maxDatMBs=500 +wrDatFile=ptdata.txt -exit
 
 .venv/stamp:
 	python3 -m venv .venv

@@ -5,12 +5,11 @@ from torch.utils.data import DataLoader, TensorDataset, random_split
 import numpy as np
 
 # Configuration
-doRegression = True
 dataFile = "ptdata.txt"
-hiddenLayers = (500, 500, 500)
-batch_size = 64
-epochs = 8
-cycles = 2
+hiddenLayers = (800, 200, 100)
+batch_size = 1024
+epochs = 2
+cycles = 5
 learning_rate = 0.001
 train_ratio = 0.8  # 80% training, 20% testing
 
@@ -34,6 +33,8 @@ class ConfigurableANN(nn.Module):
     def forward(self, x):
         return self.model(x)
 
+print("Loading...")
+
 # Function to load dataset from file
 def load_dataset(file_path):
     bindata = np.fromfile(file_path, dtype=np.byte)
@@ -41,24 +42,18 @@ def load_dataset(file_path):
     bindata = bindata.reshape(-1, recordSize+1)
     data = np.array(bindata[:,:recordSize-1] - ord('0'), dtype=np.float32)
     labels = np.array(bindata[:,recordSize-1] - ord('A'), dtype=np.float32).reshape(-1, 1)
-    if doRegression:
-        return torch.tensor(data), torch.tensor(labels)
-    return torch.tensor(data), torch.tensor(labels, dtype=torch.long)
-
-print("Loading...")
+    return torch.tensor(data), torch.tensor(labels)
 
 X, y = load_dataset(dataFile)
-if doRegression:
-    y_min = torch.min(y).item()
-    y_max = torch.max(y).item()
-    y = (y - y_min) / (y_max - y_min)
+y_min = torch.min(y).item()
+y_max = torch.max(y).item()
+y = (y - y_min) / (y_max - y_min)
 dataset = TensorDataset(X, y)
 num_samples = X.shape[0]
 
 # ANN Dimensions
 input_size = X.shape[1]
-output_size = 1 if doRegression else torch.max(y).item()+1
-sz = (input_size,) + hiddenLayers + (output_size,)
+sz = (input_size,) + hiddenLayers + (1,)
 
 # Split dataset into training and test sets
 train_size = int(train_ratio * num_samples)
@@ -69,20 +64,17 @@ train_dataset, test_dataset = random_split(dataset, [train_size, test_size])
 train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
-# Initialize model, loss function, and optimizer
 device_type = "cuda" if torch.cuda.is_available() else "cpu"
-print(f"Requesting Device: {device_type}")
+print(f"Setting up on device \"{device_type}\"...")
+
+# Initialize model, loss function, and optimizer
 device = torch.device(device_type)
 model = ConfigurableANN(sz).to(device)
-if doRegression:
-    criterion = nn.MSELoss()  # Mean Squared Error for regression
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-else:
-    criterion = nn.CrossEntropyLoss()  # Loss function for classification
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+criterion = nn.MSELoss()  # Mean Squared Error for regression
+optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
 for cycle in range(cycles):
-    print("")
+    print()
     print(f"== CYCLE {cycle+1} ==")
 
     print("Training...")
@@ -119,40 +111,42 @@ for cycle in range(cycles):
             test_loss += loss.item()
 
             # Accuracy calculation
-            if doRegression:
-                correct += ((predictions - batch_y).abs() < 1/(y_max-y_min)).sum().item()
-                deltasum += (predictions - batch_y).abs().sum().item()
-            else:
-                predicted_classes = torch.argmax(predictions, dim=1)
-                correct += (predicted_classes == batch_y).sum().item()
+            correct += ((predictions - batch_y).abs() < 1/(y_max-y_min)).sum().item()
+            deltasum += (predictions - batch_y).abs().sum().item()
             total += batch_y.size(0)
 
     print(f"Test Loss: {test_loss/len(test_loader):.6f}")
-    if doRegression:
-        print(f"Test Mean Delta: {(y_max-y_min) * deltasum / total:.2f}")
+    print(f"Test Mean Delta: {(y_max-y_min) * deltasum / total:.2f}")
     print(f"Test Accuracy: {100 * correct / total:.2f}%")
 
-if False:
-    # Function to make a prediction on a single game state
-    def predict_moves(game_state):
-        game_state = [int(item) for item in game_state]
-        game_state = torch.tensor(game_state, dtype=torch.float32).unsqueeze(0).to(device)
-        with torch.no_grad():
-            output = model(game_state)
-            if doRegression:
-                return output.item() * (y_max - y_min) + y_min
-            if True:
-                return torch.argmax(output, dim=1).item() + 1
-            return " ".join([f"{i+1}:{float(v):4.2f}" for i, v in enumerate(output[0])])
+print()
+print("Evaluating...")
 
-    with open(dataFile, "r") as file:
-        for nr, line in enumerate(file):
-            line = line.strip()
-            fIn, fOut = line[:-1], ord(line[-1])-ord('A')
-            out = predict_moves(fIn)
-            if doRegression:
-                print(f"{fIn} -> abs({fOut} - {out:.2f}) = {abs(int(fOut)-out):.2f}")
-            else:
-                print(f"{fIn} -> {fOut} / {out}")
-            if nr == 100:
-                break
+# Function to make a prediction on a single game state
+def predict_moves(game_state):
+    game_state = torch.tensor(game_state, dtype=torch.float32).unsqueeze(0).to(device)
+    with torch.no_grad():
+        output = model(game_state)
+        return output.item() * (y_max - y_min) + y_min
+
+deltas = dict()
+with open(dataFile, "r") as file:
+    for line in file:
+        line = line.strip()
+        fIn = [int(c) for c in line[:-1]]
+        fOut = ord(line[-1])-ord('A')
+        out = predict_moves(fIn)
+        if fOut not in deltas:
+            deltas[fOut] = list()
+        if len(deltas[fOut]) == 200:
+            break
+        deltas[fOut].append(out - fOut)
+
+for depth in sorted(deltas.keys()):
+    if len(deltas[depth]) < 10:
+        continue
+    v = np.array(deltas[depth])
+    Min, Max, Avg, Std = np.min(v), np.max(v), np.mean(v), np.std(v)
+    print(f"Results for depth {depth:2d} (N = {len(v):3d}): " +
+          f"{Min=:+.2f} {Max=:+.2f} {Avg=:+.2f} ({Std=:+.2f})")
+
