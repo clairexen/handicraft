@@ -6,10 +6,11 @@ import numpy as np
 
 # Configuration
 dataFile = "ptdata.txt"
-hiddenLayers = (800, 200, 100)
+y_min, y_max = 1, 8
+hiddenLayers = (500,)
 batch_size = 1024
-epochs = 2
-cycles = 5
+epochs = 8
+cycles = 8
 learning_rate = 0.001
 train_ratio = 0.8  # 80% training, 20% testing
 
@@ -24,10 +25,8 @@ class ConfigurableANN(nn.Module):
             layers.append(nn.Linear(sz[i], sz[i+1]))
             if i < len(sz)-2:
                 layers.append(nn.ReLU())
-            elif sz[i+1] == 1:
-                layers.append(nn.Softplus())
-            else:
-                layers.append(nn.Softmax(dim=1))
+            #else:
+            #    layers.append(nn.Softplus())
         self.model = nn.Sequential(*layers)
 
     def forward(self, x):
@@ -45,15 +44,17 @@ def load_dataset(file_path):
     return torch.tensor(data), torch.tensor(labels)
 
 X, y = load_dataset(dataFile)
-y_min = torch.min(y).item()
-y_max = torch.max(y).item()
+if y_min is None: y_min = torch.min(y).item()
+if y_max is None: y_max = torch.max(y).item()
 y = (y - y_min) / (y_max - y_min)
 dataset = TensorDataset(X, y)
 num_samples = X.shape[0]
+print(f"Dataset size: {num_samples} samples")
 
 # ANN Dimensions
 input_size = X.shape[1]
 sz = (input_size,) + hiddenLayers + (1,)
+print(f"ANN model geometry: {sz}")
 
 # Split dataset into training and test sets
 train_size = int(train_ratio * num_samples)
@@ -75,7 +76,7 @@ optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
 for cycle in range(cycles):
     print()
-    print(f"== CYCLE {cycle+1} ==")
+    print(f"== CYCLE {cycle+1}/{cycles} ==")
 
     print("Training...")
 
@@ -99,7 +100,9 @@ for cycle in range(cycles):
     # Evaluation on test data
     model.eval()
     test_loss = 0
-    correct = 0
+    correct02 = 0
+    correct05 = 0
+    correct08 = 0
     deltasum = 0
     total = 0
 
@@ -111,13 +114,16 @@ for cycle in range(cycles):
             test_loss += loss.item()
 
             # Accuracy calculation
-            correct += ((predictions - batch_y).abs() < 1/(y_max-y_min)).sum().item()
+            correct02 += ((predictions - batch_y).abs() < 0.2/(y_max-y_min)).sum().item()
+            correct05 += ((predictions - batch_y).abs() < 0.5/(y_max-y_min)).sum().item()
+            correct08 += ((predictions - batch_y).abs() < 0.8/(y_max-y_min)).sum().item()
             deltasum += (predictions - batch_y).abs().sum().item()
             total += batch_y.size(0)
 
     print(f"Test Loss: {test_loss/len(test_loader):.6f}")
-    print(f"Test Mean Delta: {(y_max-y_min) * deltasum / total:.2f}")
-    print(f"Test Accuracy: {100 * correct / total:.2f}%")
+    print(f"Test Mean Abs Delta: {(y_max-y_min) * deltasum / total:.2f}")
+    print(f"Test Accuracy: {100 * correct02 / total:.2f}% " +
+          f"{100 * correct05 / total:.2f}% {100 * correct08 / total:.2f}%")
 
 print()
 print("Evaluating...")

@@ -74,6 +74,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 	int maxSearchDepth = 0;
 	int maxTraceLength = 0;
 	int firstGuessIdx = 0;
+	int maxDatFiles = 0;
 	size_t maxDatSize = 0;
 	std::vector<int> depthSizeLimits;
 
@@ -643,13 +644,40 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 			return true;
 		}
 
+		if (p == "+maxDatFiles"s) {
+			maxDatFiles = intArg(arg);
+			return true;
+		}
+
 		if (p == "+wrDatFile"s)
 		{
-			std::ofstream f(arg ? arg : "wdroid.out");
-			if (!f.is_open()) {
-				pr("Error: Unable to open file for writing.\n");
-				return true;
-			}
+			int fileIndex = 0;
+			std::string currentFileName;
+			std::string argStr = arg ? arg : maxDatFiles > 1 ?
+					"wdroid%.out" : "wdroid.out";
+			std::ofstream f;
+
+			auto openNextFile = [&]() -> bool {
+				std::string s;
+				for (char c : argStr)
+					if (c == '%')
+						s += std::format("{}", fileIndex);
+					else
+						s += c;
+				pr(std::format("Writing data file '{}'.\n", s));
+				currentFileName = s;
+				fileIndex++;
+				if (f.is_open())
+					f.close();
+				f.open(currentFileName);
+				if (f.is_open())
+					return true;
+				pr(std::format("Error: Unable to open file '{}' for writing.\n", currentFileName));
+				return false;
+			};
+
+			pr(std::format("Collecting state data for {} states...\n",
+					nonTerminalStates.size() + trapStates.size()));
 
 			std::vector<std::vector<int>> statesByDepth;
 			statesByDepth.resize(stateList[0].depth+2);
@@ -673,12 +701,24 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 				std::swap(statesByDepth[i], queuesByDepth[i]);
 
 			int maxBucketSize = 0;
-			// skip buckets for depth > optimal play for maxBucketSize
+			// skip buckets used for depth > optimal play
 			for (int i = 0; i < stateList[0].depth; i++)
 				maxBucketSize = std::max(maxBucketSize, int(statesByDepth[i].size()));
 
+			if (!openNextFile())
+				return true;
+
 			size_t fileSize = 0;
-			for (int i = 0; i < maxBucketSize && fileSize < maxDatSize; i++)
+			for (int i = 0; i < maxBucketSize; i++) {
+				if (maxDatSize <= fileSize) {
+					if (currentFileName == argStr)
+						break;
+					if (0 < maxDatFiles && maxDatFiles <= fileIndex)
+						break;
+					if (!openNextFile())
+						return true;
+					fileSize = 0;
+				}
 				for (int j = 0; j < int(queuesByDepth.size()); j++) {
 					if (queuesByDepth[j].empty()) {
 						if (statesByDepth[j].empty())
@@ -691,6 +731,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 					queuesByDepth[j].pop_back();
 					fileSize += doWriteDatFileLine(f, idx);
 				}
+			}
 			return true;
 		}
 
