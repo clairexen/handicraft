@@ -78,7 +78,7 @@ if srcState is not None:
 criterion = nn.MSELoss()  # Mean Squared Error for regression
 optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
-for cycle, srcFle in enumerate(srcDatFiles):
+for cycle, srcFile in enumerate(srcDatFiles):
     print()
     print(f"== CYCLE {cycle+1} ==")
 
