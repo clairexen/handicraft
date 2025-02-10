@@ -168,7 +168,7 @@ if True:
         sizes = (sz[0]*sz[1], sz[1], sz[1], 1)
         for key, s in zip(keys, sizes):
             data = model.get_parameter(key).detach().numpy()
-            data = data.transpose().flatten().astype(np.float32)
+            data = data.flatten().astype(np.float32)
             assert len(data) == s
             data.tofile(f)
 

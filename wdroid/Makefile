@@ -30,9 +30,6 @@ run-hella: wdroid
 	./wdroid aloes/PEDAL learn/PEDAL -l -minmax-q +go \
 		-reset +word=hella -minmax-q +first=hella +go -exit
 
-ptmodel.bin: ptdata0.txt .venv/stamp-torch
-	.venv/bin/python3 ptdriver.py
-
 words.cc: words.py wordledb.json .venv/stamp-nltk
 	# apt install wamerican-english-large
 	.venv/bin/python3 words.py
@@ -40,11 +37,14 @@ words.cc: words.py wordledb.json .venv/stamp-nltk
 wordledb.json: wordledb.py .venv/stamp-requests
 	.venv/bin/python3 wordledb.py
 
+ptmodel.bin: ptdata0.txt .venv/stamp-torch
+	.venv/bin/python3 ptdriver.py
+
 ptdata0.txt: wdroid
 	time ./wdroid -5 -minmax +limit=350 +go \
 		+maxDatMBs=500 +maxDatFiles=8 +wrDatFile=ptdata%.txt -exit
 
-ptdata8.txt: wdroid
+ptdata8.txt: wdroid ptmodel.bin
 	time ./wdroid -5 -minmax +limit=350 +go \
 		+maxDatMBs=500 +useAnnModel=ptmodel.bin +wrDatFile=ptdata8.txt -exit
 

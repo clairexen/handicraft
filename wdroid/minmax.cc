@@ -627,8 +627,11 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		}
 
 		if (p == "+useAnnModel"s) {
-			if (!annModel.readModelBinFile(arg))
+			if (!annModel.readModelBinFile(arg)) {
 				pr("Reading ANN model bin fle failed!\n");
+				return true;
+			}
+			assert(wordsList.size()-1 == annModel.inputDim);
 			return true;
 		}
 
@@ -701,7 +704,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 				const auto &state = stateList[idx];
 				if (state.depth < 1)
 					return;
-				if (annModel && fabsf(annModel.evalModel(state.words) - state.depth) < 1.0)
+				if (annModel && fabsf(annModel.evalModel(state.words) - state.depth) < 1.2)
 					return;
 				if (state.depth-1 < statesByDepth.size())
 					statesByDepth[state.depth-1].push_back(idx);
