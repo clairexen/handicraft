@@ -17,6 +17,8 @@
 
 #include "anneval.hh"
 
+#undef DEBUG_ANN_TEST
+
 bool WordleDroidAnnEval::readModelBinFile(const std::string &fn)
 {
 	okay = false;
@@ -31,19 +33,40 @@ bool WordleDroidAnnEval::readModelBinFile(const std::string &fn)
 	inputWeights.resize(inputDim);
 	for (int i = 0; i < inputDim; i++) {
 		inputWeights[i].resize(innerDim);
-		file.read(reinterpret_cast<char*>(inputWeights[i].data()), innerDim*sizeof(float));
+		file.read(reinterpret_cast<char*>(inputWeights[i].data()), innerDim * sizeof(float));
 		if (!file) return false;
 	}
 
 	innerBias.resize(innerDim);
-	file.read(reinterpret_cast<char*>(innerBias.data()), innerDim*sizeof(float));
+	file.read(reinterpret_cast<char*>(innerBias.data()), innerDim * sizeof(float));
 	if (!file) return false;
 
 	outputWeights.resize(innerDim);
-	file.read(reinterpret_cast<char*>(outputWeights.data()), innerDim*sizeof(float));
+	file.read(reinterpret_cast<char*>(outputWeights.data()), innerDim * sizeof(float));
 	if (!file) return false;
 
 	file.read(reinterpret_cast<char*>(&outputBias), sizeof(float));
+	if (!file) return false;
+
+	int k;
+	file.read(reinterpret_cast<char*>(&k), sizeof(int));
+	if (!file) return false;
+	testInput.resize(k);
+	file.read(reinterpret_cast<char*>(testInput.data()), k * sizeof(int));
+	if (!file) return false;
+
+	testInner.resize(innerDim);
+	file.read(reinterpret_cast<char*>(testInner.data()), innerDim * sizeof(float));
+	if (!file) return false;
+
+	testReLU.resize(innerDim);
+	file.read(reinterpret_cast<char*>(testReLU.data()), innerDim * sizeof(float));
+	if (!file) return false;
+
+	file.read(reinterpret_cast<char*>(&testUnscaledOut), sizeof(float));
+	if (!file) return false;
+
+	file.read(reinterpret_cast<char*>(&testScaledOut), sizeof(float));
 	if (!file) return false;
 
 	// expect EOF
@@ -52,8 +75,13 @@ bool WordleDroidAnnEval::readModelBinFile(const std::string &fn)
 	if (!file.eof()) return false;
 
 	innerValues.resize(innerDim);
-	okay = false;
+	okay = true;
 
+	float testOut = evalModel(testInput);
+	assert(fabsf(testOut - testScaledOut) < 0.1);
+#ifdef DEBUG_ANN_TEST
+	assert(!"DEBUG_ANN_TEST is defined but evalModel() returns correct test value!");
+#endif
 	return true;
 }
 
@@ -71,11 +99,34 @@ float WordleDroidAnnEval::evalModel(const std::vector<int> &enabledInputs) const
 			innerValues[i] += w[i];
 	}
 
+#ifdef DEBUG_ANN_TEST
+	std::cerr << "Comparing innerValues and ReLU outputs:\n";
+	for (int i = 0; i < innerDim; i++) {
+		float reLuVal = innerValues[i] > 0 ? innerValues[i] : 0;
+		if (fabsf(innerValues[i] - testInner[i]) < 0.01 &&
+				fabsf(reLuVal - testReLU[i]) < 0.01)
+			continue;
+		std::cerr << i << ": " << innerValues[i] << " " << testInner[i]
+				<< ", " << reLuVal << " " << testReLU[i] << std::endl;
+	}
+#endif
+
 	for (int i = 0; i < innerDim; i++)
 		if (innerValues[i] > 0)
 			outputValue += outputWeights[i] * innerValues[i];
 
+#ifdef DEBUG_ANN_TEST
+	std::cerr << "Comparing unscaled output scalar: " << outputValue
+			<< " " << testUnscaledOut << std::endl;
+#endif
+
 	outputValue = outputValue * (8.0 - 1.0) + 1.0;
+
+#ifdef DEBUG_ANN_TEST
+	std::cerr << "Comparing scaled output scalar: " << outputValue
+			<< " " << testScaledOut << std::endl;
+#endif
+
 	return outputValue < 0.5 ? 0.5 : outputValue;
 }
 

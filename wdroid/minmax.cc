@@ -627,6 +627,12 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		}
 
 		if (p == "+useAnnModel"s) {
+			if (arg == nullptr)
+				arg = "ptmodel.bin";
+			if (*arg == 0) {
+				annModel.clear();
+				return true;
+			}
 			if (!annModel.readModelBinFile(arg)) {
 				pr("Reading ANN model bin fle failed!\n");
 				return true;
@@ -694,8 +700,8 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 				return false;
 			};
 
-			pr(std::format("Collecting state data from {} states...\n",
-					nonTerminalStates.size() + trapStates.size()));
+			size_t nonTermOrTrapStateCnt = nonTerminalStates.size() + trapStates.size();
+			pr(std::format("Collecting state data from {} states...\n", nonTermOrTrapStateCnt));
 
 			int addedStatesCnt = 0;
 			std::vector<std::vector<int>> statesByDepth;
@@ -717,7 +723,8 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 			for (int idx : trapStates)
 				addStateToStatesByDepth(idx);
 
-			pr(std::format("Queued {} of those states for export.\n", addedStatesCnt));
+			pr(std::format("Queued {} ({:.2}%) of those states for export.\n",
+					addedStatesCnt, (100.0 * addedStatesCnt) / nonTermOrTrapStateCnt));
 
 			std::vector<std::vector<int>> queuesByDepth;
 			queuesByDepth.resize(statesByDepth.size());
@@ -775,9 +782,11 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 					pr(std::format("  ({:3}x {:7} + {:7})", perDepthRepCnt[k]-1,
 							statesByDepth[k-1].size(), perDepthOutCnt[k] -
 							(perDepthRepCnt[k]-1) * statesByDepth[k-1].size()));
-				else if (k-1 < queuesByDepth.size() && !queuesByDepth[k-1].empty())
-					pr(std::format("      / {:7}", perDepthOutCnt[k] +
-							queuesByDepth[k-1].size()));
+				else if (k-1 < queuesByDepth.size() && !queuesByDepth[k-1].empty()) {
+					size_t sum = perDepthOutCnt[k] + queuesByDepth[k-1].size();
+					float percent = (100.0 * perDepthOutCnt[k]) / sum;
+					pr(std::format("     / {:8}  = {:6.2}%", sum, percent));
+				}
 				prNl();
 			}
 

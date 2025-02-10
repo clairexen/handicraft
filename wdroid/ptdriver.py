@@ -7,6 +7,7 @@ import struct
 
 # Configuration
 dataFile = "ptdata%.txt"
+outPrefix = "ptmodel"
 y_min, y_max = 1, 8
 hiddenLayers = (200,)
 batch_size = 1024
@@ -139,19 +140,42 @@ for cycle in range(cycles):
 print()
 print("Exporting...")
 
+def run_model(indata):
+    indata = torch.tensor(indata, dtype=torch.float32).unsqueeze(0).to(device)
+    with torch.no_grad():
+        return model(indata).item() * (y_max - y_min) + y_min
+
+example_input = [v.item() for v in X[4,:]]
+example_input = [0.0 for v in X[4,:]]
+example_inidx = [i+1 for i, v in enumerate([1,0,0,1,1]) if v > 0.5]
+
+example_layers = list()
+hookHandles = list()
+
+def fwdHook(module, args, output):
+    example_layers.append((module, output))
+
+for module in model.model.children():
+    hookHandles.append(module.register_forward_hook(fwdHook))
+
+example_output = run_model(example_input)
+
+for handle in hookHandles:
+    handle.remove()
+
 if True:
-    example_input = torch.zeros(1, sz[0])
-    traced_model = torch.jit.trace(model, example_input)
-    traced_model.save("ptmodel.pt")
+    trace_input = torch.tensor(example_input).reshape(1,-1)
+    traced_model = torch.jit.trace(model, trace_input)
+    traced_model.save(f"{outPrefix}.pt")
 
 if False:
-    with open("ptmodel.hh", "w") as fh:
-        with open("ptmodel.cc", "w") as fcc:
-            fh.write("#ifndef PTMODEL_HH\n")
-            fh.write("#define PTMODEL_HH\n")
+    with open(f"{outPrefix}.hh", "w") as fh:
+        with open(f"{outPrefix}.cc", "w") as fcc:
+            fh.write(f"#ifndef {outPrefix.upper()}_HH\n")
+            fh.write(f"#define {outPrefix.upper()}_HH\n")
             fh.write(f"#define WordleDroidANN_Dim0 {sz[0]}\n")
             fh.write(f"#define WordleDroidANN_Dim1 {sz[1]}\n")
-            fcc.write("#include \"ptmodel.hh\"\n")
+            fcc.write(f"#include \"{outPrefix}.hh\"\n")
             for name, param in model.named_parameters():
                 w = param.detach().numpy().flatten()
                 fh.write(f"extern const float WordleDroidANN_{name.replace('.', '_')}[{len(w)}]; // {name}\n")
@@ -161,9 +185,12 @@ if False:
             fh.write(f"#endif\n")
 
 if True:
-    with open("ptmodel.bin", "wb") as f:
+    with open(f"{outPrefix}.bin", "wb") as f:
+        # ANN Dimensions
         f.write(struct.pack('i', sz[0]))
         f.write(struct.pack('i', sz[1]))
+
+        # Parameters
         keys = "model.0.weight model.0.bias model.2.weight model.2.bias".split()
         sizes = (sz[0]*sz[1], sz[1], sz[1], 1)
         for key, s in zip(keys, sizes):
@@ -172,12 +199,15 @@ if True:
             assert len(data) == s
             data.tofile(f)
 
-print("Evaluating...")
+        # Test Vector
+        f.write(struct.pack('i', len(example_inidx)))
+        for idx in example_inidx:
+            f.write(struct.pack('i', idx))
+        for _, data in example_layers:
+            data.numpy().flatten().astype(np.float32).tofile(f)
+        f.write(struct.pack('f', example_output))
 
-def run_model(indata):
-    indata = torch.tensor(indata, dtype=torch.float32).unsqueeze(0).to(device)
-    with torch.no_grad():
-        return model(indata).item() * (y_max - y_min) + y_min
+print("Evaluating...")
 
 deltas = dict()
 with open(dataFile.replace("%", "0"), "r") as file:

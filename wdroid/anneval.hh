@@ -23,6 +23,7 @@
 #include <iostream>
 #include <fstream>
 #include <cassert>
+#include <cmath>
 
 struct WordleDroidAnnEval
 {
@@ -31,6 +32,12 @@ struct WordleDroidAnnEval
 	std::vector<float> innerBias;
 	std::vector<float> outputWeights;
 	float outputBias = 0.0;
+
+	std::vector<int> testInput;
+	std::vector<float> testInner;
+	std::vector<float> testReLU;
+	float testUnscaledOut;
+	float testScaledOut;
 
 	bool okay = false;
 	mutable std::vector<float> innerValues; // buffer for evalModel()
