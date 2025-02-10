@@ -145,8 +145,12 @@ def run_model(indata):
     with torch.no_grad():
         return model(indata).item() * (y_max - y_min) + y_min
 
-example_input = [v.item() for v in X[4,:]]
-example_input = [0.0 for v in X[4,:]]
+if True:
+    example_input = [v.item() for v in X[4,:]]
+else:
+    example_input = [0.0 for v in X[4,:]]
+    example_input[0] = 1.0
+
 example_inidx = [i+1 for i, v in enumerate([1,0,0,1,1]) if v > 0.5]
 
 example_layers = list()
@@ -189,6 +193,7 @@ if True:
         # ANN Dimensions
         f.write(struct.pack('i', sz[0]))
         f.write(struct.pack('i', sz[1]))
+        f.flush()
 
         # Parameters
         keys = "model.0.weight model.0.bias model.2.weight model.2.bias".split()
@@ -203,6 +208,7 @@ if True:
         f.write(struct.pack('i', len(example_inidx)))
         for idx in example_inidx:
             f.write(struct.pack('i', idx))
+        f.flush()
         for _, data in example_layers:
             data.numpy().flatten().astype(np.float32).tofile(f)
         f.write(struct.pack('f', example_output))

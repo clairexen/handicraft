@@ -17,7 +17,7 @@
 
 #include "anneval.hh"
 
-#undef DEBUG_ANN_TEST
+#define DEBUG_ANN_TEST
 
 bool WordleDroidAnnEval::readModelBinFile(const std::string &fn)
 {
