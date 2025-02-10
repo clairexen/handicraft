@@ -181,7 +181,7 @@ if False:
             fh.write(f"#define WordleDroidANN_Dim1 {sz[1]}\n")
             fcc.write(f"#include \"{outPrefix}.hh\"\n")
             for name, param in model.named_parameters():
-                w = param.detach().numpy().flatten()
+                w = param.detach().numpy().transpose().flatten()
                 fh.write(f"extern const float WordleDroidANN_{name.replace('.', '_')}[{len(w)}]; // {name}\n")
                 fcc.write(f"const float WordleDroidANN_{name.replace('.', '_')}[{len(w)}] = {{")
                 fcc.write(", ".join(map(str, w)))
@@ -200,7 +200,7 @@ if True:
         sizes = (sz[0]*sz[1], sz[1], sz[1], 1)
         for key, s in zip(keys, sizes):
             data = model.get_parameter(key).detach().numpy()
-            data = data.flatten().astype(np.float32)
+            data = data.transpose().flatten().astype(np.float32)
             assert len(data) == s
             data.tofile(f)
 

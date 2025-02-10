@@ -30,6 +30,10 @@ bool WordleDroidAnnEval::readModelBinFile(const std::string &fn)
 	file.read(reinterpret_cast<char*>(&innerDim), sizeof(int));
 	if (!file) return false;
 
+#ifdef DEBUG_ANN_TEST
+	std::cerr << "Dimensions: " << inputDim << " " << innerDim << std::endl;
+#endif
+
 	inputWeights.resize(inputDim);
 	for (int i = 0; i < inputDim; i++) {
 		inputWeights[i].resize(innerDim);
@@ -37,16 +41,41 @@ bool WordleDroidAnnEval::readModelBinFile(const std::string &fn)
 		if (!file) return false;
 	}
 
+#ifdef DEBUG_ANN_TEST
+	std::cerr << "First weight vector:";
+	for (int i = 0; i < 10 && i < innerDim; i++)
+		std::cerr << " " << inputWeights[0][i];
+	std::cerr << std::endl;
+#endif
+
 	innerBias.resize(innerDim);
 	file.read(reinterpret_cast<char*>(innerBias.data()), innerDim * sizeof(float));
 	if (!file) return false;
+
+#ifdef DEBUG_ANN_TEST
+	std::cerr << "Inner bias vector:";
+	for (int i = 0; i < 10 && i < innerDim; i++)
+		std::cerr << " " << innerBias[i];
+	std::cerr << std::endl;
+#endif
 
 	outputWeights.resize(innerDim);
 	file.read(reinterpret_cast<char*>(outputWeights.data()), innerDim * sizeof(float));
 	if (!file) return false;
 
+#ifdef DEBUG_ANN_TEST
+	std::cerr << "Output weights vector:";
+	for (int i = 0; i < 10 && i < innerDim; i++)
+		std::cerr << " " << outputWeights[i];
+	std::cerr << std::endl;
+#endif
+
 	file.read(reinterpret_cast<char*>(&outputBias), sizeof(float));
 	if (!file) return false;
+
+#ifdef DEBUG_ANN_TEST
+	std::cerr << "Output bias: " << outputBias << std::endl;
+#endif
 
 	int k;
 	file.read(reinterpret_cast<char*>(&k), sizeof(int));
@@ -78,7 +107,7 @@ bool WordleDroidAnnEval::readModelBinFile(const std::string &fn)
 	okay = true;
 
 	float testOut = evalModel(testInput);
-	assert(fabsf(testOut - testScaledOut) < 0.1);
+	assert(fabsf(testOut - testScaledOut) < 0.01);
 #ifdef DEBUG_ANN_TEST
 	assert(!"DEBUG_ANN_TEST is defined but evalModel() returns correct test value!");
 #endif
