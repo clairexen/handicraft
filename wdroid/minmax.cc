@@ -698,7 +698,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 			std::vector<std::vector<int>> queuesByDepth;
 			queuesByDepth.resize(statesByDepth.size());
 			// exclude very deep and very shallow states from resampling
-			for (int i : {0, 1, stateList[0].depth, stateList[0].depth+1})
+			for (int i : {0, 1, stateList[0].depth-1, stateList[0].depth, stateList[0].depth+1})
 				if (queuesByDepth[i].empty())
 					std::swap(queuesByDepth[i], statesByDepth[i]);
 
@@ -706,7 +706,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 			for (auto &item : statesByDepth)
 				maxBucketSize = std::max(maxBucketSize, int(item.size()));
 
-			pr(std::format("{} states in largest per-depth resampling bucket.\n", maxBucketSize));
+			pr(std::format("Got {} states in largest resampling bucket.\n", maxBucketSize));
 
 			std::vector<int> perDepthOutCnt, perDepthRepCnt;
 			perDepthOutCnt.resize(wordsList.size());
@@ -745,10 +745,15 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 			for (int k = 0; k < wordsList.size(); k++) {
 				if (!perDepthOutCnt[k])
 					continue;
-				pr(std::format("Number of written states with depth {:2}: {:8}", k, perDepthOutCnt[k]));
+				pr(std::format("Number of written states with depth {:2}: {:8}",
+						k, perDepthOutCnt[k]));
 				if (perDepthRepCnt[k] > 1)
-					pr(std::format("  ({}x{} + {})", perDepthRepCnt[k]-1, statesByDepth[k-1].size(),
-							perDepthOutCnt[k] - (perDepthRepCnt[k]-1) * statesByDepth[k-1].size()));
+					pr(std::format("  ({:3}x {:7} + {:7})", perDepthRepCnt[k]-1,
+							statesByDepth[k-1].size(), perDepthOutCnt[k] -
+							(perDepthRepCnt[k]-1) * statesByDepth[k-1].size()));
+				else if (k-1 < queuesByDepth.size() && !queuesByDepth[k-1].empty())
+					pr(std::format("      / {:7}", perDepthOutCnt[k] +
+							queuesByDepth[k-1].size()));
 				prNl();
 			}
 

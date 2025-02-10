@@ -139,6 +139,27 @@ for cycle in range(cycles):
     print(f"Test Accuracy: {100 * correct02 / total:.2f}% {100 * correct05 / total:.2f}% " +
           f"({100 * correct08 / total:.2f}% {100 * correct12 / total:.2f}% {100 * correct15 / total:.2f}%)")
 
+if True:
+    example_input = torch.zeros(1, sz[0])
+    traced_model = torch.jit.trace(model, example_input)
+    traced_model.save("ptmodel.pt")
+
+if True:
+    with open("ptmodel.h", "w") as fh:
+        with open("ptmodel.cc", "w") as fcc:
+            fh.write("#ifndef PTMODEL_H\n")
+            fh.write("#define PTMODEL_H\n")
+            fh.write(f"#define WordleDroidANN_Dim0 {sz[0]}\n")
+            fh.write(f"#define WordleDroidANN_Dim1 {sz[1]}\n")
+            fcc.write("#include \"ptmodel.h\"\n")
+            for name, param in model.named_parameters():
+                w = param.detach().numpy().flatten()
+                fh.write(f"extern const float WordleDroidANN_{name.replace('.', '_')}[{len(w)}]; // {name}\n")
+                fcc.write(f"const float WordleDroidANN_{name.replace('.', '_')}[{len(w)}] = {{")
+                fcc.write(", ".join(map(str, w)))
+                fcc.write("};\n")
+            fh.write(f"#endif\n")
+
 print()
 print("Evaluating...")
 
@@ -167,4 +188,3 @@ for depth in sorted(deltas.keys()):
     Min, Max, Avg, Std = np.min(v), np.max(v), np.mean(v), np.std(v)
     print(f"Results for depth {depth:2d} (N = {len(v):3d}): " +
           f"{Min=:+.2f} {Max=:+.2f} {Avg=:+.2f} ({Std=:+.2f})")
-

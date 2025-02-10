@@ -3,5 +3,6 @@
 /wdroid_o3
 /words.cc
 /ptdata[0-7].txt
+/ptmodel.*
 *.o
 *.d
