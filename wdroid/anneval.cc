@@ -17,7 +17,7 @@
 
 #include "anneval.hh"
 
-#define DEBUG_ANN_TEST
+#undef DEBUG_ANN_TEST
 
 bool WordleDroidAnnEval::readModelBinFile(const std::string &fn)
 {
@@ -43,9 +43,9 @@ bool WordleDroidAnnEval::readModelBinFile(const std::string &fn)
 
 #ifdef DEBUG_ANN_TEST
 	std::cerr << "First weight vector:";
-	for (int i = 0; i < 10 && i < innerDim; i++)
+	for (int i = 0; i < 5 && i < innerDim; i++)
 		std::cerr << " " << inputWeights[0][i];
-	std::cerr << std::endl;
+	std::cerr << " ..." << std::endl;
 #endif
 
 	innerBias.resize(innerDim);
@@ -54,9 +54,9 @@ bool WordleDroidAnnEval::readModelBinFile(const std::string &fn)
 
 #ifdef DEBUG_ANN_TEST
 	std::cerr << "Inner bias vector:";
-	for (int i = 0; i < 10 && i < innerDim; i++)
+	for (int i = 0; i < 5 && i < innerDim; i++)
 		std::cerr << " " << innerBias[i];
-	std::cerr << std::endl;
+	std::cerr << " ..." << std::endl;
 #endif
 
 	outputWeights.resize(innerDim);
@@ -65,9 +65,9 @@ bool WordleDroidAnnEval::readModelBinFile(const std::string &fn)
 
 #ifdef DEBUG_ANN_TEST
 	std::cerr << "Output weights vector:";
-	for (int i = 0; i < 10 && i < innerDim; i++)
+	for (int i = 0; i < 5 && i < innerDim; i++)
 		std::cerr << " " << outputWeights[i];
-	std::cerr << std::endl;
+	std::cerr << " ..." << std::endl;
 #endif
 
 	file.read(reinterpret_cast<char*>(&outputBias), sizeof(float));
@@ -130,13 +130,15 @@ float WordleDroidAnnEval::evalModel(const std::vector<int> &enabledInputs) const
 
 #ifdef DEBUG_ANN_TEST
 	std::cerr << "Comparing innerValues and ReLU outputs:\n";
-	for (int i = 0; i < innerDim; i++) {
+	for (int i = 0, k = 0; i < innerDim && k < 10; i++) {
 		float reLuVal = innerValues[i] > 0 ? innerValues[i] : 0;
-		if (fabsf(innerValues[i] - testInner[i]) < 0.01 &&
+		if (i > 3 && fabsf(innerValues[i] - testInner[i]) < 0.01 &&
 				fabsf(reLuVal - testReLU[i]) < 0.01)
 			continue;
 		std::cerr << i << ": " << innerValues[i] << " " << testInner[i]
 				<< ", " << reLuVal << " " << testReLU[i] << std::endl;
+		if (k++ == 9)
+			std::cerr << "..." << std::endl;
 	}
 #endif
 
@@ -145,14 +147,14 @@ float WordleDroidAnnEval::evalModel(const std::vector<int> &enabledInputs) const
 			outputValue += outputWeights[i] * innerValues[i];
 
 #ifdef DEBUG_ANN_TEST
-	std::cerr << "Comparing unscaled output scalar: " << outputValue
+	std::cerr << "Comparing unscaled output value: " << outputValue
 			<< " " << testUnscaledOut << std::endl;
 #endif
 
 	outputValue = outputValue * (8.0 - 1.0) + 1.0;
 
 #ifdef DEBUG_ANN_TEST
-	std::cerr << "Comparing scaled output scalar: " << outputValue
+	std::cerr << "Comparing scaled output value: " << outputValue
 			<< " " << testScaledOut << std::endl;
 #endif
 

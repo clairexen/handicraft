@@ -580,6 +580,122 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		return wordsList.size()+2;
 	}
 
+	void doWrDatFile(const std::string &filename)
+	{
+		int fileIndex = 0;
+		std::string currentFileName;
+		std::ofstream f;
+
+		auto openNextFile = [&]() -> bool {
+			std::string s;
+			for (char c : filename)
+				if (c == '%')
+					s += std::format("{}", fileIndex);
+				else
+					s += c;
+			pr(std::format("Writing data file '{}'.\n", s));
+			currentFileName = s;
+			fileIndex++;
+			if (f.is_open())
+				f.close();
+			f.open(currentFileName);
+			if (f.is_open())
+				return true;
+			pr(std::format("Error: Unable to open file '{}' for writing.\n", currentFileName));
+			return false;
+		};
+
+		size_t nonTermOrTrapStateCnt = nonTerminalStates.size() + trapStates.size();
+		pr(std::format("Collecting state data from {} states...\n", nonTermOrTrapStateCnt));
+
+		int addedStatesCnt = 0;
+		std::vector<std::vector<int>> statesByDepth;
+		statesByDepth.resize(stateList[0].depth+2);
+		auto addStateToStatesByDepth = [&](int idx) {
+			const auto &state = stateList[idx];
+			if (state.depth < 1)
+				return;
+			if (annModel && fabsf(annModel.evalModel(state.words) - state.depth) < 1.2)
+				return;
+			if (state.depth-1 < statesByDepth.size())
+				statesByDepth[state.depth-1].push_back(idx);
+			else
+				statesByDepth.back().push_back(idx);
+			addedStatesCnt++;
+		};
+		for (int idx : nonTerminalStates)
+			addStateToStatesByDepth(idx);
+		for (int idx : trapStates)
+			addStateToStatesByDepth(idx);
+
+		pr(std::format("Queued {} ({:.2}%) of those states for export.\n",
+				addedStatesCnt, (100.0 * addedStatesCnt) / nonTermOrTrapStateCnt));
+
+		std::vector<std::vector<int>> queuesByDepth;
+		queuesByDepth.resize(statesByDepth.size());
+		// exclude very deep and very shallow states from resampling
+		for (int i : {0, 1, stateList[0].depth-1, stateList[0].depth, stateList[0].depth+1})
+			if (queuesByDepth[i].empty())
+				std::swap(queuesByDepth[i], statesByDepth[i]);
+
+		int maxBucketSize = 0;
+		for (auto &item : statesByDepth)
+			maxBucketSize = std::max(maxBucketSize, int(item.size()));
+
+		pr(std::format("Got {} states in largest resampling bucket.\n", maxBucketSize));
+
+		std::vector<int> perDepthOutCnt, perDepthRepCnt;
+		perDepthOutCnt.resize(wordsList.size());
+		perDepthRepCnt.resize(wordsList.size());
+
+		if (!openNextFile())
+			return;
+
+		size_t fileSize = 0;
+		for (int i = 0; i < maxBucketSize; i++) {
+			if (maxDatSize <= fileSize) {
+				if (currentFileName == filename)
+					break;
+				if (0 < maxDatFiles && maxDatFiles <= fileIndex)
+					break;
+				if (!openNextFile())
+					return;
+				fileSize = 0;
+			}
+			for (int j = 0; j < int(queuesByDepth.size()); j++) {
+				if (queuesByDepth[j].empty()) {
+					if (statesByDepth[j].empty())
+						continue;
+					queuesByDepth[j] = statesByDepth[j];
+					perDepthRepCnt[j+1]++;
+				}
+				int k = rng(queuesByDepth[j].size());
+				int idx = queuesByDepth[j][k];
+				queuesByDepth[j][k] = queuesByDepth[j].back();
+				queuesByDepth[j].pop_back();
+				fileSize += doWriteDatFileLine(f, idx);
+				perDepthOutCnt[stateList[idx].depth]++;
+			}
+		}
+
+		for (int k = 0; k < wordsList.size(); k++) {
+			if (!perDepthOutCnt[k])
+				continue;
+			pr(std::format("Number of written states with depth {:2}: {:8}",
+					k, perDepthOutCnt[k]));
+			if (perDepthRepCnt[k] > 1)
+				pr(std::format("  ({:3}x {:7} + {:7})", perDepthRepCnt[k]-1,
+						statesByDepth[k-1].size(), perDepthOutCnt[k] -
+						(perDepthRepCnt[k]-1) * statesByDepth[k-1].size()));
+			else if (k-1 < queuesByDepth.size() && !queuesByDepth[k-1].empty()) {
+				size_t sum = perDepthOutCnt[k] + queuesByDepth[k-1].size();
+				float percent = (100.0 * perDepthOutCnt[k]) / sum;
+				pr(std::format("     / {:8}  = {:6.2}%", sum, percent));
+			}
+			prNl();
+		}
+	}
+
 	const char *vGetShortName() const override { return "minmax"; }
 
 	bool vExecuteCommand(const char *p, const char *arg,
@@ -673,123 +789,9 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 			return true;
 		}
 
-		if (p == "+wrDatFile"s)
-		{
-			int fileIndex = 0;
-			std::string currentFileName;
-			std::string argStr = arg ? arg : maxDatFiles > 1 ?
-					"wdroid%.out" : "wdroid.out";
-			std::ofstream f;
-
-			auto openNextFile = [&]() -> bool {
-				std::string s;
-				for (char c : argStr)
-					if (c == '%')
-						s += std::format("{}", fileIndex);
-					else
-						s += c;
-				pr(std::format("Writing data file '{}'.\n", s));
-				currentFileName = s;
-				fileIndex++;
-				if (f.is_open())
-					f.close();
-				f.open(currentFileName);
-				if (f.is_open())
-					return true;
-				pr(std::format("Error: Unable to open file '{}' for writing.\n", currentFileName));
-				return false;
-			};
-
-			size_t nonTermOrTrapStateCnt = nonTerminalStates.size() + trapStates.size();
-			pr(std::format("Collecting state data from {} states...\n", nonTermOrTrapStateCnt));
-
-			int addedStatesCnt = 0;
-			std::vector<std::vector<int>> statesByDepth;
-			statesByDepth.resize(stateList[0].depth+2);
-			auto addStateToStatesByDepth = [&](int idx) {
-				const auto &state = stateList[idx];
-				if (state.depth < 1)
-					return;
-				if (annModel && fabsf(annModel.evalModel(state.words) - state.depth) < 1.2)
-					return;
-				if (state.depth-1 < statesByDepth.size())
-					statesByDepth[state.depth-1].push_back(idx);
-				else
-					statesByDepth.back().push_back(idx);
-				addedStatesCnt++;
-			};
-			for (int idx : nonTerminalStates)
-				addStateToStatesByDepth(idx);
-			for (int idx : trapStates)
-				addStateToStatesByDepth(idx);
-
-			pr(std::format("Queued {} ({:.2}%) of those states for export.\n",
-					addedStatesCnt, (100.0 * addedStatesCnt) / nonTermOrTrapStateCnt));
-
-			std::vector<std::vector<int>> queuesByDepth;
-			queuesByDepth.resize(statesByDepth.size());
-			// exclude very deep and very shallow states from resampling
-			for (int i : {0, 1, stateList[0].depth-1, stateList[0].depth, stateList[0].depth+1})
-				if (queuesByDepth[i].empty())
-					std::swap(queuesByDepth[i], statesByDepth[i]);
-
-			int maxBucketSize = 0;
-			for (auto &item : statesByDepth)
-				maxBucketSize = std::max(maxBucketSize, int(item.size()));
-
-			pr(std::format("Got {} states in largest resampling bucket.\n", maxBucketSize));
-
-			std::vector<int> perDepthOutCnt, perDepthRepCnt;
-			perDepthOutCnt.resize(wordsList.size());
-			perDepthRepCnt.resize(wordsList.size());
-
-			if (!openNextFile())
-				return true;
-
-			size_t fileSize = 0;
-			for (int i = 0; i < maxBucketSize; i++) {
-				if (maxDatSize <= fileSize) {
-					if (currentFileName == argStr)
-						break;
-					if (0 < maxDatFiles && maxDatFiles <= fileIndex)
-						break;
-					if (!openNextFile())
-						return true;
-					fileSize = 0;
-				}
-				for (int j = 0; j < int(queuesByDepth.size()); j++) {
-					if (queuesByDepth[j].empty()) {
-						if (statesByDepth[j].empty())
-							continue;
-						queuesByDepth[j] = statesByDepth[j];
-						perDepthRepCnt[j+1]++;
-					}
-					int k = rng(queuesByDepth[j].size());
-					int idx = queuesByDepth[j][k];
-					queuesByDepth[j][k] = queuesByDepth[j].back();
-					queuesByDepth[j].pop_back();
-					fileSize += doWriteDatFileLine(f, idx);
-					perDepthOutCnt[stateList[idx].depth]++;
-				}
-			}
-
-			for (int k = 0; k < wordsList.size(); k++) {
-				if (!perDepthOutCnt[k])
-					continue;
-				pr(std::format("Number of written states with depth {:2}: {:8}",
-						k, perDepthOutCnt[k]));
-				if (perDepthRepCnt[k] > 1)
-					pr(std::format("  ({:3}x {:7} + {:7})", perDepthRepCnt[k]-1,
-							statesByDepth[k-1].size(), perDepthOutCnt[k] -
-							(perDepthRepCnt[k]-1) * statesByDepth[k-1].size()));
-				else if (k-1 < queuesByDepth.size() && !queuesByDepth[k-1].empty()) {
-					size_t sum = perDepthOutCnt[k] + queuesByDepth[k-1].size();
-					float percent = (100.0 * perDepthOutCnt[k]) / sum;
-					pr(std::format("     / {:8}  = {:6.2}%", sum, percent));
-				}
-				prNl();
-			}
-
+		if (p == "+wrDatFile"s) {
+			doWrDatFile(arg ? arg : maxDatFiles > 1 ?
+					"wdroid%.out" : "wdroid.out");
 			return true;
 		}
 

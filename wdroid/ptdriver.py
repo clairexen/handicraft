@@ -6,13 +6,14 @@ import numpy as np
 import struct
 
 # Configuration
-dataFile = "ptdata%.txt"
+srcPthFile = None # "ptmodel.pth"
+srcDatFiles = [f"ptdata{i}.txt" for i in range(8)]
+evalDatFile = "ptdata0.txt"
 outPrefix = "ptmodel"
 y_min, y_max = 1, 8
 hiddenLayers = (200,)
 batch_size = 1024
-epochs = 4
-cycles = 8
+num_epochs = 4
 learning_rate = 0.001
 train_ratio = 0.8  # 80% training, 20% testing
 
@@ -43,42 +44,46 @@ def load_dataset(file_path):
     print(f"Samples in dataset: {len(labels)}")
     return torch.tensor(data), torch.tensor(labels)
 
-X, y = load_dataset(dataFile.replace("%", "0"))
-if y_min is None: y_min = torch.min(y).item()
-if y_max is None: y_max = torch.max(y).item()
-y = (y - y_min) / (y_max - y_min)
-dataset = TensorDataset(X, y)
-num_samples = X.shape[0]
+if srcPthFile is not None:
+    print(f"Restoring '{srcPthFile}'...")
+    srcState = torch.load(srcPthFile)
+    hiddenLayers = (srcState["model.0.weight"].shape[0],)
+    input_size = srcState["model.0.weight"].shape[1]
+    sz = (input_size,) + hiddenLayers + (1,)
+    X, y = None, None
 
-# ANN Dimensions
-input_size = X.shape[1]
-sz = (input_size,) + hiddenLayers + (1,)
+else:
+    srcState = None
+    X, y = load_dataset(srcDatFiles[0])
+    y = (y - y_min) / (y_max - y_min)
+    dataset = TensorDataset(X, y)
+    num_samples, input_size = X.shape
+    sz = (input_size,) + hiddenLayers + (1,)
+
+    train_size = int(train_ratio * num_samples)
+    test_size = num_samples - train_size
+    train_dataset, test_dataset = random_split(dataset, [train_size, test_size])
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+
 print(f"ANN model geometry: {sz}")
-
-# Split dataset into training and test sets
-train_size = int(train_ratio * num_samples)
-test_size = num_samples - train_size
-train_dataset, test_dataset = random_split(dataset, [train_size, test_size])
-
-# Data loaders
-train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
-
 device_type = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Setting up on device \"{device_type}\"...")
 
 # Initialize model, loss function, and optimizer
 device = torch.device(device_type)
 model = ConfigurableANN(sz).to(device)
+if srcState is not None:
+    model.load_state_dict(srcState)
 criterion = nn.MSELoss()  # Mean Squared Error for regression
 optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
-for cycle in range(cycles):
+for cycle, srcFle in enumerate(srcDatFiles):
     print()
-    print(f"== CYCLE {cycle+1}/{cycles} ==")
+    print(f"== CYCLE {cycle+1} ==")
 
-    if cycle > 0:
-        X, y = load_dataset(dataFile.replace("%", f"{cycle}"))
+    if cycle > 0 or srcState is not None:
+        X, y = load_dataset(srcFile)
         y = (y - y_min) / (y_max - y_min)
         dataset = TensorDataset(X, y)
         num_samples = X.shape[0]
@@ -90,7 +95,7 @@ for cycle in range(cycles):
 
     print("Training...")
 
-    for epoch in range(epochs):
+    for epoch in range(num_epochs):
         model.train()
         total_loss = 0
         for batch_X, batch_y in train_loader:
@@ -102,7 +107,7 @@ for cycle in range(cycles):
             optimizer.step()
             total_loss += loss.item()
 
-        print(f"Epoch {epoch+1}/{epochs}, Loss: {total_loss/len(train_loader):.6f}")
+        print(f"Epoch {epoch+1}/{num_epochs}, Loss: {total_loss/len(train_loader):.6f}")
 
     print("Testing...")
 
@@ -145,13 +150,13 @@ def run_model(indata):
     with torch.no_grad():
         return model(indata).item() * (y_max - y_min) + y_min
 
-if True:
+if X is not None:
     example_input = [v.item() for v in X[4,:]]
 else:
-    example_input = [0.0 for v in X[4,:]]
+    example_input = [0.0] * input_size
     example_input[0] = 1.0
 
-example_inidx = [i+1 for i, v in enumerate([1,0,0,1,1]) if v > 0.5]
+example_inidx = [i+1 for i, v in enumerate(example_input) if v > 0.5]
 
 example_layers = list()
 hookHandles = list()
@@ -168,9 +173,7 @@ for handle in hookHandles:
     handle.remove()
 
 if True:
-    trace_input = torch.tensor(example_input).reshape(1,-1)
-    traced_model = torch.jit.trace(model, trace_input)
-    traced_model.save(f"{outPrefix}.pt")
+    torch.save(model.state_dict(), f"{outPrefix}.pth")
 
 if False:
     with open(f"{outPrefix}.hh", "w") as fh:
@@ -213,25 +216,26 @@ if True:
             data.numpy().flatten().astype(np.float32).tofile(f)
         f.write(struct.pack('f', example_output))
 
-print("Evaluating...")
+if evalDatFile is not None:
+    print("Evaluating...")
 
-deltas = dict()
-with open(dataFile.replace("%", "0"), "r") as file:
-    for line in file:
-        line = line.strip()
-        fIn = [int(c) for c in line[:-1]]
-        fOut = ord(line[-1])-ord('A')
-        out = run_model(fIn)
-        if fOut not in deltas:
-            deltas[fOut] = list()
-        if len(deltas[fOut]) == 200:
-            break
-        deltas[fOut].append(out - fOut)
+    deltas = dict()
+    with open(evalDatFile, "r") as file:
+        for line in file:
+            line = line.strip()
+            fIn = [int(c) for c in line[:-1]]
+            fOut = ord(line[-1])-ord('A')
+            out = run_model(fIn)
+            if fOut not in deltas:
+                deltas[fOut] = list()
+            if len(deltas[fOut]) == 200:
+                break
+            deltas[fOut].append(out - fOut)
 
-for depth in sorted(deltas.keys()):
-    if len(deltas[depth]) < 10:
-        continue
-    v = np.array(deltas[depth])
-    Min, Max, Avg, Std = np.min(v), np.max(v), np.mean(v), np.std(v)
-    print(f"Results for depth {depth:2d} (N = {len(v):3d}): " +
-          f"{Min=:+.2f} {Max=:+.2f} {Avg=:+.2f} ({Std=:+.2f})")
+    for depth in sorted(deltas.keys()):
+        if len(deltas[depth]) < 10:
+            continue
+        v = np.array(deltas[depth])
+        Min, Max, Avg, Std = np.min(v), np.max(v), np.mean(v), np.std(v)
+        print(f"Results for depth {depth:2d} (N = {len(v):3d}): " +
+              f"{Min=:+.2f} {Max=:+.2f} {Avg=:+.2f} ({Std=:+.2f})")
