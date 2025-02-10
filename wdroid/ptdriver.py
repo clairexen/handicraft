@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset, random_split
 import numpy as np
+import struct
 
 # Configuration
 dataFile = "ptdata%.txt"
@@ -15,7 +16,6 @@ learning_rate = 0.001
 train_ratio = 0.8  # 80% training, 20% testing
 
 
-# Define the neural network with a configurable number of hidden layers
 class ConfigurableANN(nn.Module):
     def __init__(self, sz):
         super(ConfigurableANN, self).__init__()
@@ -32,15 +32,14 @@ class ConfigurableANN(nn.Module):
     def forward(self, x):
         return self.model(x)
 
-print("Loading...")
-
-# Function to load dataset from file
 def load_dataset(file_path):
+    print(f"Loading '{file_path}'...")
     bindata = np.fromfile(file_path, dtype=np.byte)
     recordSize = np.where(bindata[:100000] == ord('\n'))[0][0]
     bindata = bindata.reshape(-1, recordSize+1)
     data = np.array(bindata[:,:recordSize-1] - ord('0'), dtype=np.float32)
     labels = np.array(bindata[:,recordSize-1] - ord('A'), dtype=np.float32).reshape(-1, 1)
+    print(f"Samples in dataset: {len(labels)}")
     return torch.tensor(data), torch.tensor(labels)
 
 X, y = load_dataset(dataFile.replace("%", "0"))
@@ -49,7 +48,6 @@ if y_max is None: y_max = torch.max(y).item()
 y = (y - y_min) / (y_max - y_min)
 dataset = TensorDataset(X, y)
 num_samples = X.shape[0]
-print(f"Dataset size: {num_samples} samples")
 
 # ANN Dimensions
 input_size = X.shape[1]
@@ -79,7 +77,6 @@ for cycle in range(cycles):
     print(f"== CYCLE {cycle+1}/{cycles} ==")
 
     if cycle > 0:
-        print("Loading...")
         X, y = load_dataset(dataFile.replace("%", f"{cycle}"))
         y = (y - y_min) / (y_max - y_min)
         dataset = TensorDataset(X, y)
@@ -139,19 +136,22 @@ for cycle in range(cycles):
     print(f"Test Accuracy: {100 * correct02 / total:.2f}% {100 * correct05 / total:.2f}% " +
           f"({100 * correct08 / total:.2f}% {100 * correct12 / total:.2f}% {100 * correct15 / total:.2f}%)")
 
+print()
+print("Exporting...")
+
 if True:
     example_input = torch.zeros(1, sz[0])
     traced_model = torch.jit.trace(model, example_input)
     traced_model.save("ptmodel.pt")
 
-if True:
-    with open("ptmodel.h", "w") as fh:
+if False:
+    with open("ptmodel.hh", "w") as fh:
         with open("ptmodel.cc", "w") as fcc:
-            fh.write("#ifndef PTMODEL_H\n")
-            fh.write("#define PTMODEL_H\n")
+            fh.write("#ifndef PTMODEL_HH\n")
+            fh.write("#define PTMODEL_HH\n")
             fh.write(f"#define WordleDroidANN_Dim0 {sz[0]}\n")
             fh.write(f"#define WordleDroidANN_Dim1 {sz[1]}\n")
-            fcc.write("#include \"ptmodel.h\"\n")
+            fcc.write("#include \"ptmodel.hh\"\n")
             for name, param in model.named_parameters():
                 w = param.detach().numpy().flatten()
                 fh.write(f"extern const float WordleDroidANN_{name.replace('.', '_')}[{len(w)}]; // {name}\n")
@@ -160,7 +160,18 @@ if True:
                 fcc.write("};\n")
             fh.write(f"#endif\n")
 
-print()
+if True:
+    with open("ptmodel.bin", "wb") as f:
+        f.write(struct.pack('i', sz[0]))
+        f.write(struct.pack('i', sz[1]))
+        keys = "model.0.weight model.0.bias model.2.weight model.2.bias".split()
+        sizes = (sz[0]*sz[1], sz[1], sz[1], 1)
+        for key, s in zip(keys, sizes):
+            data = model.get_parameter(key).detach().numpy()
+            data = data.transpose().flatten().astype(np.float32)
+            assert len(data) == s
+            data.tofile(f)
+
 print("Evaluating...")
 
 def run_model(indata):

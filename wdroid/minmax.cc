@@ -16,6 +16,7 @@
 // OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 #include "wdroid.hh"
+#include "anneval.hh"
 
 template <int WordLen>
 struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
@@ -77,6 +78,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 	int maxDatFiles = 0;
 	size_t maxDatSize = 0;
 	std::vector<int> depthSizeLimits;
+	WordleDroidAnnEval annModel;
 
 	std::vector<int> trapStates;
 	std::vector<int> terminalStates;
@@ -107,6 +109,13 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		stateIndex[msk] = idx;
 		stateList.emplace_back(idx, msk, wl);
 		auto *state = &stateList[idx];
+
+		if (wl.size() <= 2) {
+			state->depth = wl.size();
+			trapStates.push_back(idx);
+			terminalStates.push_back(idx);
+			return idx;
+		}
 
 		// detecting "simple traps"
 		if (int nwords = state->words.size(); idx != 0 && nwords <= 26) {
@@ -617,6 +626,12 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 			return true;
 		}
 
+		if (p == "+useAnnModel"s) {
+			if (!annModel.readModelBinFile(arg))
+				pr("Reading ANN model bin fle failed!\n");
+			return true;
+		}
+
 		if (p == "+setup"s) {
 			doSetup();
 			pr("Best first gusses based on first-level child state sizes:\n");
@@ -676,24 +691,30 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 				return false;
 			};
 
-			pr(std::format("Collecting state data for {} states...\n",
+			pr(std::format("Collecting state data from {} states...\n",
 					nonTerminalStates.size() + trapStates.size()));
 
+			int addedStatesCnt = 0;
 			std::vector<std::vector<int>> statesByDepth;
 			statesByDepth.resize(stateList[0].depth+2);
 			auto addStateToStatesByDepth = [&](int idx) {
 				const auto &state = stateList[idx];
 				if (state.depth < 1)
 					return;
+				if (annModel && fabsf(annModel.evalModel(state.words) - state.depth) < 1.0)
+					return;
 				if (state.depth-1 < statesByDepth.size())
 					statesByDepth[state.depth-1].push_back(idx);
 				else
 					statesByDepth.back().push_back(idx);
+				addedStatesCnt++;
 			};
 			for (int idx : nonTerminalStates)
 				addStateToStatesByDepth(idx);
 			for (int idx : trapStates)
 				addStateToStatesByDepth(idx);
+
+			pr(std::format("Queued {} of those states for export.\n", addedStatesCnt));
 
 			std::vector<std::vector<int>> queuesByDepth;
 			queuesByDepth.resize(statesByDepth.size());

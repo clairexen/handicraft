@@ -43,6 +43,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
+#include <cmath>
 
 extern const char WordleDroidWords3[];
 extern const char WordleDroidWords4[];

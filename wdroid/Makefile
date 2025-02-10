@@ -2,7 +2,7 @@ CXX = clang++
 CXXFLAGS = -O2 -ggdb -std=c++26 -Wall -MD
 CXXFLAGS_O3 = -O3 -DNDEBUG $(filter-out -O2,$(CXXFLAGS))
 
-OBJS = wdroid.o minmax.o words.o
+OBJS = wdroid.o minmax.o words.o anneval.o
 
 wdroid: $(OBJS)
 	$(CXX) $(CXXFLAGS) -o $@ $^
@@ -30,8 +30,8 @@ run-hella: wdroid
 	./wdroid aloes/PEDAL learn/PEDAL -l -minmax-q +go \
 		-reset +word=hella -minmax-q +first=hella +go -exit
 
-run-ptdemo: ptdata0.txt .venv/stamp-torch
-	.venv/bin/python3 ptdemo.py
+ptmodel.bin: ptdata0.txt .venv/stamp-torch
+	.venv/bin/python3 ptdriver.py
 
 words.cc: words.py wordledb.json .venv/stamp-nltk
 	# apt install wamerican-english-large
@@ -43,6 +43,10 @@ wordledb.json: wordledb.py .venv/stamp-requests
 ptdata0.txt: wdroid
 	time ./wdroid -5 -minmax +limit=350 +go \
 		+maxDatMBs=500 +maxDatFiles=8 +wrDatFile=ptdata%.txt -exit
+
+ptdata8.txt: wdroid
+	time ./wdroid -5 -minmax +limit=350 +go \
+		+maxDatMBs=500 +useAnnModel=ptmodel.bin +wrDatFile=ptdata8.txt -exit
 
 .venv/stamp:
 	python3 -m venv .venv
@@ -57,11 +61,12 @@ ptdata0.txt: wdroid
 	touch .venv/stamp-requests
 
 .venv/stamp-torch: .venv/stamp
-	.venv/bin/pip3 install torch torchvision torchaudio # --index-url https://download.pytorch.org/whl/cpu
+	.venv/bin/pip3 install torch torchvision torchaudio
 	touch .venv/stamp-torch
 
 clean:
 	rm -f wdroid wdroid_o3 *.o *.d
-	rm -f words.cc ptdata[0-7].txt
+	rm -f ptdata[0-8].txt ptmodel.*
+	rm -f words.cc
 
 -include *.d
