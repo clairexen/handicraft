@@ -560,6 +560,7 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 	WordMsk refinedWordsMsk;
 	std::unordered_map<Tok, int, TokHash> wordsIndex;
 	std::vector<WordData> wordsList;
+	std::vector<int> allWords;
 
 	auto words() const { return wordsList | std::views::drop(1); }
 
@@ -569,6 +570,15 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 		if (it == wordsIndex.end())
 			return 0;
 		return it->second;
+	}
+
+	int countWords(const std::vector<int> &oldWords, const WordMsk &msk)
+	{
+		int cnt = 0;
+		for (int idx : oldWords)
+			if (msk.match(wordsList[idx].msk))
+				cnt++;
+		return cnt;
 	}
 
 	std::vector<int>
@@ -631,6 +641,7 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 		wordsList.emplace_back(idx, w, w);
 		if (idx == 0)
 			return true;
+		allWords.push_back(idx);
 		wordsIndex[w] = idx;
 		refinedWordsMsk.add(w);
 		return true;
@@ -674,6 +685,7 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 				continue;
 			int idx = wordsList.size();
 			wordsList.emplace_back(idx, wdata.tok, wdata.msk);
+			allWords.push_back(idx);
 			wordsIndex[wdata.tok] = idx;
 			refinedMsk.add(wdata.msk);
 		}
@@ -717,6 +729,30 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 
 	virtual int vGetCurNumWords() const final override { return int(wordsList.size()-1); };
 
+	void doShowGuessDetails(const char *p)
+	{
+		Tok guess(p);
+		if (!findWord(guess)) {
+			pr("Warning: ");
+			prTok(guess);
+			pr(" is not in current word list\n");
+		}
+
+		std::map<Tok, int> hints;
+		for (auto w : words()) {
+			Tok hint(p, w.tok.data());
+			hints[hint] = countWords(allWords, hint);
+		}
+
+		for (auto it : hints) {
+			pr("  ");
+			prTok012(it.first);
+			pr(" ");
+			prTok(it.first);
+			pr(std::format(" -> {} words\n", it.second));
+		}
+	}
+
 	bool tryExecuteHintCommand(const char *p, const char *arg,
 			AbstractWordleDroidEngine* &nextEngine)
 	{
@@ -729,6 +765,16 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 			const char *p4 = p3 + WordLen;
 
 			if (scanWord(p1) != WordLen) return false;
+			if (*p2 == 0) {
+				if (ne != nullptr) {
+					ne->prPrompt();
+					ne->pr(p1);
+					ne->prNl();
+				}
+				(ne ? ne : this)->doShowGuessDetails(p);
+				nextEngine = ne;
+				return true;
+			}
 			if (*p2 != '/') return false;
 			if (scanTag(p3) != WordLen) return false;
 			if (*p4 != 0 && *p4 != '/') return false;
@@ -755,7 +801,7 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 				pr(' '), prWordMsk(ne->hintsWordsMsk);
 			prNl();
 
-			if (*p4 == 0)
+			if (*p4 == 0 && '0' <= *p3 && *p3 <= '2')
 				break;
 			p = p3;
 		}
