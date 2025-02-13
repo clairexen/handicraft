@@ -738,18 +738,18 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 			pr(" is not in current word list\n");
 		}
 
-		std::map<Tok, int> hints;
+		std::set<std::pair<int, Tok>> hints;
 		for (auto w : words()) {
 			Tok hint(p, w.tok.data());
-			hints[hint] = countWords(allWords, hint);
+			hints.emplace(-countWords(allWords, hint), hint);
 		}
 
 		for (auto it : hints) {
 			pr("  ");
-			prTok012(it.first);
+			prTok012(it.second);
 			pr(" ");
-			prTok(it.first);
-			pr(std::format(" -> {} words\n", it.second));
+			prTok(it.second);
+			pr(std::format(" -> {} words\n", -it.first));
 		}
 	}
 
