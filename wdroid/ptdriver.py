@@ -4,10 +4,12 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset, random_split
 import numpy as np
 import struct
+import sys
+import getopt
 
-# Configuration
-srcPthFile = None # "ptmodel.pth"
-srcDatFiles = [f"ptdata{i}.txt" for i in range(8)]
+# Default Configuration
+srcPthFile = None
+srcDatFiles = ["ptdata0.txt"]
 evalDatFile = "ptdata0.txt"
 outPrefix = "ptmodel"
 y_min, y_max = 1, 8
@@ -17,6 +19,25 @@ num_epochs = 4
 learning_rate = 0.001
 train_ratio = 0.8  # 80% training, 20% testing
 
+try:
+    opts, args = getopt.getopt(sys.argv[1:], "hi:o:t:", ["help", "inpth=", "outprefix=", "testdata="])
+except getopt.GetoptError as err:
+    print(err)
+    print("Usage: ptdriver.py --help")
+    sys.exit(2)
+
+for opt, arg in opts:
+    if opt in ("-h", "--help"):
+        print("Usage: script.py -i <input-pth> -o <output-prefix> [training-data-files...]")
+        sys.exit()
+    elif opt in ("-i", "--inpth"):
+        srcPthFile = arg
+    elif opt in ("-o", "--outprefix"):
+        outPrefix = arg
+    elif opt in ("-t", "--testdata"):
+        evalDatFile = arg
+
+srcDatFiles = args
 
 class ConfigurableANN(nn.Module):
     def __init__(self, sz):

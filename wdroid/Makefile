@@ -37,16 +37,26 @@ words.cc: words.py wordledb.json .venv/stamp-nltk
 wordledb.json: wordledb.py .venv/stamp-requests
 	.venv/bin/python3 wordledb.py
 
-ptmodel.bin: ptdata0.txt .venv/stamp-torch
-	.venv/bin/python3 ptdriver.py
+ptmodel0.bin: ptdata0.txt .venv/stamp-torch
+	.venv/bin/python3 ptdriver.py -o ptmodel0 ptdata[0-7].txt
 
 ptdata0.txt: wdroid
 	time ./wdroid -5 -minmax +limit=350 +go \
 		+maxDatMBs=500 +maxDatFiles=8 +wrDatFile=ptdata%.txt -exit
 
-ptdata8.txt: wdroid ptmodel.bin
+ptdata8.txt: wdroid ptmodel0.bin
 	time ./wdroid -5 -minmax +limit=350 +go \
-		+maxDatMBs=500 +useAnnModel=ptmodel.bin +wrDatFile=ptdata8.txt -exit
+		+maxDatMBs=500 +useAnnModel=ptmodel0.bin +wrDatFile=ptdata8.txt -exit
+
+ptmodel8.bin: ptdata8.txt .venv/stamp-torch
+	.venv/bin/python3 ptdriver.py -i ptmodel0.bin -o ptmodel8 ptdata8.txt
+
+ptdata9.txt: wdroid ptmodel8.bin
+	time ./wdroid -5 -minmax +limit=350 +go \
+		+maxDatMBs=500 +useAnnModel=ptmodel8.bin +wrDatFile=ptdata9.txt -exit
+
+ptmodel9.bin: ptdata9.txt .venv/stamp-torch
+	.venv/bin/python3 ptdriver.py -i ptmodel8.bin -o ptmodel9 ptdata9.txt
 
 .venv/stamp:
 	python3 -m venv .venv
@@ -66,7 +76,7 @@ ptdata8.txt: wdroid ptmodel.bin
 
 clean:
 	rm -f wdroid wdroid_o3 *.o *.d
-	rm -f ptdata[0-8].txt ptmodel.*
+	rm -f ptdata[0-9].txt ptmodel[089].*
 	rm -f words.cc
 
 -include *.d

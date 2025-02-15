@@ -615,8 +615,6 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 			const auto &state = stateList[idx];
 			if (state.depth < 1)
 				return;
-			if (annModel && fabsf(annModel.evalModel(state.words) - state.depth) < 1.2)
-				return;
 			if (state.depth-1 < statesByDepth.size())
 				statesByDepth[state.depth-1].push_back(idx);
 			else
@@ -628,8 +626,50 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		for (int idx : trapStates)
 			addStateToStatesByDepth(idx);
 
-		pr(std::format("Queued {} ({:.2}%) of those states for export.\n",
-				addedStatesCnt, (100.0 * addedStatesCnt) / nonTermOrTrapStateCnt));
+		if (annModel) {
+			addedStatesCnt = 0;
+			int targetSize = (maxDatSize * std::max(1, maxDatFiles)) /
+					(statesByDepth.size() * (wordsList.size()+1) * 2.5);
+			for (int k = 0; k < 3; k++) {
+				int smallStuffTotalSize = 0;
+				int numLargeStatesByDepth = 0;
+				for (auto &it : statesByDepth)
+					if (it.size() <= targetSize*3)
+						smallStuffTotalSize = it.size() * (wordsList.size()+1);
+					else
+						numLargeStatesByDepth++;
+				targetSize = (maxDatSize * std::max(1, maxDatFiles) - smallStuffTotalSize) /
+						(numLargeStatesByDepth * (wordsList.size()+1) * 2.5);
+			}
+			for (int i = 0; i < statesByDepth.size(); i++) {
+				std::vector<std::pair<float, int>> data;
+				for (int idx : statesByDepth[i])
+					data.emplace_back(fabsf(annModel.evalModel(stateList[idx].words) -
+							stateList[idx].depth), idx);
+				std::sort(data.begin(), data.end());
+				statesByDepth[i].clear();
+				for (int j = 0; j < targetSize && !data.empty(); j++) {
+					statesByDepth[i].emplace_back(data.back().second);
+					data.pop_back();
+					addedStatesCnt++;
+				}
+				for (int j = 0; j < targetSize && j < data.size(); j++) {
+					statesByDepth[i].emplace_back(data[i].second);
+					addedStatesCnt++;
+				}
+				for (int j = 0; j < targetSize && targetSize < data.size(); j++) {
+					int k = targetSize + rng(data.size() - targetSize);
+					statesByDepth[i].emplace_back(data[k].second);
+					data[k].second = data.back().second;
+					data.pop_back();
+					addedStatesCnt++;
+				}
+			}
+		}
+
+		pr(std::format("Queued {} ({:.2f}MB, {:.2f}%) of those states for export.\n",
+				addedStatesCnt, addedStatesCnt * (wordsList.size()+1.0) / 1024 / 1024,
+				(100.0 * addedStatesCnt) / nonTermOrTrapStateCnt));
 
 		std::vector<std::vector<int>> queuesByDepth;
 		queuesByDepth.resize(statesByDepth.size());
@@ -690,7 +730,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 			else if (k-1 < queuesByDepth.size() && !queuesByDepth[k-1].empty()) {
 				size_t sum = perDepthOutCnt[k] + queuesByDepth[k-1].size();
 				float percent = (100.0 * perDepthOutCnt[k]) / sum;
-				pr(std::format("     / {:8}  = {:6.2}%", sum, percent));
+				pr(std::format("     / {:8} = {:6.2}%", sum, percent));
 			}
 			prNl();
 		}
