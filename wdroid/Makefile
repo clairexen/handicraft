@@ -30,6 +30,9 @@ run-hella: wdroid
 	./wdroid aloes/PEDAL learn/PEDAL -l -minmax-q +go \
 		-reset +word=hella -minmax-q +first=hella +go -exit
 
+ipython: .venv/stamp-ipython
+	.venv/bin/ipython3
+
 words.cc: words.py wordledb.json .venv/stamp-nltk
 	# apt install wamerican-english-large
 	.venv/bin/python3 words.py
@@ -49,14 +52,17 @@ ptdata8.txt: wdroid ptmodel0.bin
 		+maxDatMBs=500 +useAnnModel=ptmodel0.bin +wrDatFile=ptdata8.txt -exit
 
 ptmodel8.bin: ptdata8.txt .venv/stamp-torch
-	.venv/bin/python3 ptdriver.py -i ptmodel0.bin -o ptmodel8 ptdata8.txt
+	.venv/bin/python3 ptdriver.py -i ptmodel0.pth -o ptmodel8 ptdata8.txt
 
 ptdata9.txt: wdroid ptmodel8.bin
 	time ./wdroid -5 -minmax +limit=350 +go \
 		+maxDatMBs=500 +useAnnModel=ptmodel8.bin +wrDatFile=ptdata9.txt -exit
 
 ptmodel9.bin: ptdata9.txt .venv/stamp-torch
-	.venv/bin/python3 ptdriver.py -i ptmodel8.bin -o ptmodel9 ptdata9.txt
+	.venv/bin/python3 ptdriver.py -i ptmodel8.pth -o ptmodel9 ptdata9.txt
+
+ptmodel.bin: ptmodel9.bin .venv/stamp-torch
+	.venv/bin/python3 ptdriver.py -i ptmodel9.pth ptdata[1-9].txt
 
 .venv/stamp:
 	python3 -m venv .venv
@@ -74,9 +80,17 @@ ptmodel9.bin: ptdata9.txt .venv/stamp-torch
 	.venv/bin/pip3 install torch torchvision torchaudio
 	touch .venv/stamp-torch
 
+.venv/stamp-ipython: .venv/stamp
+	.venv/bin/pip3 install ipython
+	touch .venv/stamp-ipython
+
 clean:
-	rm -f wdroid wdroid_o3 *.o *.d
+	rm -f words.cc wdroid_o3 *.o *.d
 	rm -f ptdata[0-9].txt ptmodel[089].*
-	rm -f words.cc
+
+purge:
+	rm -f wdroid
+	rm -f ptmodel.*
+	rm -rf .venv/
 
 -include *.d
