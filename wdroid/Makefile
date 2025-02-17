@@ -49,8 +49,8 @@ wdroid_o3: $(OBJS:.o=_o3.o)
 # Run Various Examples
 
 run: wdroid
-	./wdroid -4 -5 -6 -exit
-	./wdroid -M float/00112 magot/BOAST -l -i --K --exit
+	./wdroid -3 -4 -5 -6 -exit
+	./wdroid -5 -M -i float/00112 magot/01012 -l -i ."-K -exit"
 
 run-minmax-aloes: wdroid
 	time ./wdroid -minmax +first=aloes +go -exit
@@ -59,7 +59,7 @@ run-minmax-store: wdroid
 	time ./wdroid -minmax +first=store +go -exit
 
 run-hella: wdroid
-	./wdroid aloes/PEDAL learn/PEDAL -l -minmax-q +go \
+	./wdroid aloes/learn/12100 -l -minmax-q +go \
 		-reset +word=hella -minmax-q +first=hella +go -exit
 
 

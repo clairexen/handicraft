@@ -54,160 +54,258 @@ void AbstractWordleDroidEngine::prFlush() const {
 		std::cout << std::flush;
 }
 
-bool WordleDroidGlobalState::executeCommand(const char *p, const char *arg, bool noprompt)
+bool WordleDroidGlobalState::parseNextCommand()
 {
-	using namespace std::string_literals;
+	using namespace std::literals;
 
-	if (p == nullptr) {
+	currentCommand = {};
+	hideSubCommandPrefix = {};
+	parsedCurrentCommand.clear();
+	promptRewriteEnabled = false;
+	assert(nextEngine == nullptr);
+
+	// --------------------------
+	// Fetch next command line
+
+	if (commandStack.empty()) {
 		char buffer[1024], *p = buffer;
 		engine->prPrompt();
 		if (fgets(buffer, 1024, stdin) == nullptr) {
 			engine->pr('\r');
-			return executeCommand("-exit", nullptr, false);
+			commandStack.push_back("-exit");
+			return true;
 		}
 		if (char *cursor = strchr(buffer, '\n'); cursor != nullptr)
 			*cursor = 0;
-		if (p[0] == '-' && p[1] == '-') {
+		currentCommand = p;
+		if (currentCommand.starts_with(".."))
 			engine->prReplaceLastLine();
-			return executeCommand(p+1, nullptr, true);
-		}
-		return executeCommand(buffer, nullptr, true);
-	}
-
-	if (p[0] == '-' && p[1] == '-')
-		return executeCommand(p+1, arg, true);
-
-	if (arg == nullptr) {
-		if (const char *s = strchr(p, '='); s != nullptr) {
-			char *buffer = strdup(p);
-			char *cursor = buffer + (s - p);
-			*(cursor++) = 0;
-			bool ret = executeCommand(buffer, cursor, noprompt);
-			free(buffer);
-			return ret;
+		else
+			promptRewriteEnabled = true;
+	} else {
+		currentCommand = commandStack.back();
+		commandStack.pop_back();
+		if (!currentCommand.starts_with("..")) {
+			engine->prPrompt();
+			engine->pr(currentCommand);
+			engine->prNl();
+			promptRewriteEnabled = true;
 		}
 	}
 
-	if (!noprompt) {
-		engine->prPrompt();
-		engine->pr(p);
-		if (arg) {
-			engine->pr('=');
-			engine->pr(arg);
+	// --------------------------
+	// Split command line into commands
+
+	std::string_view arg, cmd = currentCommand;
+
+	while (cmd.starts_with('.')) {
+		hideSubCommandPrefix = ".."sv;
+		cmd = cmd.substr(1);
+	}
+
+	bool longCommand = cmd.starts_with("--") || cmd.starts_with("++");
+	cmd = cmd.substr(longCommand ? 1 : 0);
+
+	if (!longCommand)
+	{
+		std::vector<std::string_view> cmds;
+		cmds.push_back(cmd);
+
+		while (1) {
+			auto k = cmds.back().find_first_of(" \t\n\r\f\v");
+			if (k == std::string_view::npos)
+				break;
+			auto first = cmds.back().substr(0, k);
+			auto second = cmds.back().substr(k+1);
+			cmds.pop_back();
+			if (!first.empty())
+				cmds.push_back(first);
+			if (!second.empty())
+				cmds.push_back(second);
 		}
-		engine->prNl();
-	}
 
-#ifdef ENABLE_WDROID_ENGINE_3
-	if (p == "-3"s) {
-		delete engine;
-		engine = new WordleDroidEngine3(this, arg);
-		return true;
-	}
-#endif
-
-#ifdef ENABLE_WDROID_ENGINE_4
-	if (p == "-4"s) {
-		delete engine;
-		engine = new WordleDroidEngine4(this, arg);
-		return true;
-	}
-#endif
-
-#ifdef ENABLE_WDROID_ENGINE_5
-	if (p == "-5"s) {
-		delete engine;
-		engine = new WordleDroidEngine5(this, arg);
-		return true;
-	}
-#endif
-
-#ifdef ENABLE_WDROID_ENGINE_6
-	if (p == "-6"s) {
-		delete engine;
-		engine = new WordleDroidEngine6(this, arg);
-		return true;
-	}
-#endif
-
-	if (p == "-exit"s) {
-		if (showKeys)
-			engine->prShowKeyboard();
-		delete engine;
-		engine = nullptr;
-		return true;
-	}
-
-	if (p == "-K"s) {
-		showKeys = engine->boolArg(arg);
-		return true;
-	}
-
-	if (p == "-M"s) {
-		showMasks = engine->boolArg(arg);
-		return true;
-	}
-
-	if (p == "-R"s) {
-		refineMasks = engine->boolArg(arg);
-		return true;
-	}
-
-	if (engine->vGetWordLen() == 0) {
-		engine->prReplaceLastLine();
-		executeCommand("-5", nullptr);
-		return executeCommand(p, arg);
-	}
-
-	AbstractWordleDroidEngine *nextEngine = nullptr;
-	if (engine->vExecuteCommand(p, arg, nextEngine)) {
-		if (nextEngine) {
-			delete engine;
-			engine = nextEngine;
-		}
-		return true;
-	}
-	assert(nextEngine == nullptr);
-	if (engine->vExecuteBasicCommand(p, arg, nextEngine)) {
-		if (nextEngine) {
-			delete engine;
-			engine = nextEngine;
-		}
-		return true;
-	}
-	if (nextEngine) {
-		delete engine;
-		engine = nextEngine;
-		nextEngine = nullptr;
-
-		if (engine->vExecuteCommand(p, arg, nextEngine)) {
-			if (nextEngine) {
-				delete engine;
-				engine = nextEngine;
+		if (cmds.size() > 1) {
+			for (auto it = cmds.rbegin(); it != cmds.rend(); it++) {
+				std::string c(*it);
+				while (!c.starts_with(hideSubCommandPrefix))
+					c = "."s + c;
+				commandStack.push_back(c);
 			}
 			return true;
 		}
-		assert(nextEngine == nullptr);
 	}
 
-	if (arg == nullptr)
-		printf("Error executing command '%s'! Try -h for help.\n", p);
-	else
-		printf("Error executing command '%s' with arg '%s'! Try -h for help.\n", p, arg);
+	// --------------------------
+	// Split commands into command name, optional arg,
+	// and optional pargs with names and optional args
+
+	parsedCurrentCommand.emplace_back(cmd, ""sv);
+
+	while (parsedCurrentCommand.back().second.empty())
+	{
+		cmd = parsedCurrentCommand.back().first;
+
+		int argBegin = 0;
+		while (argBegin < cmd.size()) {
+			char ch = cmd[argBegin++];
+			if (argBegin == 1 && ch == '+') continue;
+			if ('a' <= ch && ch <= 'z') continue;
+			if ('A' <= ch && ch <= 'Z') continue;
+			if ('0' <= ch && ch <= '9') continue;
+			if (ch == '_' || ch == '-') continue;
+			argBegin--;
+			break;
+		}
+
+		if (argBegin == cmd.size())
+			break;
+
+		parsedCurrentCommand.back().first = cmd.substr(0, argBegin);
+		parsedCurrentCommand.back().second = cmd.substr(argBegin);
+
+		if (longCommand || parsedCurrentCommand.back().second.empty())
+			break;
+
+		auto plusBegin = parsedCurrentCommand.back().second.find('+');
+		if (plusBegin == std::string_view::npos)
+			break;
+
+		cmd = parsedCurrentCommand.back().second.substr(plusBegin);
+		arg = parsedCurrentCommand.back().second.substr(0, plusBegin);
+		parsedCurrentCommand.back().second = arg;
+		parsedCurrentCommand.emplace_back(cmd, ""sv);
+	}
 
 	return false;
 }
 
-int WordleDroidGlobalState::main(int argc, const char **argv)
+void WordleDroidGlobalState::executeNextCommand()
 {
-	for (int i=1; engine != nullptr && i<argc; i++) {
-		if (!executeCommand(argv[i], nullptr))
-			return 1;
+	using namespace std::literals;
+
+	if (parseNextCommand())
+		return;
+
+	auto [cmd, arg] = parsedCurrentCommand.front();
+	// auto pargs = parsedCurrentCommand | std::views::drop(1);
+
+	// --------------------------
+	// Simple global commands
+
+#ifdef ENABLE_WDROID_ENGINE_3
+	if (cmd == "-3"sv) {
+		delete engine;
+		engine = new WordleDroidEngine3(this, arg);
+		return;
+	}
+#endif
+
+#ifdef ENABLE_WDROID_ENGINE_4
+	if (cmd == "-4"sv) {
+		delete engine;
+		engine = new WordleDroidEngine4(this, arg);
+		return;
+	}
+#endif
+
+#ifdef ENABLE_WDROID_ENGINE_5
+	if (cmd == "-5"sv) {
+		delete engine;
+		engine = new WordleDroidEngine5(this, arg);
+		return;
+	}
+#endif
+
+#ifdef ENABLE_WDROID_ENGINE_6
+	if (cmd == "-6"sv) {
+		delete engine;
+		engine = new WordleDroidEngine6(this, arg);
+		return;
+	}
+#endif
+
+	if (cmd == "-exit"sv) {
+		if (showKeys)
+			engine->prShowKeyboard();
+		delete engine;
+		engine = nullptr;
+		return;
 	}
 
-	while (engine != nullptr)
-		executeCommand(nullptr, nullptr);
+	if (cmd == "-K"sv) {
+		showKeys = engine->boolArg(arg);
+		return;
+	}
 
+	if (cmd == "-M"sv) {
+		showMasks = engine->boolArg(arg);
+		return;
+	}
+
+	if (cmd == "-R"sv) {
+		refineMasks = engine->boolArg(arg);
+		return;
+	}
+
+	if (cmd == "-system"sv && !arg.empty()) {
+		std::string systemCommandBuf(arg.substr(1));
+		system(systemCommandBuf.c_str());
+		return;
+	}
+
+	if (engine->vGetWordLen() == 0) {
+		if (promptRewriteEnabled)
+			engine->prReplaceLastLine();
+		commandStack.push_back(currentCommand);
+		commandStack.push_back("-5");
+		return;
+	}
+
+	// --------------------------
+	// Defer to engine->vExecuteCommand()
+	// and engine->vExecuteBasicCommand()
+
+	int newEngineCount = 0;
+	bool gotNewEngine = false;
+
+	auto handleNextEngine = [&](bool rc) -> bool {
+		if (nextEngine == nullptr) {
+			gotNewEngine = false;
+			return rc;
+		}
+		delete engine;
+		engine = nextEngine;
+		nextEngine = nullptr;
+		gotNewEngine = true;
+		newEngineCount++;
+		return rc;
+	};
+
+got_new_engine:
+	if (newEngineCount >= 10) {
+		engine->pr(std::format("Error executing command '{}': "
+				"Stuck in engine reload loop.\n", currentCommand));
+		return;
+	}
+
+	if (handleNextEngine(engine->vExecuteNextCommand()))
+		return;
+	if (gotNewEngine)
+		goto got_new_engine;
+	if (handleNextEngine(engine->vExecuteBasicCommand()))
+		return;
+	if (gotNewEngine)
+		goto got_new_engine;
+
+	engine->pr(std::format("Error executing command '{}'! Try -h for help.\n", currentCommand));
+}
+
+int WordleDroidGlobalState::main(int argc, const char **argv)
+{
+	for (int i = argc-1; i > 0; i--)
+		commandStack.push_back(argv[i]);
+	while (engine)
+		executeNextCommand();
 	return 0;
 }
 

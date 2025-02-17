@@ -30,20 +30,21 @@
 #include <vector>
 #include <ranges>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
-#include <bit>
-#include <format>
 #include <algorithm>
 #include <functional>
 #include <iostream>
 #include <fstream>
+#include <format>
 #include <cstdint>
 #include <cassert>
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
 #include <cmath>
+#include <bit>
 
 extern const char WordleDroidWords3[];
 extern const char WordleDroidWords4[];
@@ -73,10 +74,8 @@ struct AbstractWordleDroidEngine
 	virtual int vGetWordLen() const { return 0; }
 	virtual int vGetCurNumWords() const { return 0; }
 	virtual const char *vGetShortName() const { return "wdroid"; }
-	virtual bool vExecuteCommand(const char *p, const char *arg,
-			AbstractWordleDroidEngine* &nextEngine) { return false; }
-	virtual bool vExecuteBasicCommand(const char *p, const char *arg,
-			AbstractWordleDroidEngine* &nextEngine) { return false; }
+	virtual bool vExecuteNextCommand() { return false; }
+	virtual bool vExecuteBasicCommand() { return false; }
 
 	void pr(char c) const;
 	void pr(const std::string &s) const;
@@ -179,19 +178,21 @@ struct AbstractWordleDroidEngine
 		return n;
 	}
 
-	bool boolArg(const char *arg) {
-		using namespace std::string_literals;
-		if (arg == nullptr) return true;
-		if (*arg == 0) return false;
-		if (*arg == '0') return false;
-		if (arg == "off"s) return false;
+	bool boolArg(std::string_view arg) {
+		using namespace std::literals;
+		if (arg.empty()) return true;
+		if (arg == "="sv) return false;
+		if (arg == "=0"sv) return false;
+		if (arg == "=off"s) return false;
 		return true;
 	}
 
-	int intArg(const char *arg, int onVal=1, int offVal=0) {
-		if (arg == nullptr) return onVal;
-		if (*arg == 0) return offVal;
-		return atoi(arg);
+	int intArg(std::string_view arg, int onVal=1, int offVal=0) {
+		using namespace std::literals;
+		if (arg.empty()) return onVal;
+		if (arg == "="sv) return offVal;
+		std::string argbuf(arg);
+		return atoi(argbuf.c_str());
 	}
 
 	static constexpr inline uint64_t xorshift64(uint64_t val, int rounds=1)
@@ -242,8 +243,16 @@ struct WordleDroidGlobalState
 		delete engine;
 	}
 
+	std::vector<std::string> commandStack;
+	std::string currentCommand;
+	std::vector<std::pair<std::string_view, std::string_view>> parsedCurrentCommand;
+	AbstractWordleDroidEngine *nextEngine = nullptr;
+	std::string_view hideSubCommandPrefix;
+	bool promptRewriteEnabled = false;
+
+	bool parseNextCommand();
+	void executeNextCommand();
 	int main(int argc, const char **argv);
-	bool executeCommand(const char *p, const char *arg, bool noprompt=false);
 };
 
 
@@ -275,6 +284,12 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 		Tok() {
 			for (int i=0; i<WordLen; i++)
 				(*this)[i] = 0;
+		}
+
+		Tok(std::string_view str) {
+			assert(str.size() == WordLen);
+			for (int i=0; i<WordLen; i++)
+				(*this)[i] = str[i];
 		}
 
 		Tok(const char *p) {
@@ -520,8 +535,8 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 		for (int i = 1; i <= 26; i++)
 			if (((msk >> i) & 1) != 0)
 				popcnt++;
-		if (popcnt == 26) {
-			pr('_');
+		if (popcnt == 0 || popcnt == 26) {
+			pr(popcnt ? '@' : '_');
 			return;
 		}
 		if (popcnt <= 13) {
@@ -655,15 +670,15 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 		}
 	}
 
-	void loadDictFile(const char *p) {
-		if (p == nullptr) {
+	void loadDictFile(std::string_view arg) {
+		if (arg.empty()) {
 			loadDict(getWordleDroidWords<WordLen>());
 			return;
 		}
 		abort();
 	}
 
-	WordleDroidEngine(WordleDroidGlobalState *st, const char *arg) : AbstractWordleDroidEngine(st)
+	WordleDroidEngine(WordleDroidGlobalState *st, std::string_view arg) : AbstractWordleDroidEngine(st)
 	{
 		addWord(Tok()); // zero word
 		hintsWordsMsk = WordMsk::fullMsk();
@@ -753,9 +768,14 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 		}
 	}
 
-	bool tryExecuteHintCommand(const char *p, const char *arg,
-			AbstractWordleDroidEngine* &nextEngine)
+	bool tryExecuteHintCommand()
 	{
+		using namespace std::literals;
+
+		// auto [cmd, arg] = globalState->parsedCurrentCommand.front();
+		// auto pargs = globalState->parsedCurrentCommand | std::views::drop(1);
+		const char *p = globalState->currentCommand.data();
+
 		WordleDroidEngine *ne = nullptr;
 
 		while (1) {
@@ -772,7 +792,7 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 					ne->prNl();
 				}
 				(ne ? ne : this)->doShowGuessDetails(p);
-				nextEngine = ne;
+				globalState->nextEngine = ne;
 				return true;
 			}
 			if (*p2 != '/') return false;
@@ -806,33 +826,37 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 			p = p3;
 		}
 
-		nextEngine = ne;
+		globalState->nextEngine = ne;
 		return true;
 	}
 
-	bool vExecuteCommand(const char *p, const char *arg,
-			AbstractWordleDroidEngine* &nextEngine) override
+	bool vExecuteNextCommand() override
 	{
-		using namespace std::string_literals;
+		using namespace std::literals;
 
-		if (p == "-reset"s) {
+		auto [cmd, arg] = globalState->parsedCurrentCommand.front();
+		// auto pargs = globalState->parsedCurrentCommand | std::views::drop(1);
+
+		if (cmd == "-reset"s) {
 			return true;
 		}
 
-		if (p == "+word"s && arg && strlen(arg) == WordLen) {
-			addWord(arg);
+		if (cmd == "+word"sv && arg.size() == WordLen+1) {
+			addWord(arg.substr(1));
 			return true;
 		}
 
 		return false;
 	}
 
-	bool vExecuteBasicCommand(const char *p, const char *arg,
-			AbstractWordleDroidEngine *&nextEngine) override final
+	bool vExecuteBasicCommand() override final
 	{
-		using namespace std::string_literals;
+		using namespace std::literals;
 
-		if (p == "-l"s) {
+		auto [cmd, arg] = globalState->parsedCurrentCommand.front();
+		// auto pargs = globalState->parsedCurrentCommand | std::views::drop(1);
+
+		if (cmd == "-l"sv) {
 			int cnt = 0;
 			for (auto &wdata : words()) {
 				pr(cnt % 16 ? " " : cnt ? "\n  " : "  ");
@@ -845,7 +869,7 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 			return true;
 		}
 
-		if (p == "-i"s) {
+		if (cmd == "-i"sv) {
 			pr("hintsWordsMsk   ");
 			prWordMsk(hintsWordsMsk);
 			prNl();
@@ -855,7 +879,7 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 			return true;
 		}
 
-		if (p == "-m"s) {
+		if (cmd == "-m"sv) {
 			WordMsk msk[2] = {hintsWordsMsk, refinedWordsMsk};
 			int32_t letters = msk[0].cleanup() | msk[1].cleanup();
 			assert(msk[1] == refinedWordsMsk);
@@ -881,11 +905,12 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 			return true;
 		}
 
-		if (tryExecuteHintCommand(p, arg, nextEngine))
+		if (tryExecuteHintCommand())
 			return true;
 
-		if (auto it = cmdTable().find(p); it != cmdTable().end())
-			nextEngine = (*it->second)(this);
+		std::string cmdBuf(cmd);
+		if (auto it = cmdTable().find(cmdBuf); it != cmdTable().end())
+			globalState->nextEngine = (*it->second)(this);
 		return false;
 	}
 };

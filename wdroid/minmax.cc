@@ -31,6 +31,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 	using Base::prNl;
 	using Base::prTok;
 	using Base::prFlush;
+	using Base::globalState;
 	using Base::refinedWordsMsk;
 	using Base::White;
 	using Base::wordsList;
@@ -738,58 +739,67 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 
 	const char *vGetShortName() const override { return "minmax"; }
 
-	bool vExecuteCommand(const char *p, const char *arg,
-			AbstractWordleDroidEngine *&nextEngine) override
+	bool vExecuteNextCommand() override
 	{
-		using namespace std::string_literals;
+		using namespace std::literals;
 
-		if (p == "-minmax"s) {
+		auto [cmd, arg] = globalState->parsedCurrentCommand.front();
+		// auto pargs = globalState->parsedCurrentCommand | std::views::drop(1);
+
+		if (cmd == "-minmax"sv) {
 			return true;
 		}
 
-		if (p == "-minmax-q"s) {
+		if (cmd == "-minmax-q"sv) {
 			verbose = false;
 			return true;
 		}
 
-		if (p == "+first"s || p == "+firstGuess"s) {
-			firstGuessIdx = findWord(arg);
+		if ((cmd == "+first"sv || cmd == "+firstGuess"sv) && !arg.empty()) {
+			firstGuessIdx = findWord(arg.substr(1));
 			return true;
 		}
 
-		if (p == "+minStateSize"s) {
+		if (cmd == "+minStateSize"sv) {
 			minStateSize = intArg(arg);
 			return true;
 		}
 
-		if (p == "+maxNumStates"s) {
+		if (cmd == "+maxNumStates"sv) {
 			maxNumStates = intArg(arg);
 			return true;
 		}
 
-		if (p == "+maxSearchDepth"s) {
+		if (cmd == "+maxSearchDepth"sv) {
 			maxSearchDepth = intArg(arg);
 			return true;
 		}
 
-		if (p == "+maxTraceLength"s) {
+		if (cmd == "+maxTraceLength"sv) {
 			maxTraceLength = intArg(arg);
 			return true;
 		}
 
-		if (p == "+limit"s) {
+		if (cmd == "+limit"sv) {
 			depthSizeLimits.push_back(intArg(arg));
 			return true;
 		}
 
-		if (p == "+useAnnModel"s) {
-			if (arg == nullptr)
-				arg = "ptmodel.bin";
-			if (*arg == 0) {
+		if (cmd == "+useAnnModel"sv) {
+			if (arg.empty())
+				switch (WordLen)
+				{
+				case 3: arg = "=ptmodel3.bin"sv; break;
+				case 4: arg = "=ptmodel4.bin"sv; break;
+				case 5: arg = "=ptmodel5.bin"sv; break;
+				case 6: arg = "=ptmodel6.bin"sv; break;
+				default: /* nothing */
+				}
+			if (arg.empty() || arg == "="sv) {
 				annModel.clear();
 				return true;
 			}
-			if (!annModel.readModelBinFile(arg)) {
+			if (!annModel.readModelBinFile(std::string(arg.substr(1)))) {
 				pr("Reading ANN model bin fle failed!\n");
 				return true;
 			}
@@ -797,14 +807,14 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 			return true;
 		}
 
-		if (p == "+setup"s) {
+		if (cmd == "+setup"sv) {
 			doSetup();
 			pr("Best first gusses based on first-level child state sizes:\n");
 			doPrintBestGuessesByChildSize(0, 50);
 			return true;
 		}
 
-		if (p == "+go"s) {
+		if (cmd == "+go"sv) {
 			doSetup();
 			while (doBatch()) { }
 			if (verbose)
@@ -814,24 +824,24 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 			return true;
 		}
 
-		if (p == "+maxDatSize"s) {
+		if (cmd == "+maxDatSize"sv) {
 			maxDatSize = intArg(arg);
 			return true;
 		}
 
-		if (p == "+maxDatMBs"s) {
+		if (cmd == "+maxDatMBs"sv) {
 			maxDatSize = size_t(1024*1024)*intArg(arg);
 			return true;
 		}
 
-		if (p == "+maxDatFiles"s) {
+		if (cmd == "+maxDatFiles"sv) {
 			maxDatFiles = intArg(arg);
 			return true;
 		}
 
-		if (p == "+wrDatFile"s) {
-			doWrDatFile(arg ? arg : maxDatFiles > 1 ?
-					"wdroid%.out" : "wdroid.out");
+		if (cmd == "+wrDatFile"sv) {
+			doWrDatFile(!arg.empty() ? std::string(arg) :
+					maxDatFiles ?  "wdroid%.out"s : "wdroid.out"s);
 			return true;
 		}
 
