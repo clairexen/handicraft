@@ -191,7 +191,7 @@ struct AbstractWordleDroidEngine
 		using namespace std::literals;
 		if (arg.empty()) return onVal;
 		if (arg == "="sv) return offVal;
-		std::string argbuf(arg);
+		std::string argbuf(arg.substr(1));
 		return atoi(argbuf.c_str());
 	}
 

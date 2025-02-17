@@ -8,9 +8,9 @@ import sys
 import getopt
 
 # Default Configuration
-srcPthFile = None
+srcPthPrefix = None
 srcDatFiles = ["ptdata0.txt"]
-evalDatFile = "ptdata0.txt"
+evalDatFile = None
 outPrefix = "ptmodel"
 y_min, y_max = 1, 8
 hiddenLayers = (200,)
@@ -20,7 +20,8 @@ learning_rate = 0.001
 train_ratio = 0.8  # 80% training, 20% testing
 
 try:
-    opts, args = getopt.getopt(sys.argv[1:], "hi:o:t:", ["help", "inpth=", "outprefix=", "testdata="])
+    opts, args = getopt.getopt(sys.argv[1:], "hi:o:t:e:",
+            ["help", "inprefix=", "outprefix=", "testdata=", "epochs="])
 except getopt.GetoptError as err:
     print(err)
     print("Usage: ptdriver.py --help")
@@ -30,14 +31,20 @@ for opt, arg in opts:
     if opt in ("-h", "--help"):
         print("Usage: script.py -i <input-pth> -o <output-prefix> [training-data-files...]")
         sys.exit()
-    elif opt in ("-i", "--inpth"):
-        srcPthFile = arg
+    elif opt in ("-i", "--inprefix"):
+        srcPthPrefix = arg
     elif opt in ("-o", "--outprefix"):
         outPrefix = arg
     elif opt in ("-t", "--testdata"):
         evalDatFile = arg
+    elif opt in ("-e", "--epochs"):
+        num_epochs = int(arg)
 
-srcDatFiles = args
+if len(args):
+    srcDatFiles = args
+
+if evalDatFile is None and len(srcDatFiles):
+    evalDatFile = srcDatFiles[0]
 
 class ConfigurableANN(nn.Module):
     def __init__(self, sz):
@@ -65,9 +72,9 @@ def load_dataset(file_path):
     print(f"Samples in dataset: {len(labels)}")
     return torch.tensor(data), torch.tensor(labels)
 
-if srcPthFile is not None:
-    print(f"Restoring '{srcPthFile}'...")
-    srcState = torch.load(srcPthFile)
+if srcPthPrefix is not None:
+    print(f"Restoring '{srcPthPrefix}.pth'...")
+    srcState = torch.load(f"{srcPthPrefix}.pth")
     hiddenLayers = (srcState["model.0.weight"].shape[0],)
     input_size = srcState["model.0.weight"].shape[1]
     sz = (input_size,) + hiddenLayers + (1,)

@@ -2,8 +2,8 @@
 /wdroid
 /wdroid_o3
 /words.cc
-/ptdata[0-9].txt
-/ptmodel[089].*
-/ptmodel.*
+/ptdata[3456][A-Z][0-9].txt
+/ptmodel[3456][A-Z].*
+/ptmodel[3456].*
 *.o
 *.d

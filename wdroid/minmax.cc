@@ -697,7 +697,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 			if (maxDatSize <= fileSize) {
 				if (currentFileName == filename)
 					break;
-				if (0 < maxDatFiles && maxDatFiles <= fileIndex)
+				if (0 < maxDatFiles && fileIndex >= maxDatFiles)
 					break;
 				if (!openNextFile())
 					return;
@@ -840,7 +840,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		}
 
 		if (cmd == "+wrDatFile"sv) {
-			doWrDatFile(!arg.empty() ? std::string(arg) :
+			doWrDatFile(!arg.empty() ? std::string(arg.substr(1)) :
 					maxDatFiles ?  "wdroid%.out"s : "wdroid.out"s);
 			return true;
 		}

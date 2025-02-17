@@ -21,8 +21,20 @@
 
 MKANN = 0
 MKWORDS = 0
+MKSTATIC = 0
+
 CXX = clang++
 CXXFLAGS = -O2 -ggdb -std=c++26 -Wall -MD
+LD = $(CXX)
+LDFLAGS =
+LDLIBS =
+
+ifeq ($(MKSTATIC),1)
+LDFLAGS += -static
+endif
+
+CXXFLAGS += $(shell pkg-config --cflags libedit)
+LDLIBS += $(shell pkg-config --libs libedit)
 
 
 #####################################################
@@ -33,13 +45,13 @@ CXXFLAGS_O3 = -O3 -DNDEBUG $(filter-out -O2,$(CXXFLAGS))
 OBJS = wdroid.o minmax.o words.o anneval.o
 
 wdroid: $(OBJS)
-	$(CXX) $(CXXFLAGS) -o $@ $^
+	$(LD) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
 %.o: %.cc
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
 
 wdroid_o3: $(OBJS:.o=_o3.o)
-	$(CXX) $(CXXFLAGS_O3) -o $@ $^
+	$(LD) $(LDFLAGS) -o $@ $^ $(LDLIBS)
 
 %_o3.o: %.cc
 	$(CXX) $(CXXFLAGS_O3) -c -o $@ $<
@@ -83,29 +95,18 @@ endif
 # ANN Training (with PyTorch)
 
 ifeq ($(MKANN),1)
-ptmodel0.bin: ptdata0.txt .venv/stamp-torch
-	.venv/bin/python3 ptdriver.py -o ptmodel0 ptdata[0-7].txt
+ptmodel5.bin: ptmodel5C.bin .venv/stamp-torch
+	.venv/bin/python3 ptdriver.py -o ptmodel5 -i ptmodel5C -e 2 ptdata5[A-Z][0-9].txt
 
-ptdata0.txt: wdroid
+ptmodel5C.bin: wdroid .venv/stamp-torch
 	time ./wdroid -5 -minmax +limit=350 +go \
-		+maxDatMBs=500 +maxDatFiles=8 +wrDatFile=ptdata%.txt -exit
-
-ptdata8.txt: wdroid ptmodel0.bin
-	time ./wdroid -5 -minmax +limit=350 +go \
-		+maxDatMBs=500 +useAnnModel=ptmodel0.bin +wrDatFile=ptdata8.txt -exit
-
-ptmodel8.bin: ptdata8.txt .venv/stamp-torch
-	.venv/bin/python3 ptdriver.py -i ptmodel0.pth -o ptmodel8 ptdata8.txt
-
-ptdata9.txt: wdroid ptmodel8.bin
-	time ./wdroid -5 -minmax +limit=350 +go \
-		+maxDatMBs=500 +useAnnModel=ptmodel8.bin +wrDatFile=ptdata9.txt -exit
-
-ptmodel9.bin: ptdata9.txt .venv/stamp-torch
-	.venv/bin/python3 ptdriver.py -i ptmodel8.pth -o ptmodel9 ptdata9.txt
-
-ptmodel.bin: ptmodel9.bin .venv/stamp-torch
-	.venv/bin/python3 ptdriver.py -i ptmodel9.pth ptdata[1-9].txt
+		+maxDatMBs=500 +maxDatFiles=4 +wrDatFile=ptdata5A%.txt \
+		--system=".venv/bin/python3 ptdriver.py -o ptmodel5A ptdata5A[0-9].txt" \
+		+useAnnModel=ptmodel5A.bin +wrDatFile=ptdata5B%.txt \
+		--system=".venv/bin/python3 ptdriver.py -o ptmodel5B -i ptmodel5A ptdata5B[0-9].txt" \
+		+useAnnModel=ptmodel5B.bin +wrDatFile=ptdata5C%.txt \
+		--system=".venv/bin/python3 ptdriver.py -o ptmodel5C -i ptmodel5B ptdata5C[0-9].txt" \
+		-exit
 endif
 
 
@@ -141,12 +142,15 @@ ipython: .venv/stamp-ipython
 
 clean:
 	rm -f wdroid_o3 *.o *.d
-	rm -f ptdata[0-9].txt ptmodel[089].*
+	rm -f ptdata[3456][A-Z][0-9].txt
+	rm -f ptmodel[3456][A-Z].*
 
-purge:
+purge: clean
 	rm -f wdroid
 	rm -f words.cc
-	rm -f ptmodel.*
+	rm -f ptmodel[3456].*
+
+mrproper: purge
 	rm -rf .venv/
 
 -include *.d
