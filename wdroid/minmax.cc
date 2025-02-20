@@ -182,7 +182,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		for (int i = 0; i < state->words.size(); i++)
 		{
 			int ki = state->words[i];
-			if (firstState && !firstGuessIndices.empty() && firstGuessIndices.count(ki))
+			if (firstState && !firstGuessIndices.empty() && !firstGuessIndices.count(ki))
 				continue;
 			if (!state->children[i].empty())
 				continue;
