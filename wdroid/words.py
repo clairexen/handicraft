@@ -42,6 +42,10 @@ with open("wordledb.json") as f:
     all_wordle_words = {record["solution"]
                         for record in json.load(f).values()}
 
+with open("twl3456.txt") as f:
+    twl_words = {line.strip().lower()
+                 for line in f if not line.startswith("#")}
+
 selected_words = set(words.words('en-basic'))
 
 if True:
@@ -55,6 +59,9 @@ if False:
     selected_words |= all_en_words
     selected_words |= all_wordnet_lemmas
     selected_words |= all_dict_words
+
+if True:
+    selected_words &= twl_words
 
 if True:
     missing_wordle_words = sorted(all_wordle_words.difference(selected_words))
