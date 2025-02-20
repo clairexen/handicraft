@@ -99,7 +99,7 @@ ptmodel5.bin: ptmodel5C.bin .venv/stamp-torch
 	.venv/bin/python3 ptdriver.py -o ptmodel5 -i ptmodel5C -e 2 ptdata5[A-Z][0-9].txt
 
 ptmodel5C.bin: wdroid .venv/stamp-torch
-	time ./wdroid -5 -minmax +limit=350 +go \
+	time ./wdroid -5 -minmax +frnag +f=carol +f=dumpy +f=topee +f=penis +setup +go \
 		+maxDatMBs=500 +maxDatFiles=4 +wrDatFile=ptdata5A%.txt \
 		--system=".venv/bin/python3 ptdriver.py -o ptmodel5A ptdata5A[0-9].txt" \
 		+useAnnModel=ptmodel5A.bin +wrDatFile=ptdata5B%.txt \

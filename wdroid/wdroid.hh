@@ -164,6 +164,14 @@ struct AbstractWordleDroidEngine
 		prFlush();
 	}
 
+	template<typename... Args>
+	bool svIn(std::string_view sv, Args... args) const {
+		// Credit: https://articles.emptycrate.com/2016/05/14/folds_in_cpp11_ish.html
+		bool result = false;
+		(void) std::initializer_list<int>{ (result = result || (sv == args), 0)... };
+		return result;
+	}
+
 	int scanWord(const char *p) const {
 		int n = 0;
 		while ('a' <= *p && *p <= 'z') n++, p++;
@@ -326,6 +334,14 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 
 		char val(int idx) const { return (*this)[idx] & 31; }
 		char col(int idx) const { return (*this)[idx] & 96; }
+
+		int col() const {
+			int rv = col(0);
+			for (int i=1; i<WordLen; i++)
+				if (rv != col(i))
+					return -1;
+			return rv;
+		}
 
 		void setCol(char newCol, int idx) {
 			(*this)[idx] &= 31;
@@ -856,7 +872,7 @@ struct WordleDroidEngine : public AbstractWordleDroidEngine
 		auto [cmd, arg] = globalState->parsedCurrentCommand.front();
 		// auto pargs = globalState->parsedCurrentCommand | std::views::drop(1);
 
-		if (cmd == "-l"sv) {
+		if (svIn(cmd, "-l"sv, "-list"sv)) {
 			int cnt = 0;
 			for (auto &wdata : words()) {
 				pr(cnt % 16 ? " " : cnt ? "\n  " : "  ");

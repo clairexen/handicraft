@@ -34,11 +34,14 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 	using Base::globalState;
 	using Base::refinedWordsMsk;
 	using Base::White;
+	using Base::Gray;
 	using Base::wordsList;
 	using Base::findWord;
 	using Base::refineWords;
 	using Base::refineMask;
+	using Base::boolArg;
 	using Base::intArg;
+	using Base::svIn;
 	using Base::rng;
 
 	struct StateData
@@ -75,11 +78,14 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 	int minStateSize = 0;
 	int maxSearchDepth = 0;
 	int maxTraceLength = 0;
-	int firstGuessIdx = 0;
 	int maxDatFiles = 0;
 	size_t maxDatSize = 0;
 	std::vector<int> depthSizeLimits;
 	WordleDroidAnnEval annModel;
+
+	std::set<int> firstGuessIndices;
+	bool firstResponseAllGrayMode = false;
+	bool firstResponseNotAllGrayMode = false;
 
 	std::vector<int> trapStates;
 	std::vector<int> terminalStates;
@@ -88,6 +94,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 	std::unordered_map<WordMsk, int, WordMskHash> stateIndex;
 	std::priority_queue<std::pair<int, int>> stateQueue;
 	std::vector<std::vector<WordMsk>> hintMskTab;
+	std::vector<std::vector<bool>> hintAllGrayTab;
 
 	int largestSimpleTrapState[WordLen] = { };
 	int largestComplexTrapState[WordLen] = { };
@@ -156,7 +163,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		return idx;
 	}
 
-	void expandState(int idx, int guessWordIdx = 0)
+	void expandState(int idx, bool firstState=false)
 	{
 		auto *state = &stateList[idx];
 		std::vector<int> trapGuesses;
@@ -175,7 +182,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		for (int i = 0; i < state->words.size(); i++)
 		{
 			int ki = state->words[i];
-			if (guessWordIdx && ki != guessWordIdx)
+			if (firstState && !firstGuessIndices.empty() && firstGuessIndices.count(ki))
 				continue;
 			if (!state->children[i].empty())
 				continue;
@@ -186,6 +193,9 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 			for (int j = 0; j < state->words.size(); j++) {
 				int kj = state->words[j];
 				if (ki == kj && state->words.size() > 1)
+					continue;
+				if (firstState && (firstResponseAllGrayMode || firstResponseNotAllGrayMode) &&
+						hintAllGrayTab[ki][kj] == firstResponseNotAllGrayMode)
 					continue;
 				WordMsk msk = state->msk;
 				msk.intersect(hintMskTab[ki][kj]);
@@ -304,21 +314,25 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 
 		vPr("Creating hint-mask table...\n");
 		hintMskTab.resize(wordsList.size());
+		hintAllGrayTab.resize(wordsList.size());
 		std::unordered_map<WordMsk, WordMsk, WordMskHash> refineCache;
 		std::unordered_set<WordMsk, WordMskHash> uniqueRefinedMasks;
 		for (int i = 1; i < wordsList.size(); i++) {
 			const char *p = wordsList[i].tok.begin();
 			hintMskTab[i].resize(wordsList.size());
+			hintAllGrayTab[i].resize(wordsList.size());
 			for (int j = 1; j < wordsList.size(); j++) {
 				const char *q = wordsList[j].tok.begin();
+				Tok hint(p, q);
 				WordMsk msk = refinedWordsMsk;
-				msk.intersect(Tok(p, q));
+				msk.intersect(hint);
 				if (auto it = refineCache.find(msk); it != refineCache.end())
 					msk = it->second;
 				else
 					msk = refineCache[msk] = refineMask(msk);
 				uniqueRefinedMasks.insert(msk);
 				hintMskTab[i][j] = msk;
+				hintAllGrayTab[i][j] = hint.col() == Gray;
 			}
 		}
 		vPr(std::format("  unique refined masks:    {:10}\n", uniqueRefinedMasks.size()));
@@ -339,7 +353,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		int prevNumStates = stateList.size();
 		assert(stateQueue.top().second == 0);
 		stateQueue.pop();
-		expandState(0, firstGuessIdx);
+		expandState(0, true);
 
 		if (!stateQueue.empty())
 			vPr(std::format("  size of largest queued state: {:5}\n", stateQueue.top().first));
@@ -755,8 +769,21 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 			return true;
 		}
 
-		if ((cmd == "+first"sv || cmd == "+firstGuess"sv) && !arg.empty()) {
-			firstGuessIdx = findWord(arg.substr(1));
+		if (svIn(cmd, "+f"sv, "+first"sv, "+firstGuess"sv) && !arg.empty()) {
+			if (int idx = findWord(arg.substr(1)))
+				firstGuessIndices.insert(idx);
+			return true;
+		}
+
+		if (svIn(cmd, "+frag"sv, "+firstResponseAllGray"sv)) {
+			firstResponseAllGrayMode = boolArg(arg);
+			firstResponseNotAllGrayMode = false;
+			return true;
+		}
+
+		if (svIn(cmd, "+frnag"sv, "+firstResponseNotAllGray"sv)) {
+			firstResponseAllGrayMode = false;
+			firstResponseNotAllGrayMode = boolArg(arg);
 			return true;
 		}
 
@@ -810,7 +837,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		if (cmd == "+setup"sv) {
 			doSetup();
 			pr("Best first gusses based on first-level child state sizes:\n");
-			doPrintBestGuessesByChildSize(0, 50);
+			doPrintBestGuessesByChildSize(0, 100);
 			return true;
 		}
 
