@@ -62,9 +62,11 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		// (set to depth>=0 when state is queued or marked terminal)
 		int depth = -1;
 
-		int perfectDepth = 0;
-		std::vector<int> perfectParents;
-		std::vector<int> perfectChildren;
+		float annDepth = 0;
+
+		// int optimalDepth = 0;
+		// std::vector<int> optimalParents;
+		// std::vector<int> optimalChildren;
 	};
 
 	bool verbose = true;
@@ -149,7 +151,10 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		not_a_simple_trap:;
 		}
 
-		if (wl.size() < std::max(minStateSize, 2)) {
+		if (annModel)
+			state->annDepth = std::max(annModel.evalModel(state->words), 0.5f);
+
+		if (wl.size() < minStateSize) {
 			state->depth = 0;
 			terminalStates.push_back(idx);
 			return idx;
@@ -167,6 +172,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 	{
 		auto *state = &stateList[idx];
 		std::vector<int> trapGuesses;
+		std::vector<float> maxGuessAnnDepth;
 
 		if (maxSearchDepth > 0 && state->pathDepth > maxSearchDepth) {
 			terminalStates.push_back(idx);
@@ -177,6 +183,9 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		int limit = state->words.size();
 		if (state->pathDepth < depthSizeLimits.size())
 			limit = depthSizeLimits[state->pathDepth];
+
+		if (annModel && !firstState)
+			maxGuessAnnDepth.resize(state->words.size());
 
 		state->children.resize(state->words.size());
 		for (int i = 0; i < state->words.size(); i++)
@@ -203,6 +212,8 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 				int childIdx = getStateIdx(state->words, msk);
 				state = &stateList[idx]; // invalidated by getStateIdx()
 				auto &st = stateList[childIdx];
+				if (!maxGuessAnnDepth.empty())
+					maxGuessAnnDepth[i] = std::max(maxGuessAnnDepth[i], st.annDepth);
 				if (st.pathDepth > state->pathDepth+1) {
 					st.pathDepth = state->pathDepth+1;
 					st.pathParent = idx;
@@ -266,6 +277,27 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		if (trapGuesses.size() + removedLimitedGuesses < state->children.size())
 			for (int i : trapGuesses)
 				state->children[i].clear();
+
+		if (!maxGuessAnnDepth.empty()) {
+			float minGuessAnnDepth = maxGuessAnnDepth.front();
+			for (int i = 1; i < state->words.size(); i++)
+				minGuessAnnDepth = std::min(minGuessAnnDepth, maxGuessAnnDepth[i]);
+			for (int i = 0; i < state->words.size(); i++) {
+				if (int(maxGuessAnnDepth[i]+0.5f)-int(minGuessAnnDepth+0.5f) >= 2) {
+					state->children[i].clear();
+					continue;
+				}
+				std::vector<int> newChildren;
+				newChildren.reserve(state->children[i].size());
+				for (int k : state->children[i]) {
+					auto &st = stateList[k];
+					if (int(maxGuessAnnDepth[i]+0.5f)-int(st.annDepth+0.5f) < 2)
+						newChildren.push_back(k);
+				}
+				newChildren.shrink_to_fit();
+				state->children[i] = std::move(newChildren);
+			}
+		}
 
 		for (int i = 0; i < state->words.size(); i++)
 			for (int k : state->children[i]) {
