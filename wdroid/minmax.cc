@@ -213,7 +213,8 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 				state = &stateList[idx]; // invalidated by getStateIdx()
 				auto &st = stateList[childIdx];
 				if (!maxGuessAnnDepth.empty())
-					maxGuessAnnDepth[i] = std::max(maxGuessAnnDepth[i], st.annDepth);
+					maxGuessAnnDepth[i] = std::max(maxGuessAnnDepth[i],
+							st.depth > 0 ? st.depth : st.annDepth);
 				if (st.pathDepth > state->pathDepth+1) {
 					st.pathDepth = state->pathDepth+1;
 					st.pathParent = idx;
@@ -282,8 +283,10 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 			float minGuessAnnDepth = maxGuessAnnDepth.front();
 			for (int i = 1; i < state->words.size(); i++)
 				minGuessAnnDepth = std::min(minGuessAnnDepth, maxGuessAnnDepth[i]);
+			int minDepth = minGuessAnnDepth + 0.5f;
 			for (int i = 0; i < state->words.size(); i++) {
-				if (int(maxGuessAnnDepth[i]+0.5f)-int(minGuessAnnDepth+0.5f) >= 2) {
+				int maxDepth = maxGuessAnnDepth[i] + 0.5f;
+				if (maxDepth - minDepth >= 2) {
 					state->children[i].clear();
 					continue;
 				}
@@ -291,7 +294,8 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 				newChildren.reserve(state->children[i].size());
 				for (int k : state->children[i]) {
 					auto &st = stateList[k];
-					if (int(maxGuessAnnDepth[i]+0.5f)-int(st.annDepth+0.5f) < 2)
+					int childDepth = st.depth > 0 ? st.depth : int(st.annDepth+0.5f);
+					if (maxDepth - childDepth < 2)
 						newChildren.push_back(k);
 				}
 				newChildren.shrink_to_fit();
