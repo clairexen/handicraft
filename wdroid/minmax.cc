@@ -583,6 +583,10 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 				if (depth+1 == theDepth)
 					guesses.push_back(st.words[i]);
 			}
+			if (guesses.empty()) {
+				pr("  -none-\n");
+				return;
+			}
 			for (int i = 0; i < guesses.size(); i++) {
 				if (i != 0 && i % 10 == 0)
 					prNl();
