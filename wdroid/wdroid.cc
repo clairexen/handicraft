@@ -39,6 +39,8 @@ void AbstractWordleDroidEngine::pr(char c) const {
 		globalState->outfile << c;
 	else
 		std::cout << c;
+	if (c == '\n')
+		prFlush();
 }
 
 void AbstractWordleDroidEngine::pr(const std::string &s) const {
@@ -46,6 +48,8 @@ void AbstractWordleDroidEngine::pr(const std::string &s) const {
 		globalState->outfile << s;
 	else
 		std::cout << s;
+	if (!s.empty() && s.back() == '\n')
+		prFlush();
 }
 
 void AbstractWordleDroidEngine::prFlush() const {
