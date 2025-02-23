@@ -84,6 +84,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 	size_t maxDatSize = 0;
 	std::vector<int> depthSizeLimits;
 	WordleDroidAnnEval annModel;
+	bool strongAnnModel = false;
 
 	std::set<int> firstGuessIndices;
 	bool firstResponseAllGrayMode = false;
@@ -286,7 +287,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 			int minDepth = minGuessAnnDepth + 0.5f;
 			for (int i = 0; i < state->words.size(); i++) {
 				int maxDepth = maxGuessAnnDepth[i] + 0.5f;
-				if (maxDepth - minDepth >= 2) {
+				if (maxDepth - minDepth >= (strongAnnModel ? 1 : 2)) {
 					state->children[i].clear();
 					continue;
 				}
@@ -295,7 +296,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 				for (int k : state->children[i]) {
 					auto &st = stateList[k];
 					int childDepth = st.depth > 0 ? st.depth : int(st.annDepth+0.5f);
-					if (maxDepth - childDepth < 2)
+					if (maxDepth - childDepth < (strongAnnModel ? 1 : 2))
 						newChildren.push_back(k);
 				}
 				newChildren.shrink_to_fit();
@@ -536,7 +537,10 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 			auto &state = stateList[idx];
 			if (state.depth != 0)
 				continue;
-			state.depth = state.words.size();
+			if (state.annDepth > 0)
+				state.depth = state.annDepth;
+			else
+				state.depth = state.words.size();
 			cntEstTerm++;
 		}
 
@@ -558,7 +562,38 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 				state.depth = std::min(state.depth, maxDepth+1);
 			}
 		}
+
 		pr(std::format("Maximum depth at optimal play: {}\n", stateList[0].depth));
+	}
+
+	void doShowFirst()
+	{
+		auto &st = stateList[0];
+		if (st.children.empty())
+			return;
+
+		pr("Optimal first guesses:\n");
+
+		std::vector<int> guesses;
+		for (int i = 0; i < st.words.size(); i++) {
+			if (st.children[i].empty())
+				continue;
+			int depth = 0;
+			for (int k : st.children[i])
+				depth = std::max(depth, stateList[k].depth);
+			if (depth+1 == st.depth)
+				guesses.push_back(st.words[i]);
+		}
+
+		for (int i = 0; i < guesses.size(); i++) {
+			if (i != 0 && i % 10 == 0)
+				prNl();
+			Tok t = wordsList[guesses[i]].tok;
+			t.setCol(White);
+			pr("  ");
+			prTok(t);
+		}
+		prNl();
 	}
 
 	std::vector<std::pair<int,int>> getTrace(int curState = 0)
@@ -606,6 +641,11 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		for (int k = 0; k < traceData.front().size(); k++) {
 			pr(std::format("  {:2}:", k+1));
 			for (int i = 0; i < traceData.size(); i++) {
+				if (k >= traceData[i].size()) {
+					for (int l = 0; l < WordLen+3; l++)
+						pr(' ');
+					continue;
+				}
 				auto *state = &stateList[traceData[i][k].second];
 				bool isTerm = state->children.empty();
 				pr(isTerm ? " (" : "  ");
@@ -613,6 +653,10 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 				const Tok &secret = wordsList[traceData[i].back().first].tok;
 				prTok(Tok(hint.data(), secret.data()));
 				pr(isTerm ? ")" : " ");
+			}
+			if (k >= traceData.back().size()) {
+				prNl();
+				continue;
 			}
 			auto *state = &stateList[traceData.back()[k].second];
 			pr(std::format(" {:5}\n", state->words.size()));
@@ -848,7 +892,8 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 			return true;
 		}
 
-		if (cmd == "+useAnnModel"sv) {
+		if (svIn(cmd, "+useAnnModel"sv, "+useStrongAnnModel"sv)) {
+			strongAnnModel = cmd == "+useStrongAnnModel"sv;
 			if (arg.empty())
 				switch (WordLen)
 				{
@@ -883,6 +928,8 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 			if (verbose)
 				doShowTraps();
 			doMinMaxSweep();
+			if (verbose)
+				doShowFirst();
 			doTrace();
 			return true;
 		}

@@ -95,17 +95,23 @@ endif
 # ANN Training (with PyTorch)
 
 ifeq ($(MKANN),1)
-ptmodel5.bin: ptmodel5C.bin .venv/stamp-torch
-	.venv/bin/python3 ptdriver.py -o ptmodel5 -i ptmodel5C -e 2 ptdata5[A-Z][0-9].txt
+ptmodel5.bin: ptmodel5D.bin .venv/stamp-torch
+	.venv/bin/python3 ptdriver.py -o ptmodel5 -i ptmodel5D -e 2 ptdata5[A-Z][0-9].txt
 
-ptmodel5C.bin: wdroid .venv/stamp-torch
-	time ./wdroid -5 -minmax +frnag +f=carol +f=dumpy +f=topee +f=penis +setup +go \
+ptmodel5B.bin: wdroid .venv/stamp-torch
+	time ./wdroid -5 -minmax +frnag +f=carol +f=dumpy +f=topee +f=abort +setup +go \
 		+maxDatMBs=500 +maxDatFiles=4 +wrDatFile=ptdata5A%.txt \
 		--system=".venv/bin/python3 ptdriver.py -o ptmodel5A ptdata5A[0-9].txt" \
 		+useAnnModel=ptmodel5A.bin +wrDatFile=ptdata5B%.txt \
 		--system=".venv/bin/python3 ptdriver.py -o ptmodel5B -i ptmodel5A ptdata5B[0-9].txt" \
-		+useAnnModel=ptmodel5B.bin +wrDatFile=ptdata5C%.txt \
+		-exit
+
+ptmodel5D.bin: ptmodel5B.bin wdroid .venv/stamp-torch
+	time ./wdroid -5 -minmax +frnag +f=deism +f=plain +f=spelt +f=silva +setup +go \
+		+maxDatMBs=500 +maxDatFiles=4 +useAnnModel=ptmodel5B.bin +wrDatFile=ptdata5C%.txt \
 		--system=".venv/bin/python3 ptdriver.py -o ptmodel5C -i ptmodel5B ptdata5C[0-9].txt" \
+		+useAnnModel=ptmodel5D.bin +wrDatFile=ptdata5D%.txt \
+		--system=".venv/bin/python3 ptdriver.py -o ptmodel5D -i ptmodel5C ptdata5D[0-9].txt" \
 		-exit
 endif
 
