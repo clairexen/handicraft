@@ -16,6 +16,7 @@
 // OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 #include "wdroid.hh"
+#include <sys/resource.h>
 
 #ifdef ENABLE_WDROID_ENGINE_3
 template struct WordleDroidEngine<3>;
@@ -244,6 +245,14 @@ void WordleDroidGlobalState::executeNextCommand()
 
 	if (cmd == "-R"sv) {
 		refineMasks = engine->boolArg(arg);
+		return;
+	}
+
+	if (cmd == "-G"sv) {
+		struct rlimit rl;
+		getrlimit(RLIMIT_DATA, &rl);
+		rl.rlim_cur = 1024L * 1024L * 1024L * engine->intArg(arg);
+		setrlimit(RLIMIT_DATA, &rl);
 		return;
 	}
 
