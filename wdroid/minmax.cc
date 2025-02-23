@@ -572,28 +572,35 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		if (st.children.empty())
 			return;
 
+		auto showWithDepth = [&](int theDepth) {
+			std::vector<int> guesses;
+			for (int i = 0; i < st.words.size(); i++) {
+				if (st.children[i].empty())
+					continue;
+				int depth = 0;
+				for (int k : st.children[i])
+					depth = std::max(depth, stateList[k].depth);
+				if (depth+1 == theDepth)
+					guesses.push_back(st.words[i]);
+			}
+			for (int i = 0; i < guesses.size(); i++) {
+				if (i != 0 && i % 10 == 0)
+					prNl();
+				Tok t = wordsList[guesses[i]].tok;
+				t.setCol(White);
+				pr("  ");
+				prTok(t);
+			}
+			prNl();
+		};
+
 		pr("Optimal first guesses:\n");
+		showWithDepth(st.depth);
 
-		std::vector<int> guesses;
-		for (int i = 0; i < st.words.size(); i++) {
-			if (st.children[i].empty())
-				continue;
-			int depth = 0;
-			for (int k : st.children[i])
-				depth = std::max(depth, stateList[k].depth);
-			if (depth+1 == st.depth)
-				guesses.push_back(st.words[i]);
+		for (int k = st.depth+1; k < maxTraceLength; k++) {
+			pr(std::format("Sub-optimal first guesses with depth {}:\n", k));
+			showWithDepth(k);
 		}
-
-		for (int i = 0; i < guesses.size(); i++) {
-			if (i != 0 && i % 10 == 0)
-				prNl();
-			Tok t = wordsList[guesses[i]].tok;
-			t.setCol(White);
-			pr("  ");
-			prTok(t);
-		}
-		prNl();
 	}
 
 	std::vector<std::pair<int,int>> getTrace(int curState = 0)
