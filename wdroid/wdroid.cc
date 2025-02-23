@@ -248,11 +248,35 @@ void WordleDroidGlobalState::executeNextCommand()
 		return;
 	}
 
-	if (cmd == "-G"sv) {
+	if (cmd == "-rlimitDataMBs"sv) {
 		struct rlimit rl;
 		getrlimit(RLIMIT_DATA, &rl);
-		rl.rlim_cur = 1024L * 1024L * 1024L * engine->intArg(arg);
+		rl.rlim_cur = 1024.0 * 1024.0 * engine->floatArg(arg);
 		setrlimit(RLIMIT_DATA, &rl);
+		return;
+	}
+
+	if (cmd == "-rlimitDataGBs"sv) {
+		struct rlimit rl;
+		getrlimit(RLIMIT_DATA, &rl);
+		rl.rlim_cur = 1024.0 * 1024.0 * 1024.0 * engine->floatArg(arg);
+		setrlimit(RLIMIT_DATA, &rl);
+		return;
+	}
+
+	if (cmd == "-rlimitCpuSecs"sv) {
+		struct rlimit rl;
+		getrlimit(RLIMIT_CPU, &rl);
+		rl.rlim_cur = engine->floatArg(arg);
+		setrlimit(RLIMIT_CPU, &rl);
+		return;
+	}
+
+	if (cmd == "-rlimitCpuMins"sv) {
+		struct rlimit rl;
+		getrlimit(RLIMIT_CPU, &rl);
+		rl.rlim_cur = 60.0 * engine->floatArg(arg);
+		setrlimit(RLIMIT_CPU, &rl);
 		return;
 	}
 

@@ -203,6 +203,14 @@ struct AbstractWordleDroidEngine
 		return atoi(argbuf.c_str());
 	}
 
+	float floatArg(std::string_view arg, float onVal=1.0, float offVal=0.0) {
+		using namespace std::literals;
+		if (arg.empty()) return onVal;
+		if (arg == "="sv) return offVal;
+		std::string argbuf(arg.substr(1));
+		return atof(argbuf.c_str());
+	}
+
 	static constexpr inline uint64_t xorshift64(uint64_t val, int rounds=1)
 	{
 		while (rounds--) {
