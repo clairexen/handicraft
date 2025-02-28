@@ -87,9 +87,12 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 	bool strongAnnModel = false;
 
 	std::set<int> firstGuessIndices;
+	int firstGuessRandSel = 0;
+	int firstResponseRandSel = 0;
 	bool firstResponseAllGrayMode = false;
 	bool firstResponseNotAllGrayMode = false;
 
+	int firstStateIdx = 0;
 	std::vector<int> trapStates;
 	std::vector<int> terminalStates;
 	std::vector<int> nonTerminalStates;
@@ -175,6 +178,9 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		std::vector<int> trapGuesses;
 		std::vector<float> maxGuessAnnDepth;
 
+		if (firstState)
+			firstStateIdx = idx;
+
 		if (maxSearchDepth > 0 && state->pathDepth > maxSearchDepth) {
 			terminalStates.push_back(idx);
 			return;
@@ -188,20 +194,60 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		if (annModel && !firstState)
 			maxGuessAnnDepth.resize(state->words.size());
 
+		int gWordsIdx = -1;
+		std::vector<int> gWordsSelected;
+
+		if (firstState && firstGuessRandSel > 0) {
+			std::vector<int> tmp = state->words;
+			for (int j = 0; j < firstGuessRandSel; j++) {
+				int k = rng(tmp.size());
+				gWordsSelected.push_back(tmp[k]);
+				tmp[k] = tmp.back();
+				tmp.pop_back();
+			}
+			std::ranges::sort(gWordsSelected);
+			gWordsIdx = 0;
+		}
+
 		state->children.resize(state->words.size());
 		for (int i = 0; i < state->words.size(); i++)
 		{
 			int ki = state->words[i];
+			if (gWordsIdx >= 0) {
+				if (gWordsSelected[gWordsIdx] != ki)
+					continue;
+				gWordsIdx++;
+			}
 			if (firstState && !firstGuessIndices.empty() && !firstGuessIndices.count(ki))
 				continue;
 			if (!state->children[i].empty())
 				continue;
+
+			int rWordsIdx = -1;
+			std::vector<int> rWordsSelected;
+
+			if (firstState && firstResponseRandSel > 0) {
+				std::vector<int> tmp = state->words;
+				for (int j = 0; j < firstResponseRandSel; j++) {
+					int k = rng(tmp.size());
+					rWordsSelected.push_back(tmp[k]);
+					tmp[k] = tmp.back();
+					tmp.pop_back();
+				}
+				std::ranges::sort(rWordsSelected);
+				rWordsIdx = 0;
+			}
 
 			std::vector<int> vec;
 			vec.reserve(state->words.size());
 			int maxChildSize = 0;
 			for (int j = 0; j < state->words.size(); j++) {
 				int kj = state->words[j];
+				if (rWordsIdx >= 0) {
+					if (rWordsSelected[rWordsIdx] != kj)
+						continue;
+					rWordsIdx++;
+				}
 				if (ki == kj && state->words.size() > 1)
 					continue;
 				if (firstState && (firstResponseAllGrayMode || firstResponseNotAllGrayMode) &&
@@ -728,9 +774,11 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 			addedStatesCnt++;
 		};
 		for (int idx : nonTerminalStates)
-			addStateToStatesByDepth(idx);
+			if (idx > firstStateIdx)
+				addStateToStatesByDepth(idx);
 		for (int idx : trapStates)
-			addStateToStatesByDepth(idx);
+			if (idx > firstStateIdx)
+				addStateToStatesByDepth(idx);
 
 		if (annModel) {
 			addedStatesCnt = 0;
@@ -863,6 +911,16 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		if (svIn(cmd, "+f"sv, "+first"sv, "+firstGuess"sv) && !arg.empty()) {
 			if (int idx = findWord(arg.substr(1)))
 				firstGuessIndices.insert(idx);
+			return true;
+		}
+
+		if (svIn(cmd, "+fgrs"sv, "+firstGuessRandSel"sv)) {
+			firstGuessRandSel = intArg(arg);
+			return true;
+		}
+
+		if (svIn(cmd, "+frrs"sv, "+firstResponseRandSel"sv)) {
+			firstResponseRandSel = intArg(arg);
 			return true;
 		}
 

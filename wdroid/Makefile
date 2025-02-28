@@ -21,6 +21,7 @@
 
 MKANN = 0
 MKWORDS = 0
+MK5ONLY = 0
 MKSTATIC = 0
 
 CXX = clang++
@@ -28,6 +29,15 @@ CXXFLAGS = -O2 -ggdb -std=c++26 -Wall -MD
 LD = $(CXX)
 LDFLAGS =
 LDLIBS =
+
+ifeq ($(MK5ONLY),1)
+CXXFLAGS += -DENABLE_WDROID_ENGINE_5
+else
+CXXFLAGS += -DENABLE_WDROID_ENGINE_3
+CXXFLAGS += -DENABLE_WDROID_ENGINE_4
+CXXFLAGS += -DENABLE_WDROID_ENGINE_5
+CXXFLAGS += -DENABLE_WDROID_ENGINE_6
+endif
 
 ifeq ($(MKSTATIC),1)
 LDFLAGS += -static
@@ -96,9 +106,10 @@ endif
 
 ifeq ($(MKANN),1)
 ptmodel5.bin: ptmodel5D.bin .venv/stamp-torch
-	.venv/bin/python3 ptdriver.py -o ptmodel5 -i ptmodel5D -e 2 ptdata5[A-Z][0-9].txt
+	.venv/bin/python3 ptdriver.py -o ptmodel5 -i ptmodel5D -e 2 ptdata5[ABCD][0-9].txt
 
 ptmodel5B.bin: wdroid .venv/stamp-torch
+	rm -f ptdata5[AB][0-9].txt
 	time ./wdroid -5 -minmax +frnag +f=carol +f=dumpy +f=topee +f=abort +setup +go \
 		+maxDatMBs=500 +maxDatFiles=4 +wrDatFile=ptdata5A%.txt \
 		--system=".venv/bin/python3 ptdriver.py -o ptmodel5A ptdata5A[0-9].txt" \
@@ -107,14 +118,30 @@ ptmodel5B.bin: wdroid .venv/stamp-torch
 		-exit
 
 ptmodel5D.bin: ptmodel5B.bin wdroid .venv/stamp-torch
+	rm -f ptdata5[CD][0-9].txt
 	time ./wdroid -5 -minmax +frnag +f=deism +f=plain +f=spelt +f=silva +setup +go \
 		+maxDatMBs=500 +maxDatFiles=4 +useAnnModel=ptmodel5B.bin +wrDatFile=ptdata5C%.txt \
 		--system=".venv/bin/python3 ptdriver.py -o ptmodel5C -i ptmodel5B ptdata5C[0-9].txt" \
 		+useAnnModel=ptmodel5D.bin +wrDatFile=ptdata5D%.txt \
 		--system=".venv/bin/python3 ptdriver.py -o ptmodel5D -i ptmodel5C ptdata5D[0-9].txt" \
 		-exit
+else
+ptmodel5.bin:
+	$(MAKE) MKANN=1 ptmodel5.bin
 endif
 
+refine-ptmodel5: ptmodel5.bin wdroid .venv/stamp-torch
+	rm -f ptdata5X[0-9].txt
+	time ./wdroid -5 -minmax +fgrs=5 +frrs=5 +frnag +setup +go +maxDatMBs=500 +maxDatFiles=2 \
+		+useAnnModel=ptmodel5.bin +wrDatFile=ptdata5X%.txt -exit
+	.venv/bin/python3 ptdriver.py -o ptmodel5 -i ptmodel5 ptdata5X[0-9].txt
+
+refresh-ptmodel5: ptmodel5.bin .venv/stamp-torch
+	.venv/bin/python3 ptdriver.py -o ptmodel5 -i ptmodel5 -e 2 ptdata5[ABCD][0-9].txt
+
+improve-ptmodel5:
+	for i in 0 1 2 3 4 5 6 7 8 9; do $(MAKE) refine-ptmodel5; done
+	$(MAKE) refresh-ptmodel5
 
 #####################################################
 # Python Virtual-Env

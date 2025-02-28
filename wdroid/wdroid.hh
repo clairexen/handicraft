@@ -18,10 +18,13 @@
 #ifndef WDROID_HH
 #define WDROID_HH
 
-#define ENABLE_WDROID_ENGINE_3
-#define ENABLE_WDROID_ENGINE_4
-#define ENABLE_WDROID_ENGINE_5
-#define ENABLE_WDROID_ENGINE_6
+#if !defined(ENABLE_WDROID_ENGINE_3) && !defined(ENABLE_WDROID_ENGINE_4) && \
+	!defined(ENABLE_WDROID_ENGINE_5) && !defined(ENABLE_WDROID_ENGINE_6)
+#  define ENABLE_WDROID_ENGINE_3
+#  define ENABLE_WDROID_ENGINE_4
+#  define ENABLE_WDROID_ENGINE_5
+#  define ENABLE_WDROID_ENGINE_6
+#endif
 
 #include <map>
 #include <set>
