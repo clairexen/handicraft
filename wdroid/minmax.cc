@@ -94,6 +94,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 
 	int firstStateIdx = 0;
 	std::vector<int> trapStates;
+	std::vector<int> complexTrapStates;
 	std::vector<int> terminalStates;
 	std::vector<int> nonTerminalStates;
 	std::vector<StateData> stateList;
@@ -306,6 +307,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 			state->depth = state->words.size();
 			state->children.clear();
 			trapStates.push_back(idx);
+			complexTrapStates.push_back(idx);
 			terminalStates.push_back(idx);
 
 			int lockedCnt = 0;
@@ -757,7 +759,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 			return false;
 		};
 
-		size_t nonTermOrTrapStateCnt = nonTerminalStates.size() + trapStates.size();
+		size_t nonTermOrTrapStateCnt = nonTerminalStates.size() + complexTrapStates.size();
 		pr(std::format("Collecting state data from {} states...\n", nonTermOrTrapStateCnt));
 
 		int addedStatesCnt = 0;
@@ -776,7 +778,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		for (int idx : nonTerminalStates)
 			if (idx > firstStateIdx)
 				addStateToStatesByDepth(idx);
-		for (int idx : trapStates)
+		for (int idx : complexTrapStates)
 			if (idx > firstStateIdx)
 				addStateToStatesByDepth(idx);
 
@@ -847,7 +849,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 
 		size_t fileSize = 0;
 		for (int i = 0; i < maxBucketSize; i++) {
-			if (maxDatSize <= fileSize) {
+			if (maxDatSize && maxDatSize <= fileSize) {
 				if (currentFileName == filename)
 					break;
 				if (0 < maxDatFiles && fileIndex >= maxDatFiles)

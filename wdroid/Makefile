@@ -102,7 +102,28 @@ endif
 
 
 #####################################################
-# ANN Training (with PyTorch)
+# ANN Training for 3-letter words (with PyTorch)
+
+ifeq ($(MKANN),1)
+ptmodel3.bin: wdroid .venv/stamp-torch
+	time ./wdroid -3 -minmax +go +wrDatFile=ptdata3A0.txt \
+		--system=".venv/bin/python3 ptdriver.py -o ptmodel3A -e 8 -H 50 ptdata3A0.txt" \
+		+useAnnModel=ptmodel3A.bin +maxDatMBs=1 +wrDatFile=ptdata3B0.txt \
+		--system=".venv/bin/python3 ptdriver.py -o ptmodel3B -i ptmodel3A -e 8 ptdata3B0.txt" \
+		+useAnnModel=ptmodel3B.bin +maxDatMBs=1 +wrDatFile=ptdata3C0.txt \
+		--system=".venv/bin/python3 ptdriver.py -o ptmodel3C -i ptmodel3B -e 8 ptdata3C0.txt" \
+		+useAnnModel=ptmodel3C.bin +maxDatMBs=1 +wrDatFile=ptdata3D0.txt \
+		-quit
+	time .venv/bin/python3 ptdriver.py -o ptmodel3 -i ptmodel3C \
+		ptdata3[A-C]0.txt ptdata3[A-C]0.txt ptdata3A0.txt
+else
+ptmodel3.bin:
+	$(MAKE) MKANN=1 ptmodel3.bin
+endif
+
+
+#####################################################
+# ANN Training for 5-letter words (with PyTorch)
 
 ptmodel5A.bin: wdroid .venv/stamp-torch
 	rm -f ptdata5A[0-9].txt
