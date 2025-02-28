@@ -144,7 +144,10 @@ ipython: .venv/stamp-ipython
 
 
 #####################################################
-# Clean
+# Install & Clean
+
+install: wdroid
+	install -st /usr/local/bin wdroid
 
 clean:
 	rm -f wdroid_o3 *.o *.d
