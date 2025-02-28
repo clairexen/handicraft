@@ -132,8 +132,8 @@ endif
 
 refine-ptmodel5: ptmodel5.bin wdroid .venv/stamp-torch
 	rm -f ptdata5X[0-9].txt
-	time ./wdroid -5 -minmax +fgrs=5 +frrs=5 +frnag +setup +go +maxDatMBs=500 +maxDatFiles=2 \
-		+useAnnModel=ptmodel5.bin +wrDatFile=ptdata5X%.txt -exit
+	time ./wdroid -5 -seed -minmax +fgrs=5 +frrs=5 +frnag +setup +go +useAnnModel=ptmodel5.bin \
+		+maxDatMBs=500 +maxDatFiles=2 +wrDatFile=ptdata5X%.txt -exit
 	.venv/bin/python3 ptdriver.py -o ptmodel5 -i ptmodel5 ptdata5X[0-9].txt
 
 refresh-ptmodel5: ptmodel5.bin .venv/stamp-torch

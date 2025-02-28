@@ -16,6 +16,8 @@
 // OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 #include "wdroid.hh"
+#include <time.h>
+#include <unistd.h>
 #include <sys/resource.h>
 
 #ifdef ENABLE_WDROID_ENGINE_3
@@ -57,6 +59,24 @@ void AbstractWordleDroidEngine::prFlush() const {
 		globalState->outfile << std::flush;
 	else
 		std::cout << std::flush;
+}
+
+uint64_t AbstractWordleDroidEngine::rng(uint64_t limit)
+{
+	if (limit == 1)
+		return 0;
+
+	globalState->rngState = xorshift64(globalState->rngState);
+	uint64_t val = globalState->rngState * 0x2545F4914F6CDD1D;
+
+	if (limit == 0)
+		return val;
+
+	val >>= std::countl_zero(limit-1);
+	if (val < limit)
+		return val;
+
+	return rng(limit);
 }
 
 bool WordleDroidGlobalState::parseNextCommand()
@@ -285,6 +305,12 @@ void WordleDroidGlobalState::executeNextCommand()
 		getrlimit(RLIMIT_CPU, &rl);
 		rl.rlim_cur = 60.0 * engine->floatArg(arg);
 		setrlimit(RLIMIT_CPU, &rl);
+		return;
+	}
+
+	if (cmd == "-seed"sv) {
+		int seedval = engine->intArg(arg, time(nullptr) + 100000 * getpid(), 0);
+		rngState = engine->xorshift64(seedval ? seedval : 42, 7);
 		return;
 	}
 

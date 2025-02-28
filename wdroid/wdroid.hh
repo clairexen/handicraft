@@ -224,25 +224,7 @@ struct AbstractWordleDroidEngine
 		return val;
 	}
 
-	uint64_t rngState = xorshift64(42, 7);
-
-	uint64_t rng(uint64_t limit = 0)
-	{
-		if (limit == 1)
-			return 0;
-
-		rngState = xorshift64(rngState);
-		uint64_t val = rngState * 0x2545F4914F6CDD1D;
-
-		if (limit == 0)
-			return val;
-
-		val >>= std::countl_zero(limit-1);
-		if (val < limit)
-			return val;
-
-		return rng(limit);
-	}
+	uint64_t rng(uint64_t limit = 0);
 };
 
 struct WordleDroidGlobalState
@@ -253,6 +235,8 @@ struct WordleDroidGlobalState
 	bool showMasks = false;
 	int showLists = 0;
 	int showKeys = 0;
+
+	uint64_t rngState = AbstractWordleDroidEngine::xorshift64(42, 7);
 
 	WordleDroidGlobalState() {
 		engine = new AbstractWordleDroidEngine(this);
