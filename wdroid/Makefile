@@ -104,44 +104,38 @@ endif
 #####################################################
 # ANN Training (with PyTorch)
 
+ptmodel5A.bin: wdroid .venv/stamp-torch
+	rm -f ptdata5A[0-9].txt
+	time ./wdroid -5 -minmax +frnag +f=carol +f=final +f=topee +f=abort +f=leapt +f=sepal \
+		+f=hoard +f=smart +f=fecal +f=depot +f=scorn +f=spoil +f=aleph +f=shard +setup +go \
+		+maxDatMBs=500 +maxDatFiles=10 +wrDatFile=ptdata5A%.txt -quit
+	time .venv/bin/python3 ptdriver.py -o ptmodel5A ptdata5A[0-9].txt
+
+ptmodel5B.bin: ptmodel5A.bin wdroid .venv/stamp-torch
+	rm -f ptdata5B[0-9].txt
+	time ./wdroid -5 -minmax +f=scald +f=impel +f=asdic +f=faced +f=dumpy +setup +go \
+		+useAnnModel=ptmodel5A.bin +maxDatMBs=500 +maxDatFiles=10 +wrDatFile=ptdata5B%.txt -quit
+	time .venv/bin/python3 ptdriver.py -o ptmodel5B -i ptmodel5A ptdata5B[0-9].txt
+
+ptmodel5C.bin: ptmodel5B.bin wdroid .venv/stamp-torch
+	rm -f ptdata5C[0-9].txt
+	time ./wdroid -5 -seed=1 -minmax +fgrs=10 +frrs=10 +setup +go \
+		+useAnnModel=ptmodel5B.bin +maxDatMBs=500 +maxDatFiles=10 +wrDatFile=ptdata5C%.txt -quit
+	time .venv/bin/python3 ptdriver.py -o ptmodel5C -i ptmodel5B ptdata5C[0-9].txt
+
+ptmodel5D.bin: ptmodel5C.bin wdroid .venv/stamp-torch
+	rm -f ptdata5D[0-9].txt
+	time ./wdroid -5 -seed=2 -minmax +fgrs=10 +frrs=10 +setup +go \
+		+useAnnModel=ptmodel5C.bin +maxDatMBs=500 +maxDatFiles=10 +wrDatFile=ptdata5D%.txt -quit
+	time .venv/bin/python3 ptdriver.py -o ptmodel5D -i ptmodel5C ptdata5D[0-9].txt
+
 ifeq ($(MKANN),1)
 ptmodel5.bin: ptmodel5D.bin .venv/stamp-torch
-	.venv/bin/python3 ptdriver.py -o ptmodel5 -i ptmodel5D -e 2 ptdata5[ABCD][0-9].txt
-
-ptmodel5B.bin: wdroid .venv/stamp-torch
-	rm -f ptdata5[AB][0-9].txt
-	time ./wdroid -5 -minmax +frnag +f=carol +f=dumpy +f=topee +f=abort +setup +go \
-		+maxDatMBs=500 +maxDatFiles=4 +wrDatFile=ptdata5A%.txt \
-		--system=".venv/bin/python3 ptdriver.py -o ptmodel5A ptdata5A[0-9].txt" \
-		+useAnnModel=ptmodel5A.bin +wrDatFile=ptdata5B%.txt \
-		--system=".venv/bin/python3 ptdriver.py -o ptmodel5B -i ptmodel5A ptdata5B[0-9].txt" \
-		-exit
-
-ptmodel5D.bin: ptmodel5B.bin wdroid .venv/stamp-torch
-	rm -f ptdata5[CD][0-9].txt
-	time ./wdroid -5 -minmax +frnag +f=deism +f=plain +f=spelt +f=silva +setup +go \
-		+maxDatMBs=500 +maxDatFiles=4 +useAnnModel=ptmodel5B.bin +wrDatFile=ptdata5C%.txt \
-		--system=".venv/bin/python3 ptdriver.py -o ptmodel5C -i ptmodel5B ptdata5C[0-9].txt" \
-		+useAnnModel=ptmodel5D.bin +wrDatFile=ptdata5D%.txt \
-		--system=".venv/bin/python3 ptdriver.py -o ptmodel5D -i ptmodel5C ptdata5D[0-9].txt" \
-		-exit
+	time .venv/bin/python3 ptdriver.py -o ptmodel5 -i ptmodel5D -e 2 ptdata5[A-D][0-9].txt
 else
 ptmodel5.bin:
 	$(MAKE) MKANN=1 ptmodel5.bin
 endif
-
-refine-ptmodel5: ptmodel5.bin wdroid .venv/stamp-torch
-	rm -f ptdata5X[0-9].txt
-	time ./wdroid -5 -seed -minmax +fgrs=5 +frrs=5 +frnag +setup +go +useAnnModel=ptmodel5.bin \
-		+maxDatMBs=500 +maxDatFiles=2 +wrDatFile=ptdata5X%.txt -exit
-	.venv/bin/python3 ptdriver.py -o ptmodel5 -i ptmodel5 ptdata5X[0-9].txt
-
-refresh-ptmodel5: ptmodel5.bin .venv/stamp-torch
-	.venv/bin/python3 ptdriver.py -o ptmodel5 -i ptmodel5 -e 2 ptdata5[ABCD][0-9].txt
-
-improve-ptmodel5:
-	for i in 0 1 2 3 4 5 6 7 8 9; do $(MAKE) refine-ptmodel5; done
-	$(MAKE) refresh-ptmodel5
 
 
 #####################################################

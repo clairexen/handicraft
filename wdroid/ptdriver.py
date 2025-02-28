@@ -37,8 +37,8 @@ learning_rate = 0.001
 train_ratio = 0.8  # 80% training, 20% testing
 
 try:
-    opts, args = getopt.getopt(sys.argv[1:], "hi:o:t:e:",
-            ["help", "inprefix=", "outprefix=", "testdata=", "epochs="])
+    opts, args = getopt.getopt(sys.argv[1:], "hi:o:t:e:H:",
+            ["help", "inprefix=", "outprefix=", "testdata=", "epochs=", "hidden="])
 except getopt.GetoptError as err:
     print(err)
     print("Usage: ptdriver.py --help")
@@ -56,6 +56,8 @@ for opt, arg in opts:
         evalDatFile = arg
     elif opt in ("-e", "--epochs"):
         num_epochs = int(arg)
+    elif opt in ("-H", "--hidden"):
+        hiddenLayers = tuple([int(t) for t in arg.split(",")])
 
 if len(args):
     srcDatFiles = args
@@ -72,6 +74,7 @@ class ConfigurableANN(nn.Module):
             layers.append(nn.Linear(sz[i], sz[i+1]))
             if i < len(sz)-2:
                 layers.append(nn.ReLU())
+                #layers.append(nn.ELU(0.2))
             #else:
             #    layers.append(nn.Softplus())
         self.model = nn.Sequential(*layers)
@@ -236,7 +239,7 @@ if False:
                 fcc.write("};\n")
             fh.write(f"#endif\n")
 
-if True:
+if len(hiddenLayers) == 1:
     with open(f"{outPrefix}.bin", "wb") as f:
         # ANN Dimensions
         f.write(struct.pack('i', sz[0]))
