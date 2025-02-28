@@ -237,6 +237,10 @@ void WordleDroidGlobalState::executeNextCommand()
 		return;
 	}
 
+	if (cmd == "-quit"sv) {
+		_Exit(0);
+	}
+
 	if (cmd == "-K"sv) {
 		showKeys = engine->boolArg(arg);
 		return;
