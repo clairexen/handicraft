@@ -85,6 +85,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 	std::vector<int> depthSizeLimits;
 	WordleDroidAnnEval annModel;
 	bool strongAnnModel = false;
+	bool noOptMode = false;
 
 	std::set<int> firstGuessIndices;
 	int firstGuessRandSel = 0;
@@ -324,7 +325,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 			return;
 		}
 
-		if (trapGuesses.size() + removedLimitedGuesses < state->children.size())
+		if (trapGuesses.size() + removedLimitedGuesses < state->children.size() && !noOptMode)
 			for (int i : trapGuesses)
 				state->children[i].clear();
 
@@ -335,7 +336,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 			int minDepth = minGuessAnnDepth + 0.5f;
 			for (int i = 0; i < state->words.size(); i++) {
 				int maxDepth = maxGuessAnnDepth[i] + 0.5f;
-				if (maxDepth - minDepth >= (strongAnnModel ? 1 : 2)) {
+				if (maxDepth - minDepth >= (strongAnnModel ? 1 : 2) && !noOptMode) {
 					state->children[i].clear();
 					continue;
 				}
@@ -902,7 +903,25 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 
 		f << "digraph WordleDroidMinMaxGraph {\n";
 		f << "  rankdir=LR;\n";
+		std::set<int> stateQueue;
 		for (int idx = firstStateIdx; idx < stateList.size(); idx++) {
+			const auto &st = stateList[idx];
+			for (int i = 0; i < st.children.size(); i++) {
+				int widx = st.words[i];
+				Tok t = wordsList[widx].tok;
+				t.setCol(White);
+				stateQueue.insert(idx);
+				f << std::format("  S{} -> S{}_{};\n", idx, idx, widx);
+				f << std::format("  S{}_{} [label=\"{}\", shape={}];\n",
+						idx, widx, std::string_view(t),
+						st.children[i].empty() ? "triangle" : "box");
+				for (int k : st.children[i]) {
+					stateQueue.insert(k);
+					f << std::format("  S{}_{} -> S{};\n", idx, widx, k);
+				}
+			}
+		}
+		for (int idx : stateQueue) {
 			const auto &st = stateList[idx];
 			std::ostringstream label;
 			for (int widx : st.words) {
@@ -912,19 +931,9 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 				t.setCol(White);
 				label << std::string_view(t);
 			}
+			if (st.depth > 0 && (st.words.size() > st.depth || st.words.size() > 5))
+				label << std::format("\\n<{}>", st.depth);
 			f << std::format("  S{} [label=\"{}\"];\n", idx, label.view());
-			for (int i = 0; i < st.children.size(); i++) {
-				if (st.children[i].empty())
-					continue;
-				int widx = st.words[i];
-				Tok t = wordsList[widx].tok;
-				t.setCol(White);
-				f << std::format("  S{}_{} [label=\"{}\", shape=box];\n",
-						idx, widx, std::string_view(t));
-				f << std::format("  S{} -> S{}_{};\n", idx, idx, widx);
-				for (int k : st.children[i])
-					f << std::format("  S{}_{} -> S{};\n", idx, widx, k);
-			}
 		}
 		f << "}\n";
 	}
@@ -944,6 +953,11 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 
 		if (cmd == "-minmax-q"sv) {
 			verbose = false;
+			return true;
+		}
+
+		if (svIn(cmd, "+O"sv, "+noOpt"sv)) {
+			noOptMode = boolArg(arg);
 			return true;
 		}
 
