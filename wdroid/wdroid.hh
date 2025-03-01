@@ -40,6 +40,7 @@
 #include <functional>
 #include <iostream>
 #include <fstream>
+#include <sstream>
 #include <format>
 #include <cstdint>
 #include <cassert>

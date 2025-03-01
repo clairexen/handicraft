@@ -892,6 +892,43 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		}
 	}
 
+	void doWrDotFile(const std::string &filename)
+	{
+		std::ofstream f(filename);
+		if (!f.is_open()) {
+			pr(std::format("Error: Unable to open file '{}' for writing.\n", filename));
+			return;
+		}
+
+		f << "digraph WordleDroidMinMaxGraph {\n";
+		f << "  rankdir=LR;\n";
+		for (int idx = firstStateIdx; idx < stateList.size(); idx++) {
+			const auto &st = stateList[idx];
+			std::ostringstream label;
+			for (int widx : st.words) {
+				if (label.tellp())
+					label << "\\n";
+				Tok t = wordsList[widx].tok;
+				t.setCol(White);
+				label << std::string_view(t);
+			}
+			f << std::format("  S{} [label=\"{}\"];\n", idx, label.view());
+			for (int i = 0; i < st.children.size(); i++) {
+				if (st.children[i].empty())
+					continue;
+				int widx = st.words[i];
+				Tok t = wordsList[widx].tok;
+				t.setCol(White);
+				f << std::format("  S{}_{} [label=\"{}\", shape=box];\n",
+						idx, widx, std::string_view(t));
+				f << std::format("  S{} -> S{}_{};\n", idx, idx, widx);
+				for (int k : st.children[i])
+					f << std::format("  S{}_{} -> S{};\n", idx, widx, k);
+			}
+		}
+		f << "}\n";
+	}
+
 	const char *vGetShortName() const override { return "minmax"; }
 
 	bool vExecuteNextCommand() override
@@ -1023,6 +1060,11 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 		if (cmd == "+wrDatFile"sv) {
 			doWrDatFile(!arg.empty() ? std::string(arg.substr(1)) :
 					maxDatFiles ?  "wdroid%.out"s : "wdroid.out"s);
+			return true;
+		}
+
+		if (cmd == "+wrDotFile"sv) {
+			doWrDotFile(!arg.empty() ? std::string(arg.substr(1)) : "wdroid.dot");
 			return true;
 		}
 
