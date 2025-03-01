@@ -146,7 +146,7 @@ ptmodel5C.bin: ptmodel5B.bin wdroid .venv/stamp-torch
 
 ptmodel5D.bin: ptmodel5C.bin wdroid .venv/stamp-torch
 	rm -f ptdata5D[0-9].txt
-	time ./wdroid -5 -seed=2 -minmax +frag +fgrs=10 +setup +go \
+	time ./wdroid -5 -seed=2 -minmax +frag +fgrs=5 +setup +go \
 		+useAnnModel=ptmodel5C.bin +maxDatMBs=500 +maxDatFiles=10 +wrDatFile=ptdata5D%.txt -quit
 	time .venv/bin/python3 ptdriver.py -o ptmodel5D -i ptmodel5C ptdata5D[0-9].txt
 
