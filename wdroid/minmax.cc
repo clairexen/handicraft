@@ -243,6 +243,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 			std::vector<int> vec;
 			vec.reserve(state->words.size());
 			int maxChildSize = 0;
+			int maxTrapDepth = 0;
 			for (int j = 0; j < state->words.size(); j++) {
 				int kj = state->words[j];
 				if (rWordsIdx >= 0) {
@@ -277,6 +278,7 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 						vec.clear();
 					}
 				}
+				maxTrapDepth = std::max(maxTrapDepth, st.depth);
 				maxChildSize = std::max(maxChildSize, int(st.words.size()));
 				vec.push_back(childIdx);
 			}
@@ -290,10 +292,21 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 			auto subrange = std::ranges::unique(vec);
 			vec.erase(subrange.begin(), subrange.end());
 			vec.shrink_to_fit();
+
 			if (vec.size() == 1 && state->words.size()-1 ==
 					stateList[vec.front()].words.size())
 				trapGuesses.push_back(i);
-			state->children[i] = std::move(vec);
+
+			auto &cvec = state->children[i];
+			assert(cvec.empty());
+			cvec.reserve(vec.size());
+			for (int childIdx : vec) {
+				auto &st = stateList[childIdx];
+				if (st.depth < 0 && st.words.size() <= maxTrapDepth)
+					continue;
+				cvec.push_back(childIdx);
+			}
+			cvec.shrink_to_fit();
 		}
 
 		if (removedLimitedGuesses == state->words.size()) {
