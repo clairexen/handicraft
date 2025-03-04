@@ -309,7 +309,9 @@ void WordleDroidGlobalState::executeNextCommand()
 	}
 
 	if (cmd == "-seed"sv) {
-		int seedval = engine->intArg(arg, time(nullptr) + 100000 * getpid(), 0);
+		static int seedcnt = 0;
+		int seedval = engine->intArg(arg, time(nullptr) + (seedcnt++) +
+				engine->xorshift64(getpid(), 7), 0);
 		rngState = engine->xorshift64(seedval ? seedval : 42, 7);
 		return;
 	}
