@@ -200,6 +200,7 @@ clean:
 purge: clean
 	rm -f wdroid
 	rm -f words.cc
+	rm -f words[3456].txt
 	rm -f ptmodel[3456].*
 
 mrproper: purge

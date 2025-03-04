@@ -94,6 +94,9 @@ with open("words.cc", "w") as f:
         words = selected_words if N > 3 else set(words.words('en-basic'))
         words = "".join(sorted([w for w in words if len(w) == N and
                                 w.isalpha() and w.islower() and w.isascii()]))
+        with open(f"words{N}.txt", "w") as t:
+            for k in range(0, len(words), N):
+                print(words[k:k+N], file=t)
         print(f"Final length-{N} word list size: {len(words)//N}")
         print(f"extern const char WordleDroidWords{N}[];", file=f)
         print(f"const char WordleDroidWords{N}[] = // {len(words)//N} words", end="", file=f)
