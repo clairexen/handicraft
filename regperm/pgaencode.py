@@ -4,9 +4,10 @@ from argparse import ArgumentParser
 import pga, sys, os
 
 opnames = """
-    n z tu t tz u
-    h l rh rl r
-    uh tzl th tl tr
+    n t rl tr
+    h th rh r
+    tz tu tzl uh
+    l tl z u
 """.split()
 
 class Cards (pga.PGA):
@@ -18,7 +19,7 @@ class Cards (pga.PGA):
             , num_replace   = 19
             , mutation_only = True
             , mutation_prob = 0.2
-            , max_GA_iter   = 1000
+            , max_GA_iter   = 100
             , print_options = [pga.PGA_REPORT_STRING]
             , random_seed   = self.args.random_seed
             )
@@ -60,15 +61,17 @@ class Cards (pga.PGA):
                     f"tee -o pgaencode_db/{n}.out stat -tech cmos' pgaencode_db/{n}.v")
             assert ret == 0
 
-        score = -1
+        score = None
         with open(f"pgaencode_db/{n}.out") as f:
             for line in f:
                 if "Estimated number of transistors:" in line:
                     score = int(line.split()[-1])
-        assert 0 < score
+        assert score is not None
 
-        print(f"{self.GA_iter:3d}{chr(65+p)}: {n} -> {score:3d} " +
-                f"transistors{' (cached)' if is_cached else ''}")
+        if True:
+            print(f"{self.GA_iter:5d}-{chr(65+p)}: {n} -> {score:3d} " +
+                    f"transistors{' (cached)' if is_cached else ''}")
+            if p == 25: print()
 
         return score
 
@@ -79,8 +82,7 @@ class Cards (pga.PGA):
     def stop_cond(self):
         best_idx = self.get_best_index(pga.PGA_OLDPOP)
         best_val = self.evaluate(best_idx, pga.PGA_OLDPOP)
-        if best_val <= 0:
-            return True
+        if best_val <= 0: return True
         return self.check_stopping_conditions ()
 
 def main(argv):
