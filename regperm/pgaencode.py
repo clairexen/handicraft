@@ -4,7 +4,8 @@ from argparse import ArgumentParser
 import pga, sys, os
 
 #tech = "cmos"
-tech = "lut3"
+#tech = "lut3"
+tech = "gates"
 show = True
 
 opnames = """
@@ -67,6 +68,9 @@ class Cards (pga.PGA):
                     ret = os.system(f"yosys -ql pgaencode_db/{nn}.log " +
                             f"-p 'synth; abc -luts 2,3,5; techmap -map lutmap.v; " +
                             f"tee -o pgaencode_db/{nn}.out stat' lutlib.v pgaencode_db/{n}.v")
+                case "gates":
+                    ret = os.system(f"yosys -ql pgaencode_db/{nn}.log -p 'synth; abc -g gates; " +
+                            f"tee -o pgaencode_db/{nn}.out stat' pgaencode_db/{n}.v")
                 case _:
                     raise AssertionError
             assert ret == 0
@@ -107,7 +111,10 @@ class Cards (pga.PGA):
                             f"clean -purge; show -stretch top' pgaencode_db/{n}.v")
                 case "lut3":
                     os.system(f"yosys -qp 'synth; abc -luts 2,3,5; techmap -map lutmap.v; splitnets -ports; " +
-                            f"clean -purge; stat; show -stretch top' lutlib.v pgaencode_db/{n}.v")
+                            f"clean -purge; show -stretch top' lutlib.v pgaencode_db/{n}.v")
+                case "gates":
+                    os.system(f"yosys -qp 'synth; abc -g gates; splitnets -ports; " +
+                            f"clean -purge; show -stretch top' pgaencode_db/{n}.v")
                 case _:
                     raise AssertionError
         print(n, file=file)
