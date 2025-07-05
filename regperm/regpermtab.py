@@ -1,112 +1,138 @@
 
-from collections import defaultdict
+###################################################################
+# Fundamental Ops
 
 Id = "543210"
 Zip = "432105"
 Refl = "012345"
 Shfl = "524130"
 
+# the chosen "magic ops pair"
+MagicOps = {'543201', '543120'}
+
+
+###################################################################
+# Fundamental Op Groups
+
 def applyOp(dat, op, cnt=1):
-    for i in range(cnt):
-        dat = "".join(dat[5-int(op[i])] for i in range(6))
-    return dat
+    if isinstance(dat, str):
+        for i in range(cnt):
+            dat = "".join(dat[5-int(op[i])] for i in range(6))
+        return dat
+    if isinstance(dat, set):
+        return {applyOp(d, op) for d in dat}
+    assert False
 
-match 3:
-    case 0: MagicOps = []
-    case 1: MagicOps = ['043251', '143205']
-    case 2: MagicOps = ['053214', '403215']
-    case 3: MagicOps = ['143250', '503214']
+ReflOps = {Id, Refl}
+ZipOps = {applyOp(Id, Zip, i) for i in range(6)}
+ZipOps5 = {applyOp(Id, Zip, i) for i in range(6) if i != 3}
+ZipMagicOps = ZipOps | MagicOps
+ShflOps = {applyOp(Id, Shfl, i) for i in range(4)}
+ShflOps3 = {applyOp(Id, Shfl, i) for i in range(4) if i != 2}
 
-print()
-print("Basic Ops:")
-ops = set()
-for k in [Id, Refl]:
-    for j in range(4):
-        for i in range(6):
-            ops.add(applyOp(applyOp(k, Zip, i), Shfl, j))
-        for m in MagicOps:
-            ops.add(applyOp(applyOp(k, m), Shfl, j))
-print(f"{len(ops)=}, {sorted(ops)=}")
 
-print()
-print("MSB bit pair:")
-table = {f"{i}{j}": set() for i in range(6) for j in range(6) if i != j}
-for op in ops:
-    table[op[:2]].add(op)
-for k,v in sorted(table.items()):
-    print(k, v)
+###################################################################
+# The "Regular Permutations Engine"
 
-print()
-print("LSB bit pair:")
-table = {f"{i}{j}": set() for i in range(6) for j in range(6) if i != j}
-for op in ops:
-    table[op[4:6]].add(op)
-for k,v in sorted(table.items()):
-    print(k, v)
+def applyOps(dats, ops):
+    return {applyOp(dat, op) for dat in dats for op in ops}
 
-print()
-print("MSB bit tripple:")
-table = {f"{i}{j}{k}": set() for i in range(6) for j in range(6) for k in range(6) if i < j < k}
-for op in ops:
-    table["".join(sorted(op[:3]))].add(op)
-for k,v in sorted(table.items()):
-    print(k, v)
+OpChain = []
+ValChain = [{Id}]
 
-print()
-print("LSB bit tripple:")
-table = {f"{i}{j}{k}": set() for i in range(6) for j in range(6) for k in range(6) if i < j < k}
-for op in ops:
-    table["".join(sorted(op[3:6]))].add(op)
-for k,v in sorted(table.items()):
-    print(k, v)
+def addStage(ops):
+    OpChain.append(ops)
+    ValChain.append(applyOps(ValChain[-1], ops))
+    print(f"Chain Link #{len(OpChain)}: {len(ops)} ops, {len(ValChain[-1])} outputs")
 
-print()
-print("Two Ops:")
-opops = defaultdict(float)
-for op in [applyOp(a, b) for a in ops for b in ops]:
-    opops[op] += 1
-print(len(opops), ".... Wohho!  \\o/" if len(opops) == 720 else ".... Ohno!  /o\\")
+addStage(ReflOps)
+addStage(ZipOps)
+addStage(ShflOps)
+addStage(ZipMagicOps)
+addStage(ShflOps)
+assert(len(ValChain[-1]) == 720)
 
-opopops = defaultdict(float)
-for cover, op in [(opops[a], applyOp(a, b)) for a in opops for b in ops]:
-    opopops[op] += cover**0.5
-uncoveredOps = set(op for op in opopops.keys() if op not in opops)
-print(f"{len(uncoveredOps)=}, {sorted(uncoveredOps)=}")
 
-print()
-print("Three Ops:")
-exoticOps = set(op for op, cover in opopops.items() if cover == min(opopops.values()))
-print(f"{len(opopops)=}, {min(opopops.values())=}, {len(exoticOps)=}, {sorted(exoticOps)=}")
+###################################################################
+# R-Type Ops only have access to the first three stages
 
-print()
-print("Testing Candidates..")
-best = set()
-maxScore = 0
-for op in uncoveredOps:
-    spread = set()
-    for k in [Id, Refl]:
-        for j in range(4):
-            o = applyOp(applyOp(k, op), Shfl, j)
-            for a in ops:
-                spread.add(applyOp(a, o))
-                spread.add(applyOp(o, a))
-    score = 0
-    for a in spread:
-        if a in uncoveredOps: score += 1
-    if maxScore < score:
-        best = set()
-        maxScore = score
-    if maxScore == score:
-        best.add(op)
-    # print(f"{op=} {score=} /{len(spread)}")
-print(f"{maxScore=}, {len(best)=}, {sorted(best)=}")
+rTypeOps = ValChain[3]
+#rTypeOps = applyOps(applyOps(ReflOps, ZipOps), ShflOps3)
+#rTypeOps = applyOps(applyOps(ReflOps, ZipOps5), ShflOps)
+
+def evalRTypePermOps(ops):
+    outTable = [[],[],[]]
+    outTable[0].append("All 30 ordered MSB pairs:")
+    outTable[1].append("All 30 ordered LSB pairs:")
+    table = {f"{i}{j}": [set(),set()] for i in range(6) for j in range(6) if i != j}
+    for op in ops:
+        table[op[:2]][0].add(op)
+        table[op[4:]][1].add(op)
+    for k,(v0,v1) in sorted(table.items()):
+        outTable[0].append(f"{k}-XX-XX: {' '.join(sorted(v0))}")
+        outTable[1].append(f"XX-XX-{k}: {' '.join(sorted(v1))}")
+
+    outTable[2].append("All 20 unordered MSB-LSB tripples:")
+    table = {f"{i}{j}{k}": [set(), ""] for i in range(6) for j in range(6) for k in range(6) if i < j < k}
+    for op in ops:
+        table["".join(sorted(op[:3]))][0].add(op)
+        table["".join(sorted(op[:3]))][1] = "".join(sorted(op[3:]))
+    for k0,(v,k1) in sorted(table.items()):
+        outTable[2].append(f"{k0}-{k1}: {' '.join(sorted(v))}")
+
+    while len(outTable[2]) < len(outTable[0]):
+        outTable[2].append("")
+
+    for i in range(len(outTable[0])):
+        if i == 0:
+            print(f"    | {outTable[0][i]:25} | {outTable[1][i]:25} | {outTable[2][i]}")
+        else:
+            print(f"{i:2}. | {outTable[0][i]:25} | {outTable[1][i]:25} | {outTable[2][i]}")
 
 print()
-print("Inspecting Candidates..")
-for op in best:
-    loop = set()
-    for i in range(1, 10):
-        if (o := applyOp(Id, op, i)) == Id: break
-        loop.add(o)
-    print(f"{op=} {len(loop)=} {sorted(loop)=}")
+print(f"Number of Ops for R-Type INSN: {len(rTypeOps)}")
+evalRTypePermOps(rTypeOps)
 
+
+###################################################################
+# Find Magic Op Pairs
+
+print()
+
+ops1 = ValChain[3]
+ops2 = applyOps(ops1, ops1)
+ops3 = applyOps(ops2, ops1)
+assert len(ops2) < 720 and len(ops3) == 720
+hardOps = ops3 - ops2
+
+print()
+print(f"{len(ops1)=} {len(ops2)=} {len(ops3)=} {len(hardOps)=}")
+
+# find candidates for first magic op. it can be any of the 720,
+# but must cover at least half of the hardOps.
+sel_candidates = dict()
+all_candidates = dict()
+for op in ops3:
+    spread = applyOps(applyOp(ops1, op), ShflOps) & hardOps
+    if len(spread) >= len(hardOps) // 2:
+        sel_candidates[op] = spread
+    all_candidates[op] = spread
+print(f"{len(sel_candidates)=} {sorted(sel_candidates)=}")
+
+print()
+magic_pairs = set()
+for a, a_spread in sorted(sel_candidates.items()):
+    magic_partners = set()
+    for b, b_spread in all_candidates.items():
+        if len(a_spread) + len(b_spread) < len(hardOps):
+            continue
+        spread = a_spread | b_spread
+        if len(spread) >= len(hardOps):
+            assert len(spread) == len(hardOps)
+            magic_pairs.add(tuple(reversed(sorted([a, b]))))
+            magic_partners.add(b)
+    assert magic_partners
+    if magic_partners and a[:3] == "543":
+        print(f"{a=} {len(magic_partners)=} {sorted(magic_partners)[-5:]=}")
+print()
+print(f"{len(magic_pairs)=} {sorted(magic_pairs)[-3:]=}")
