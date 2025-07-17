@@ -1,0 +1,4 @@
+/__pycache__/
+/llm_wrapper/__pycache__/
+/finetuned_model/
+/.venv/
