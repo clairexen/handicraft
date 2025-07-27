@@ -322,8 +322,8 @@ if __name__ == "__main__":
     tokens.pr_table(9)
 
     print()
-    print("Medium Example Token List")
-    print("=========================")
+    print("Medium (Default) Example Token List")
+    print("===================================")
     cfg = GraphSprechConfig()
     tokens = gentokens(cfg)
     tokens.pr_table(10)
