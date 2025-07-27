@@ -1,5 +1,4 @@
-import types
-from itertools import product
+import sys, types, itertools
 
 # import nltk
 # nltk.download('words')
@@ -110,6 +109,51 @@ en_basic_words = ["I", "a", "able", "about", "account", "acid", "across",
 "with", "woman", "wood", "wool", "word", "work", "worm", "wound", "writing",
 "wrong", "year", "yellow", "yes", "yesterday", "you", "young"]
 
+example_text = """
+REM "Tokenizer encode/decode example text."
+
+PROMPT "What is 7+4?"
+TXT "11."
+
+PROMPT "What's a short name for Robert?"
+TXT "Bob."
+
+MODULE "test_1"
+  DIMS i16 f8 n64 o4
+  PI i1 i2 i3 i4
+  PO o1 o2
+
+  TABLE "ref"
+    '-------- 11-------------- XXXXXXXX 1-XX'
+    '-------- --00------------ XXXXXXXX -0XX'
+    '-------- ---------------- XXXXXXXX 01XX'
+
+  CIRCUIT "impl"
+    FNCN o1 AND i1 i2
+    FNCN o2 OR i3 i4
+
+PROMPT ```
+Create another truth table, that explicitly encodes the
+cases where the AND-inputs are '1' and the OR-inputs are '0'.
+```
+TXT ```
+Thinking.. The user asks me to ... the TABLE "ref" has one line
+per gate, plus a final line with defaults ... in order to get
+the encoding the user asks for I therefore should ...
+```
+
+  TABLE "alt"
+    '-------- 0--------------- XXXXXXXX 0-XX'
+    '-------- -0-------------- XXXXXXXX 0-XX'
+    '-------- --1------------- XXXXXXXX -1XX'
+    '-------- ---1------------ XXXXXXXX -1XX'
+    '-------- ---------------- XXXXXXXX 10XX'
+
+REM "Finished creating the table."
+
+ENDMOD
+"""
+
 def reload():
     exec(open("tokens.py").read(), globals())
 
@@ -157,22 +201,27 @@ class GraphSprechConfig:
 @dataclass
 class TokenList:
     lines: list = field(default_factory=list)
+    tokens: dict = field(default_factory=dict)
     encoder: dict = field(default_factory=dict)
+    pi_offset: int = 0
+    ff_offset: int = 0
+    op_offset: int = 0
+    po_offset: int = 0
 
     def pr_table(self, cols=5, /):
-        col_height = (len(tokens.lines)+cols-1) // cols
+        col_height = (len(self.lines)+cols-1) // cols
         col_widths = [0]*cols
 
         for i in range(col_height):
             for j in range(cols):
                 k = i + col_height * j
-                l = tokens.lines[k] if k < len(tokens.lines) else ""
+                l = self.lines[k] if k < len(self.lines) else ""
                 col_widths[j] = max(col_widths[j], len(l))
 
         for i in range(col_height):
             for j in range(cols):
                 k = i + col_height * j
-                l = tokens.lines[k] if k < len(tokens.lines) else ""
+                l = self.lines[k] if k < len(self.lines) else ""
                 print(f"{l}\n" if j == cols-1 else f"{l:<{col_widths[j]}} | ", end="")
 
 def gentokens(cfg: GraphSprechConfig = GraphSprechConfig()):
@@ -184,21 +233,31 @@ def gentokens(cfg: GraphSprechConfig = GraphSprechConfig()):
         s = x.split()
         tok_index = len(ret.lines)
         ret.lines.append(f"{tok_index:<3} {x}")
-        def enc(x, y): ret.encoder[x] = y
+        ret.tokens[x] = tok_index
+        def enc(x, y):
+            ret.encoder[x] = y
         if len(s) >= 1: enc(s[0], (tok_index,))
         if len(s) >= 2: enc(s[1], (tok_shift, tok_index))
         if len(s) >= 3: enc(s[2], (tok_altgr, tok_index))
         return tok_index
 
-    tok("NULL") # unsed
+    # used only as EOF marker
+    tok("NULL")
+
+    # a break is just an empty line
+    tok("BREAK")
+
+    # chatbot interface:  PROMPT "<text>"
+    # (response as TXT in the next line and/or REM later)
+    tok("PROMPT")
 
     # start of module block
     tok("MODULE")      # MODULE "<name>"
 
     # can be used anywhere
-    tok("REM")         #   REM "This is a comment"
-    tok("TXT")         #   TXT "This is an annotation"
-    tok("TAG")         #   TAG (i|f|n|o)<N> "This is an annotation"
+    tok("REM")         #   REM "This is a comment or remark"
+    tok("TXT")         #   TXT "This is an annotation of the last statement"
+    tok("TAG")         #   TAG (i|f|n|o)<N> "This is an annotation of this entity"
 
     # header statements
     tok("DIMS")        #   DIMS i<max> f<max> n<max> o<max>
@@ -207,10 +266,11 @@ def gentokens(cfg: GraphSprechConfig = GraphSprechConfig()):
 
     # table block
     tok("TABLE")       #   TABLE ["<optional_table_name>"]
-    tok("LINE_I")      #     '<in_3state_pat> <ff_4state_constr> <out_4state_constr>'
-    tok("LINE_F")      #     ^LINE_I         ^LINE_F            ^LINE_O             ^LINE_E
-    tok("LINE_O")
-    tok("LINE_E")
+    tok("LUT_Q")       #     '<ff_3state_pat> <in_3state_pat> <ff_4state_constr> <out_4state_constr>'
+    tok("LUT_I")       #     ^LUT_Q          ^LUT_I          ^LUT_D             ^LUT_O              ^LUT_E
+    tok("LUT_D")
+    tok("LUT_O")
+    tok("LUT_E")
 
     # circuit block
     tok("CIRCUIT")     #   CIRCUIT ["<optional_circuit_name>" ["<table_name>"... | "*"]]
@@ -226,9 +286,13 @@ def gentokens(cfg: GraphSprechConfig = GraphSprechConfig()):
     # end of module block
     tok("ENDMOD")      # ENDMOD
 
-    # OP types. (LUT<N> is directly followed by 3-state LUT data, terminated by LUTEND)
+    # OP types. (LUT<N> is directly followed by 3-state LUT data, terminated by LUT_E)
     for s in """AND NAND OR NOR XOR XNOR ANDNOT ORNOT MUX NMUX
-            AOI3 OAI3 AOI4 OAI4 LUT2 LUT3 LUT4 LUT5 LUT6 LUT_E""".split(): tok(s)
+            AOI3 OAI3 AOI4 OAI4 LUT2 LUT3 LUT4 LUT5 LUT6""".split(): tok(s)
+
+    tok("STR_B")  # start of "..." string
+    tok("STR_Q")  # start of ```\n...\n```\n string
+    tok("STR_E")  # end of string
 
     for idx in range(1, cfg.num_pi+1): tok(f"i{idx}")
     for idx in range(1, cfg.num_ff+1): tok(f"f{idx}")
@@ -237,13 +301,11 @@ def gentokens(cfg: GraphSprechConfig = GraphSprechConfig()):
 
     vals = set("01ZX")
     for n in cfg.nbits_3state:
-        for w in product(*["01Z" for _ in range(n)]): vals.add("".join(w))
+        for w in itertools.product(*["01Z" for _ in range(n)]): vals.add("".join(w))
     for n in cfg.nbits_4state:
-        for w in product(*["01ZX" for _ in range(n)]): vals.add("".join(w))
+        for w in itertools.product(*["01ZX" for _ in range(n)]): vals.add("".join(w))
     for l,w in sorted((len(v),v) for v in vals):
-        tok(f"'{w.replace('X', '*').replace('Z', '-')}'")
-
-    tok("STR")
+        tok(f"'{w.replace('Z', '-')}'")
 
     if cfg.shift_altgr:
         tok_shift = tok("SHIFT")
@@ -297,11 +359,18 @@ def gentokens(cfg: GraphSprechConfig = GraphSprechConfig()):
         for _,w in sorted((len(w),w) for w in en_basic_words):
             tok(f"_{w}")
 
-    tok("STR_E")
+    ret.pi_offset = 0
+    ret.ff_offset = 0
+    ret.op_offset = 0
+    ret.po_offset = 0
 
     return ret
 
-if __name__ == "__main__":
+def main():
+    if args and args[0] == "-e":
+        # FIXME
+        return
+
     print()
     print("Huge Example Token List")
     print("=======================")
@@ -340,3 +409,7 @@ if __name__ == "__main__":
     )
     tokens = gentokens(cfg)
     tokens.pr_table(8)
+
+if __name__ == "__main__":
+    cmdname, *args = sys.argv
+    sys.exit(main())
