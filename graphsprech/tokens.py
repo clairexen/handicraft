@@ -207,9 +207,10 @@ def gentokens(cfg: GraphSprechConfig = GraphSprechConfig()):
 
     # table block
     tok("TABLE")       #   TABLE ["<optional_table_name>"]
-    tok("TAB_I")       #     TAB_I '<in_3state_pat>' TAB_F '<ff_4state_constr>' TAB_O '<out_4state_constr>'
-    tok("TAB_F")
-    tok("TAB_O")
+    tok("LINE_I")      #     '<in_3state_pat> <ff_4state_constr> <out_4state_constr>'
+    tok("LINE_F")      #     ^LINE_I         ^LINE_F            ^LINE_O             ^LINE_E
+    tok("LINE_O")
+    tok("LINE_E")
 
     # circuit block
     tok("CIRCUIT")     #   CIRCUIT ["<optional_circuit_name>" ["<table_name>"... | "*"]]
