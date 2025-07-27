@@ -32,84 +32,168 @@ def pr(x, *, keys=None):
 
 # =======================================================
 
-dims = (16, 8, 64, 4)
-shift_alt = False
-tok_index = 0
+from dataclasses import dataclass, field
 
-def tok(x):
-    global tok_index
-    tok_index += 1
-    print(f"{tok_index:<3} {x}")
+@dataclass
+class GraphSprechConfig:
+    num_pi: int = 16
+    num_ff: int = 8
+    num_op: int = 64
+    num_po: int = 4
+    nbits_3state: int = 2
+    nbits_4state: int = 2
+    shift_alt: bool = True
 
-tok("FUNCTION")
-tok("LUTI")
-tok("LUTF")
-tok("LUTO")
-tok("REM")
-tok("TXT")
-tok("CIRCUIT")
-tok("CNFN")
-tok("FNCN")
-tok("CONN")
-tok("FUNC")
-tok("END")
+@dataclass
+class TokenList:
+    lines: list = field(default_factory=list)
+    encoder: dict = field(default_factory=dict)
 
-for s in """AND NAND OR NOR XOR XNOR ANDNOT ORNOT MUX NMUX
-            AOI3 OAI3 AOI4 OAI4 LUT2 LUT3 LUT4 LUT5 LUT6""".split():
-    tok(s)
+    def pr_table(self, cols=7, /):
+        col_height = (len(tokens.lines)+cols-1) // cols
+        col_widths = [0]*cols
 
-def toks(ch, caps, alt):
-    if caps == ' ': caps = "\\n"
-    if alt == '\\': alt = "\\\\"
-    if alt == '\"': alt = "\\\""
-    if shift_alt:
-        tok(f'"{ch}" "{caps}" "{alt}"')
-    else:
-        tok(f'"{ch}"')
-        tok(f'"{caps}"')
-        tok(f'"{alt}"')
+        for i in range(col_height):
+            for j in range(cols):
+                k = i + col_height * j
+                l = tokens.lines[k] if k < len(tokens.lines) else ""
+                col_widths[j] = max(col_widths[j], len(l))
 
-toks(*"aA!")
-toks(*"bB\"")
-toks(*"cC#")
-toks(*"dD$")
-toks(*"eE%")
-toks(*"fF&")
-toks(*"gG'")
-toks(*"hH(")
-toks(*"iI)")
-toks(*"jJ*")
-toks(*"kK+")
-toks(*"lL,")
-toks(*"mM-")
-toks(*"nN.")
-toks(*"oO/")
-toks(*"pP:")
-toks(*"qQ;")
-toks(*"rR<")
-toks(*"sS=")
-toks(*"tT>")
-toks(*"uU?")
-toks(*"vV@")
-toks(*"wW[")
-toks(*"xX\\")
-toks(*"yY]")
-toks(*"zZ^")
-toks(*"05_")
-toks(*"16`")
-toks(*"27{")
-toks(*"38|")
-toks(*"48}")
-toks(*"  ~")
+        for i in range(col_height):
+            for j in range(cols):
+                k = i + col_height * j
+                l = tokens.lines[k] if k < len(tokens.lines) else ""
+                print(f"{l}\n" if j == cols-1 else f"{l:<{col_widths[j]}} | ", end="")
 
-if shift_alt:
-    tok("SHIFT")
-    tok("ALT")
+def gentokens(cfg: GraphSprechConfig = GraphSprechConfig()):
+    ret = TokenList()
+    tok_shift = None
+    tok_alt = None
 
-for idx in range(1, dims[0]+1): tok(f"i{idx}")
-for idx in range(1, dims[1]+1): tok(f"f{idx}")
-for idx in range(1, dims[2]+1): tok(f"n{idx}")
-for idx in range(1, dims[3]+1): tok(f"o{idx}")
+    def tok(x):
+        s = x.split()
+        tok_index = len(ret.lines)
+        ret.lines.append(f"{tok_index:<3} {x}")
+        def enc(x, y): ret.encoder[x] = y
+        if len(s) >= 1: enc(s[0], (tok_index,))
+        if len(s) >= 2: enc(s[1], (tok_shift, tok_index))
+        if len(s) >= 3: enc(s[2], (tok_alt, tok_index))
+        return tok_index
 
-for w in ("".join(w) for w in product("01XZ", "01XZ", "01XZ", "01XZ")):
-    tok(f"h{w} '{w.replace('X', '*').replace('Z', '-')}'")
+    tok("NULL") # unsed
+
+    # start of module block
+    tok("MODULE")      # MODULE "<name>"
+
+    # can be used anywhere
+    tok("REM")         #   REM "This is a comment"
+    tok("TXT")         #   TXT "This is an annotation"
+    tok("TAG")         #   TAG (i|f|n|o)<N> "This is an annotation"
+
+    # header statements
+    tok("DIMS")        #   DIMS i<max> f<max> n<max> o<max>
+    tok("PI")          #   PI i<first> ... i<last>
+    tok("PO")          #   PO o<first> ... o<last>
+
+    # table block
+    tok("TABLE")       #   TABLE ["<optional_table_name>"]
+    tok("TAB_I")       #     TAB_I '<in_3state_pat>' TAB_F '<ff_4state_constr>' TAB_O '<out_4state_constr>'
+    tok("TAB_F")
+    tok("TAB_O")
+
+    # circuit block
+    tok("CIRCUIT")     #   CIRCUIT ["<optional_circuit_name>" ["<table_name>"... | "*"]]
+    tok("OPS")         #     OPS NAND NOR
+    tok("FFS")         #     FFS f<first> ... f<last>
+    tok("NETS")        #     NETS n<first> ... n<last>
+    tok("CNFN")        #     CNFN n1 i1 i2 NAND
+    tok("FNCN")        #     FNCN n2 NOR n1 i3
+    tok("CONN")        #     CONN n3 n1 n2
+    tok("FUNC")        #     FUNC n3 NAND
+    tok("NEXT")        #     NEXT f1 n3
+
+    # end of module block
+    tok("ENDMOD")      # ENDMOD
+
+    # OP types. (LUT<N> is directly followed by 3-state LUT data)
+    for s in """AND NAND OR NOR XOR XNOR ANDNOT ORNOT MUX NMUX
+                AOI3 OAI3 AOI4 OAI4 LUT2 LUT3 LUT4 LUT5 LUT6""".split(): tok(s)
+
+    if cfg.shift_alt:
+        tok_shift = tok("SHIFT")
+        tok_alt = tok("ALT")
+
+    def toks(ch, caps, alt):
+        if caps == ' ': caps = "\\n"
+        if alt == '\\': alt = "\\\\"
+        if alt == '\"': alt = "\\\""
+        if cfg.shift_alt:
+            tok(f'"{ch}" "{caps}" "{alt}"')
+        else:
+            tok(f'"{ch}"')
+            tok(f'"{caps}"')
+            tok(f'"{alt}"')
+
+    toks(*"aA!")
+    toks(*"bB\"")
+    toks(*"cC#")
+    toks(*"dD$")
+    toks(*"eE%")
+    toks(*"fF&")
+    toks(*"gG'")
+    toks(*"hH(")
+    toks(*"iI)")
+    toks(*"jJ*")
+    toks(*"kK+")
+    toks(*"lL,")
+    toks(*"mM-")
+    toks(*"nN.")
+    toks(*"oO/")
+    toks(*"pP:")
+    toks(*"qQ;")
+    toks(*"rR<")
+    toks(*"sS=")
+    toks(*"tT>")
+    toks(*"uU?")
+    toks(*"vV@")
+    toks(*"wW[")
+    toks(*"xX\\")
+    toks(*"yY]")
+    toks(*"zZ^")
+    toks(*"05_")
+    toks(*"16`")
+    toks(*"27{")
+    toks(*"38|")
+    toks(*"48}")
+    toks(*"  ~")
+
+    for idx in range(1, cfg.num_pi+1): tok(f"i{idx}")
+    for idx in range(1, cfg.num_ff+1): tok(f"f{idx}")
+    for idx in range(1, cfg.num_op+1): tok(f"n{idx}")
+    for idx in range(1, cfg.num_po+1): tok(f"o{idx}")
+
+    vals = set()
+    for w in product(*["01Z"  for _ in range(cfg.nbits_3state)]): vals.add("".join(w))
+    for w in product(*["01ZX" for _ in range(cfg.nbits_4state)]): vals.add("".join(w))
+    for l,w in sorted((len(v),v) for v in vals): tok(f"b{w} '{w.replace('X', '*').replace('Z', '-')}'")
+
+    return ret
+
+if __name__ == "__main__":
+    print()
+    print("Large Example Token List")
+    print("========================")
+    cfg = GraphSprechConfig(
+        nbits_3state = 4,
+        nbits_4state = 4,
+        shift_alt = False
+    )
+    tokens = gentokens(cfg)
+    tokens.pr_table(6)
+
+    print()
+    print("Small Example Token List")
+    print("========================")
+    cfg = GraphSprechConfig()
+    tokens = gentokens(cfg)
+    tokens.pr_table(7)
