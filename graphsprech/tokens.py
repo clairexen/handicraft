@@ -1,4 +1,5 @@
-import sys, types, itertools
+import re, sys, types, itertools, collections
+from dataclasses import dataclass, field
 
 # import nltk
 # nltk.download('words')
@@ -128,7 +129,7 @@ MODULE "test_1"
     '-------- --00------------ XXXXXXXX -0XX'
     '-------- ---------------- XXXXXXXX 01XX'
 
-  CIRCUIT "impl"
+  CIRCUIT "impl" "ref"
     FNCN o1 AND i1 i2
     FNCN o2 OR i3 i4
 
@@ -136,7 +137,7 @@ PROMPT ```
 Create another truth table, that explicitly encodes the
 cases where the AND-inputs are '1' and the OR-inputs are '0'.
 ```
-TXT ```
+REM ```
 Thinking.. The user asks me to ... the TABLE "ref" has one line
 per gate, plus a final line with defaults ... in order to get
 the encoding the user asks for I therefore should ...
@@ -149,10 +150,17 @@ the encoding the user asks for I therefore should ...
     '-------- ---1------------ XXXXXXXX -1XX'
     '-------- ---------------- XXXXXXXX 10XX'
 
-REM "Finished creating the table."
+TXT "Finished creating the table."
 
 ENDMOD
 """
+
+re_keywords = re.compile("""
+(?<![a-zA-Z]) ( PROMPT | MODULE | REM | TXT | TAG | DIMS | PI | PO | TABLE |
+CIRCUIT | OPS | FFS | NETS | CNFN | FNCN | CONN | FUNC | NEXT | ENDMOD |
+AND | NAND | OR | NOR | XOR | XNOR | ANDNOT | ORNOT | MUX | NMUX |
+AOI3 | OAI3 | AOI4 | OAI4 | LUT2 | LUT3 | LUT4 | LUT5 | LUT6 | [ifno][0-9]+ ) (?![a-zA-Z])
+""", re.A|re.X)
 
 def reload():
     exec(open("tokens.py").read(), globals())
@@ -185,7 +193,6 @@ def pr(x, *, keys=None):
 
 # =======================================================
 
-from dataclasses import dataclass, field
 
 @dataclass
 class GraphSprechConfig:
@@ -197,12 +204,15 @@ class GraphSprechConfig:
     nbits_4state: tuple = (2,)
     shift_altgr: bool = False
     with_words: bool = False
+    with_dbls: bool = False
+    with_tris: bool = False
 
 @dataclass
 class TokenList:
     lines: list = field(default_factory=list)
     tokens: dict = field(default_factory=dict)
     encoder: dict = field(default_factory=dict)
+    decoder: list = field(default_factory=list)
     pi_offset: int = 0
     ff_offset: int = 0
     op_offset: int = 0
@@ -224,24 +234,40 @@ class TokenList:
                 l = self.lines[k] if k < len(self.lines) else ""
                 print(f"{l}\n" if j == cols-1 else f"{l:<{col_widths[j]}} | ", end="")
 
+def quote_str_char(c):
+    if c == '"': return '"\\""'
+    if c == '\n': return '"\\n"'
+    if c == '\\': return '"\\\\"'
+    return f'"{c}"'
+
 def gentokens(cfg: GraphSprechConfig = GraphSprechConfig()):
     ret = TokenList()
     tok_shift = None
     tok_altgr = None
 
     def tok(x):
-        s = x.split()
         tok_index = len(ret.lines)
         ret.lines.append(f"{tok_index:<3} {x}")
+        ret.decoder.append(x)
         ret.tokens[x] = tok_index
         def enc(x, y):
             ret.encoder[x] = y
+        if x.startswith('"'):
+            s = x.removeprefix('"')
+            s = s.removesuffix('"')
+            s = s.replace('" "', '')
+            s = s.replace('\\"', '"')
+            s = s.replace('\\n', '\n')
+            s = s.replace('\\\\', '\\')
+            s = tuple(quote_str_char(c) for c in s)
+        else:
+            s = (x,)
         if len(s) >= 1: enc(s[0], (tok_index,))
         if len(s) >= 2: enc(s[1], (tok_shift, tok_index))
         if len(s) >= 3: enc(s[2], (tok_altgr, tok_index))
         return tok_index
 
-    # used only as EOF marker
+    # only as EOF and ERROR marker
     tok("NULL")
 
     # a break is just an empty line
@@ -255,9 +281,9 @@ def gentokens(cfg: GraphSprechConfig = GraphSprechConfig()):
     tok("MODULE")      # MODULE "<name>"
 
     # can be used anywhere
-    tok("REM")         #   REM "This is a comment or remark"
-    tok("TXT")         #   TXT "This is an annotation of the last statement"
-    tok("TAG")         #   TAG (i|f|n|o)<N> "This is an annotation of this entity"
+    tok("REM")         #   REM "This is a comment or remark that can be ignored"
+    tok("TXT")         #   TXT "This is a relevant information or reply to a prompt"
+    tok("TAG")         #   TAG (i|f|n|o)<N> "This is an annotation of that entity"
 
     # header statements
     tok("DIMS")        #   DIMS i<max> f<max> n<max> o<max>
@@ -265,7 +291,7 @@ def gentokens(cfg: GraphSprechConfig = GraphSprechConfig()):
     tok("PO")          #   PO o<first> ... o<last>
 
     # table block
-    tok("TABLE")       #   TABLE ["<optional_table_name>"]
+    tok("TABLE")       #   TABLE ["<optional_table_name>" ["<table_or_circuit_name>"... | "*"]]
     tok("LUT_Q")       #     '<ff_3state_pat> <in_3state_pat> <ff_4state_constr> <out_4state_constr>'
     tok("LUT_I")       #     ^LUT_Q          ^LUT_I          ^LUT_D             ^LUT_O              ^LUT_E
     tok("LUT_D")
@@ -273,7 +299,7 @@ def gentokens(cfg: GraphSprechConfig = GraphSprechConfig()):
     tok("LUT_E")
 
     # circuit block
-    tok("CIRCUIT")     #   CIRCUIT ["<optional_circuit_name>" ["<table_name>"... | "*"]]
+    tok("CIRCUIT")     #   CIRCUIT ["<optional_circuit_name>" ["<table_or_circuit_name>"... | "*"]]
     tok("OPS")         #     OPS NAND NOR
     tok("FFS")         #     FFS f<first> ... f<last>
     tok("NETS")        #     NETS n<first> ... n<last>
@@ -310,6 +336,11 @@ def gentokens(cfg: GraphSprechConfig = GraphSprechConfig()):
     if cfg.shift_altgr:
         tok_shift = tok("SHIFT")
         tok_altgr = tok("ALTGR")
+
+    if cfg.with_words:
+        if not tok_shift:
+            tok_shift = tok("SHIFT")
+        tok("CAPS")
 
     def toks(ch, caps, alt):
         if caps == ' ': caps = "\\n"
@@ -348,27 +379,120 @@ def gentokens(cfg: GraphSprechConfig = GraphSprechConfig()):
     toks(*"xX\\")
     toks(*"yY]")
     toks(*"zZ^")
-    toks(*"05_")
-    toks(*"16`")
-    toks(*"27{")
-    toks(*"38|")
-    toks(*"48}")
-    toks(*"  ~")
+    toks(*"05`")
+    toks(*"16{")
+    toks(*"27|")
+    toks(*"38}")
+    toks(*"49~")
+    toks(*"  _")
 
+    lex = []
     if cfg.with_words:
-        for _,w in sorted((len(w),w) for w in en_basic_words):
-            tok(f"_{w}")
+        lex += [f"_{w}" for w in en_basic_words]
 
-    ret.pi_offset = 0
-    ret.ff_offset = 0
-    ret.op_offset = 0
-    ret.po_offset = 0
+    if cfg.with_dbls:
+        dbls = set()
+        for w in en_basic_words:
+            if len(w) <= 2: continue
+            for i in range(0,len(w)-1):
+                dbls.add(w[i:i+2])
+        for dbl in dbls:
+            lex.append(f".{dbl}")
+
+    if cfg.with_tris:
+        tris = set()
+        for w in en_basic_words:
+            if len(w) <= 3: continue
+            for i in range(0,len(w)-2):
+                tris.add(w[i:i+3])
+        for tri in tris:
+            lex.append(f".{tri}")
+
+    if lex:
+        for _,_,t in sorted((len(t), t[1:]+t[0], t) for t in lex):
+            tok(t)
+
+    ret.pi_offset = ret.tokens["i1"]
+    ret.ff_offset = ret.tokens["f1"]
+    ret.op_offset = ret.tokens["n1"]
+    ret.po_offset = ret.tokens["o1"]
 
     return ret
 
+def encode(lex, text):
+    tokens = []
+    state = ""
+    pos = 0
+
+    while pos < len(text):
+        if not state:
+            if text[pos:pos+2] == "\n\n":
+                pos += 1
+                tokens += lex.encoder["BREAK"]
+                continue
+            if text[pos] in " \t\n":
+                pos += 1
+                continue
+            if m := re_keywords.match(text, pos):
+                pos += len(m[0])
+                assert m[0] in lex.encoder
+                tokens += lex.encoder[m[0]]
+                continue
+            if text[pos] == '"':
+                pos += 1
+                state = 'STR_B'
+                tokens += lex.encoder['STR_B']
+                continue
+
+        elif state == 'STR_B':
+            if text[pos] == '"':
+                state = ""; t = 'STR_E'
+            elif text[pos:pos+2] == '\\n':
+                pos += 1; t ='"\\n"'
+            elif text[pos:pos+2] in ('\\"', '\\\\'):
+                pos += 1; t ='"\\{text[pos]}"'
+            else:
+                t = quote_str_char(text[pos])
+            assert t in lex.encoder, f"Token {t} not in encoder table."
+            tokens += lex.encoder[t]
+            pos += 1
+            continue
+
+        tokens.append(0)
+        break
+
+    return tokens
+
+def decode(lex, toks):
+    return "FIXME"
+
+def tok2str(lex, toks):
+    if isinstance(toks, int):
+        s = lex.decoder[toks]
+        if ' ' in s and s != '" "':
+            s = s.removeprefix('\"')
+            s = s.removesuffix('\"')
+            s = s.replace('" "', '')
+            s = s.replace('\\"', '"')
+            s = f"[{s}]"
+        return s
+    if toks is None:
+        return "None"
+    return " ".join(tok2str(lex, t) for t in toks)
+
 def main():
-    if args and args[0] == "-e":
-        # FIXME
+    if args and args[0] == "-t":
+        cfg = GraphSprechConfig(shift_altgr = True)
+        lex = gentokens(cfg)
+        lex.pr_table(8)
+        for s in args[1:]:
+            print()
+            print(f"Input: {s}")
+            t = encode(lex, s)
+            print(f"Ids: {' '.join(str(i) for i in t)}")
+            print(f"Tokens: {tok2str(lex, t)}")
+            x = decode(lex, t)
+            print(f"Output: {x}")
         return
 
     print()
@@ -378,10 +502,12 @@ def main():
         nbits_3state = (4,),
         nbits_4state = (2,3,4),
         shift_altgr = False,
-        with_words = True
+        with_words = True,
+        with_dbls = True,
+        with_tris = True
     )
-    tokens = gentokens(cfg)
-    tokens.pr_table(8)
+    lex = gentokens(cfg)
+    lex.pr_table(8)
 
     print()
     print("Large Example Token List")
@@ -391,15 +517,15 @@ def main():
         nbits_4state = (4,),
         shift_altgr = False
     )
-    tokens = gentokens(cfg)
-    tokens.pr_table(9)
+    lex = gentokens(cfg)
+    lex.pr_table(9)
 
     print()
-    print("Medium (Default) Example Token List")
-    print("===================================")
+    print("Medium (Default) Token List")
+    print("===========================")
     cfg = GraphSprechConfig()
-    tokens = gentokens(cfg)
-    tokens.pr_table(10)
+    lex = gentokens(cfg)
+    lex.pr_table(10)
 
     print()
     print("Small Example Token List")
@@ -407,8 +533,8 @@ def main():
     cfg = GraphSprechConfig(
         shift_altgr = True
     )
-    tokens = gentokens(cfg)
-    tokens.pr_table(8)
+    lex = gentokens(cfg)
+    lex.pr_table(8)
 
 if __name__ == "__main__":
     cmdname, *args = sys.argv
