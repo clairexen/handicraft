@@ -159,7 +159,7 @@ class TokenList:
     lines: list = field(default_factory=list)
     encoder: dict = field(default_factory=dict)
 
-    def pr_table(self, cols=7, /):
+    def pr_table(self, cols=5, /):
         col_height = (len(tokens.lines)+cols-1) // cols
         col_widths = [0]*cols
 
