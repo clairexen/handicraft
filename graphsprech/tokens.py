@@ -294,7 +294,7 @@ def gentokens(cfg: GraphSprechConfig = GraphSprechConfig()):
     toks(*"  ~")
 
     if cfg.with_words:
-        for w in en_basic_words:
+        for _,w in sorted((len(w),w) for w in en_basic_words):
             tok(f"_{w}")
 
     tok("STR_E")
@@ -312,7 +312,7 @@ if __name__ == "__main__":
         with_words = True
     )
     tokens = gentokens(cfg)
-    tokens.pr_table(6)
+    tokens.pr_table(8)
 
     print()
     print("Large Example Token List")
