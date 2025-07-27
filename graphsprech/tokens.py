@@ -155,13 +155,6 @@ TXT "Finished creating the table."
 ENDMOD
 """
 
-re_keywords = re.compile("""
-(?<![a-zA-Z]) ( PROMPT | MODULE | REM | TXT | TAG | DIMS | PI | PO | TABLE |
-CIRCUIT | OPS | FFS | NETS | CNFN | FNCN | CONN | FUNC | NEXT | ENDMOD |
-AND | NAND | OR | NOR | XOR | XNOR | ANDNOT | ORNOT | MUX | NMUX |
-AOI3 | OAI3 | AOI4 | OAI4 | LUT2 | LUT3 | LUT4 | LUT5 | LUT6 | [ifno][0-9]+ ) (?![a-zA-Z])
-""", re.A|re.X)
-
 def reload():
     exec(open("tokens.py").read(), globals())
 
@@ -234,6 +227,20 @@ class TokenList:
                 l = self.lines[k] if k < len(self.lines) else ""
                 print(f"{l}\n" if j == cols-1 else f"{l:<{col_widths[j]}} | ", end="")
 
+    def finish(self):
+        self.pi_offset = self.tokens["i1"]
+        self.ff_offset = self.tokens["f1"]
+        self.op_offset = self.tokens["n1"]
+        self.po_offset = self.tokens["o1"]
+
+        objnames = " | ".join(t for t in self.decoder if t[0] in 'ifno')
+        self.re_keywords = re.compile(f"""
+            (?<![a-zA-Z0-9]) ( PROMPT | MODULE | REM | TXT | TAG | DIMS | PI | PO | TABLE |
+            CIRCUIT | OPS | FFS | NETS | CNFN | FNCN | CONN | FUNC | NEXT | ENDMOD |
+            AND | NAND | OR | NOR | XOR | XNOR | ANDNOT | ORNOT | MUX | NMUX |
+            AOI3 | OAI3 | AOI4 | OAI4 | LUT2 | LUT3 | LUT4 | LUT5 | LUT6 | {objnames} ) (?![a-zA-Z0-9])
+        """, re.A|re.X)
+
 def quote_str_char(c):
     if c == '"': return '"\\""'
     if c == '\n': return '"\\n"'
@@ -292,10 +299,9 @@ def gentokens(cfg: GraphSprechConfig = GraphSprechConfig()):
 
     # table block
     tok("TABLE")       #   TABLE ["<optional_table_name>" ["<table_or_circuit_name>"... | "*"]]
-    tok("LUT_Q")       #     '<ff_3state_pat> <in_3state_pat> <ff_4state_constr> <out_4state_constr>'
-    tok("LUT_I")       #     ^LUT_Q          ^LUT_I          ^LUT_D             ^LUT_O              ^LUT_E
-    tok("LUT_D")
-    tok("LUT_O")
+    tok("LUT_B")       #     '<ff_3state_pat> <in_3state_pat> <ff_4state_constr> <out_4state_constr>'
+    tok("LUT_D")       #     ^LUT_B          ^LUT_D          ^LUT_T             ^LUT_D              ^LUT_E
+    tok("LUT_T")
     tok("LUT_E")
 
     # circuit block
@@ -313,7 +319,7 @@ def gentokens(cfg: GraphSprechConfig = GraphSprechConfig()):
     tok("ENDMOD")      # ENDMOD
 
     # OP types. (LUT<N> is directly followed by 3-state LUT data, terminated by LUT_E)
-    for s in """AND NAND OR NOR XOR XNOR ANDNOT ORNOT MUX NMUX
+    for s in """NOT AND NAND OR NOR XOR XNOR ANDNOT ORNOT MUX NMUX
             AOI3 OAI3 AOI4 OAI4 LUT2 LUT3 LUT4 LUT5 LUT6""".split(): tok(s)
 
     tok("STR_B")  # start of "..." string
@@ -412,11 +418,7 @@ def gentokens(cfg: GraphSprechConfig = GraphSprechConfig()):
         for _,_,t in sorted((len(t), t[1:]+t[0], t) for t in lex):
             tok(t)
 
-    ret.pi_offset = ret.tokens["i1"]
-    ret.ff_offset = ret.tokens["f1"]
-    ret.op_offset = ret.tokens["n1"]
-    ret.po_offset = ret.tokens["o1"]
-
+    ret.finish()
     return ret
 
 def encode(lex, text):
@@ -433,7 +435,7 @@ def encode(lex, text):
             if text[pos] in " \t\n":
                 pos += 1
                 continue
-            if m := re_keywords.match(text, pos):
+            if m := lex.re_keywords.match(text, pos):
                 pos += len(m[0])
                 assert m[0] in lex.encoder
                 tokens += lex.encoder[m[0]]
@@ -482,7 +484,9 @@ def tok2str(lex, toks):
 
 def main():
     if args and args[0] == "-t":
-        cfg = GraphSprechConfig(shift_altgr = True)
+        cfg = GraphSprechConfig(
+            shift_altgr = False
+        )
         lex = gentokens(cfg)
         lex.pr_table(8)
         for s in args[1:]:
