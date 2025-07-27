@@ -42,7 +42,7 @@ class GraphSprechConfig:
     num_po: int = 4
     nbits_3state: int = 2
     nbits_4state: int = 2
-    shift_alt: bool = True
+    shift_altgr: bool = False
 
 @dataclass
 class TokenList:
@@ -68,7 +68,7 @@ class TokenList:
 def gentokens(cfg: GraphSprechConfig = GraphSprechConfig()):
     ret = TokenList()
     tok_shift = None
-    tok_alt = None
+    tok_altgr = None
 
     def tok(x):
         s = x.split()
@@ -77,7 +77,7 @@ def gentokens(cfg: GraphSprechConfig = GraphSprechConfig()):
         def enc(x, y): ret.encoder[x] = y
         if len(s) >= 1: enc(s[0], (tok_index,))
         if len(s) >= 2: enc(s[1], (tok_shift, tok_index))
-        if len(s) >= 3: enc(s[2], (tok_alt, tok_index))
+        if len(s) >= 3: enc(s[2], (tok_altgr, tok_index))
         return tok_index
 
     tok("NULL") # unsed
@@ -115,19 +115,31 @@ def gentokens(cfg: GraphSprechConfig = GraphSprechConfig()):
     # end of module block
     tok("ENDMOD")      # ENDMOD
 
-    # OP types. (LUT<N> is directly followed by 3-state LUT data)
+    # OP types. (LUT<N> is directly followed by 3-state LUT data, terminated by LUTEND)
     for s in """AND NAND OR NOR XOR XNOR ANDNOT ORNOT MUX NMUX
-                AOI3 OAI3 AOI4 OAI4 LUT2 LUT3 LUT4 LUT5 LUT6""".split(): tok(s)
+            AOI3 OAI3 AOI4 OAI4 LUT2 LUT3 LUT4 LUT5 LUT6 LUTEND""".split(): tok(s)
 
-    if cfg.shift_alt:
+    for idx in range(1, cfg.num_pi+1): tok(f"i{idx}")
+    for idx in range(1, cfg.num_ff+1): tok(f"f{idx}")
+    for idx in range(1, cfg.num_op+1): tok(f"n{idx}")
+    for idx in range(1, cfg.num_po+1): tok(f"o{idx}")
+
+    vals = set()
+    for w in product(*["01Z"  for _ in range(cfg.nbits_3state)]): vals.add("".join(w))
+    for w in product(*["01ZX" for _ in range(cfg.nbits_4state)]): vals.add("".join(w))
+    for l,w in sorted((len(v),v) for v in vals): tok(f"'{w.replace('X', '*').replace('Z', '-')}'")
+
+    tok("STR")
+
+    if cfg.shift_altgr:
         tok_shift = tok("SHIFT")
-        tok_alt = tok("ALT")
+        tok_altgr = tok("ALTGR")
 
     def toks(ch, caps, alt):
         if caps == ' ': caps = "\\n"
         if alt == '\\': alt = "\\\\"
         if alt == '\"': alt = "\\\""
-        if cfg.shift_alt:
+        if cfg.shift_altgr:
             tok(f'"{ch}" "{caps}" "{alt}"')
         else:
             tok(f'"{ch}"')
@@ -167,15 +179,7 @@ def gentokens(cfg: GraphSprechConfig = GraphSprechConfig()):
     toks(*"48}")
     toks(*"  ~")
 
-    for idx in range(1, cfg.num_pi+1): tok(f"i{idx}")
-    for idx in range(1, cfg.num_ff+1): tok(f"f{idx}")
-    for idx in range(1, cfg.num_op+1): tok(f"n{idx}")
-    for idx in range(1, cfg.num_po+1): tok(f"o{idx}")
-
-    vals = set()
-    for w in product(*["01Z"  for _ in range(cfg.nbits_3state)]): vals.add("".join(w))
-    for w in product(*["01ZX" for _ in range(cfg.nbits_4state)]): vals.add("".join(w))
-    for l,w in sorted((len(v),v) for v in vals): tok(f"b{w} '{w.replace('X', '*').replace('Z', '-')}'")
+    tok("STREND")
 
     return ret
 
@@ -186,14 +190,23 @@ if __name__ == "__main__":
     cfg = GraphSprechConfig(
         nbits_3state = 4,
         nbits_4state = 4,
-        shift_alt = False
+        shift_altgr = False
     )
     tokens = gentokens(cfg)
-    tokens.pr_table(6)
+    tokens.pr_table(9)
+
+    print()
+    print("Medium Example Token List")
+    print("=========================")
+    cfg = GraphSprechConfig()
+    tokens = gentokens(cfg)
+    tokens.pr_table(10)
 
     print()
     print("Small Example Token List")
     print("========================")
-    cfg = GraphSprechConfig()
+    cfg = GraphSprechConfig(
+        shift_altgr = True
+    )
     tokens = gentokens(cfg)
-    tokens.pr_table(7)
+    tokens.pr_table(8)
