@@ -149,8 +149,8 @@ class GraphSprechConfig:
     num_ff: int = 8
     num_op: int = 64
     num_po: int = 4
-    nbits_3state: int = 2
-    nbits_4state: int = 2
+    nbits_3state: tuple = (2,)
+    nbits_4state: tuple = (2,)
     shift_altgr: bool = False
     with_words: bool = False
 
@@ -228,7 +228,7 @@ def gentokens(cfg: GraphSprechConfig = GraphSprechConfig()):
 
     # OP types. (LUT<N> is directly followed by 3-state LUT data, terminated by LUTEND)
     for s in """AND NAND OR NOR XOR XNOR ANDNOT ORNOT MUX NMUX
-            AOI3 OAI3 AOI4 OAI4 LUT2 LUT3 LUT4 LUT5 LUT6 LUTEND""".split(): tok(s)
+            AOI3 OAI3 AOI4 OAI4 LUT2 LUT3 LUT4 LUT5 LUT6 LUT_E""".split(): tok(s)
 
     for idx in range(1, cfg.num_pi+1): tok(f"i{idx}")
     for idx in range(1, cfg.num_ff+1): tok(f"f{idx}")
@@ -236,9 +236,12 @@ def gentokens(cfg: GraphSprechConfig = GraphSprechConfig()):
     for idx in range(1, cfg.num_po+1): tok(f"o{idx}")
 
     vals = set("01ZX")
-    for w in product(*["01Z"  for _ in range(cfg.nbits_3state)]): vals.add("".join(w))
-    for w in product(*["01ZX" for _ in range(cfg.nbits_4state)]): vals.add("".join(w))
-    for l,w in sorted((len(v),v) for v in vals): tok(f"'{w.replace('X', '*').replace('Z', '-')}'")
+    for n in cfg.nbits_3state:
+        for w in product(*["01Z" for _ in range(n)]): vals.add("".join(w))
+    for n in cfg.nbits_4state:
+        for w in product(*["01ZX" for _ in range(n)]): vals.add("".join(w))
+    for l,w in sorted((len(v),v) for v in vals):
+        tok(f"'{w.replace('X', '*').replace('Z', '-')}'")
 
     tok("STR")
 
@@ -294,7 +297,7 @@ def gentokens(cfg: GraphSprechConfig = GraphSprechConfig()):
         for w in en_basic_words:
             tok(f"_{w}")
 
-    tok("STREND")
+    tok("STR_E")
 
     return ret
 
@@ -303,8 +306,8 @@ if __name__ == "__main__":
     print("Huge Example Token List")
     print("=======================")
     cfg = GraphSprechConfig(
-        nbits_3state = 4,
-        nbits_4state = 4,
+        nbits_3state = (4,),
+        nbits_4state = (2,3,4),
         shift_altgr = False,
         with_words = True
     )
@@ -315,8 +318,8 @@ if __name__ == "__main__":
     print("Large Example Token List")
     print("========================")
     cfg = GraphSprechConfig(
-        nbits_3state = 4,
-        nbits_4state = 4,
+        nbits_3state = (4,),
+        nbits_4state = (4,),
         shift_altgr = False
     )
     tokens = gentokens(cfg)
