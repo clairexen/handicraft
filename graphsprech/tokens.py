@@ -125,13 +125,13 @@ MODULE "test_1"
   PO o1 o2
 
   PTABLE "ref"
-    '11-------------- -------- ==> 1--- --------'
-    '--00------------ -------- ==> -0-- --------'
-    '---------------- -------- ==> 01-- --------'
+    DEF '11-------------- -------- ==> 1--- --------'
+    DEF '--00------------ -------- ==> -0-- --------'
+    DEF '---------------- -------- ==> 01-- --------'
 
   CIRCUIT "impl" "ref"
-    DEF o1 AND(i1,i2)
-    DEF o2 OR(i3,i4)
+    DEF o1 (AND i1 i2)
+    DEF o2 (OR i3 i4)
 
 PROMPT ```
 Create another truth table, that explicitly encodes the
@@ -144,11 +144,11 @@ the encoding the user asks for I therefore should ...
 ```
 
   PTABLE "alt"
-    '0--------------- -------- ==> 0--- --------'
-    '-0-------------- -------- ==> 0--- --------'
-    '--1------------- -------- ==> -1-- --------'
-    '---1------------ -------- ==> -1-- --------'
-    '---------------- -------- ==> 10-- --------'
+    DEF '0--------------- -------- ==> 0--- --------'
+    DEF '-0-------------- -------- ==> 0--- --------'
+    DEF '--1------------- -------- ==> -1-- --------'
+    DEF '---1------------ -------- ==> -1-- --------'
+    DEF '---------------- -------- ==> 10-- --------'
 
 TXT "Finished creating the table."
 
@@ -313,10 +313,10 @@ def gentokens(cfg: GraphSprechConfig = GraphSprechConfig()):
     # circuit block
     tok("CIRCUIT")     #   CIRCUIT ["<optional_name>"
     tok("OPS")         #     OPS NAND NOR
-    tok("DEF")         #     DEF n1 NAND(i1,i2)   # create/define a GATE
-    tok("FUN_B")       #     DEF n2 MUX(n1,i1,i3) # MUX(n1,i1,i3) = FUN_B MUX n1 i1 i3 FUN_E
-    tok("FUN_E")       #     DEF NEXT f1 n1       # drive FF input
-    tok("NEXT")        #     DEF o1 n2            # drive primary output
+    tok("DEF")         #     DEF n1 (NAND i1 i2)   # create/define a GATE
+    tok("FUN_B")       #     DEF n2 (MUX n1 i1 i3) # (MUX n1 i1 i3) = FUN_B MUX n1 i1 i3 FUN_E
+    tok("FUN_E")       #     DEF NEXT f1 n1        # drive FF input
+    tok("NEXT")        #     DEF o1 n2             # drive primary output
 
     # end of module block
     tok("ENDMOD")      # ENDMOD
@@ -421,40 +421,57 @@ def gentokens(cfg: GraphSprechConfig = GraphSprechConfig()):
     ret.finish()
     return ret
 
-def encode(lex, text):
+def encode(lex, text, encodeText=True):
     tokens = []
     state_str1 = False
     state_str2 = False
     state_bits = False
-    state_fun = False
     pos = 0
 
     while pos < len(text):
-        if state_str1:
-            if text[pos] == '"':
-                state_str1 = False; t = 'STR_E'
-            elif text[pos:pos+2] == '\\n':
-                pos += 1; t ='"\\n"'
-            elif text[pos:pos+2] in ('\\"', '\\\\'):
-                pos += 1; t ='"\\{text[pos]}"'
-            else:
-                t = quote_str_char(text[pos])
-            assert t in lex.encoder, f"Token {t} not in encoder table."
-            tokens += lex.encoder[t]
-            pos += 1
-            continue
+        if state_str1 or state_str2:
+            if not encodeText:
+                l = 0; t = []
+                if state_str1:
+                    while text[pos+l] != '"' and pos+l < len(text):
+                        l += 1 if text[pos+l] != "\\" else 2
+                    t += lex.encoder["STR_E"]
+                else:
+                    while text[pos+l:pos+l+5] != "\n```\n" and pos+l < len(text):
+                        l += 1
+                    t += lex.encoder["STR_E"]
+                    t += lex.encoder["STR_E"]
+                tokens += [text[pos:pos+l]] + t
+                pos += l + (1 if state_str1 else 4)
+                state_str1 = False; state_str2 = False
+                continue
 
-        if state_str2:
-            if text[pos:].startswith('\n```\n'):
-                state_str2 = False; t = 'STR_E'
+            elif state_str1:
+                if text[pos] == '"':
+                    state_str1 = False; t = 'STR_E'
+                elif text[pos:pos+2] == '\\n':
+                    pos += 1; t ='"\\n"'
+                elif text[pos:pos+2] in ('\\"', '\\\\'):
+                    pos += 1; t ='"\\{text[pos]}"'
+                else:
+                    t = quote_str_char(text[pos])
+                assert t in lex.encoder, f"Token {t} not in encoder table."
                 tokens += lex.encoder[t]
-                pos += 3
+                pos += 1
+                continue
+
             else:
-                t = quote_str_char(text[pos])
-            assert t in lex.encoder, f"Token {t} not in encoder table."
-            tokens += lex.encoder[t]
-            pos += 1
-            continue
+                assert state_str2
+                if text[pos:].startswith('\n```\n'):
+                    state_str2 = False; t = 'STR_E'
+                    tokens += lex.encoder[t]
+                    pos += 3
+                else:
+                    t = quote_str_char(text[pos])
+                assert t in lex.encoder, f"Token {t} not in encoder table."
+                tokens += lex.encoder[t]
+                pos += 1
+                continue
 
         if state_bits:
             if text[pos] == "'":
@@ -474,18 +491,6 @@ def encode(lex, text):
             tokens += lex.encoder[t]
             continue
 
-        if state_fun:
-            if text[pos] == ",":
-                pos += 1
-            if m := lex.re_keywords.match(text, pos):
-                pos += len(m[0])
-                assert m[0] in lex.encoder
-                tokens += lex.encoder[m[0]]
-                continue
-            assert text[pos] == ")"
-            state_fun = False; pos += 1
-            continue
-
         # no special state
         if text[pos:pos+2] == "\n\n":
             pos += 1
@@ -497,9 +502,6 @@ def encode(lex, text):
         if m := lex.re_keywords.match(text, pos):
             pos += len(m[0])
             assert m[0] in lex.encoder
-            if m[0] in lex.cfg.gates and text[pos] == '(':
-                tokens += lex.encoder["FUN_B"]
-                state_fun = True; pos += 1
             tokens += lex.encoder[m[0]]
             continue
         if text[pos] == '"':
@@ -508,7 +510,7 @@ def encode(lex, text):
             tokens += lex.encoder['STR_B']
             continue
         if text[pos:].startswith("```\n"):
-            pos += 1
+            pos += 4
             state_str2 = True
             tokens += lex.encoder['STR_B']
             tokens += lex.encoder['STR_B']
@@ -517,6 +519,16 @@ def encode(lex, text):
             pos += 1
             state_bits = True
             tokens += lex.encoder['LUT_B']
+            continue
+
+        if text[pos] == "(":
+            pos += 1
+            tokens += lex.encoder['FUN_B']
+            continue
+
+        if text[pos] == ")":
+            pos += 1
+            tokens += lex.encoder['FUN_E']
             continue
 
         tokens.append(0)
@@ -529,15 +541,99 @@ def decode(lex, tokens):
     pos = 0
 
     def last_c():
+        while text and not text[-1]:
+            text.pop()
+        if not text:
+            return None
         return text[-1][-1]
 
+    tok = None
     while pos < len(tokens):
-        text.append(f"*** DECODE ERROR AT POSITION {pos} ***")
+        if isinstance(tokens[pos], str):
+            text.append(tokens[pos])
+            pos += 1
+            continue
+
+        last_tok = tok
+        tok = lex.decoder[tokens[pos]]
+        pos += 1
+
+        if tok in ('REM', 'TXT', 'PROMPT', 'QUERY', 'MODULE', 'ENDMOD',
+                   *(indent_2 := ('DIMS', 'TABLE', 'PTABLE', 'CIRCUIT')),
+                   *(indent_4 := ('PI', 'PO', 'OPS', 'DEF'))):
+            if last_c() is not None:
+                text.append('\n')
+                if tok in indent_2:
+                    text.append('  ')
+                if tok in indent_4:
+                    text.append('    ')
+            text.append(tok)
+            continue
+
+        if tok == 'BREAK':
+            text.append('\n')
+            continue
+
+        if tok[0] in "ifno" or tok in lex.cfg.gates:
+            if last_tok != "FUN_B":
+                text.append(f' {tok}')
+            else:
+                text.append(tok)
+            continue
+
+        if tok == 'STR_B':
+            state_str = True
+            text.append(' ')
+            if tokens[pos-1] == tokens[pos]:
+                text.append('```\n')
+                pos += 1
+            else:
+                text.append('"')
+            continue
+
+        if tok == 'STR_E':
+            state_str = False
+            if tokens[pos-1] == tokens[pos]:
+                text.append('\n```')
+                pos += 1
+            else:
+                text.append('"')
+            continue
+
+        if tok in ('LUT_B', 'LUT_E'):
+            state_lut = tok == 'LUT_B'
+            text.append(" '" if state_lut else "'")
+            continue
+
+        if tok == 'LUT_D':
+            text.append(' ')
+            continue
+
+        if tok == 'LUT_T':
+            text.append(' ==> ')
+            continue
+
+        if tok == 'FUN_B':
+            text.append(' (')
+            continue
+
+        if tok == 'FUN_E':
+            text.append(')')
+            continue
+
+        if tok[0] == "'":
+            text.append(tok.strip("'") if state_lut else tok)
+            continue
+
+        pos -= 1
+        text.append(f"*** DECODE ERROR AT POSITION {pos}: {tok} ***")
         break
 
     return "".join(text)
 
 def tok2str(lex, toks):
+    if isinstance(toks, str):
+        return repr(toks)
     if isinstance(toks, int):
         s = lex.decoder[toks]
         if ' ' in s and s != '" "':
@@ -563,8 +659,8 @@ def main():
         for s in args[1:]:
             print()
             print(f"Input: {s}")
-            t = encode(lex, s)
-            print(f"Ids: {' '.join(str(i) for i in t)}")
+            t = encode(lex, s, False)
+            print(f"Ids: {' '.join(repr(i) for i in t)}")
             print(f"Tokens: {tok2str(lex, t)}")
             x = decode(lex, t)
             print(f"Output: {x}")
