@@ -191,10 +191,12 @@ def pr(x, *, keys=None):
 class GraphSprechConfig:
     gates: tuple = ("BUF", "NOT", "AND", "NAND", "OR", "NOR", "XOR", "XNOR", "ANDNOT", "ORNOT",
             "MUX", "NMUX", "AOI3", "OAI3", "AOI4", "OAI4", "LUT2", "LUT3", "LUT4", "LUT5", "LUT6")
-    num_pi: int = 16
+    num_pi: int = 8
     num_ff: int = 8
-    num_gt: int = 64
-    num_po: int = 4
+    num_nn: int = 8
+    num_po: int = 8
+    num_fn: int = 8
+    num_fa: int = 8
     max_nbits: int = 2
     shift_altgr: bool = False
     with_words: bool = False
@@ -214,20 +216,24 @@ class TokenList:
     po_offset: int = 0
 
     def pr_table(self, cols=5, /):
-        col_height = (len(self.lines)+cols-1) // cols
+        lines = [l for l in self.lines if l is not None]
+
+        col_height = (len(lines)+cols-1) // cols
         col_widths = [0]*cols
 
         for i in range(col_height):
             for j in range(cols):
                 k = i + col_height * j
-                l = self.lines[k] if k < len(self.lines) else ""
+                l = lines[k] if k < len(lines) else ""
                 col_widths[j] = max(col_widths[j], len(l))
 
         for i in range(col_height):
             for j in range(cols):
                 k = i + col_height * j
-                l = self.lines[k] if k < len(self.lines) else ""
+                l = lines[k] if k < len(lines) else ""
                 print(f"{l}\n" if j == cols-1 else f"{l:<{col_widths[j]}} | ", end="")
+
+        print(f"({len(lines)} tokens in total)")
 
     def finish(self):
         self.pi_offset = self.tokens["i1"]
@@ -254,9 +260,11 @@ def gentokens(cfg: GraphSprechConfig = GraphSprechConfig()):
     tok_shift = None
     tok_altgr = None
 
-    def tok(x):
-        tok_index = len(ret.lines)
-        ret.lines.append(f"{tok_index:<3} {x}")
+    def tok(x, tok_index=None):
+        if tok_index is None:
+            tok_index = len(ret.lines)
+            ret.lines.append(None)
+        ret.lines[tok_index] = f"{tok_index:<3} {x}"
         ret.decoder.append(x)
         ret.tokens[x] = tok_index
         def enc(x, y):
@@ -279,23 +287,28 @@ def gentokens(cfg: GraphSprechConfig = GraphSprechConfig()):
     # only as EOF and ERROR marker
     tok("NULL")
 
+    # skip 7-bit ASCII range for now
+    while len(ret.lines) < 128:
+        ret.lines.append(None)
+
     # a break is just an empty line
-    tok("BREAK")
+    tok("BREAK", 20) # ASCII DC4 (device control 4)
 
     # chatbot interface:  PROMPT "<text>"
     # (response as TXT in the next line and/or REM later)
-    tok("PROMPT")
+    tok("PROMPT", 1) # ASCII SOH (start of heading)
 
     # future extension: run a (python) query on SMT model
-    tok("QUERY")
+    tok("QUERY", 5) # ASCII ENQ (enquiry)
 
     # start of module block
-    tok("MODULE")      # MODULE ["<optional_name>"]
+    tok("MODULE", 2)      # ASCII STX (start of text)  # MODULE ["<optional_name>"]
 
     # can be used anywhere
-    tok("REM")         #   REM "This is just a comment or remark that can be ignored"
-    tok("TXT")         #   TXT "This is relevant information and/or reply to a prompt or query"
-    tok("TAG")         #   TAG (i|f|n|o)<N> "This is an annotation of that entity"
+    tok("REM", 28)  # ASCII FS  (file separator)   #   REM "This is just a comment or remark that can be ignored"
+    tok("TXT", 29)  # ASCII GS  (group separator)  #   TXT "This is relevant information and/or reply to a prompt or query"
+    tok("ASC", 30)  # ASCII RS  (record separator) #   ASC "This is special 'ASCII-only' block, mostly used in training"
+    tok("TAG", 31)  # ASCII US  (unit separator)   #   TAG (i|f|n|o)<N> "This is an annotation of that entity"
 
     # header statements
     tok("DIMS")        #   DIMS i<max> f<max> n<max> o<max>
@@ -319,7 +332,7 @@ def gentokens(cfg: GraphSprechConfig = GraphSprechConfig()):
     tok("NEXT")        #     DEF o1 n2             # drive primary output
 
     # end of module block
-    tok("ENDMOD")      # ENDMOD
+    tok("ENDMOD", 3)  # ASCII ETX (end of text)    # ENDMOD
 
     # OP types. (LUT<N> is directly followed by 3-state LUT data, terminated by LUT_E)
     for s in cfg.gates: tok(s)
@@ -327,10 +340,13 @@ def gentokens(cfg: GraphSprechConfig = GraphSprechConfig()):
     tok("STR_B")  # normal "..."-strings: STR_B ... STR_E
     tok("STR_E")  # here-doc-style strings: STR_B STR_B ... STR_E STR_E
 
-    for idx in range(1, cfg.num_pi+1): tok(f"i{idx}")
-    for idx in range(1, cfg.num_ff+1): tok(f"f{idx}")
-    for idx in range(1, cfg.num_gt+1): tok(f"n{idx}")
-    for idx in range(1, cfg.num_po+1): tok(f"o{idx}")
+    for idx in range(cfg.num_pi): tok(f"i{idx}")
+    for idx in range(cfg.num_ff): tok(f"d{idx}")
+    for idx in range(cfg.num_ff): tok(f"q{idx}")
+    for idx in range(cfg.num_nn): tok(f"n{idx}")
+    for idx in range(cfg.num_po): tok(f"o{idx}")
+    for idx in range(cfg.num_fn): tok(f"f{idx}")
+    for idx in range(cfg.num_fa): tok(f"a{idx}")
 
     vals = set("01ZX")
     for n in range(1, cfg.max_nbits+1):
@@ -340,24 +356,30 @@ def gentokens(cfg: GraphSprechConfig = GraphSprechConfig()):
         tok(f"'{w.replace('Z', '-')}'")
 
     if cfg.shift_altgr:
-        tok_shift = tok("SHIFT")
-        tok_altgr = tok("ALTGR")
+        tok_shift = tok("SHIFT", 17) # ASCII DC1 (device control 1)
+        tok_altgr = tok("ALTGR", 18) # ASCII DC2 (device control 2)
 
     if cfg.with_words:
         if not tok_shift:
-            tok_shift = tok("SHIFT")
-        tok("CAPS")
+            tok_shift = tok("SHIFT", 17) # ASCII DC1 (device control 1)
+        tok("CAPS", 19) # ASCII DC3 (device control 3)
 
     def toks(ch, caps, alt):
+        def myord(c):
+            if len(c) == 1: return ord(c)
+            if c == "\\n": return ord("\n")
+            if c == "\\\\": return ord("\\")
+            if c == "\\\"": return ord("\"")
+            assert False
         if caps == ' ': caps = "\\n"
         if alt == '\\': alt = "\\\\"
         if alt == '\"': alt = "\\\""
         if cfg.shift_altgr:
-            tok(f'"{ch}" "{caps}" "{alt}"')
+            tok(f'"{ch}" "{caps}" "{alt}"', myord(ch))
         else:
-            tok(f'"{ch}"')
-            tok(f'"{caps}"')
-            tok(f'"{alt}"')
+            tok(f'"{ch}"', myord(ch))
+            tok(f'"{caps}"', myord(caps))
+            tok(f'"{alt}"', myord(alt))
 
     toks(*"aA!")
     toks(*"bB\"")
@@ -667,8 +689,8 @@ def main():
         return
 
     print()
-    print("Huge Example Token List")
-    print("=======================")
+    print("Large Example Token List")
+    print("========================")
     cfg = GraphSprechConfig(
         max_nbits = 4,
         with_words = True,
@@ -679,8 +701,8 @@ def main():
     lex.pr_table(8)
 
     print()
-    print("Large Example Token List")
-    print("========================")
+    print("Medium Example Token List")
+    print("=========================")
     cfg = GraphSprechConfig(
         max_nbits = 4,
     )
@@ -688,15 +710,15 @@ def main():
     lex.pr_table(9)
 
     print()
-    print("Medium (Default) Token List")
-    print("===========================")
+    print("Small (Default) Token List")
+    print("==========================")
     cfg = GraphSprechConfig()
     lex = gentokens(cfg)
     lex.pr_table(10)
 
     print()
-    print("Small Example Token List")
-    print("========================")
+    print("Tiny Example Token List")
+    print("=======================")
     cfg = GraphSprechConfig(
         shift_altgr = True
     )
