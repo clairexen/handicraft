@@ -110,8 +110,21 @@ en_basic_words = ["I", "a", "able", "about", "account", "acid", "across",
 "with", "woman", "wood", "wool", "word", "work", "worm", "wound", "writing",
 "wrong", "year", "yellow", "yes", "yesterday", "you", "young"]
 
+ascii_ctrls = ["NUL", "SOH", "STX", "ETX", "EOT", "ENQ", "ACK", "BEL", "BS",
+"HT", "LF", "VT", "FF", "CR", "SO", "SI", "DLE", "DC1", "DC2", "DC3", "DC4",
+"NAK", "SYN", "ETB", "CAN", "EM", "SUB", "ESC", "FS", "GS", "RS", "US"]
+ascii_ctrls_by_name = {n: i for i,n in enumerate(ascii_ctrls)}
+
 example_text = """
 REM "Tokenizer encode/decode example text."
+
+REM ``
+This is a 'Text'. 'i1' '110011' 'o3'
+``
+
+REM '''
+This is an 'ASCII Text'. 'i1' '110011' 'o3'
+'''
 
 PROMPT "What is 7+4?"
 TXT "11."
@@ -120,35 +133,41 @@ PROMPT "What's a short name for Robert?"
 TXT "Bob."
 
 MODULE "test_1"
-  DIMS i16 f8 n64 o4
+  DIMS i7 q7 n7 o7 d7 f7 a7
   PI i1 i2 i3 i4
   PO o1 o2
 
   PTABLE "ref"
-    DEF '11-------------- -------- ==> 1--- --------'
-    DEF '--00------------ -------- ==> -0-- --------'
-    DEF '---------------- -------- ==> 01-- --------'
+    GET i1 i2
+    GET i3 i4
+    SET o1 o2
+    DEF '11 -- ==> 1-'
+    DEF '-- 00 ==> -0'
+    DEF '-- -- ==> 01'
 
-  CIRCUIT "impl" "ref"
+  CIRCUIT "impl"
     DEF o1 (AND i1 i2)
     DEF o2 (OR i3 i4)
 
-PROMPT ```
+PROMPT ``
 Create another truth table, that explicitly encodes the
 cases where the AND-inputs are '1' and the OR-inputs are '0'.
-```
-REM ```
+``
+REM ``
 Thinking.. The user asks me to ... the PTABLE "ref" has one line
 per gate, plus a final line with defaults ... in order to get
 the encoding the user asks for I therefore should ...
-```
+``
 
   PTABLE "alt"
-    DEF '0--------------- -------- ==> 0--- --------'
-    DEF '-0-------------- -------- ==> 0--- --------'
-    DEF '--1------------- -------- ==> -1-- --------'
-    DEF '---1------------ -------- ==> -1-- --------'
-    DEF '---------------- -------- ==> 10-- --------'
+    GET i1 i2
+    GET i3 i4
+    SET o1 o2
+    DEF '0- -- ==> 0-'
+    DEF '-0 -- ==> 0-'
+    DEF '-- 1- ==> -1'
+    DEF '-- -1 ==> -1'
+    DEF '-- -- ==> 10'
 
 TXT "Finished creating the table."
 
@@ -191,12 +210,7 @@ def pr(x, *, keys=None):
 class GraphSprechConfig:
     gates: tuple = ("BUF", "NOT", "AND", "NAND", "OR", "NOR", "XOR", "XNOR", "ANDNOT", "ORNOT",
             "MUX", "NMUX", "AOI3", "OAI3", "AOI4", "OAI4", "LUT2", "LUT3", "LUT4", "LUT5", "LUT6")
-    num_pi: int = 8
-    num_ff: int = 8
-    num_nn: int = 8
-    num_po: int = 8
-    num_fn: int = 8
-    num_fa: int = 8
+    idx_base: int = 8
     max_nbits: int = 2
     shift_altgr: bool = False
     with_words: bool = False
@@ -209,7 +223,7 @@ class TokenList:
     lines: list = field(default_factory=list)
     tokens: dict = field(default_factory=dict)
     encoder: dict = field(default_factory=dict)
-    decoder: list = field(default_factory=list)
+    decoder: dict = field(default_factory=dict)
     pi_offset: int = 0
     ff_offset: int = 0
     op_offset: int = 0
@@ -242,10 +256,10 @@ class TokenList:
         self.po_offset = self.tokens["o1"]
 
         opnames = " | ".join(t for t in self.cfg.gates)
-        objnames = " | ".join(t for t in self.decoder if t[0] in 'ifno')
+        objnames = " | ".join(t for t in self.decoder.values() if t[0] in 'iqnodfa')
         self.re_keywords = re.compile(f"""
-            (?<![a-zA-Z0-9]) ( PROMPT | MODULE | REM | TXT | TAG | DIMS | PI | PO | TABLE | PTABLE |
-                    CIRCUIT | OPS | DEF | NEXT | ENDMOD | {opnames} | {objnames}) (?![a-zA-Z0-9])
+            (?<![a-zA-Z0-9]) ( PROMPT | REPLY | QUERY | REM | TXT | TAG | MODULE | DIMS | PI | PO |
+                    TABLE | PTABLE | GET | SET | CIRCUIT | OPS | DEF | ENDMOD | {opnames} | {objnames}) (?![a-zA-Z0-9])
         """, re.A|re.X)
 
 def quote_str_char(c):
@@ -264,8 +278,12 @@ def gentokens(cfg: GraphSprechConfig = GraphSprechConfig()):
         if tok_index is None:
             tok_index = len(ret.lines)
             ret.lines.append(None)
+        else:
+            if isinstance(tok_index, str):
+                tok_index = ascii_ctrls_by_name[tok_index]
+            assert ret.lines[tok_index] is None
         ret.lines[tok_index] = f"{tok_index:<3} {x}"
-        ret.decoder.append(x)
+        ret.decoder[tok_index] = x
         ret.tokens[x] = tok_index
         def enc(x, y):
             ret.encoder[x] = y
@@ -284,69 +302,74 @@ def gentokens(cfg: GraphSprechConfig = GraphSprechConfig()):
         if len(s) >= 3: enc(s[2], (tok_altgr, tok_index))
         return tok_index
 
-    # only as EOF and ERROR marker
-    tok("NULL")
-
-    # skip 7-bit ASCII range for now
-    while len(ret.lines) < 128:
+    # skip 7-bit ASCII range + 2 reserved slots for now
+    while len(ret.lines) < (128 + 2):
         ret.lines.append(None)
 
-    # a break is just an empty line
-    tok("BREAK", 20) # ASCII DC4 (device control 4)
+    # only as EOF and ERROR marker
+    tok("NULL", "NUL")
 
-    # chatbot interface:  PROMPT "<text>"
-    # (response as TXT in the next line and/or REM later)
-    tok("PROMPT", 1) # ASCII SOH (start of heading)
+    # a break is just an empty line
+    tok("BREAK", "ETB")
+
+    # erase the last command
+    tok("UNDO", 127)
+
+    # chatbot interface:  PROMPT "<text>" ... REPLY "<text>"
+    tok("PROMPT", "SOH")
+    tok("REPLY", "EOT")
 
     # future extension: run a (python) query on SMT model
-    tok("QUERY", 5) # ASCII ENQ (enquiry)
-
-    # start of module block
-    tok("MODULE", 2)      # ASCII STX (start of text)  # MODULE ["<optional_name>"]
+    tok("QUERY", "ENQ")
 
     # can be used anywhere
-    tok("REM", 28)  # ASCII FS  (file separator)   #   REM "This is just a comment or remark that can be ignored"
-    tok("TXT", 29)  # ASCII GS  (group separator)  #   TXT "This is relevant information and/or reply to a prompt or query"
-    tok("ASC", 30)  # ASCII RS  (record separator) #   ASC "This is special 'ASCII-only' block, mostly used in training"
-    tok("TAG", 31)  # ASCII US  (unit separator)   #   TAG (i|f|n|o)<N> "This is an annotation of that entity"
+    tok("#", "DLE")    # #-comments at the end of a line
+    tok("REM", "STX")  #   REM "This is just a remark that can be ignored"
+    tok("TXT", "ETX")  #   TXT "This is relevant information and/or reply to a prompt or query"
+    tok("TAG", "SUB")  #   TAG (i|f|n|o)<N> "This is an annotation of that entity"
+
+    # start of module block
+    tok("MODULE", 128) # MODULE ["<optional_name>"]
 
     # header statements
-    tok("DIMS")        #   DIMS i<max> f<max> n<max> o<max>
+    tok("DIMS")        #   DIMS i<max> d<max> n<max> o<max> q<max> f<max> a<max>
     tok("PI")          #   PI i<first> ... i<last>
     tok("PO")          #   PO o<first> ... o<last>
 
-    # (p)table blocks  #   TABLE ["<optional_name>"]
-    tok("TABLE")       #     '<in_3state_pat> <ff_3state_pat> ==> <out_3state_constr> <ff_3state_constr>'
-    tok("PTABLE")      #     ^LUT_B          ^LUT_D            ^LUT_T                ^LUT_D             ^LUT_E
-    tok("LUT_B")       #
-    tok("LUT_D")       #   PTABLE ["<optional_name>"]
-    tok("LUT_T")       #     '<in_3state_pat> <ff_3state_pat> ==> <out_4state_constr> <ff_4state_constr>'
-    tok("LUT_E")       #     ^LUT_B          ^LUT_D            ^LUT_T                ^LUT_D             ^LUT_E
+    # (p)table blocks  #   [P]TABLE ["<optional_name>"]
+    tok("TABLE")       #     GET i0 i1 i2
+    tok("PTABLE")      #     GET i3 i4 i5 d1
+    tok("GET")         #     SET o1 o2
+    tok("SET")         #     SET q1
+    tok("LUT_B", "FS") #     '010 1--0 ==> 1X 1'
+    tok("LUT_D", "GS") #
+    tok("LUT_T", "RS") #     '<3x[01-]> <4x[01-]> ==> <2x[01X-]> <[01X->'
+    tok("LUT_E", "US") #     ^LUT_B    ^LUT_D      ^LUT_T       ^LUT_D  ^LUT_E
 
     # circuit block
-    tok("CIRCUIT")     #   CIRCUIT ["<optional_name>"
+    tok("CIRCUIT")     #   CIRCUIT ["<optional_name>"]
     tok("OPS")         #     OPS NAND NOR
     tok("DEF")         #     DEF n1 (NAND i1 i2)   # create/define a GATE
-    tok("FUN_B")       #     DEF n2 (MUX n1 i1 i3) # (MUX n1 i1 i3) = FUN_B MUX n1 i1 i3 FUN_E
-    tok("FUN_E")       #     DEF NEXT f1 n1        # drive FF input
-    tok("NEXT")        #     DEF o1 n2             # drive primary output
+    tok("FUN_B","DC1") #     DEF n2 (MUX n1 i1 i3) # (MUX n1 i1 i3) = FUN_B MUX n1 i1 i3 FUN_E
+    tok("FUN_E","DC2") #     DEF d1 n1             # also works with FF inputs (dN) and outputs (oN)
 
     # end of module block
-    tok("ENDMOD", 3)  # ASCII ETX (end of text)    # ENDMOD
+    tok("ENDMOD", 129) # ENDMOD
 
     # OP types. (LUT<N> is directly followed by 3-state LUT data, terminated by LUT_E)
     for s in cfg.gates: tok(s)
 
-    tok("STR_B")  # normal "..."-strings: STR_B ... STR_E
-    tok("STR_E")  # here-doc-style strings: STR_B STR_B ... STR_E STR_E
+    tok("STR_B", "DC3")  # normal "..."-strings: STR_B ... STR_E
+    tok("STR_E", "DC4")  # here-doc-style strings: STR_B STR_B ... STR_E STR_E
 
-    for idx in range(cfg.num_pi): tok(f"i{idx}")
-    for idx in range(cfg.num_ff): tok(f"d{idx}")
-    for idx in range(cfg.num_ff): tok(f"q{idx}")
-    for idx in range(cfg.num_nn): tok(f"n{idx}")
-    for idx in range(cfg.num_po): tok(f"o{idx}")
-    for idx in range(cfg.num_fn): tok(f"f{idx}")
-    for idx in range(cfg.num_fa): tok(f"a{idx}")
+    for idx in range(cfg.idx_base): tok(f"i{idx}")
+    for idx in range(cfg.idx_base): tok(f"q{idx}")
+    for idx in range(cfg.idx_base): tok(f"n{idx}")
+    for idx in range(cfg.idx_base): tok(f"o{idx}")
+    for idx in range(cfg.idx_base): tok(f"d{idx}")
+    for idx in range(cfg.idx_base): tok(f"f{idx}")
+    for idx in range(cfg.idx_base): tok(f"a{idx}")
+    for idx in range(cfg.idx_base): tok(f"x{idx}")
 
     vals = set("01ZX")
     for n in range(1, cfg.max_nbits+1):
@@ -355,14 +378,12 @@ def gentokens(cfg: GraphSprechConfig = GraphSprechConfig()):
     for l,w in sorted((len(v),v) for v in vals):
         tok(f"'{w.replace('Z', '-')}'")
 
+    if cfg.shift_altgr or cfg.with_words:
+        tok_shift = tok("SHIFT", "SO")
     if cfg.shift_altgr:
-        tok_shift = tok("SHIFT", 17) # ASCII DC1 (device control 1)
-        tok_altgr = tok("ALTGR", 18) # ASCII DC2 (device control 2)
-
+        tok_altgr = tok("ALTGR", "SI")
     if cfg.with_words:
-        if not tok_shift:
-            tok_shift = tok("SHIFT", 17) # ASCII DC1 (device control 1)
-        tok("CAPS", 19) # ASCII DC3 (device control 3)
+        tok("CAPS", "EM")
 
     def toks(ch, caps, alt):
         def myord(c):
@@ -447,25 +468,33 @@ def encode(lex, text, encodeText=True):
     tokens = []
     state_str1 = False
     state_str2 = False
+    state_str3 = False
     state_bits = False
     pos = 0
 
     while pos < len(text):
-        if state_str1 or state_str2:
+        if state_str1 or state_str2 or state_str3:
             if not encodeText:
                 l = 0; t = []
                 if state_str1:
                     while text[pos+l] != '"' and pos+l < len(text):
                         l += 1 if text[pos+l] != "\\" else 2
                     t += lex.encoder["STR_E"]
-                else:
-                    while text[pos+l:pos+l+5] != "\n```\n" and pos+l < len(text):
+                elif state_str2:
+                    while text[pos+l:pos+l+4] != "\n``\n" and pos+l < len(text):
                         l += 1
+                    t += lex.encoder["STR_E"]
+                    t += lex.encoder["STR_E"]
+                else:
+                    assert state_str3
+                    while text[pos+l:pos+l+5] != "\n'''\n" and pos+l < len(text):
+                        l += 1
+                    t += lex.encoder["STR_E"]
                     t += lex.encoder["STR_E"]
                     t += lex.encoder["STR_E"]
                 tokens += [text[pos:pos+l]] + t
                 pos += l + (1 if state_str1 else 4)
-                state_str1 = False; state_str2 = False
+                state_str1 = False; state_str2 = False; state_str3 = False
                 continue
 
             elif state_str1:
@@ -482,9 +511,21 @@ def encode(lex, text, encodeText=True):
                 pos += 1
                 continue
 
+            elif state_str2:
+                if text[pos:].startswith('\n``\n'):
+                    state_str2 = False; t = 'STR_E'
+                    tokens += lex.encoder[t]
+                    pos += 3
+                else:
+                    t = quote_str_char(text[pos])
+                assert t in lex.encoder, f"Token {t} not in encoder table."
+                tokens += lex.encoder[t]
+                pos += 1
+                continue
+
             else:
-                assert state_str2
-                if text[pos:].startswith('\n```\n'):
+                assert state_str3
+                if text[pos:].startswith("\n'''\n"):
                     state_str2 = False; t = 'STR_E'
                     tokens += lex.encoder[t]
                     pos += 3
@@ -531,9 +572,16 @@ def encode(lex, text, encodeText=True):
             state_str1 = True
             tokens += lex.encoder['STR_B']
             continue
-        if text[pos:].startswith("```\n"):
-            pos += 4
+        if text[pos:].startswith("``\n"):
+            pos += 3
             state_str2 = True
+            tokens += lex.encoder['STR_B']
+            tokens += lex.encoder['STR_B']
+            continue
+        if text[pos:].startswith("'''\n"):
+            pos += 4
+            state_str3 = True
+            tokens += lex.encoder['STR_B']
             tokens += lex.encoder['STR_B']
             tokens += lex.encoder['STR_B']
             continue
@@ -554,6 +602,7 @@ def encode(lex, text, encodeText=True):
             continue
 
         tokens.append(0)
+        tokens.append(text[pos:pos+15])
         break
 
     return tokens
@@ -580,9 +629,9 @@ def decode(lex, tokens):
         tok = lex.decoder[tokens[pos]]
         pos += 1
 
-        if tok in ('REM', 'TXT', 'PROMPT', 'QUERY', 'MODULE', 'ENDMOD',
-                   *(indent_2 := ('DIMS', 'TABLE', 'PTABLE', 'CIRCUIT')),
-                   *(indent_4 := ('PI', 'PO', 'OPS', 'DEF'))):
+        if tok in (*("REM TXT PROMPT QUERY MODULE ENDMOD".split()),
+                   *(indent_2 := "DIMS TABLE PTABLE CIRCUIT".split()),
+                   *(indent_4 := "PI PO GET SET OPS DEF".split())):
             if last_c() is not None:
                 text.append('\n')
                 if tok in indent_2:
@@ -596,7 +645,7 @@ def decode(lex, tokens):
             text.append('\n')
             continue
 
-        if tok[0] in "ifno" or tok in lex.cfg.gates:
+        if tok[0] in "iqnodfa" or tok in lex.cfg.gates:
             if last_tok != "FUN_B":
                 text.append(f' {tok}')
             else:
@@ -607,8 +656,12 @@ def decode(lex, tokens):
             state_str = True
             text.append(' ')
             if tokens[pos-1] == tokens[pos]:
-                text.append('```\n')
-                pos += 1
+                if tokens[pos-1] == tokens[pos+1]:
+                    text.append("'''\n")
+                    pos += 2
+                else:
+                    text.append('``\n')
+                    pos += 1
             else:
                 text.append('"')
             continue
@@ -616,8 +669,12 @@ def decode(lex, tokens):
         if tok == 'STR_E':
             state_str = False
             if tokens[pos-1] == tokens[pos]:
-                text.append('\n```')
-                pos += 1
+                if tokens[pos-1] == tokens[pos+1]:
+                    text.append("\n'''")
+                    pos += 2
+                else:
+                    text.append('\n``')
+                    pos += 1
             else:
                 text.append('"')
             continue
