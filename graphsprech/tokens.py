@@ -266,6 +266,8 @@ def quote_str_char(c):
     if c == '"': return '"\\""'
     if c == '\n': return '"\\n"'
     if c == '\\': return '"\\\\"'
+    if ord(c) < 31 or ord(c) >= 127:
+        return f'"\\x{ord(c):02x}"'
     return f'"{c}"'
 
 def gentokens(cfg: GraphSprechConfig = GraphSprechConfig()):
