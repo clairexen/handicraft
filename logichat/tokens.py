@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from en_basic import en_basic_words
 import config
 
+# Still unused: ACK NAK SYN (and '\a', '\b', '\t', '\n', '\v', '\f', '\r')
 ascii_ctrls = ["NUL", "SOH", "STX", "ETX", "EOT", "ENQ", "ACK", "BEL", "BS",
 "HT", "LF", "VT", "FF", "CR", "SO", "SI", "DLE", "DC1", "DC2", "DC3", "DC4",
 "NAK", "SYN", "ETB", "CAN", "EM", "SUB", "ESC", "FS", "GS", "RS", "US"]
@@ -106,13 +107,15 @@ class TokenList:
     tokens: dict = field(default_factory=dict)
     encoder: dict = field(default_factory=dict)
     decoder: dict = field(default_factory=dict)
-    pi_offset: int = 0
-    ff_offset: int = 0
-    op_offset: int = 0
-    po_offset: int = 0
 
-    def pr_table(self, cols=5, /):
+    def pr_table(self, cols=5, /, showCtrl=False):
         lines = [l for l in self.lines if l is not None]
+
+        if showCtrl:
+            for i,l in enumerate(lines):
+                idx = int(l.split(" ", 1)[0])
+                if idx < len(ascii_ctrls):
+                    lines[i] = f"{l[0:3]}{ascii_ctrls[idx]:<3}{l[3:]}"
 
         col_height = (len(lines)+cols-1) // cols
         col_widths = [0]*cols
@@ -132,11 +135,6 @@ class TokenList:
         print(f"({len(lines)} tokens in total)")
 
     def finish(self):
-        self.pi_offset = self.tokens["i1"]
-        self.ff_offset = self.tokens["f1"]
-        self.op_offset = self.tokens["n1"]
-        self.po_offset = self.tokens["o1"]
-
         opnames = " | ".join(t for t in self.cfg.gates)
         objnames = " | ".join(t for t in self.decoder.values() if t[0] in 'iqnodfa')
         self.re_keywords = re.compile(f"""
@@ -205,6 +203,9 @@ def gentokens(cfg: config.LogiChatConfig = config.LogiChatConfig()):
     # future extension: run a (python) query on SMT model
     tok("QUERY", "ENQ")
 
+    # end of LLM generated output. e.g. after QUERY or REPLY
+    tok("STOP", "CAN")
+
     # can be used anywhere
     tok("#", "DLE")    # #-comments at the end of a line
     tok("REM", "STX")  #   REM "This is just a remark that can be ignored"
@@ -215,9 +216,11 @@ def gentokens(cfg: config.LogiChatConfig = config.LogiChatConfig()):
     tok("MODULE", 128) # MODULE ["<optional_name>"]
 
     # header statements
-    tok("DIMS")        #   DIMS i<max> d<max> n<max> o<max> q<max> f<max> a<max>
+    tok("DIMS")        #   DIMS i<max> q<max> n<max> o<max> d<max> f<max> a<max>
+    tok("NONE")        #   -
     tok("PI")          #   PI i<first> ... i<last>
     tok("PO")          #   PO o<first> ... o<last>
+    tok("INIT")        #   INIT '1' q0 q1
 
     # (p)table blocks  #   [P]TABLE ["<optional_name>"]
     tok("TABLE")       #     GET i0 i1 i2
@@ -628,29 +631,31 @@ def main():
             print(f"Output: {x}")
         return
 
+    showCtrl = "-c" in args
+
     print()
     print("Large Example Token List")
     print("========================")
     lex_large = gentokens(config.cfg_large)
-    lex_large.pr_table(8)
+    lex_large.pr_table(8, showCtrl=showCtrl)
 
     print()
     print("Medium Example Token List")
     print("=========================")
     lex_medium = gentokens(config.cfg_medium)
-    lex_medium.pr_table(9)
+    lex_medium.pr_table(9, showCtrl=showCtrl)
 
     print()
     print("Small (Default) Token List")
     print("==========================")
     lex_small = gentokens(config.cfg_small)
-    lex_small.pr_table(10)
+    lex_small.pr_table(10, showCtrl=showCtrl)
 
     print()
     print("Tiny Example Token List")
     print("=======================")
     lex_tiny = gentokens(config.cfg_tiny)
-    lex_tiny.pr_table(8)
+    lex_tiny.pr_table(8, showCtrl=showCtrl)
 
 if __name__ == "__main__":
     cmdname, *args = sys.argv

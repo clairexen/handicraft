@@ -1,4 +1,5 @@
-from z3 import Solver, sat, unsat
+from dataclasses import dataclass, field
+from z3 import Solver, sat, unsat, simplify, substitute
 from z3 import Bool, Not, And, Or, Xor, Implies
 import parser
 
@@ -78,15 +79,18 @@ class FormalModel:
             self.syms[name] = val
             return val
 
-    def expr(self, toks):
+    def expr(self, toks, spec):
         if isinstance(toks, str):
-            return self.sym(toks)
+            s = self.sym(toks)
+            if s not in spec.outputs:
+                spec.inputs.add(s)
+            return s
         if len(toks) == 1 and toks[0][0] in "iqnod":
             return self.sym(toks[0])
 
         if toks[0] == "(" and toks[-1] == ")":
             op = toks[1]
-            args = [self.expr(t) for t in collapse_args(toks[2:-1])]
+            args = [self.expr(t, spec) for t in collapse_args(toks[2:-1])]
 
             if op == "NOT":
                 assert len(args) == 1
@@ -113,7 +117,7 @@ class FormalModel:
         assert False, f"Invalid Expr: {toks}"
 
     def block(self, name):
-        clauses = []
+        spec = FormalSpec(self)
         idx = self.blocks[name]
         hdr = self.stmts[idx]
         idx += 1
@@ -126,17 +130,38 @@ class FormalModel:
                 continue
             if s.tokens[0] in ('TABLE', 'PTABLE', 'CIRCUIT'):
                 break
-            clause = None
 
             if s.tokens[0] == "DEF" and s.tokens[1][0] in "nod":
                 lhs = self.sym(s.tokens[1])
-                rhs = self.expr(s.tokens[2:])
-                clause = (lhs == rhs)
+                rhs = self.expr(s.tokens[2:], spec)
+                spec.inputs.discard(lhs)
+                spec.outputs[lhs] = simplify(rhs)
+                continue
 
-            assert clause is not None
-            clauses.append(clause)
+            assert False, f"Block Parser Error at {s.tokens[0]}"
 
-        return And(*clauses)
+        keep_running = True
+        while keep_running:
+            keep_running = False
+            for key in spec.outputs.keys():
+                old_rhs = spec.outputs[key]
+                new_rhs = simplify(substitute(old_rhs, *spec.outputs.items()))
+                if str(old_rhs) != str(new_rhs):
+                    spec.outputs[key] = new_rhs
+                    keep_running = True
+
+        return spec
+
+@dataclass
+class FormalSpec:
+    model: FormalModel
+    inputs: set = field(default_factory=set)
+    outputs: dict = field(default_factory=dict)
+
+    def check(self, other):
+        keys = set(self.output.keys()).intersection(set(other.output.keys()))
+        terms = [self.output[key] == other.output[key] for key in keys]
+        return And(*terms)
 
 if __name__ == "__main__":
     fm = FormalModel("""
@@ -148,21 +173,40 @@ MODULE "demo"
   CIRCUIT "gold"
     DEF o0 (AND i1 i2)
 
+  TABLE "tab"
+    GET i0 i1
+    SET o0
+    DEF '11 ==> 1'
+    DEF '0- ==> 0'
+    DEF '-0 ==> 0'
+
+  PTABLE "ptab"
+    GET i0 i1
+    SET o0
+    DEF '11 ==> 1'
+    DEF '-- ==> 0'
+
   CIRCUIT "gate1"
     DEF o0 (NOR (NOT i1) (NOT i2))
 
   CIRCUIT "gate2"
     DEF o0 (NOR (NOT i1) i2)
+
+  CIRCUIT "gate3"
+    DEF n0 (OR (NOT i1) (NOT i2))
+    DEF o0 (NOT n0)
 ENDMODULE
 """)
     gold = fm.block("gold")
-    for g in ("gate1", "gate2"):
+    print(gold)
+    for g in ("gate1", "gate2", "gate3"):
         gate = fm.block(g)
-        s = Solver()
-        s.add(Not(Implies(gold, gate)))
-        print(f"\ngold vs {g}:")
-        if s.check() == sat:
-            print(s.model())
-        else:
-            print("unsat")
+        print(gate)
+        #s = Solver()
+        #s.add(Not(Implies(gold, gate)))
+        #print(f"\ngold vs {g}:")
+        #if s.check() == sat:
+        #    print(s.model())
+        #else:
+        #    print("unsat")
     print()
