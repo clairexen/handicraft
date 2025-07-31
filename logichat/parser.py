@@ -93,7 +93,7 @@ class Parser:
                     name = toks[1].removeprefix('"').removesuffix('"')
                 else:
                     name = f"_{toks[0]}_L{linenr}"
-                c.names[name] = {"": linenr}
+                c.names[name] = {"": (idx, linenr)}
                 self.mod = name
 
             if toks[0] == "ENDMOD":
@@ -104,7 +104,7 @@ class Parser:
                     name = toks[1].removeprefix('"').removesuffix('"')
                 else:
                     name = f"_{toks[0]}_L{linenr}"
-                c.names[self.mod][name] = linenr
+                c.names[self.mod][name] = (idx, linenr)
 
 example_text = """
 REM "Tokenizer encode/decode example text."
