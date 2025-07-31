@@ -1,6 +1,7 @@
 import re, sys, types, itertools, collections
 from dataclasses import dataclass, field
 from en_basic import en_basic_words
+import config
 
 ascii_ctrls = ["NUL", "SOH", "STX", "ETX", "EOT", "ENQ", "ACK", "BEL", "BS",
 "HT", "LF", "VT", "FF", "CR", "SO", "SI", "DLE", "DC1", "DC2", "DC3", "DC4",
@@ -99,19 +100,8 @@ def pr(x, *, keys=None):
 
 
 @dataclass
-class LogiChatConfig:
-    gates: tuple = ("BUF", "NOT", "AND", "NAND", "OR", "NOR", "XOR", "XNOR", "ANDNOT", "ORNOT",
-            "MUX", "NMUX", "AOI3", "OAI3", "AOI4", "OAI4", "LUT2", "LUT3", "LUT4", "LUT5", "LUT6")
-    idx_base: int = 8
-    max_nbits: int = 2
-    shift_altgr: bool = False
-    with_words: bool = False
-    with_dbls: bool = False
-    with_tris: bool = False
-
-@dataclass
 class TokenList:
-    cfg: LogiChatConfig = field(default_factory=LogiChatConfig)
+    cfg: config.LogiChatConfig
     lines: list = field(default_factory=list)
     tokens: dict = field(default_factory=dict)
     encoder: dict = field(default_factory=dict)
@@ -162,9 +152,8 @@ def quote_str_char(c):
         return f'"\\x{ord(c):02x}"'
     return f'"{c}"'
 
-def gentokens(cfg: LogiChatConfig = LogiChatConfig()):
-    ret = TokenList()
-    ret.cfg = cfg
+def gentokens(cfg: config.LogiChatConfig = config.LogiChatConfig()):
+    ret = TokenList(cfg)
     tok_shift = None
     tok_altgr = None
 
@@ -642,39 +631,26 @@ def main():
     print()
     print("Large Example Token List")
     print("========================")
-    cfg = LogiChatConfig(
-        max_nbits = 4,
-        with_words = True,
-        with_dbls = True,
-        with_tris = True
-    )
-    lex = gentokens(cfg)
-    lex.pr_table(8)
+    lex_large = gentokens(config.cfg_large)
+    lex_large.pr_table(8)
 
     print()
     print("Medium Example Token List")
     print("=========================")
-    cfg = LogiChatConfig(
-        max_nbits = 4,
-    )
-    lex = gentokens(cfg)
-    lex.pr_table(9)
+    lex_medium = gentokens(config.cfg_medium)
+    lex_medium.pr_table(9)
 
     print()
     print("Small (Default) Token List")
     print("==========================")
-    cfg = LogiChatConfig()
-    lex = gentokens(cfg)
-    lex.pr_table(10)
+    lex_small = gentokens(config.cfg_small)
+    lex_small.pr_table(10)
 
     print()
     print("Tiny Example Token List")
     print("=======================")
-    cfg = LogiChatConfig(
-        shift_altgr = True
-    )
-    lex = gentokens(cfg)
-    lex.pr_table(8)
+    lex_tiny = gentokens(config.cfg_tiny)
+    lex_tiny.pr_table(8)
 
 if __name__ == "__main__":
     cmdname, *args = sys.argv
