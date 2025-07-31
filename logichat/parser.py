@@ -4,8 +4,6 @@ from dataclasses import dataclass, field
 @dataclass
 class Stmt:
     src : str
-    childidx : int
-    nchildren : int = None
     tokens: list = field(default_factory=list)
 
     def unparse(self, showTokens=False):
@@ -83,7 +81,7 @@ class Parser:
         while pos < len(lines):
             linenr = len(self.code.lines)+1
             toks, txt, pos = self.scan(lines, pos)
-            s = Stmt(txt, len(c.stmts))
+            s = Stmt(txt.strip())
             s.tokens = toks
             idx = len(c.stmts)
             c.stmts.append(s)
