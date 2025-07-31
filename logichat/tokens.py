@@ -207,7 +207,7 @@ def pr(x, *, keys=None):
 
 
 @dataclass
-class GraphSprechConfig:
+class LogiChatConfig:
     gates: tuple = ("BUF", "NOT", "AND", "NAND", "OR", "NOR", "XOR", "XNOR", "ANDNOT", "ORNOT",
             "MUX", "NMUX", "AOI3", "OAI3", "AOI4", "OAI4", "LUT2", "LUT3", "LUT4", "LUT5", "LUT6")
     idx_base: int = 8
@@ -219,7 +219,7 @@ class GraphSprechConfig:
 
 @dataclass
 class TokenList:
-    cfg: GraphSprechConfig = field(default_factory=GraphSprechConfig)
+    cfg: LogiChatConfig = field(default_factory=LogiChatConfig)
     lines: list = field(default_factory=list)
     tokens: dict = field(default_factory=dict)
     encoder: dict = field(default_factory=dict)
@@ -270,7 +270,7 @@ def quote_str_char(c):
         return f'"\\x{ord(c):02x}"'
     return f'"{c}"'
 
-def gentokens(cfg: GraphSprechConfig = GraphSprechConfig()):
+def gentokens(cfg: LogiChatConfig = LogiChatConfig()):
     ret = TokenList()
     ret.cfg = cfg
     tok_shift = None
@@ -732,7 +732,7 @@ def main():
     if args and args[0] == "-t":
         if len(args) == 1:
             args.append(example_text)
-        cfg = GraphSprechConfig(
+        cfg = LogiChatConfig(
             shift_altgr = False
         )
         lex = gentokens(cfg)
@@ -750,7 +750,7 @@ def main():
     print()
     print("Large Example Token List")
     print("========================")
-    cfg = GraphSprechConfig(
+    cfg = LogiChatConfig(
         max_nbits = 4,
         with_words = True,
         with_dbls = True,
@@ -762,7 +762,7 @@ def main():
     print()
     print("Medium Example Token List")
     print("=========================")
-    cfg = GraphSprechConfig(
+    cfg = LogiChatConfig(
         max_nbits = 4,
     )
     lex = gentokens(cfg)
@@ -771,14 +771,14 @@ def main():
     print()
     print("Small (Default) Token List")
     print("==========================")
-    cfg = GraphSprechConfig()
+    cfg = LogiChatConfig()
     lex = gentokens(cfg)
     lex.pr_table(10)
 
     print()
     print("Tiny Example Token List")
     print("=======================")
-    cfg = GraphSprechConfig(
+    cfg = LogiChatConfig(
         shift_altgr = True
     )
     lex = gentokens(cfg)
