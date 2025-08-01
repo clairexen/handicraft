@@ -1,5 +1,4 @@
-# train a miniature character-level shakespeare model
-# good for debugging and playing on macbooks and such
+# based on shakespeare_char model
 
 out_dir = 'out-logichat-small'
 eval_interval = 250 # keep frequent because we'll overfit
@@ -36,7 +35,10 @@ warmup_iters = 100 # not super necessary potentially
 device = 'cpu'  # run on cpu only
 # compile = False # do not torch compile the model
 
-# shrink some parms further
-eval_iters = 5
-log_interval = 10 # don't print too too often
-batch_size = 4
+# shrink some training parms further
+eval_interval = 50
+eval_iters = 20
+batch_size = 16
+
+# run train with --init_from=scratch to start fresh
+init_from = 'resume'

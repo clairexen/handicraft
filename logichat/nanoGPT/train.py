@@ -199,7 +199,7 @@ if block_size < model.config.block_size:
 model.to(device)
 
 # initialize a GradScaler. If enabled=False scaler is a no-op
-scaler = torch.cuda.amp.GradScaler(enabled=(dtype == 'float16'))
+scaler = torch.amp.GradScaler(device_type, enabled=(dtype == 'float16'))
 
 # optimizer
 optimizer = model.configure_optimizers(weight_decay, learning_rate, (beta1, beta2), device_type)
@@ -219,21 +219,25 @@ if ddp:
 
 # helps estimate an arbitrarily accurate loss over either split using many batches
 @torch.no_grad()
-def estimate_loss():
+def estimate_loss(iter_num):
+    print(f"step {iter_num}: ", end="", flush=True)
     out = {}
     model.eval()
     for split in ['train', 'val']:
-        print(f"estimate '{split}' loss:", end="", flush=True)
+        if split == 'train':
+            print("train loss ", end="", flush=True)
+        else:
+            print(", val loss ", end="", flush=True)
         losses = torch.zeros(eval_iters)
         for k in range(eval_iters):
-            print(f" {k}", end="", flush=True)
             X, Y = get_batch(split)
             with ctx:
                 logits, loss = model(X, Y)
             losses[k] = loss.item()
         out[split] = losses.mean()
-        print()
+        print(f"{out[split]:.4f}", end="", flush=True)
     model.train()
+    print()
     return out
 
 # learning rate decay scheduler (cosine with warmup)
@@ -256,7 +260,7 @@ if wandb_log and master_process:
     wandb.init(project=wandb_project, name=wandb_run_name, config=config)
 
 # training loop
-print("Training...")
+print("training the model...")
 X, Y = get_batch('train') # fetch the very first batch
 t0 = time.time()
 local_iter_num = 0 # number of iterations in the lifetime of this process
@@ -270,8 +274,7 @@ while True:
 
     # evaluate the loss on train/val sets and write checkpoints
     if iter_num % eval_interval == 0 and master_process:
-        losses = estimate_loss()
-        print(f"step {iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+        losses = estimate_loss(iter_num)
         if wandb_log:
             wandb.log({
                 "iter": iter_num,

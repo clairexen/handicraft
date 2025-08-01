@@ -1,3 +1,4 @@
 /.venv/
 /datasets/
+/nanoGPT/out-*
 __pycache__
