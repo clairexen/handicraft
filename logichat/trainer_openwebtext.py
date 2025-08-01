@@ -98,15 +98,15 @@ while meta["index"] < len(dataset) and total - rejected < limit:
     else:
         rejected += 1
 
-print(f" `- copy parts to single output file and remove parts.")
+partpipe_close(0)
+print(f" `- written {total - rejected} / {total} items (= {100*(total-rejected) // total}%)")
+
+print(f" `- consolidating {len(datafile_parts)} part files into one large output file.")
 with datafile.open("wb") as f:
     for fn in datafile_parts:
         f.write(open(fn, "rb").read())
         os.remove(fn)
 
-print(f"  written {total - rejected} / {total} items (= {100*(total-rejected) // total}%)")
-
-partpipe_close(0)
 print(f"Rejected {rejected} / {total} items containing non-ASCII chars.")
 
 print(f"\nFinal Meta:")
