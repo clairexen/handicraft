@@ -1,4 +1,6 @@
-import weakref
+import weakref, sys
+
+# ======================================================================
 
 def const(f, *, __cache__=weakref.WeakKeyDictionary()):
     try:
@@ -7,6 +9,31 @@ def const(f, *, __cache__=weakref.WeakKeyDictionary()):
         val = f()
         __cache__[f.__code__] = val
         return val
+
+# ======================================================================
+
+def opts_args():
+    _, *args = sys.argv
+    opts = set(a for a in args if a.startswith("-"))
+    args = [a for a in args if a not in opts]
+    return opts, args
+
+# ======================================================================
+
+def embed():
+    import inspect, ptpython
+    caller = inspect.currentframe().f_back
+    print(f"\nCalled embed() from {caller.f_code.co_filename}:{caller.f_lineno} — dropping to ptpython:")
+    ptpython.repl.embed(caller.f_globals, caller.f_locals, configure=ptpy_configure)
+
+def ptpy_configure(repl):
+    if False:
+        for n in dir(repl):
+            if n.startswith("_"): continue
+            print(n, getattr(repl, n))
+    repl.swap_light_and_dark = True
+
+# ======================================================================
 
 def reload():
     exec(open("tokens.py").read(), globals())

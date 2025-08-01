@@ -42,7 +42,7 @@ cfg_tiny = _LogiChatConfig(
 )
 
 # active (default) config
-cfg = cfg_small
+cfg = cfg_large
 
 cfgs = {
      "large": (cfg_large,  'Large'  + (" (default)" if cfg == cfg_large  else "")),

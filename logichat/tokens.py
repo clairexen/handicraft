@@ -9,6 +9,8 @@ ascii_ctrls = ["NUL", "SOH", "STX", "ETX", "EOT", "ENQ", "ACK", "BEL", "BS",
 "NAK", "SYN", "ETB", "CAN", "EM", "SUB", "ESC", "FS", "GS", "RS", "US"]
 ascii_ctrls_by_name = {n: i for i,n in enumerate(ascii_ctrls)}
 
+abcABC123 = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
+
 example_text = """
 REM "Tokenizer encode/decode example text."
 
@@ -330,21 +332,23 @@ class Tokenizer:
         """, pcre2.X)
 
         sorted_by_len = lambda l: [t for _,_,t in sorted((-len(t), t.lower(), t) for t in l)]
+        self.re_words, self.re_frags = None, None
 
         morph_words = "|".join(sorted_by_len([
             *[t[1:] for t in self.decoder.values() if t.startswith("_")],
             *[t[1].upper() + t[2:] for t in self.decoder.values() if t.startswith("_") and t != "_I"],
             *[t[1:].upper() for t in self.decoder.values() if t.startswith("_") and t != "_I"]
         ]))
+        if morph_words:
+            self.re_words = pcre2.compile(morph_words, pcre2.X|pcre2.S)
 
         morph_frags = "|".join(sorted_by_len([
             *[t[1:] for t in self.decoder.values() if t.startswith(".")],
             *[t[1].upper() + t[2:] for t in self.decoder.values() if t.startswith(".")],
             *[t[1:].upper() for t in self.decoder.values() if t.startswith(".")]
         ]))
-
-        self.re_words = pcre2.compile(f"((?<=[a-zA-Z0-9]) [ ] | (<?![a-zA-Z0-9])) ({morph_words})", pcre2.X|pcre2.S)
-        self.re_frags = pcre2.compile(morph_frags, pcre2.X|pcre2.S)
+        if morph_frags:
+            self.re_frags = pcre2.compile(morph_frags, pcre2.X|pcre2.S)
 
         vocab_size = max(self.decoder.keys())+1
         stoi = { f" {s}": i for i, s in self.decoder.items() }
@@ -399,18 +403,19 @@ class Tokenizer:
                     state_str1 = False; state_str2 = False; state_str3 = False
                     continue
 
-                if m := self.re_words.match(text, pos):
-                    s = m[0][1:] if m[0].startswith(" ") else m[0]
-                    t = f"_{'I' if s == 'I' else s.lower()}"
-                    if s.isupper():
-                        tokens += self.encoder["CAPS"]
-                    elif s[0].isupper():
-                        tokens += self.encoder["SHIFT"]
-                    tokens += self.encoder[t]
-                    pos += len(m[0])
-                    continue
+                if self.re_words:
+                    off = 1 if text[pos-1] in abcABC123 and text[pos] == " " else 0
+                    if m := self.re_words.match(text, pos+off):
+                        t = f"_{'I' if m[0] == 'I' else m[0].lower()}"
+                        if m[0].isupper():
+                            tokens += self.encoder["CAPS"]
+                        elif m[0][0].isupper():
+                            tokens += self.encoder["SHIFT"]
+                        tokens += self.encoder[t]
+                        pos += len(m[0])+off
+                        continue
 
-                if m := self.re_frags.match(text, pos):
+                if self.re_frags and (m := self.re_frags.match(text, pos)):
                     t = f".{m[0].lower()}"
                     if m[0].isupper():
                         tokens += self.encoder["CAPS"]
@@ -572,7 +577,7 @@ class Tokenizer:
                 continue
 
             if tok.startswith("_"):
-                if last_c() in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789":
+                if last_c() in abcABC123:
                     text.append(' ')
                 t = tok[1:]
                 if state_caps:
@@ -718,6 +723,7 @@ def main():
         c.lex().pr_table(showCtrl=("-c" in opts))
 
 if __name__ == "__main__":
+    opts, args = utils.opts_args()
     cmdname, *args = sys.argv
     opts = set(a for a in args if a.startswith("-"))
     args = [a for a in args if a not in opts]
