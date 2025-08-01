@@ -1,0 +1,1 @@
+This is a copy of [nanoGPT](https://github.com/karpathy/nanoGPT), commit [93a43d9](https://github.com/karpathy/nanoGPT/commit/93a43d9a5c22450bbf06e78da2cb6eeef084b717), with local modifications, and without the examples and docs and ipython notebooks.
