@@ -61,45 +61,52 @@ else:
 
 datafile_parts = []
 datafile_partidx = 0
-datafile_partpipe = None
+datafile_partpipes = []
 datafile_bytes = None
 
-def partpipe_close():
-    global datafile_parts, datafile_partidx, datafile_partpipe, datafile_bytes
-    print(".")
-    datafile_partpipe.stdin.close()
-    datafile_partpipe.wait()
-    datafile_partpipe = None
+def partpipe_close(N=4):
+    global datafile_parts, datafile_partidx, datafile_partpipes, datafile_bytes
+    if datafile_bytes is not None:
+        datafile_partpipes[-1].stdin.close()
+        print(".")
+    while len(datafile_partpipes) > N:
+        datafile_partpipes[0].wait()
+        del datafile_partpipes[0]
     datafile_bytes = None
 
 def partpipe_write(t):
-    global datafile_parts, datafile_partidx, datafile_partpipe, datafile_bytes
-    if datafile_bytes is not None and datafile_bytes > 1024*1024:
+    global datafile_parts, datafile_partidx, datafile_partpipes, datafile_bytes
+    if datafile_bytes is None or datafile_bytes > 1024*1024:
         partpipe_close()
-    if datafile_partpipe is None:
         datafile_parts.append(str(datafile.with_suffix(f".part{datafile_partidx:05d}")))
         print(f" `- writing {datafile_parts[-1]}", flush=True, end="")
-        datafile_partpipe = Popen(["/bin/sh", "-c", f"python3 tokens.py -e '{datafile_parts[-1]}'"], stdin=PIPE)
+        datafile_partpipes.append(Popen(["/bin/sh", "-c", f"python3 tokens.py -e '{datafile_parts[-1]}'"], stdin=PIPE))
         datafile_partidx += 1
         datafile_bytes = 0
-    datafile_partpipe.stdin.write(bytes(t, "ascii"))
+    datafile_partpipes[-1].stdin.write(bytes(t, "ascii"))
     datafile_bytes += len(t)
 
 total = 0
 rejected = 0
 print(f"\nWriting {datafile} ...")
-with datafile.open("wb") as f:
-    while meta["index"] < len(dataset) and total - rejected < limit:
-        t = dataset[meta["index"]]["text"]
-        total += 1; meta["index"] += 1
-        if all(31 < ord(c) < 127 for c in t if c != "\n"):
-            t = f"REM '''\n{t}\n'''\n\x00"
-            partpipe_write(t)
-        else:
-            rejected += 1
-    print(f"  written {total - rejected} / {total} items (= {100*(total-rejected) // total}%)")
+while meta["index"] < len(dataset) and total - rejected < limit:
+    t = dataset[meta["index"]]["text"]
+    total += 1; meta["index"] += 1
+    if all(31 < ord(c) < 127 for c in t if c != "\n"):
+        t = f"REM '''\n{t}\n'''\n\x00"
+        partpipe_write(t)
+    else:
+        rejected += 1
 
-partpipe_close()
+print(f" `- copy parts to single output file and remove parts.")
+with datafile.open("wb") as f:
+    for fn in datafile_parts:
+        f.write(open(fn, "rb").read())
+        os.remove(fn)
+
+print(f"  written {total - rejected} / {total} items (= {100*(total-rejected) // total}%)")
+
+partpipe_close(0)
 print(f"Rejected {rejected} / {total} items containing non-ASCII chars.")
 
 print(f"\nFinal Meta:")
