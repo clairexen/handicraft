@@ -22,7 +22,7 @@ if $_ok; then
 		done
 	}
 
-	pip_install_deps z3-solver numpy torch
+	pip_install_deps z3-solver pcre2 numpy torch
 	pip_install_deps transformers datasets tiktoken wandb tqdm
 
 	deactivate() {

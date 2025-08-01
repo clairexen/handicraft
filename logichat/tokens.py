@@ -1,4 +1,4 @@
-import re, sys, types, numpy, itertools, collections
+import pcre2, sys, types, numpy, itertools, collections
 from dataclasses import dataclass, field
 from en_basic import en_basic_words
 import config, utils, tokens
@@ -324,10 +324,27 @@ class Tokenizer:
 
         opnames = " | ".join(t for t in self.cfg.gates)
         objnames = " | ".join(t for t in self.decoder.values() if t[0] in 'iqnodfa')
-        self.re_keywords = re.compile(f"""
+        self.re_keywords = pcre2.compile(f"""
             (?<![a-zA-Z0-9]) ( PROMPT | REPLY | QUERY | REM | TXT | TAG | MODULE | DIMS | PI | PO |
                     TABLE | PTABLE | GET | SET | CIRCUIT | OPS | DEF | ENDMOD | {opnames} | {objnames}) (?![a-zA-Z0-9])
-        """, re.A|re.X)
+        """, pcre2.X)
+
+        sorted_by_len = lambda l: [t for _,_,t in sorted((-len(t), t.lower(), t) for t in l)]
+
+        morph_words = "|".join(sorted_by_len([
+            *[t[1:] for t in self.decoder.values() if t.startswith("_")],
+            *[t[1].upper() + t[2:] for t in self.decoder.values() if t.startswith("_") and t != "_I"],
+            *[t[1:].upper() for t in self.decoder.values() if t.startswith("_") and t != "_I"]
+        ]))
+
+        morph_frags = "|".join(sorted_by_len([
+            *[t[1:] for t in self.decoder.values() if t.startswith(".")],
+            *[t[1].upper() + t[2:] for t in self.decoder.values() if t.startswith(".")],
+            *[t[1:].upper() for t in self.decoder.values() if t.startswith(".")]
+        ]))
+
+        self.re_words = pcre2.compile(f"((?<=[a-zA-Z0-9]) [ ] | (<?![a-zA-Z0-9])) ({morph_words})", pcre2.X|pcre2.S)
+        self.re_frags = pcre2.compile(morph_frags, pcre2.X|pcre2.S)
 
         vocab_size = max(self.decoder.keys())+1
         stoi = { f" {s}": i for i, s in self.decoder.items() }
@@ -382,7 +399,28 @@ class Tokenizer:
                     state_str1 = False; state_str2 = False; state_str3 = False
                     continue
 
-                elif state_str1:
+                if m := self.re_words.match(text, pos):
+                    s = m[0][1:] if m[0].startswith(" ") else m[0]
+                    t = f"_{'I' if s == 'I' else s.lower()}"
+                    if s.isupper():
+                        tokens += self.encoder["CAPS"]
+                    elif s[0].isupper():
+                        tokens += self.encoder["SHIFT"]
+                    tokens += self.encoder[t]
+                    pos += len(m[0])
+                    continue
+
+                if m := self.re_frags.match(text, pos):
+                    t = f".{m[0].lower()}"
+                    if m[0].isupper():
+                        tokens += self.encoder["CAPS"]
+                    elif m[0][0].isupper():
+                        tokens += self.encoder["SHIFT"]
+                    tokens += self.encoder[t]
+                    pos += len(m[0])
+                    continue
+
+                if state_str1:
                     if text[pos] == '"':
                         state_str1 = False; t = 'STR_E'
                     elif text[pos:pos+2] == '\\n':
@@ -493,6 +531,9 @@ class Tokenizer:
         return tokens
 
     def decode(self, tokens):
+        state_caps = 0
+        state_shift = 0
+        state_altgr = 0
         text = []
         pos = 0
 
@@ -505,6 +546,10 @@ class Tokenizer:
 
         tok = None
         while pos < len(tokens):
+            if state_caps: state_caps -= 1
+            if state_shift: state_shift -= 1
+            if state_altgr: state_altgr -= 1
+
             if isinstance(tokens[pos], str):
                 text.append(tokens[pos])
                 pos += 1
@@ -513,6 +558,38 @@ class Tokenizer:
             last_tok = tok
             tok = self.decoder[tokens[pos]]
             pos += 1
+
+            if tok == 'CAPS':
+                state_caps = 2
+                continue
+
+            if tok == 'SHIFT':
+                state_shift = 2
+                continue
+
+            if tok == 'ALTGR':
+                state_altgr = 2
+                continue
+
+            if tok.startswith("_"):
+                if last_c() in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789":
+                    text.append(' ')
+                t = tok[1:]
+                if state_caps:
+                    t = t.upper()
+                elif state_shift:
+                    t = t[0].upper() + t[1:]
+                text.append(t)
+                continue
+
+            if tok.startswith("."):
+                t = tok[1:]
+                if state_caps:
+                    t = t.upper()
+                elif state_shift:
+                    t = t[0].upper() + t[1:]
+                text.append(t)
+                continue
 
             if tok in (*("REM TXT PROMPT QUERY MODULE ENDMOD".split()),
                        *(indent_2 := "DIMS TABLE PTABLE CIRCUIT".split()),
@@ -532,15 +609,14 @@ class Tokenizer:
 
             if tok[0] in "iqnodfa" or tok in self.cfg.gates:
                 if last_tok != "FUN_B":
-                    text.append(f' {tok}')
-                else:
-                    text.append(tok)
+                    if pos-1: text.append(' ')
+                text.append(tok)
                 continue
 
             if tok == 'STR_B':
                 state_str = True
-                text.append(' ')
-                if tokens[pos-1] == tokens[pos]:
+                if pos-1: text.append(' ')
+                if pos < len(tokens) and tokens[pos-1] == tokens[pos]:
                     if pos+1 < len(tokens) and tokens[pos-1] == tokens[pos+1]:
                         text.append("'''\n")
                         pos += 2
@@ -553,7 +629,7 @@ class Tokenizer:
 
             if tok == 'STR_E':
                 state_str = False
-                if tokens[pos-1] == tokens[pos]:
+                if pos < len(tokens) and tokens[pos-1] == tokens[pos]:
                     if pos+1 < len(tokens) and tokens[pos-1] == tokens[pos+1]:
                         text.append("\n'''")
                         pos += 2
@@ -566,7 +642,8 @@ class Tokenizer:
 
             if tok in ('LUT_B', 'LUT_E'):
                 state_lut = tok == 'LUT_B'
-                text.append(" '" if state_lut else "'")
+                if state_lut and pos-1: text.append(' ')
+                text.append("'")
                 continue
 
             if tok == 'LUT_D':
@@ -578,7 +655,8 @@ class Tokenizer:
                 continue
 
             if tok == 'FUN_B':
-                text.append(' (')
+                if pos-1: text.append(' ')
+                text.append('(')
                 continue
 
             if tok == 'FUN_E':
@@ -619,9 +697,11 @@ def main():
     if "-t" in opts or "-T" in opts:
         if not args:
             args.append(example_text)
-        cfg = config.cfg_large
+        cfg = config.cfg
+        for n,(c,_) in config.cfgs.items():
+            if f"--{n}" in opts: cfg = c
         lex = cfg.lex()
-        lex.pr_table(8)
+        lex.pr_table()
         for s in args:
             print()
             print(f"Input: {s}")
