@@ -330,8 +330,8 @@ class Tokenizer:
         """, re.A|re.X)
 
         vocab_size = max(self.decoder.keys())
-        stoi = { f" {s}": i for i, s in decoder.items() }
-        itos = { i: f" {s}" for i, s in decoder.items() }
+        stoi = { f" {s}": i for i, s in self.decoder.items() }
+        itos = { i: f" {s}" for i, s in self.decoder.items() }
 
         # nanoGPT meta.pkl
         self.meta = {
@@ -342,8 +342,6 @@ class Tokenizer:
 
         self.binext = "uint8" if vocab_size < 256 else "uint16"
         self.bintype = numpy.uint8 if vocab_size < 256 else numpy.uint16
-
-    def metapkl(self
 
     def encode(self, text, encodeText=True):
         tokens = []
