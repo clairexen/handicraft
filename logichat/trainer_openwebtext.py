@@ -11,17 +11,16 @@ if len(args) == 0:
     args.append(config.cfg.name)
 
 if len(args) == 1:
-    for i in range(6):
-        os.system(f"set -x; python3 '{sys.argv[0]}' {args[0]} {i}")
+    os.system(f"set -x; python3 '{sys.argv[0]}' {args[0]} test")
+    os.system(f"set -x; python3 '{sys.argv[0]}' {args[0]} train")
     sys.exit()
 
 if len(args) == 2:
     args.append("")
 
-cfg_name, partnum, mblimit = args
-partnum = int(partnum)
+cfg_name, split, mblimit = args
 if not mblimit or not int(mblimit):
-    mblimit = 100 if partnum else 10
+    mblimit = 100 if split == "train" else 10
 limit = 350*int(mblimit)
 
 cfg = config.cfgs[cfg_name][0]
@@ -35,13 +34,12 @@ datasets = datasets["train"].train_test_split(test_size=50000, seed=1357, shuffl
 datapath = Path(f"datasets/{dataset_name}")
 datapath.mkdir(parents=True, exist_ok=True)
 
-metafile = datapath.joinpath('meta.pkl')
-if partnum:
+metafile = datapath.joinpath(cfg_name + '.meta.pkl')
+if split == "train":
     with metafile.open('rb') as f:
         meta = pickle.load(f)
 else:
     meta = lex.meta
-    meta["index"] = 0
     with metafile.open('wb') as f:
         pickle.dump(meta, f)
 
@@ -52,12 +50,12 @@ for key in sorted(meta.keys()):
     else:
         print(f"    {key:<10} {repr(meta[key])}")
 
-if partnum:
+if split == "train":
     dataset = datasets["train"]
-    datafile = datapath.joinpath(f"{cfg_name}.t{partnum:02d}.{lex.binext}")
+    datafile = datapath.joinpath(f"{cfg_name}.train.{lex.binext}")
 else:
     dataset = datasets["test"]
-    datafile = datapath.joinpath(f"{cfg_name}.val.{lex.binext}")
+    datafile = datapath.joinpath(f"{cfg_name}.test.{lex.binext}")
 
 datafile_parts = []
 datafile_partidx = 0
@@ -86,20 +84,45 @@ def partpipe_write(t):
     datafile_partpipes[-1].stdin.write(bytes(t, "ascii"))
     datafile_bytes += len(t)
 
+def convert_special_chars(t):
+    t = t.replace("\u00a9", '(C)')
+    t = t.replace("\u00ad", '')
+    t = t.replace("\u00ae", '(R)')
+    t = t.replace("\u00b4", "'")
+    t = t.replace("\u200b", '')
+    t = t.replace("\u2011", '-')
+    t = t.replace("\u2013", '-')
+    t = t.replace("\u2014", '-')
+    t = t.replace("\u2015", '-')
+    t = t.replace("\u2019", "'")
+    t = t.replace("\u201c", '"')
+    t = t.replace("\u201d", '"')
+    t = t.replace("\u201f", '"')
+    t = t.replace("\u2026", '...')
+    t = t.replace("\uff01", '!')
+    t = t.replace("\uff08", '(')
+    t = t.replace("\uff09", ')')
+    t = t.replace("\uff0d", '"')
+    return t
+
 total = 0
 rejected = 0
+special_chars_cnt = dict()
 print(f"\nWriting {datafile} ...")
-while meta["index"] < len(dataset) and total - rejected < limit:
-    t = dataset[meta["index"]]["text"]
-    total += 1; meta["index"] += 1
+while total < len(dataset) and total - rejected < limit:
+    t = dataset[total]["text"]; total += 1
     if all(31 < ord(c) < 127 for c in t if c != "\n"):
-        t = f"REM '''\n{t}\n'''\n\x00"
+        t = f"REM '''\n{convert_special_chars(t)}\n'''\n\x00"
         partpipe_write(t)
     else:
+        special_chars = [c for c in t if (ord(c) < 32 or 127 <= ord(c)) and c not in "\t"]
+        for c in special_chars:
+            special_chars_cnt[c] = special_chars_cnt.get(c, 0) + 1
         rejected += 1
 
+partpipe_close()
+print(f" `- waiting for encoder threads to finish writing part files.")
 partpipe_close(0)
-print(f" `- written {total - rejected} / {total} items (= {100*(total-rejected) // total}%)")
 
 print(f" `- consolidating {len(datafile_parts)} part files into one large output file.")
 with datafile.open("wb") as f:
@@ -107,7 +130,12 @@ with datafile.open("wb") as f:
         f.write(open(fn, "rb").read())
         os.remove(fn)
 
-print(f"Rejected {rejected} / {total} items containing non-ASCII chars.")
+print(f"Rejected {rejected} / {total} items (={100*rejected//total}%) containing non-ASCII chars.\n")
+
+if "-s" in opts:
+    print("Frequency of non-ASCII chars:")
+    for cnt, ch in sorted((-cnt,ch) for ch,cnt in special_chars_cnt.items()):
+        print(f"  {ch}\t\\u{hex(ord(ch))[2:]}\t{-cnt}")
 
 print(f"\nFinal Meta:")
 for key in sorted(meta.keys()):
