@@ -1,5 +1,7 @@
 import datasets, pickle, numpy, sys, os
 import config, tokens, utils
+from pathlib import Path
+from subprocess import Popen, PIPE
 
 dataset_name = "openwebtext"
 
@@ -25,7 +27,6 @@ limit = 350*int(mblimit)
 cfg = config.cfgs[cfg_name][0]
 lex = cfg.lex()
 
-from pathlib import Path
 Path.mkdirs = lambda self: self.mkdir(parents=True, exist_ok=True)
 
 datasets = datasets.load_dataset("openwebtext")
@@ -58,6 +59,32 @@ else:
     dataset = datasets["test"]
     datafile = datapath.joinpath(f"{cfg_name}.val.{lex.binext}")
 
+datafile_parts = []
+datafile_partidx = 0
+datafile_partpipe = None
+datafile_bytes = None
+
+def partpipe_close():
+    global datafile_parts, datafile_partidx, datafile_partpipe, datafile_bytes
+    print(".")
+    datafile_partpipe.stdin.close()
+    datafile_partpipe.wait()
+    datafile_partpipe = None
+    datafile_bytes = None
+
+def partpipe_write(t):
+    global datafile_parts, datafile_partidx, datafile_partpipe, datafile_bytes
+    if datafile_bytes is not None and datafile_bytes > 1024*1024:
+        partpipe_close()
+    if datafile_partpipe is None:
+        datafile_parts.append(str(datafile.with_suffix(f".part{datafile_partidx:05d}")))
+        print(f" `- writing {datafile_parts[-1]}", flush=True, end="")
+        datafile_partpipe = Popen(["/bin/sh", "-c", f"python3 tokens.py -e '{datafile_parts[-1]}'"], stdin=PIPE)
+        datafile_partidx += 1
+        datafile_bytes = 0
+    datafile_partpipe.stdin.write(bytes(t, "ascii"))
+    datafile_bytes += len(t)
+
 total = 0
 rejected = 0
 print(f"\nWriting {datafile} ...")
@@ -66,14 +93,13 @@ with datafile.open("wb") as f:
         t = dataset[meta["index"]]["text"]
         total += 1; meta["index"] += 1
         if all(31 < ord(c) < 127 for c in t if c != "\n"):
-            t = f"REM '''\n{t}\n'''\n"
-            t = lex.encode(t) + [0]
-            t = numpy.array(t, lex.bintype)
-            t.tofile(f)
+            t = f"REM '''\n{t}\n'''\n\x00"
+            partpipe_write(t)
         else:
             rejected += 1
     print(f"  written {total - rejected} / {total} items (= {100*(total-rejected) // total}%)")
 
+partpipe_close()
 print(f"Rejected {rejected} / {total} items containing non-ASCII chars.")
 
 print(f"\nFinal Meta:")

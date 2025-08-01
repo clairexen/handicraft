@@ -454,7 +454,7 @@ class Tokenizer:
                 else:
                     assert state_str3
                     if text[pos:].startswith("\n'''\n"):
-                        state_str2 = False; t = 'STR_E'
+                        state_str3 = False; t = 'STR_E'
                         tokens += self.encoder[t]
                         pos += 3
                     else:
@@ -527,6 +527,11 @@ class Tokenizer:
             if text[pos] == ")":
                 pos += 1
                 tokens += self.encoder['FUN_E']
+                continue
+
+            if text[pos] == "\x00":
+                pos += 1
+                tokens += self.encoder['NULL']
                 continue
 
             tokens.append(0)
@@ -702,11 +707,13 @@ def main():
     if "-t" in opts or "-T" in opts:
         if not args:
             args.append(example_text)
+
         cfg = config.cfg
         for n,(c,_) in config.cfgs.items():
-            if f"--{n}" in opts: cfg = c
+            if f"-{n}" in opts: cfg = c
         lex = cfg.lex()
         lex.pr_table()
+
         for s in args:
             print()
             print(f"Input: {s}")
@@ -715,6 +722,31 @@ def main():
             print(f"Tokens: {lex.tok2str(t)}")
             x = lex.decode(t)
             print(f"Output: {x}")
+        return 0
+
+    if "-e" in opts:
+
+        cfg = config.cfg
+        for n,(c,_) in config.cfgs.items():
+            if f"-{n}" in opts: cfg = c
+        lex = cfg.lex()
+
+        with open(args[0], "ab" if "-a" in opts else "wb") as f:
+            #print("reading..")
+            data = sys.stdin.read()
+            #print("splitting..")
+            data = data.split("\x00")
+            for i,t in enumerate(data):
+                if not t: continue
+                #print(f"encoding {i}..")
+                # print("-----\n" + t + "\n-----")
+                t = lex.encode(t)
+                #print(f"packing {i}..")
+                t = numpy.array(t, lex.bintype)
+                #print(f"writing {i}..")
+                t.tofile(f)
+                f.flush()
+
         return 0
 
     for c, t in config.cfgs.values():
