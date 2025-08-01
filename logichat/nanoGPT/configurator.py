@@ -17,6 +17,9 @@ comes up with a better simple Python solution I am all ears.
 import sys
 from ast import literal_eval
 
+parent_dir = os.path.abspath(os.path.join(os.getcwd(), ".."))
+sys.path.insert(0, parent_dir)
+
 for idx, arg in enumerate(["../gptcfg.py"] + sys.argv[1:]):
     if '=' not in arg:
         # assume it's the name of a config file

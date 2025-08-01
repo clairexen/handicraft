@@ -329,9 +329,15 @@ class Tokenizer:
                     TABLE | PTABLE | GET | SET | CIRCUIT | OPS | DEF | ENDMOD | {opnames} | {objnames}) (?![a-zA-Z0-9])
         """, re.A|re.X)
 
-        vocab_size = max(self.decoder.keys())
+        vocab_size = max(self.decoder.keys())+1
         stoi = { f" {s}": i for i, s in self.decoder.items() }
         itos = { i: f" {s}" for i, s in self.decoder.items() }
+
+        if False:
+            for i in range(vocab_size):
+                if i not in itos:
+                    itos[i] = f" *UNUSED_TOKEN_{i}*"
+                    stoi[f" *UNUSED_TOKEN_{i}*"] = i
 
         # nanoGPT meta.pkl
         self.meta = {
@@ -535,7 +541,7 @@ class Tokenizer:
                 state_str = True
                 text.append(' ')
                 if tokens[pos-1] == tokens[pos]:
-                    if tokens[pos-1] == tokens[pos+1]:
+                    if pos+1 < len(tokens) and tokens[pos-1] == tokens[pos+1]:
                         text.append("'''\n")
                         pos += 2
                     else:
@@ -548,7 +554,7 @@ class Tokenizer:
             if tok == 'STR_E':
                 state_str = False
                 if tokens[pos-1] == tokens[pos]:
-                    if tokens[pos-1] == tokens[pos+1]:
+                    if pos+1 < len(tokens) and tokens[pos-1] == tokens[pos+1]:
                         text.append("\n'''")
                         pos += 2
                     else:
@@ -583,6 +589,10 @@ class Tokenizer:
                 text.append(tok.strip("'") if state_lut else tok)
                 continue
 
+            if tok[0] == '"':
+                text.append(tok.removeprefix('"').removesuffix('"'))
+                continue
+
             pos -= 1
             text.append(f"*** DECODE ERROR AT POSITION {pos}: {tok} ***")
             break
@@ -606,7 +616,7 @@ class Tokenizer:
         return " ".join(self.tok2str(t) for t in toks)
 
 def main():
-    if "-t" in opts:
+    if "-t" in opts or "-T" in opts:
         if not args:
             args.append(example_text)
         cfg = config.cfg_large
