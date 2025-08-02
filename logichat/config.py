@@ -5,7 +5,7 @@ class _LogiChatConfig:
     name: str
     gates: tuple = ("BUF", "NOT", "AND", "NAND", "OR", "NOR", "XOR", "XNOR", "ANDNOT", "ORNOT",
             "MUX", "NMUX", "AOI3", "OAI3", "AOI4", "OAI4", "LUT2", "LUT3", "LUT4", "LUT5", "LUT6")
-    idx_base: int = 8
+    idx_base: int = 10
     max_nbits: int = 2
     with_words: bool = False
 
@@ -27,16 +27,21 @@ class _LogiChatConfig:
 
     def gptcfg(self):
         if self._gptcfg is None:
+            lex = self.lex()
             from nanoGPT.model import GPTConfig
-            self._gptcfg = tokens.Tokenizer(self)
-            self._gptcfg.vocab_size = 1234
-            self._gptcfg.modif_size = 5 + idx_base
-            self._gptcfg.n_layer = gpt_n_layer
-            self._gptcfg.n_head  = gpt_n_head
-            self._gptcfg.n_embd  = gpt_n_embd
-            self._gptcfg.dropout = gpt_dropout
-            self._gptcfg.bias    = gpt_bias
+            self._gptcfg = GPTConfig()
+            self._gptcfg.vocab_size = lex.meta.vocab_size
+            self._gptcfg.modif_size = lex.meta.modif_size
+            self._gptcfg.n_layer = self.gpt_n_layer
+            self._gptcfg.n_head  = self.gpt_n_head
+            self._gptcfg.n_embd  = self.gpt_n_embd
+            self._gptcfg.dropout = self.gpt_dropout
+            self._gptcfg.bias    = self.gpt_bias
         return self._gptcfg
+
+    def gptname(self):
+        return f"GPT2M-L{self.gpt_n_layer}-H{self.gpt_n_head}-E{self.gpt_n_embd}-" + \
+                        f"D{f'{dropout:.2f}'[2:]}-B{1 if self.gpt_bias else 0}"
 
 cfg_small = _LogiChatConfig(
     "small",

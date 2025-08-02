@@ -9,7 +9,12 @@ ascii_ctrls = ["NUL", "SOH", "STX", "ETX", "EOT", "ENQ", "ACK", "BEL", "BS",
 "NAK", "SYN", "ETB", "CAN", "EM", "SUB", "ESC", "FS", "GS", "RS", "US"]
 ascii_ctrls_by_name = {n: i for i,n in enumerate(ascii_ctrls)}
 
-abcABC123 = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
+cls_ws_etc = set(" \a\b\t\n\x1b")
+cls_abc = set("abcdefghijklmnopqrstuvwxyz")
+cls_ABC = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+cls_123 = set("1234567890")
+cls_abcABC123 = cls_abc | cls_ABC | cls_123
+cls_special = set("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~")
 
 example_text = """
 REM "Tokenizer encode/decode example text."
@@ -74,19 +79,26 @@ ENDMOD
 @dataclass
 class Tokenizer:
     cfg: config._LogiChatConfig
-    lines: list = field(default_factory=list)
-    tokens: dict = field(default_factory=dict)
-    encoder: dict = field(default_factory=dict)
-    decoder: dict = field(default_factory=dict)
+
+    base_embd_map: dict = field(default_factory=dict)
+    base_embd_names: list = field(default_factory=list)
+
+    modif_embd_map: dict = field(default_factory=dict)
+    modif_embd_names: list = field(default_factory=list)
+
+    token_map: dict = field(default_factory=dict)
+    token_names: list = field(default_factory=list)
+
+    stoi_map: dict = field(default_factory=dict)
+    itos_map: dict = field(default_factory=dict)
 
     def pr_table(self, /, showCtrl=False):
-        lines = [l for l in self.lines if l is not None]
+        lines = [f"{i:3} {'----' if n is None else n}" for i,n in enumerate(self.token_names)]
 
         if showCtrl:
             for i,l in enumerate(lines):
-                idx = int(l.split(" ", 1)[0])
-                if idx < len(ascii_ctrls):
-                    lines[i] = f"{l[0:3]}{ascii_ctrls[idx]:<3}{l[3:]}"
+                if i >= len(ascii_ctrls): break
+                lines[i] = f"{l[0:3]} {ascii_ctrls[i]:<3}{l[3:]}"
 
         def render(cols):
             text = []
@@ -105,7 +117,9 @@ class Tokenizer:
                     l = lines[k] if k < len(lines) else ""
                     text.append(f"{l}\n" if j == cols-1 else f"{l:<{col_widths[j]}} | ")
 
-            text.append(f"({len(lines)} tokens in total)\n")
+            text.append(f"({len(self.token_names)} tokens in total, " +
+                        f"{len(self.base_embd_names)} base embeddings, " +
+                        f"{len(self.modif_embd_names)} modifier embeddings)\n")
             text = "".join(text)
             width = max(len(l) for l in text.split("\n"))
             return text, width
@@ -128,247 +142,222 @@ class Tokenizer:
             return f'"\\x{ord(c):02x}"'
         return f'"{c}"'
 
-    def __post_init__(self):
-        tok_shift = None
-        tok_altgr = None
+    def add_base_embd(self, base_name):
+        assert base_name not in self.base_embd_map
+        self.base_embd_map[base_name] = (idx := len(self.base_embd_names))
+        self.base_embd_names.append(base_name)
+        return idx
 
-        def tok(x, tok_index=None):
-            if tok_index is None:
-                tok_index = len(self.lines)
-                self.lines.append(None)
-            else:
-                if isinstance(tok_index, str):
-                    tok_index = ascii_ctrls_by_name[tok_index]
-                assert self.lines[tok_index] is None
-            self.lines[tok_index] = f"{tok_index:<3} {x}"
-            self.decoder[tok_index] = x
-            self.tokens[x] = tok_index
-            def enc(x, y):
-                self.encoder[x] = y
-            if x.startswith('"'):
-                s = x.removeprefix('"')
-                s = s.removesuffix('"')
-                s = s.replace('" "', '')
-                s = s.replace('\\"', '"')
-                s = s.replace('\\n', '\n')
-                s = s.replace('\\\\', '\\')
-                s = tuple(self.quote_str_char(c) for c in s)
-            else:
-                s = (x,)
-            if len(s) >= 1: enc(s[0], (tok_index,))
-            if len(s) >= 2: enc(s[1], (tok_shift, tok_index))
-            if len(s) >= 3: enc(s[2], (tok_altgr, tok_index))
-            return tok_index
+    def add_modif_embd(self, modif_name):
+        assert modif_name not in self.modif_embd_map
+        self.modif_embd_map[modif_name] = (idx := len(self.modif_embd_names))
+        self.modif_embd_names.append(modif_name)
+        return idx
+
+    def add_token(self, token_name, base_idx=None, modif_idx=None, idx=None):
+        if base_idx and modif_idx is None and idx is None:
+            idx = base_idx; base_idx = None
+
+        if not base_idx and not modif_idx:
+            base_idx = self.add_base_embd(f"B_{token_name}")
+            self.add_stoi_itos(f" {token_name}", True)
+            modif_idx = 0
+
+        assert token_name not in self.token_map
+
+        if idx is None:
+            idx = len(self.token_names)
+            self.token_names.append(None)
+        else:
+            if isinstance(idx, str):
+                idx = ascii_ctrls.index(idx)
+        assert self.token_names[idx] is None
+
+        if isinstance(base_idx, str): base_idx = self.base_embd_map[base_idx]
+        if isinstance(modif_idx, str): modif_idx = self.modif_embd_map[modif_idx]
+
+        self.token_map[token_name] = (idx, base_idx, modif_idx)
+        self.token_names[idx] = token_name
+        return idx
+
+    def add_stoi_itos(self, s, i, skip_stoi=False):
+        if not skip_stoi:
+            self.stoi_map[s] = i
+        self.itos_map[i] = s
+
+    def __post_init__(self):
+        self.add_modif_embd("M_NOMOD")
+        self.add_modif_embd("M_SHIFT")
+        self.add_modif_embd("M_CAPS")
+        self.add_modif_embd("M_SPACE")
+        self.add_modif_embd("M_SPACE_SHIFT")
+        self.add_modif_embd("M_SPACE_CAPS")
+        for i in range(self.cfg.idx_base):
+            self.add_modif_embd(f"M_{i}")
 
         # skip 7-bit ASCII range + 2 reserved slots for now
-        while len(self.lines) < (128 + 2):
-            self.lines.append(None)
+        while len(self.token_names) < 128:
+            self.token_names.append(None)
 
         # only as EOF and ERROR marker
-        tok("NULL", "NUL")
+        self.add_token("NULL", 0, 0, "NUL")
 
         # a break is just an empty line
-        tok("BREAK", "ETB")
+        self.add_token("BREAK", "CR")
 
         # erase the last command
-        tok("UNDO", 127)
+        self.add_token("UNDO", 127)
 
         # chatbot interface:  PROMPT "<text>" ... REPLY "<text>"
-        tok("PROMPT", "SOH")
-        tok("REPLY", "EOT")
+        self.add_token("PROMPT", "SOH")
+        self.add_token("REPLY", "EOT")
 
         # future extension: run a (python) query on SMT model
-        tok("QUERY", "ENQ")
+        self.add_token("QUERY", "ENQ")
 
         # end of LLM generated output. e.g. after QUERY or REPLY
-        tok("STOP", "CAN")
+        self.add_token("STOP", "CAN")
 
         # can be used anywhere
-        tok("#", "DLE")    # #-comments at the end of a line
-        tok("REM", "STX")  #   REM "This is just a remark that can be ignored"
-        tok("TXT", "ETX")  #   TXT "This is relevant information and/or reply to a prompt or query"
-        tok("TAG", "SUB")  #   TAG (i|f|n|o)<N> "This is an annotation of that entity"
+        self.add_token("#", "DLE")    # #-comments at the end of a line
+        self.add_token("REM", "STX")  #   REM "This is just a remark that can be ignored"
+        self.add_token("TXT", "ETX")  #   TXT "This is relevant information and/or reply to a prompt or query"
+        self.add_token("TAG", "SUB")  #   TAG (i|f|n|o)<N> "This is an annotation of that entity"
 
         # start of module block
-        tok("MODULE", 128) # MODULE ["<optional_name>"]
+        self.add_token("MODULE", "ACK") # MODULE ["<optional_name>"]
 
         # header statements
-        tok("DIMS")        #   DIMS i<max> q<max> n<max> o<max> d<max> f<max> a<max>
-        tok("NONE")        #   -
-        tok("PI")          #   PI i<first> ... i<last>
-        tok("PO")          #   PO o<first> ... o<last>
-        tok("INIT")        #   INIT '1' q0 q1
+        self.add_token("DIMS")        #   DIMS i<max> q<max> n<max> o<max> d<max> f<max> a<max>
+        self.add_token("NONE", "EM")  #   -
+        self.add_token("PI")          #   PI i<first> ... i<last>
+        self.add_token("PO")          #   PO o<first> ... o<last>
+        self.add_token("INIT")        #   INIT '1' q0 q1
 
         # (p)table blocks  #   [P]TABLE ["<optional_name>"]
-        tok("TABLE")       #     GET i0 i1 i2
-        tok("PTABLE")      #     GET i3 i4 i5 d1
-        tok("GET")         #     SET o1 o2
-        tok("SET")         #     SET q1
-        tok("LUT_B", "FS") #     '010 1--0 ==> 1X 1'
-        tok("LUT_D", "GS") #
-        tok("LUT_T", "RS") #     '<3x[01-]> <4x[01-]> ==> <2x[01X-]> <[01X->'
-        tok("LUT_E", "US") #     ^LUT_B    ^LUT_D      ^LUT_T       ^LUT_D  ^LUT_E
+        self.add_token("TABLE")       #     GET i0 i1 i2
+        self.add_token("PTABLE")      #     GET i3 i4 i5 d1
+        self.add_token("GET", "SYN")  #     SET o1 o2
+        self.add_token("SET", "ETB")  #     SET q1
+        self.add_token("LUT_B", "FS") #     '010 1--0 ==> 1X 1'
+        self.add_token("LUT_D", "GS") #
+        self.add_token("LUT_T", "RS") #     '<3x[01-]> <4x[01-]> ==> <2x[01X-]> <[01X->'
+        self.add_token("LUT_E", "US") #     ^LUT_B    ^LUT_D      ^LUT_T       ^LUT_D  ^LUT_E
 
         # circuit block
-        tok("CIRCUIT")     #   CIRCUIT ["<optional_name>"]
-        tok("OPS")         #     OPS NAND NOR
-        tok("DEF")         #     DEF n1 (NAND i1 i2)   # create/define a GATE
-        tok("FUN_B","DC1") #     DEF n2 (MUX n1 i1 i3) # (MUX n1 i1 i3) = FUN_B MUX n1 i1 i3 FUN_E
-        tok("FUN_E","DC2") #     DEF d1 n1             # also works with FF inputs (dN) and outputs (oN)
+        self.add_token("CIRCUIT")     #   CIRCUIT ["<optional_name>"]
+        self.add_token("OPS")         #     OPS NAND NOR
+        self.add_token("DEF")         #     DEF n1 (NAND i1 i2)   # create/define a GATE
+        self.add_token("FUN_B", "SO") #     DEF n2 (MUX n1 i1 i3) # (MUX n1 i1 i3) = FUN_B MUX n1 i1 i3 FUN_E
+        self.add_token("FUN_E", "SI") #     DEF d1 n1             # also works with FF inputs (dN) and outputs (oN)
 
         # end of module block
-        tok("ENDMOD", 129) # ENDMOD
+        self.add_token("ENDMOD", "NAK") # ENDMOD
 
         # OP types. (LUT<N> is directly followed by 3-state LUT data, terminated by LUT_E)
-        for s in self.cfg.gates: tok(s)
+        for s in self.cfg.gates: self.add_token(s)
 
-        tok("STR_B", "DC3")  # normal "..."-strings: STR_B ... STR_E
-        tok("STR_E", "DC4")  # here-doc-style strings: STR_B STR_B ... STR_E STR_E
+        self.add_token("STR_B", "VT")  # normal "..."-strings: STR_B ... STR_E
+        self.add_token("STR_E", "FF")  # here-doc-style strings: STR_B STR_B ... STR_E STR_E
 
-        for idx in range(self.cfg.idx_base): tok(f"i{idx}")
-        for idx in range(self.cfg.idx_base): tok(f"q{idx}")
-        for idx in range(self.cfg.idx_base): tok(f"n{idx}")
-        for idx in range(self.cfg.idx_base): tok(f"o{idx}")
-        for idx in range(self.cfg.idx_base): tok(f"d{idx}")
-        for idx in range(self.cfg.idx_base): tok(f"f{idx}")
-        for idx in range(self.cfg.idx_base): tok(f"a{idx}")
-        for idx in range(self.cfg.idx_base): tok(f"x{idx}")
+        for kind in "iqnodfax":
+            base_idx = self.add_base_embd(f"B_{kind}")
+            for idx in range(min(self.cfg.idx_base, 10)):
+                self.add_token(f"{kind}{idx}", base_idx, f"M_{idx}")
 
-        vals = set("01ZX")
-        for n in range(1, self.cfg.max_nbits+1):
+        for i,(w,n) in enumerate(zip("01ZX", "DC1 DC2 DC3 DC4".split())):
+            self.add_token(f"'{w.replace('Z', '-')}'", n)
+
+        vals = set()
+        for n in range(2, 1 + min(2, self.cfg.max_nbits)):
             for w in itertools.product(*["01ZX" for _ in range(n)]):
                 vals.add("".join(w))
         for l,w in sorted((len(v),v) for v in vals):
-            tok(f"'{w.replace('Z', '-')}'")
+            self.add_token(f"'{w.replace('Z', '-')}'")
 
-        if self.cfg.shift_altgr or self.cfg.with_words:
-            tok_shift = tok("SHIFT", "SO")
-        if self.cfg.shift_altgr:
-            tok_altgr = tok("ALTGR", "SI")
+        while len(self.token_names) < 256:
+            self.token_names.append(None)
+
+        for ch in sorted(cls_ws_etc):
+            t = f'"{repr(ch)[1:-1]}"'
+            base_idx = self.add_base_embd(f"B:{t}")
+            self.add_token(t, base_idx, 0, ord(ch))
+
+        for ch in sorted(cls_special):
+            if (c := ch) in '"\\': ch = "\\" + ch
+            base_idx = self.add_base_embd("B:" + (t := f'"{ch}"'))
+            self.add_token(t, base_idx, 0, ord(c))
+
+        for ch in sorted(cls_123):
+            base_idx = self.add_base_embd(f"B:{ch}")
+            self.add_stoi_itos(      ch,         self.add_token("." + ch,         base_idx, "M_NOMOD",       ord(ch)))
+            if self.cfg.with_words:
+                self.add_stoi_itos(" " + ch,         self.add_token("_" + ch,         base_idx, "M_SPACE",       None))
+
+        for ch in sorted(cls_abc):
+            base_idx = self.add_base_embd(f"B:{ch}")
+            self.add_stoi_itos(      ch,         self.add_token("." + ch,         base_idx, "M_NOMOD",       ord(ch)))
+            self.add_stoi_itos(      ch.upper(), self.add_token("." + ch.upper(), base_idx, "M_SHIFT",       ord(ch.upper())))
+            if self.cfg.with_words:
+                self.add_stoi_itos(" " + ch,         self.add_token("_" + ch,         base_idx, "M_SPACE",       None))
+                self.add_stoi_itos(" " + ch.upper(), self.add_token("_" + ch.upper(), base_idx, "M_SPACE_SHIFT", None))
+
+        vals = set()
+        for n in range(3, 1 + self.cfg.max_nbits):
+            for w in itertools.product(*["01ZX" for _ in range(n)]):
+                vals.add("".join(w))
+        for l,w in sorted((len(v),v) for v in vals):
+            self.add_token(f"'{w.replace('Z', '-')}'")
+
+        morphemes = set()
         if self.cfg.with_words:
-            tok("CAPS", "EM")
+            morphemes |= set(w for w in en_basic_words if len(w) > 1)
+            for k in [2,3]:
+                for w in en_basic_words:
+                    if len(w) <= k: continue
+                    for i in range(0,len(w)-k+1):
+                        morphemes.add(w[i:i+k])
 
-        def toks(ch, caps, alt):
-            def myord(c):
-                if len(c) == 1: return ord(c)
-                if c == "\\n": return ord("\n")
-                if c == "\\\\": return ord("\\")
-                if c == "\\\"": return ord("\"")
-                assert False
-            if caps == ' ': caps = "\\n"
-            if alt == '\\': alt = "\\\\"
-            if alt == '\"': alt = "\\\""
-            if self.cfg.shift_altgr:
-                tok(f'"{ch}" "{caps}" "{alt}"', myord(ch))
-            else:
-                tok(f'"{ch}"', myord(ch))
-                tok(f'"{caps}"', myord(caps))
-                tok(f'"{alt}"', myord(alt))
+        for _,t in sorted((len(t),t) for t in morphemes):
+            if len(t) < 2: continue
+            t_caps = t.upper(); t_shift = t_caps[0] + t[1:]
+            base_idx = self.add_base_embd(f"B:{t}")
+            self.add_stoi_itos(      t,       self.add_token("." + t,       base_idx, "M_NOMOD"))
+            self.add_stoi_itos(      t_shift, self.add_token("." + t_shift, base_idx, "M_SHIFT"))
+            self.add_stoi_itos(      t_caps,  self.add_token("." + t_caps,  base_idx, "M_CAPS"))
+            self.add_stoi_itos(" " + t,       self.add_token("_" + t,       base_idx, "M_SPACE"))
+            self.add_stoi_itos(" " + t_shift, self.add_token("_" + t_shift, base_idx, "M_SPACE_SHIFT"))
+            self.add_stoi_itos(" " + t_caps,  self.add_token("_" + t_caps,  base_idx, "M_SPACE_CAPS"))
 
-        toks(*"aA!")
-        toks(*"bB\"")
-        toks(*"cC#")
-        toks(*"dD$")
-        toks(*"eE%")
-        toks(*"fF&")
-        toks(*"gG'")
-        toks(*"hH(")
-        toks(*"iI)")
-        toks(*"jJ*")
-        toks(*"kK+")
-        toks(*"lL,")
-        toks(*"mM-")
-        toks(*"nN.")
-        toks(*"oO/")
-        toks(*"pP:")
-        toks(*"qQ;")
-        toks(*"rR<")
-        toks(*"sS=")
-        toks(*"tT>")
-        toks(*"uU?")
-        toks(*"vV@")
-        toks(*"wW[")
-        toks(*"xX\\")
-        toks(*"yY]")
-        toks(*"zZ^")
-        toks(*"05`")
-        toks(*"16{")
-        toks(*"27|")
-        toks(*"38}")
-        toks(*"49~")
-        toks(*"  _")
-
-        morphemes = []
-        if self.cfg.with_words:
-            morphemes += [f"_{w}" for w in en_basic_words]
-
-        if self.cfg.with_dbls:
-            dbls = set()
-            for w in en_basic_words:
-                if len(w) <= 2: continue
-                for i in range(0,len(w)-1):
-                    dbls.add(w[i:i+2])
-            for dbl in dbls:
-                morphemes.append(f".{dbl}")
-
-        if self.cfg.with_tris:
-            tris = set()
-            for w in en_basic_words:
-                if len(w) <= 3: continue
-                for i in range(0,len(w)-2):
-                    tris.add(w[i:i+3])
-            for tri in tris:
-                morphemes.append(f".{tri}")
-
-        if morphemes:
-            for _,_,t in sorted((len(t), t[1:]+t[0], t) for t in morphemes):
-                tok(t)
+        for idx in range(10, self.cfg.idx_base):
+            for kind in "iqnodfax":
+                self.add_token(f"{kind}{idx}", f"B_{kind}", f"M_{idx}")
 
         opnames = " | ".join(t for t in self.cfg.gates)
-        objnames = " | ".join(t for t in self.decoder.values() if t[0] in 'iqnodfa')
+        objnames = " | ".join(t for t in self.token_names if t and t[0] in 'iqnodfa')
         self.re_keywords = pcre2.compile(f"""
             (?<![a-zA-Z0-9]) ( PROMPT | REPLY | QUERY | REM | TXT | TAG | MODULE | DIMS | PI | PO |
                     TABLE | PTABLE | GET | SET | CIRCUIT | OPS | DEF | ENDMOD | {opnames} | {objnames}) (?![a-zA-Z0-9])
         """, pcre2.X)
 
         sorted_by_len = lambda l: [t for _,_,t in sorted((-len(t), t.lower(), t) for t in l)]
-        self.re_words, self.re_frags = None, None
-
-        morph_words = "|".join(sorted_by_len([
-            *[t[1:] for t in self.decoder.values() if t.startswith("_")],
-            *[t[1].upper() + t[2:] for t in self.decoder.values() if t.startswith("_") and t != "_I"],
-            *[t[1:].upper() for t in self.decoder.values() if t.startswith("_") and t != "_I"]
-        ]))
-        if morph_words:
-            self.re_words = pcre2.compile(morph_words, pcre2.X|pcre2.S)
-
-        morph_frags = "|".join(sorted_by_len([
-            *[t[1:] for t in self.decoder.values() if t.startswith(".")],
-            *[t[1].upper() + t[2:] for t in self.decoder.values() if t.startswith(".")],
-            *[t[1:].upper() for t in self.decoder.values() if t.startswith(".")]
-        ]))
-        if morph_frags:
-            self.re_frags = pcre2.compile(morph_frags, pcre2.X|pcre2.S)
-
-        vocab_size = max(self.decoder.keys())+1
-        stoi = { f" {s}": i for i, s in self.decoder.items() }
-        itos = { i: f" {s}" for i, s in self.decoder.items() }
-
-        if False:
-            for i in range(vocab_size):
-                if i not in itos:
-                    itos[i] = f" *UNUSED_TOKEN_{i}*"
-                    stoi[f" *UNUSED_TOKEN_{i}*"] = i
+        morph_pattern = sorted_by_len(f"[{w[0]}{w[0].upper()}]{w[1:]}|{w.upper()}" for w in morphemes)
+        morph_pattern = f" ?(?:{'|'.join(morph_pattern)})"
+        self.re_morph = pcre2.compile(morph_pattern)
 
         # nanoGPT meta.pkl
         self.meta = {
-            'vocab_size': vocab_size,
-            'itos': itos,
-            'stoi': stoi,
+            'vocab_size': len(self.base_embd_names),
+            'modif_size': len(self.modif_embd_names),
+            'tokens': [None if self.token_names[i] is None else \
+                            (self.token_names[i], *self.token_map[self.token_names[i]][1:])
+                                    for i in range(len(self.token_names))],
+            'itos': self.itos_map,
+            'stoi': self.stoi_map,
         }
 
-        self.binext = "uint8" if vocab_size < 256 else "uint16"
-        self.bintype = numpy.uint8 if vocab_size < 256 else numpy.uint16
+        self.binext = "uint8" if len(self.token_names) < 256 else "uint16"
+        self.bintype = numpy.uint8 if len(self.token_names) < 256 else numpy.uint16
 
     def encode(self, text, encodeText=True):
         tokens = []
