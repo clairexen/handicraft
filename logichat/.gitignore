@@ -1,4 +1,9 @@
 /.venv/
+/datasrc/
 /datasets/
+/fastenc/pattern.re
+/fastenc/pattern.c
+/fastenc/*.o
+/fastenc/*.d
 /nanoGPT/out-*
 __pycache__
