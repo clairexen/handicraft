@@ -89,6 +89,7 @@ class Tokenizer:
     token_map: dict = field(default_factory=dict)
     token_names: list = field(default_factory=list)
 
+    kwtoi_map: dict = field(default_factory=dict)
     stoi_map: dict = field(default_factory=dict)
     itos_map: dict = field(default_factory=dict)
 
@@ -158,9 +159,8 @@ class Tokenizer:
         if base_idx and modif_idx is None and idx is None:
             idx = base_idx; base_idx = None
 
-        if not base_idx and not modif_idx:
+        if kwmode := (not base_idx and not modif_idx):
             base_idx = self.add_base_embd(f"B_{token_name}")
-            self.add_stoi_itos(f" {token_name}", True)
             modif_idx = 0
 
         assert token_name not in self.token_map
@@ -173,6 +173,9 @@ class Tokenizer:
                 idx = ascii_ctrls.index(idx)
         assert self.token_names[idx] is None
 
+        if kwmode:
+            self.add_kwtoi(token_name, idx)
+
         if isinstance(base_idx, str): base_idx = self.base_embd_map[base_idx]
         if isinstance(modif_idx, str): modif_idx = self.modif_embd_map[modif_idx]
 
@@ -180,9 +183,12 @@ class Tokenizer:
         self.token_names[idx] = token_name
         return idx
 
-    def add_stoi_itos(self, s, i, skip_stoi=False):
-        if not skip_stoi:
-            self.stoi_map[s] = i
+    def add_stoi(self, s, i):
+        self.stoi_map[s] = i
+        self.itos_map[i] = s
+
+    def add_kwtoi(self, s, i):
+        self.kwtoi_map[s] = i
         self.itos_map[i] = s
 
     def __post_init__(self):
@@ -263,7 +269,7 @@ class Tokenizer:
         for kind in "iqnodfax":
             base_idx = self.add_base_embd(f"B_{kind}")
             for idx in range(min(self.cfg.idx_base, 10)):
-                self.add_token(f"{kind}{idx}", base_idx, f"M_{idx}")
+                self.add_kwtoi(f"{kind}{idx}", self.add_token(f"{kind}{idx}", base_idx, f"M_{idx}"))
 
         for i,(w,n) in enumerate(zip("01ZX", "DC1 DC2 DC3 DC4".split())):
             self.add_token(f"'{w.replace('Z', '-')}'", n)
@@ -281,26 +287,26 @@ class Tokenizer:
         for ch in sorted(cls_ws_etc):
             t = f'"{repr(ch)[1:-1]}"'
             base_idx = self.add_base_embd(f"B:{t}")
-            self.add_token(t, base_idx, 0, ord(ch))
+            self.add_stoi(ch, self.add_token(t, base_idx, 0, ord(ch)))
 
         for ch in sorted(cls_special):
             if (c := ch) in '"\\': ch = "\\" + ch
             base_idx = self.add_base_embd("B:" + (t := f'"{ch}"'))
-            self.add_token(t, base_idx, 0, ord(c))
+            self.add_stoi(c, self.add_token(t, base_idx, 0, ord(c)))
 
         for ch in sorted(cls_123):
             base_idx = self.add_base_embd(f"B:{ch}")
-            self.add_stoi_itos(      ch,         self.add_token("." + ch,         base_idx, "M_NOMOD",       ord(ch)))
+            self.add_stoi(      ch,         self.add_token("." + ch,         base_idx, "M_NOMOD",       ord(ch)))
             if self.cfg.with_words:
-                self.add_stoi_itos(" " + ch,         self.add_token("_" + ch,         base_idx, "M_SPACE",       None))
+                self.add_stoi(" " + ch,         self.add_token("_" + ch,         base_idx, "M_SPACE",       None))
 
         for ch in sorted(cls_abc):
             base_idx = self.add_base_embd(f"B:{ch}")
-            self.add_stoi_itos(      ch,         self.add_token("." + ch,         base_idx, "M_NOMOD",       ord(ch)))
-            self.add_stoi_itos(      ch.upper(), self.add_token("." + ch.upper(), base_idx, "M_SHIFT",       ord(ch.upper())))
+            self.add_stoi(      ch,         self.add_token("." + ch,         base_idx, "M_NOMOD",       ord(ch)))
+            self.add_stoi(      ch.upper(), self.add_token("." + ch.upper(), base_idx, "M_SHIFT",       ord(ch.upper())))
             if self.cfg.with_words:
-                self.add_stoi_itos(" " + ch,         self.add_token("_" + ch,         base_idx, "M_SPACE",       None))
-                self.add_stoi_itos(" " + ch.upper(), self.add_token("_" + ch.upper(), base_idx, "M_SPACE_SHIFT", None))
+                self.add_stoi(" " + ch,         self.add_token("_" + ch,         base_idx, "M_SPACE",       None))
+                self.add_stoi(" " + ch.upper(), self.add_token("_" + ch.upper(), base_idx, "M_SPACE_SHIFT", None))
 
         vals = set()
         for n in range(3, 1 + self.cfg.max_nbits):
@@ -322,12 +328,12 @@ class Tokenizer:
             if len(t) < 2: continue
             t_caps = t.upper(); t_shift = t_caps[0] + t[1:]
             base_idx = self.add_base_embd(f"B:{t}")
-            self.add_stoi_itos(      t,       self.add_token("." + t,       base_idx, "M_NOMOD"))
-            self.add_stoi_itos(      t_shift, self.add_token("." + t_shift, base_idx, "M_SHIFT"))
-            self.add_stoi_itos(      t_caps,  self.add_token("." + t_caps,  base_idx, "M_CAPS"))
-            self.add_stoi_itos(" " + t,       self.add_token("_" + t,       base_idx, "M_SPACE"))
-            self.add_stoi_itos(" " + t_shift, self.add_token("_" + t_shift, base_idx, "M_SPACE_SHIFT"))
-            self.add_stoi_itos(" " + t_caps,  self.add_token("_" + t_caps,  base_idx, "M_SPACE_CAPS"))
+            self.add_stoi(      t,       self.add_token("." + t,       base_idx, "M_NOMOD"))
+            self.add_stoi(      t_shift, self.add_token("." + t_shift, base_idx, "M_SHIFT"))
+            self.add_stoi(      t_caps,  self.add_token("." + t_caps,  base_idx, "M_CAPS"))
+            self.add_stoi(" " + t,       self.add_token("_" + t,       base_idx, "M_SPACE"))
+            self.add_stoi(" " + t_shift, self.add_token("_" + t_shift, base_idx, "M_SPACE_SHIFT"))
+            self.add_stoi(" " + t_caps,  self.add_token("_" + t_caps,  base_idx, "M_SPACE_CAPS"))
 
         for idx in range(10, self.cfg.idx_base):
             for kind in "iqnodfax":
@@ -352,8 +358,9 @@ class Tokenizer:
             'tokens': [None if self.token_names[i] is None else \
                             (self.token_names[i], *self.token_map[self.token_names[i]][1:])
                                     for i in range(len(self.token_names))],
-            'itos': self.itos_map,
+            'kwtoi': self.kwtoi_map,
             'stoi': self.stoi_map,
+            'itos': self.itos_map,
         }
 
         self.binext = "uint8" if len(self.token_names) < 256 else "uint16"
@@ -374,89 +381,66 @@ class Tokenizer:
                     if state_str1:
                         while text[pos+l] != '"' and pos+l < len(text):
                             l += 1 if text[pos+l] != "\\" else 2
-                        t += self.encoder["STR_E"]
+                        t += [self.kwtoi_map["STR_E"]]
                     elif state_str2:
                         while text[pos+l:pos+l+4] != "\n``\n" and pos+l < len(text):
                             l += 1
-                        t += self.encoder["STR_E"]
-                        t += self.encoder["STR_E"]
+                        t += [self.kwtoi_map["STR_E"]]*2
                     else:
                         assert state_str3
                         while text[pos+l:pos+l+5] != "\n'''\n" and pos+l < len(text):
                             l += 1
-                        t += self.encoder["STR_E"]
-                        t += self.encoder["STR_E"]
-                        t += self.encoder["STR_E"]
+                        t += [self.kwtoi_map["STR_E"]]*3
                     tokens += [text[pos:pos+l]] + t
                     pos += l + (1 if state_str1 else 4)
                     state_str1 = False; state_str2 = False; state_str3 = False
                     continue
 
-                if self.re_words:
-                    off = 1 if text[pos-1] in abcABC123 and text[pos] == " " else 0
-                    if m := self.re_words.match(text, pos+off):
-                        t = f"_{'I' if m[0] == 'I' else m[0].lower()}"
-                        if m[0].isupper():
-                            tokens += self.encoder["CAPS"]
-                        elif m[0][0].isupper():
-                            tokens += self.encoder["SHIFT"]
-                        tokens += self.encoder[t]
-                        pos += len(m[0])+off
-                        continue
-
-                if self.re_frags and (m := self.re_frags.match(text, pos)):
-                    t = f".{m[0].lower()}"
-                    if m[0].isupper():
-                        tokens += self.encoder["CAPS"]
-                    elif m[0][0].isupper():
-                        tokens += self.encoder["SHIFT"]
-                    tokens += self.encoder[t]
+                if self.re_morph and (m := self.re_morph.match(text, pos)):
+                    tokens += [self.stoi_map[m[0]]]
                     pos += len(m[0])
                     continue
 
                 if state_str1:
                     if text[pos] == '"':
-                        state_str1 = False; t = 'STR_E'
-                    elif text[pos:pos+2] == '\\n':
-                        pos += 1; t ='"\\n"'
-                    elif text[pos:pos+2] in ('\\"', '\\\\'):
-                        pos += 1; t ='"\\{text[pos]}"'
+                        pos += 1
+                        state_str1 = False
+                        tokens += [self.kwtoi_map['STR_E']]
                     else:
-                        t = self.quote_str_char(text[pos])
-                    assert t in self.encoder, f"Token {t} not in encoder table."
-                    tokens += self.encoder[t]
-                    pos += 1
+                        if text[pos:pos+2] == '\\n':
+                            pos += 1; t = self.token_map['"\\n"'][0]
+                        elif text[pos:pos+2] in ('\\"', '\\\\'):
+                            pos += 1; t = self.token_map[f'"\\{text[pos]}"'][0]
+                        else:
+                            t = self.stoi_map[text[pos]]
+                        tokens += [t]; pos += 1
                     continue
 
                 elif state_str2:
                     if text[pos:].startswith('\n``\n'):
-                        state_str2 = False; t = 'STR_E'
-                        tokens += self.encoder[t]
                         pos += 3
+                        state_str2 = False
+                        tokens += [self.kwtoi_map['STR_E']]*2
                     else:
-                        t = self.quote_str_char(text[pos])
-                    assert t in self.encoder, f"Token {t} not in encoder table."
-                    tokens += self.encoder[t]
-                    pos += 1
+                        t = self.stoi_map[text[pos]]
+                        tokens += [t]; pos += 1
                     continue
 
                 else:
                     assert state_str3
                     if text[pos:].startswith("\n'''\n"):
-                        state_str3 = False; t = 'STR_E'
-                        tokens += self.encoder[t]
-                        pos += 3
+                        pos += 4
+                        state_str3 = False
+                        tokens += [self.kwtoi_map['STR_E']]*3
                     else:
-                        t = self.quote_str_char(text[pos])
-                    assert t in self.encoder, f"Token {t} not in encoder table."
-                    tokens += self.encoder[t]
-                    pos += 1
+                        t = self.stoi_map[text[pos]]
+                        tokens += [t]; pos += 1
                     continue
 
             if state_bits:
                 if text[pos] == "'":
                     state_bits = False; pos += 1
-                    tokens += self.encoder["LUT_E"]
+                    tokens += [self.kwtoi_map["LUT_E"]]
                     continue
                 if text[pos:].startswith(" ==> "):
                     t = "LUT_T"; pos += 4
@@ -468,59 +452,56 @@ class Tokenizer:
                     tokens.append(0)
                     break
                 pos += 1
-                tokens += self.encoder[t]
+                tokens += [self.kwtoi_map[t]]
                 continue
 
             # no special state
             if text[pos:pos+2] == "\n\n":
                 pos += 1
-                tokens += self.encoder["BREAK"]
+                tokens += [self.kwtoi_map["BREAK"]]
                 continue
             if text[pos] in " \t\n":
                 pos += 1
                 continue
             if m := self.re_keywords.match(text, pos):
                 pos += len(m[0])
-                assert m[0] in self.encoder
-                tokens += self.encoder[m[0]]
+                assert m[0] in self.kwtoi_map
+                tokens += [self.kwtoi_map[m[0]]]
                 continue
             if text[pos] == '"':
                 pos += 1
                 state_str1 = True
-                tokens += self.encoder['STR_B']
+                tokens += [self.kwtoi_map['STR_B']]
                 continue
             if text[pos:].startswith("``\n"):
                 pos += 3
                 state_str2 = True
-                tokens += self.encoder['STR_B']
-                tokens += self.encoder['STR_B']
+                tokens += [self.kwtoi_map['STR_B']]*2
                 continue
             if text[pos:].startswith("'''\n"):
                 pos += 4
                 state_str3 = True
-                tokens += self.encoder['STR_B']
-                tokens += self.encoder['STR_B']
-                tokens += self.encoder['STR_B']
+                tokens += [self.kwtoi_map['STR_B']]*3
                 continue
             if text[pos] == "'":
                 pos += 1
                 state_bits = True
-                tokens += self.encoder['LUT_B']
+                tokens += [self.kwtoi_map['LUT_B']]
                 continue
 
             if text[pos] == "(":
                 pos += 1
-                tokens += self.encoder['FUN_B']
+                tokens += [self.kwtoi_map['FUN_B']]
                 continue
 
             if text[pos] == ")":
                 pos += 1
-                tokens += self.encoder['FUN_E']
+                tokens += [self.kwtoi_map['FUN_E']]
                 continue
 
             if text[pos] == "\x00":
                 pos += 1
-                tokens += self.encoder['NULL']
+                tokens += [self.kwtoi_map['NULL']]
                 continue
 
             tokens.append(0)
@@ -555,7 +536,7 @@ class Tokenizer:
                 continue
 
             last_tok = tok
-            tok = self.decoder[tokens[pos]]
+            tok = self.itos_map[tokens[pos]]
             pos += 1
 
             if tok == 'CAPS':
@@ -680,7 +661,7 @@ class Tokenizer:
         if isinstance(toks, str):
             return repr(toks)
         if isinstance(toks, int):
-            s = self.decoder[toks]
+            s = self.token_names[toks]
             if ' ' in s and s != '" "':
                 s = s.removeprefix('\"')
                 s = s.removesuffix('\"')
