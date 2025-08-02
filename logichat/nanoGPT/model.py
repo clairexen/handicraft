@@ -109,6 +109,7 @@ class Block(nn.Module):
 class GPTConfig:
     block_size: int = 1024
     vocab_size: int = 50304 # GPT-2 vocab_size of 50257, padded up to nearest multiple of 64 for efficiency
+    modif_size: int = 0 # when nob-zero: tokens are now pairs of a vocab element and a modif element
     n_layer: int = 12
     n_head: int = 12
     n_embd: int = 768
@@ -125,6 +126,7 @@ class GPT(nn.Module):
 
         self.transformer = nn.ModuleDict(dict(
             wte = nn.Embedding(config.vocab_size, config.n_embd),
+            wme = nn.Embedding(config.modif_size, config.n_embd) if config.modif_size else None,
             wpe = nn.Embedding(config.block_size, config.n_embd),
             drop = nn.Dropout(config.dropout),
             h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
@@ -136,6 +138,10 @@ class GPT(nn.Module):
         # This behavior is deprecated and will be an error in future versions"
         # not 100% sure what this is, so far seems to be harmless. TODO investigate
         self.transformer.wte.weight = self.lm_head.weight # https://paperswithcode.com/method/weight-tying
+
+        if config.modif_size:
+            self.lm_head_modif = nn.Linear(config.n_embd, config.modif_size, bias=False)
+            self.transformer.wme.weight = self.lm_head_modif.weight
 
         # init all weights
         self.apply(self._init_weights)
@@ -167,16 +173,21 @@ class GPT(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, idx, targets=None):
+    def forward(self, idx, targets=None, midx=None):
         device = idx.device
         b, t = idx.size()
+        if midx is not None: assert idx.size() == midx.size()
         assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
         pos = torch.arange(0, t, dtype=torch.long, device=device) # shape (t)
 
         # forward the GPT model itself
         tok_emb = self.transformer.wte(idx) # token embeddings of shape (b, t, n_embd)
         pos_emb = self.transformer.wpe(pos) # position embeddings of shape (t, n_embd)
-        x = self.transformer.drop(tok_emb + pos_emb)
+        if midx:
+            mod_emb = self.transformer.wme(midx) # modifier embeddings of shape (b, t, n_embd)
+            x = self.transformer.drop(tok_emb + mod_emb + pos_emb)
+        else:
+            x = self.transformer.drop(tok_emb + pos_emb)
         for block in self.transformer.h:
             x = block(x)
         x = self.transformer.ln_f(x)
@@ -189,6 +200,9 @@ class GPT(nn.Module):
             # inference-time mini-optimization: only forward the lm_head on the very last position
             logits = self.lm_head(x[:, [-1], :]) # note: using list [-1] to preserve the time dim
             loss = None
+
+        if midx:
+            pass # FIXME
 
         return logits, loss
 
@@ -303,17 +317,21 @@ class GPT(nn.Module):
         return mfu
 
     @torch.no_grad()
-    def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None):
+    def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None, midx=None):
         """
         Take a conditioning sequence of indices idx (LongTensor of shape (b,t)) and complete
         the sequence max_new_tokens times, feeding the predictions back into the model each time.
         Most likely you'll want to make sure to be in model.eval() mode of operation for this.
         """
+        if midx is not None:
+            assert idx.size() == midx.size()
         for _ in range(max_new_tokens):
             # if the sequence context is growing too long we must crop it at block_size
             idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
+            midx_cond = None if midx is None else \
+                            midx if midx.size(1) <= self.config.block_size else midx[:, -self.config.block_size:]
             # forward the model to get the logits for the index in the sequence
-            logits, _ = self(idx_cond)
+            logits, _ = self(idx_cond, midx=midx_cond)
             # pluck the logits at the final step and scale by desired temperature
             logits = logits[:, -1, :] / temperature
             # optionally crop the logits to only the top k options
