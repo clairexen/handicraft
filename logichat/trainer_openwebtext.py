@@ -1,4 +1,5 @@
-import datasets, pickle, numpy, sys, os
+import datasets, pickle, pcre2
+import json, numpy, sys, os
 import config, tokens, utils
 from pathlib import Path
 from subprocess import Popen, PIPE
@@ -11,8 +12,8 @@ if len(args) == 0:
     args.append(config.cfg.name)
 
 if len(args) == 1:
-    os.system(f"set -x; python3 '{sys.argv[0]}' {args[0]} test")
-    os.system(f"set -x; python3 '{sys.argv[0]}' {args[0]} train")
+    os.system(f"set -x; python3 '{sys.argv[0]}' {' '.join(opts)} {args[0]} test")
+    os.system(f"set -x; python3 '{sys.argv[0]}' {' '.join(opts)} {args[0]} train")
     sys.exit()
 
 if len(args) == 2:
@@ -46,9 +47,9 @@ else:
 print(f"\nInitial Meta:")
 for key in sorted(meta.keys()):
     if key in ("itos", "stoi"):
-        print(f"    {key:<10} {repr(meta[key])[:60]} ....")
+        print(f"  {key:<15} {repr(meta[key])[:60]} ....")
     else:
-        print(f"    {key:<10} {repr(meta[key])}")
+        print(f"  {key:<15} {repr(meta[key])}")
 
 if split == "train":
     dataset = datasets["train"]
@@ -56,6 +57,8 @@ if split == "train":
 else:
     dataset = datasets["test"]
     datafile = datapath.joinpath(f"{cfg_name}.test.{lex.binext}")
+
+# ======================================================================
 
 datafile_parts = []
 datafile_partidx = 0
@@ -84,45 +87,68 @@ def partpipe_write(t):
     datafile_partpipes[-1].stdin.write(bytes(t, "ascii"))
     datafile_bytes += len(t)
 
+# ======================================================================
+
+replace_special_table = {
+    "\u0081": '', "\u00b4": "'", "\u2014": '-', "\u201c": '"', "\uff01": '!', "\u00a9": '(C)',
+    "\u00ad": '', "\u2011": '-', "\u2015": '-', "\u201d": '"', "\uff08": '(', "\u00ae": '(R)',
+    "\u200b": '', "\u2013": '-', "\u2019": "'", "\u201f": '"', "\uff09": ')', "\u2026": '...',
+    "\t": "    ", "\uff0d": '"', "\u2018": "'", "\u2212": '-', "\uff0c": ',', "\u00bb": '"',
+    "\r":     '', "\u2032": "'", "\u2033": '"', "\u00d7": '*', "\uff0e": '.', "\u00ab": '"',
+}
+
+for line in json.load(open("emoji_codes.json")):
+    code, tag = line.split(" -- ")[1].split()
+    emoji = "".join(chr(int(s,16)) for s in code.split("-"))
+    replace_special_table[emoji] = tag
+
+re_special_pat = "|".join(replace_special_table.keys()).replace("*", "\\*")
+re_special = pcre2.compile(re_special_pat, jit=True)
+
 def convert_special_chars(t):
-    t = t.replace("\u00a9", '(C)')
-    t = t.replace("\u00ad", '')
-    t = t.replace("\u00ae", '(R)')
-    t = t.replace("\u00b4", "'")
-    t = t.replace("\u200b", '')
-    t = t.replace("\u2011", '-')
-    t = t.replace("\u2013", '-')
-    t = t.replace("\u2014", '-')
-    t = t.replace("\u2015", '-')
-    t = t.replace("\u2019", "'")
-    t = t.replace("\u201c", '"')
-    t = t.replace("\u201d", '"')
-    t = t.replace("\u201f", '"')
-    t = t.replace("\u2026", '...')
-    t = t.replace("\uff01", '!')
-    t = t.replace("\uff08", '(')
-    t = t.replace("\uff09", ')')
-    t = t.replace("\uff0d", '"')
-    return t
+    return re_special.sub(lambda m: replace_special_table[m[0]], t)
+
+def escape_unicode(t):
+    out = []
+    for c in t:
+        idx = ord(c)
+        if 31 < idx < 127:
+            out.append(c)
+        elif idx <= 127:
+            out.append(f"\\x{idx:02x}")
+        elif idx <= 0xffff:
+            out.append(f"\\u{idx:04x}")
+        else:
+            out.append(f"\\U{idx:04x}")
+    return "".join(out)
+
+# ======================================================================
 
 total = 0
 rejected = 0
 special_chars_cnt = dict()
 print(f"\nWriting {datafile} ...")
 while total < len(dataset) and total - rejected < limit:
-    t = dataset[total]["text"]; total += 1
-    if all(31 < ord(c) < 127 for c in t if c != "\n"):
-        t = f"REM '''\n{convert_special_chars(t)}\n'''\n\x00"
+    t = convert_special_chars(dataset[total]["text"]); total += 1
+    special_chars = [c for c in t if (ord(c) < 32 or 127 <= ord(c)) and c != "\n"]
+    if len(special_chars) < 20 and 100*len(special_chars) < len(t):
+        if special_chars:
+            t = escape_unicode(t)
+        t = f"REM '''\n{t}\n'''\n\x00"
         partpipe_write(t)
     else:
-        special_chars = [c for c in t if (ord(c) < 32 or 127 <= ord(c)) and c not in "\t"]
         for c in special_chars:
             special_chars_cnt[c] = special_chars_cnt.get(c, 0) + 1
+        with datapath.joinpath(f"rejected.txt").open("a") as rej_f:
+            rej_f.write("Rejected bc. of the following non-ASCII chars:\n")
+            rej_f.write(repr(special_chars) + "\n\n" + t + "\n\n" + "# " + "="*70 + "\n")
         rejected += 1
 
 partpipe_close()
 print(f" `- waiting for encoder threads to finish writing part files.")
 partpipe_close(0)
+
+# ======================================================================
 
 print(f" `- consolidating {len(datafile_parts)} part files into one large output file.")
 with datafile.open("wb") as f:
@@ -135,14 +161,25 @@ print(f"Rejected {rejected} / {total} items (={100*rejected//total}%) containing
 if "-s" in opts:
     print("Frequency of non-ASCII chars:")
     for cnt, ch in sorted((-cnt,ch) for ch,cnt in special_chars_cnt.items()):
-        print(f"  {ch}\t\\u{hex(ord(ch))[2:]}\t{-cnt}")
+        if ord(ch) <= 127:
+            print(f"  {ch}\t\\x{ord(ch):02x}       {-cnt}")
+        elif ord(ch) <= 0xFFFF:
+            print(f"  {ch}\t\\u{ord(ch):04x}     {-cnt}")
+        else:
+            print(f"  {ch}\t\\U{ord(ch):08x} {-cnt}")
+
+if "special_chars" not in meta:
+    meta["special_chars"] = dict()
+for idx,(cnt,ch) in enumerate(sorted((-cnt,ch) for ch,cnt in special_chars_cnt.items())):
+    if idx <= 100 or cnt <= -100:
+        meta["special_chars"][ch] = meta["special_chars"].get(ch, 0) - cnt
 
 print(f"\nFinal Meta:")
 for key in sorted(meta.keys()):
     if key in ("itos", "stoi"):
-        print(f"    {key:<10} {repr(meta[key])[:60]} ....")
+        print(f"  {key:<15} {repr(meta[key])[:60]} ....")
     else:
-        print(f"    {key:<10} {repr(meta[key])}")
+        print(f"  {key:<15} {repr(meta[key])}")
 
 with metafile.open('wb') as f:
     pickle.dump(meta, f)
