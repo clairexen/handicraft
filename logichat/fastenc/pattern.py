@@ -34,6 +34,7 @@ int match_word(const char *s) {{
         *  {{ return -1; }}
     */
 }}
+
 int match_frag(const char *s) {{
     const char *YYCURSOR = s;
     /*!re2c
