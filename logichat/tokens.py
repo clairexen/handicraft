@@ -346,10 +346,13 @@ class Tokenizer:
                     TABLE | PTABLE | GET | SET | CIRCUIT | OPS | DEF | ENDMOD | {opnames} | {objnames}) (?![a-zA-Z0-9])
         """, pcre2.X)
 
-        sorted_by_len = lambda l: [t for _,_,t in sorted((-len(t), t.lower(), t) for t in l)]
-        morph_pattern = sorted_by_len(f"[{w[0]}{w[0].upper()}]{w[1:]}|{w.upper()}" for w in morphemes)
-        morph_pattern = f" ?(?:{'|'.join(morph_pattern)})"
-        self.re_morph = pcre2.compile(morph_pattern)
+        if self.cfg.with_words:
+            sorted_by_len = lambda l: [t for _,_,t in sorted((-len(t), t.lower(), t) for t in l)]
+            morph_pattern = sorted_by_len(f"[{w[0]}{w[0].upper()}]{w[1:]}|{w.upper()}" for w in morphemes)
+            morph_pattern = f" ?(?:{'|'.join(morph_pattern)}|[a-zA-Z0-9])"
+            self.re_morph = pcre2.compile(morph_pattern)
+        else:
+            self.re_morph = None
 
         # nanoGPT meta.pkl
         self.meta = {
@@ -511,9 +514,6 @@ class Tokenizer:
         return tokens
 
     def decode(self, tokens):
-        state_caps = 0
-        state_shift = 0
-        state_altgr = 0
         text = []
         pos = 0
 
@@ -526,49 +526,19 @@ class Tokenizer:
 
         tok = None
         while pos < len(tokens):
-            if state_caps: state_caps -= 1
-            if state_shift: state_shift -= 1
-            if state_altgr: state_altgr -= 1
-
             if isinstance(tokens[pos], str):
                 text.append(tokens[pos])
+                tok = None
                 pos += 1
                 continue
 
             last_tok = tok
-            tok = self.itos_map[tokens[pos]]
+            tokidx = tokens[pos]
+            tok = self.token_names[tokidx]
             pos += 1
 
-            if tok == 'CAPS':
-                state_caps = 2
-                continue
-
-            if tok == 'SHIFT':
-                state_shift = 2
-                continue
-
-            if tok == 'ALTGR':
-                state_altgr = 2
-                continue
-
-            if tok.startswith("_"):
-                if last_c() in abcABC123:
-                    text.append(' ')
-                t = tok[1:]
-                if state_caps:
-                    t = t.upper()
-                elif state_shift:
-                    t = t[0].upper() + t[1:]
-                text.append(t)
-                continue
-
-            if tok.startswith("."):
-                t = tok[1:]
-                if state_caps:
-                    t = t.upper()
-                elif state_shift:
-                    t = t[0].upper() + t[1:]
-                text.append(t)
+            if tok[0] in "._\"":
+                text.append(self.itos_map[tokidx])
                 continue
 
             if tok in (*("REM TXT PROMPT QUERY MODULE ENDMOD".split()),
@@ -692,28 +662,22 @@ def main():
             print(f"Tokens: {lex.tok2str(t)}")
             x = lex.decode(t)
             print(f"Output: {x}")
+
         return 0
 
     if "-e" in opts:
-
         cfg = config.cfg
         for n,(c,_) in config.cfgs.items():
             if f"-{n}" in opts: cfg = c
         lex = cfg.lex()
 
         with open(args[0], "ab" if "-a" in opts else "wb") as f:
-            #print("reading..")
             data = sys.stdin.read()
-            #print("splitting..")
             data = data.split("\x00")
-            for i,t in enumerate(data):
+            for t in data:
                 if not t: continue
-                #print(f"encoding {i}..")
-                # print("-----\n" + t + "\n-----")
-                t = lex.encode(t)
-                #print(f"packing {i}..")
+                t = lex.encode(t) + [0]
                 t = numpy.array(t, lex.bintype)
-                #print(f"writing {i}..")
                 t.tofile(f)
                 f.flush()
 
