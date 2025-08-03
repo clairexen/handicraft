@@ -5,8 +5,8 @@ class _LogiChatConfig:
     name: str
     gates: tuple = ("BUF", "NOT", "AND", "NAND", "OR", "NOR", "XOR", "XNOR", "ANDNOT", "ORNOT",
             "MUX", "NMUX", "AOI3", "OAI3", "AOI4", "OAI4", "LUT2", "LUT3", "LUT4", "LUT5", "LUT6")
-    idx_base: int = 10
-    max_nbits: int = 2
+    idx_digits: int = 2
+    bits_blksz: int = 2
     with_words: bool = False
 
     # baby GPT model :)
@@ -49,8 +49,8 @@ cfg_small = _LogiChatConfig(
 
 cfg_large = _LogiChatConfig(
     "large",
-    idx_base = 100,
-    max_nbits = 4,
+    idx_digits = 3,
+    bits_blksz = 4,
     with_words = True,
 )
 

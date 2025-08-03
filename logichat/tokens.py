@@ -211,11 +211,8 @@ class Tokenizer:
         self.add_modif_embd("M_SPACE")
         self.add_modif_embd("M_SPACE_SHIFT")
         self.add_modif_embd("M_SPACE_CAPS")
-        for i in range(min(10, self.cfg.idx_base)):
+        for i in range(10):
             self.add_modif_embd(f"M_IDX_{i}")
-        if self.cfg.idx_base > 10:
-            for idx in range(0, min(100, self.cfg.idx_base)):
-                self.add_modif_embd(f"M_IDX_{idx:02}")
 
         # skip 7-bit ASCII range + 2 reserved slots for now
         while len(self.token_names) < 128:
@@ -282,16 +279,16 @@ class Tokenizer:
         self.add_token("STR_B", "VT")  # normal "..."-strings: STR_B ... STR_E
         self.add_token("STR_E", "FF")  # here-doc-style strings: STR_B STR_B ... STR_E STR_E
 
-        for kind in "iqnodfax":
+        for kind in "iqnodfa" + ("x" if self.cfg.idx_digits > 1 else ""):
             base_idx = self.add_base_embd(f"B_KIND_{kind}")
-            for idx in range(min(self.cfg.idx_base, 10)):
+            for idx in range(10):
                 self.add_kwtoi(f"{kind}{idx}", self.add_token(f"{kind}{idx}", base_idx, f"M_IDX_{idx}"))
 
         for i,(w,n) in enumerate(zip("01ZX", "DC1 DC2 DC3 DC4".split())):
             self.add_token(f"'{w.replace('Z', '-')}'", n)
 
         vals = set()
-        for n in range(2, 1 + min(2, self.cfg.max_nbits)):
+        for n in range(2, 1 + min(2, self.cfg.bits_blksz)):
             for w in itertools.product(*["01ZX" for _ in range(n)]):
                 vals.add("".join(w))
         for l,w in sorted((len(v),v) for v in vals):
@@ -320,7 +317,7 @@ class Tokenizer:
                 self.add_stoi(" " + ch.upper(), self.add_token("_" + ch.upper(), base_idx, "M_SPACE_SHIFT", None))
 
         vals = set()
-        for n in range(3, 1 + self.cfg.max_nbits):
+        for n in range(3, 1 + self.cfg.bits_blksz):
             for w in itertools.product(*["01ZX" for _ in range(n)]):
                 vals.add("".join(w))
         for l,w in sorted((len(v),v) for v in vals):
@@ -346,10 +343,11 @@ class Tokenizer:
             self.add_stoi(" " + t_shift, self.add_token("_" + t_shift, base_idx, "M_SPACE_SHIFT"))
             self.add_stoi(" " + t_caps,  self.add_token("_" + t_caps,  base_idx, "M_SPACE_CAPS"))
 
-        if self.cfg.idx_base > 10:
-            for idx in range(0, min(100, self.cfg.idx_base)):
-                for kind in "iqnodfax":
-                    self.add_token(f"{kind}{idx:02}", f"B_KIND_{kind}", f"M_IDX_{idx:02}")
+        for kind,n in zip("yzw",[2,3,4]):
+            if self.cfg.idx_digits <= n: break
+            base_idx = self.add_base_embd(f"B_KIND_{kind}")
+            for idx in range(10):
+                    self.add_token(f"{kind}{idx}", base_idx, f"M_IDX_{idx}")
 
         opnames = " | ".join(t for t in self.cfg.gates)
         objnames = " | ".join(t for t in self.token_names if t and t[0] in 'iqnodfa')
@@ -364,7 +362,7 @@ class Tokenizer:
             morph_pattern = f" ?(?:{'|'.join(morph_pattern)}|[a-zA-Z0-9])"
             self.re_morph = pcre2.compile(morph_pattern)
         else:
-            self.re_morph = None
+            self.re_morph = pcre2.compile(r"[a-zA-Z0-9]")
 
         # nanoGPT meta.pkl
         self.meta = {
