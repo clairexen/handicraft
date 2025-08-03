@@ -88,7 +88,7 @@ ENDMOD
 
 @dataclass
 class Tokenizer:
-    cfg: config._LogiChatConfig
+    cfg: config.LogiChatConfig
 
     base_embd_map: dict = field(default_factory=dict)
     base_embd_names: list = field(default_factory=list)
@@ -374,6 +374,9 @@ class Tokenizer:
         else:
             self.re_morph = pcre2.compile(r"[a-zA-Z0-9]")
 
+        self.binext = "uint8" if len(self.token_names) < 256 else "uint16"
+        self.bintype = numpy.uint8 if len(self.token_names) < 256 else numpy.uint16
+
         # nanoGPT meta.pkl
         self.meta = {
             'vocab_size': len(self.base_embd_names),
@@ -384,10 +387,13 @@ class Tokenizer:
             'kwtoi': self.kwtoi_map,
             'stoi': self.stoi_map,
             'itos': self.itos_map,
+            'fmt': self.binext
         }
 
-        self.binext = "uint8" if len(self.token_names) < 256 else "uint16"
-        self.bintype = numpy.uint8 if len(self.token_names) < 256 else numpy.uint16
+        self.meta["config"] = self.cfg
+        self.meta["gptcfg"] = self.cfg.gptcfg()
+        self.meta["cfg_name"] = self.cfg.name
+        self.meta["gpt_name"] = self.cfg.gptname()
 
     def encode(self, text, encodeText=True):
         tokens = []
