@@ -40,8 +40,14 @@ class _LogiChatConfig:
         return self._gptcfg
 
     def gptname(self):
-        return f"GPT2M-L{self.gpt_n_layer}-H{self.gpt_n_head}-E{self.gpt_n_embd}-" + \
-                        f"D{f'{dropout:.2f}'[2:]}-B{1 if self.gpt_bias else 0}"
+        return "-".join([
+            f"GPT2{'M' if self.gptcfg().modif_size else ''}",
+            f"L{self.gpt_n_layer}",
+            f"H{self.gpt_n_head}",
+            f"E{self.gpt_n_embd}",
+            f"D{f'{self.gpt_dropout:.2f}'[2:]}",
+            f"B{1 if self.gpt_bias else 0}"
+        ])
 
 cfg_small = _LogiChatConfig(
     "small",
