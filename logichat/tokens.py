@@ -284,11 +284,21 @@ class Tokenizer:
             for idx in range(10):
                 self.add_kwtoi(f"{kind}{idx}", self.add_token(f"{kind}{idx}", base_idx, f"M_IDX_{idx}"))
 
+        modif_idx = self.add_modif_embd(f"M_NOLEFT")
         for i,(w,n) in enumerate(zip("01ZX", "DC1 DC2 DC3 DC4".split())):
-            self.add_token(f"'{w.replace('Z', '-')}'", n)
+            base_idx = self.add_base_embd(f"B_RIGHT_{w}")
+            tokname = f"'{w.replace('Z', '-')}'"
+            self.add_kwtoi(tokname, self.add_token(tokname, base_idx, modif_idx, n))
+
+        if self.cfg.bits_blksz > 1:
+            for l in "01ZX":
+                modif_idx = self.add_modif_embd(f"M_LEFT_{l}")
+                for r in "01ZX":
+                    tokname = f"'{(l+r).replace('Z', '-')}'"
+                    self.add_kwtoi(tokname, self.add_token(tokname, f"B_RIGHT_{r}", modif_idx))
 
         vals = set()
-        for n in range(2, 1 + min(2, self.cfg.bits_blksz)):
+        for n in range(3, 1 + min(2, self.cfg.bits_blksz)):
             for w in itertools.product(*["01ZX" for _ in range(n)]):
                 vals.add("".join(w))
         for l,w in sorted((len(v),v) for v in vals):
