@@ -9,6 +9,16 @@ ascii_ctrls = ["NUL", "SOH", "STX", "ETX", "EOT", "ENQ", "ACK", "BEL", "BS",
 "NAK", "SYN", "ETB", "CAN", "EM", "SUB", "ESC", "FS", "GS", "RS", "US"]
 ascii_ctrls_by_name = {n: i for i,n in enumerate(ascii_ctrls)}
 
+escaped_chars = {
+    '\a': '\\a',
+    '\b': '\\b',
+    '\t': '\\t',
+    '\n': '\\n',
+    '\033': '\\e',
+    '\\': '\\\\',
+    '"': '\\"',
+}
+
 cls_ws_etc = set(" \a\b\t\n\x1b")
 cls_abc = set("abcdefghijklmnopqrstuvwxyz")
 cls_ABC = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
@@ -160,7 +170,10 @@ class Tokenizer:
             idx = base_idx; base_idx = None
 
         if kwmode := (not base_idx and not modif_idx):
-            base_idx = self.add_base_embd(f"B_{token_name}")
+            if token_name[0] in "\"'#":
+                base_idx = self.add_base_embd(f"B:{token_name}")
+            else:
+                base_idx = self.add_base_embd(f"B_{token_name}")
             modif_idx = 0
 
         assert token_name not in self.token_map
@@ -198,8 +211,11 @@ class Tokenizer:
         self.add_modif_embd("M_SPACE")
         self.add_modif_embd("M_SPACE_SHIFT")
         self.add_modif_embd("M_SPACE_CAPS")
-        for i in range(self.cfg.idx_base):
-            self.add_modif_embd(f"M_{i}")
+        for i in range(min(10, self.cfg.idx_base)):
+            self.add_modif_embd(f"M_IDX_{i}")
+        if self.cfg.idx_base > 10:
+            for idx in range(0, min(100, self.cfg.idx_base)):
+                self.add_modif_embd(f"M_IDX_{idx:02}")
 
         # skip 7-bit ASCII range + 2 reserved slots for now
         while len(self.token_names) < 128:
@@ -267,9 +283,9 @@ class Tokenizer:
         self.add_token("STR_E", "FF")  # here-doc-style strings: STR_B STR_B ... STR_E STR_E
 
         for kind in "iqnodfax":
-            base_idx = self.add_base_embd(f"B_{kind}")
+            base_idx = self.add_base_embd(f"B_KIND_{kind}")
             for idx in range(min(self.cfg.idx_base, 10)):
-                self.add_kwtoi(f"{kind}{idx}", self.add_token(f"{kind}{idx}", base_idx, f"M_{idx}"))
+                self.add_kwtoi(f"{kind}{idx}", self.add_token(f"{kind}{idx}", base_idx, f"M_IDX_{idx}"))
 
         for i,(w,n) in enumerate(zip("01ZX", "DC1 DC2 DC3 DC4".split())):
             self.add_token(f"'{w.replace('Z', '-')}'", n)
@@ -284,15 +300,10 @@ class Tokenizer:
         while len(self.token_names) < 256:
             self.token_names.append(None)
 
-        for ch in sorted(cls_ws_etc):
-            t = f'"{repr(ch)[1:-1]}"'
+        for ch in sorted(cls_ws_etc | cls_special):
+            t = f'"{ch if ch not in escaped_chars else escaped_chars[ch]}"'
             base_idx = self.add_base_embd(f"B:{t}")
             self.add_stoi(ch, self.add_token(t, base_idx, 0, ord(ch)))
-
-        for ch in sorted(cls_special):
-            if (c := ch) in '"\\': ch = "\\" + ch
-            base_idx = self.add_base_embd("B:" + (t := f'"{ch}"'))
-            self.add_stoi(c, self.add_token(t, base_idx, 0, ord(c)))
 
         for ch in sorted(cls_123):
             base_idx = self.add_base_embd(f"B:{ch}")
@@ -335,9 +346,10 @@ class Tokenizer:
             self.add_stoi(" " + t_shift, self.add_token("_" + t_shift, base_idx, "M_SPACE_SHIFT"))
             self.add_stoi(" " + t_caps,  self.add_token("_" + t_caps,  base_idx, "M_SPACE_CAPS"))
 
-        for idx in range(10, self.cfg.idx_base):
-            for kind in "iqnodfax":
-                self.add_token(f"{kind}{idx}", f"B_{kind}", f"M_{idx}")
+        if self.cfg.idx_base > 10:
+            for idx in range(0, min(100, self.cfg.idx_base)):
+                for kind in "iqnodfax":
+                    self.add_token(f"{kind}{idx:02}", f"B_KIND_{kind}", f"M_IDX_{idx:02}")
 
         opnames = " | ".join(t for t in self.cfg.gates)
         objnames = " | ".join(t for t in self.token_names if t and t[0] in 'iqnodfa')
@@ -631,27 +643,33 @@ class Tokenizer:
         if isinstance(toks, str):
             return repr(toks)
         if isinstance(toks, int):
-            s = self.token_names[toks]
-            if ' ' in s and s != '" "':
-                s = s.removeprefix('\"')
-                s = s.removesuffix('\"')
-                s = s.replace('" "', '')
-                s = s.replace('\\"', '"')
-                s = f"[{s}]"
-            return s
+            return self.token_names[toks]
         if toks is None:
             return "None"
-        return " ".join(self.tok2str(t) for t in toks)
+
+        text = []
+        last_s = None
+        for t in toks:
+            s = self.tok2str(t)
+            if not last_s:
+                text.append(s)
+            elif s[0] == "." and last_s[0] in "._":
+                text.append(s)
+            else:
+                text.append(" " + s)
+            last_s = s
+
+        return "".join(text)
 
 def main():
+    cfg = config.cfg
+    for n,(c,_) in config.cfgs.items():
+        if f"-{n}" in opts: cfg = c
+    lex = cfg.lex()
+
     if "-t" in opts or "-T" in opts:
         if not args:
             args.append(example_text)
-
-        cfg = config.cfg
-        for n,(c,_) in config.cfgs.items():
-            if f"-{n}" in opts: cfg = c
-        lex = cfg.lex()
         lex.pr_table()
 
         for s in args:
@@ -666,11 +684,6 @@ def main():
         return 0
 
     if "-e" in opts:
-        cfg = config.cfg
-        for n,(c,_) in config.cfgs.items():
-            if f"-{n}" in opts: cfg = c
-        lex = cfg.lex()
-
         with open(args[0], "ab" if "-a" in opts else "wb") as f:
             data = sys.stdin.read()
             data = data.split("\x00")
@@ -681,6 +694,17 @@ def main():
                 t.tofile(f)
                 f.flush()
 
+        return 0
+
+    if "-L" in opts:
+        for idx,tok in enumerate(lex.token_names):
+            if tok is None:
+                print(f"{idx:6} {'-'*70}")
+            else:
+                sym = ascii_ctrls[idx] if idx < len(ascii_ctrls) else ""
+                _, base_idx, modif_idx = lex.token_map[tok]
+                print(f"{idx:6} {sym:<3} {tok:<20} | M={modif_idx:<3} B={base_idx:<4} | " +
+                      f"{lex.modif_embd_names[modif_idx]:<13} + {lex.base_embd_names[base_idx]}")
         return 0
 
     for c, t in config.cfgs.values():

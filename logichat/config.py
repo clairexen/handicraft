@@ -49,7 +49,7 @@ cfg_small = _LogiChatConfig(
 
 cfg_large = _LogiChatConfig(
     "large",
-    idx_base = 64,
+    idx_base = 100,
     max_nbits = 4,
     with_words = True,
 )
