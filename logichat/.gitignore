@@ -2,8 +2,8 @@
 /datasrc/
 /datasets/
 /fastenc/pattern.re
-/fastenc/pattern.c
-/fastenc/*.o
-/fastenc/*.d
+/fastenc/fastenc.cc
+/fastenc/fastenc
 /nanoGPT/out-*
 __pycache__
+.*.swp
