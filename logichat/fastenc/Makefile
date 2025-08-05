@@ -8,4 +8,4 @@ pattern.re: pattern.py ../tokens.py ../config.py
 	../.venv/bin/python3 pattern.py
 
 clean:
-	rm -f fastenc fastenc.cc pattern.re
+	rm -f fastenc fastenc.cc pattern.re pattern.cc

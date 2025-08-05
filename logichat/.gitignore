@@ -2,6 +2,7 @@
 /datasrc/
 /datasets/
 /fastenc/pattern.re
+/fastenc/pattern.cc
 /fastenc/fastenc.cc
 /fastenc/fastenc
 /nanoGPT/out-*
