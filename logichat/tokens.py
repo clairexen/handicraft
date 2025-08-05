@@ -390,10 +390,9 @@ class Tokenizer:
             'fmt': self.binext
         }
 
-        self.meta["config"] = self.cfg
-        self.meta["gptcfg"] = self.cfg.gptcfg()
         self.meta["cfg_name"] = self.cfg.name
         self.meta["gpt_name"] = self.cfg.gptname()
+        self.meta["gpt_cfg"] = self.cfg.gptcfg()
 
     def encode(self, text, encodeText=True):
         tokens = []

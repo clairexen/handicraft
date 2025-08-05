@@ -1,13 +1,19 @@
-#include <vector>
 #include <unistd.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdio.h>
 
+#include <vector>
+#include <string>
+#include <string_view>
+
+using namespace std::literals;
+
 typedef char YYCTYPE;
 std::vector<char> buffer;
 std::vector<uint16_t> output;
 FILE *outfp = NULL;
+bool flag_O;
 
 /*!re2c
 	re2c:eof = 0;
@@ -133,7 +139,21 @@ error:
 }
 
 int main(int argc, const char **argv) {
-	buffer.reserve(1024*1024);
+	const char *arg = NULL;
+	for (int i=1; i < argc; i++) {
+		std::string_view a = argv[1];
+		if (a == "-O"sv) {
+			flag_O = 1;
+			continue;
+		}
+		if (!arg) {
+			arg = argv[i];
+			continue;
+		}
+		fprintf(stderr, "ARGS ERROR\n");
+		exit(1);
+	}
+	buffer.reserve(16*1024*1024);
 	while (1) {
 		long s = buffer.size(), n = 4096;
 		buffer.resize(s+n);
@@ -145,11 +165,17 @@ int main(int argc, const char **argv) {
 		buffer.resize(s + rc);
 		if (rc == 0) break;
 	}
+	if (arg)
+		outfp = fopen(arg, "ab");
 	if (!buffer.empty() && buffer.back())
 		buffer.push_back(0);
 	if (!outfp)
 		printf("Tokens:");
 	encode_buffer();
+	if (outfp && fwrite(output.data(), 2*output.size(), 1, outfp) != 1) {
+		perror("fastenc write()");
+		exit(1);
+	}
 	if (!outfp)
 		printf("\n");
 	return 0;

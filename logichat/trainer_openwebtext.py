@@ -6,6 +6,8 @@ from subprocess import Popen, PIPE
 
 dataset_name = "openwebtext"
 
+shortend_meta_fields = set("itos stoi kwtoi tokens".split())
+
 opts, args = utils.opts_args()
 
 if len(args) == 0:
@@ -46,7 +48,7 @@ else:
 
 print(f"\nInitial Meta:")
 for key in sorted(meta.keys()):
-    if key in ("itos", "stoi"):
+    if key in shortend_meta_fields:
         print(f"  {key:<15} {repr(meta[key])[:60]} ....")
     else:
         print(f"  {key:<15} {repr(meta[key])}")
@@ -81,7 +83,8 @@ def partpipe_write(t):
         partpipe_close()
         datafile_parts.append(str(datafile.with_suffix(f".part{datafile_partidx:05d}")))
         print(f" `- writing {datafile_parts[-1]}", flush=True, end="")
-        datafile_partpipes.append(Popen(["/bin/sh", "-c", f"python3 tokens.py -e '{datafile_parts[-1]}'"], stdin=PIPE))
+        # datafile_partpipes.append(Popen(["/bin/sh", "-c", f"python3 tokens.py -e '{datafile_parts[-1]}'"], stdin=PIPE))
+        datafile_partpipes.append(Popen(["./fastenc/fastenc", datafile_parts[-1]], stdin=PIPE))
         datafile_partidx += 1
         datafile_bytes = 0
     datafile_partpipes[-1].stdin.write(bytes(t, "ascii"))
@@ -176,7 +179,7 @@ for idx,(cnt,ch) in enumerate(sorted((-cnt,ch) for ch,cnt in special_chars_cnt.i
 
 print(f"\nFinal Meta:")
 for key in sorted(meta.keys()):
-    if key in ("itos", "stoi"):
+    if key in shortend_meta_fields:
         print(f"  {key:<15} {repr(meta[key])[:60]} ....")
     else:
         print(f"  {key:<15} {repr(meta[key])}")
