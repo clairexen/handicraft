@@ -85,7 +85,7 @@ struct AbstractWordleDroidEngine
 	void pr(const std::string &s) const;
 	void prFlush() const;
 
-	void prGrayTok()   const { pr("\033[30m\033[100m"); } // Black text, gray background
+	void prGrayTok()   const { pr("\033[37m\033[100m"); } // White text, gray background
 	void prYellowTok() const { pr("\033[30m\033[103m"); } // Black text, yellow background
 	void prGreenTok()  const { pr("\033[37m\033[42m");  } // White text, green background
 	void prWhiteTok()  const { pr("\033[30m\033[47m");  } // Black text, white background
