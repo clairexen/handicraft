@@ -325,9 +325,8 @@ void WordleDroidGlobalState::executeNextCommand()
 	if (engine->vGetWordLen() == 0) {
 		if (promptRewriteEnabled)
 			engine->prReplaceLastLine();
-		delete engine;
-		engine = new WordleDroidEngine5(this, arg);
 		commandStack.push_back(currentCommand);
+		commandStack.push_back("..-5");
 		return;
 	}
 
