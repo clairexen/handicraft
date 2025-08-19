@@ -87,6 +87,6 @@ def dump_text(src_path, out_path1, out_path2, ratio):
 datapath = Path(f"datasets/simplewiki-plain")
 datapath.mkdir(parents=True, exist_ok=True)
 
-dump_text("datasrc/simplewiki-20250720-pages-articles.xml",
+dump_text("datasrc/simplewiki-20250720-pages-articles.xml.bz2",
         "datasets/simplewiki-plain/simplewiki-train.asc",
         "datasets/simplewiki-plain/simplewiki-test.asc", 20)

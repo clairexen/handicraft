@@ -24,7 +24,7 @@ if $_ok; then
 
 	pip_install_deps z3-solver pcre2 numpy torch ptpython
 	pip_install_deps transformers datasets tiktoken wandb tqdm
-	pip_install_deps lxml mwparserfromhell
+	pip_install_deps lxml mwparserfromhell pyphen
 
 	deactivate() {
 		unset LOGICHAT_HOME
