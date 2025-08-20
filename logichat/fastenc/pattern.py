@@ -8,10 +8,6 @@ cfg = config.cfg
 lex = cfg.lex()
 
 with open("pattern.re", "w") as f:
-    for i,s in enumerate(lex.token_names):
-        if not s or s[0] in "._'\"#": continue
-        f.write(f"#define TOK_{s} {i}\n")
-
     f.write("/*!rules:re2c:pat_keywords\n")
     for i,s in enumerate(lex.token_names):
         if not s or s[0] in "._'\"#": continue
@@ -24,11 +20,6 @@ with open("pattern.re", "w") as f:
         f.write(f"  \"'{s}'\" {{ pushtok({i}); continue; }}\n")
     f.write("*/\n")
 
-    f.write("/*!re2c\n")
-    bag = [f'"{s}"' for s in lex.stoi_map.keys() if len(s) > 1]
-    f.write(f"  strtok = {'|\n'.join(bag)};")
-    f.write("*/\n")
-
     f.write("/*!rules:re2c:pat_strtoks\n")
     for s,i in lex.stoi_map.items():
         if len(s) <= 1: continue
@@ -36,6 +27,10 @@ with open("pattern.re", "w") as f:
     f.write("*/\n")
 
 with open("pattern.cc", "w") as f:
+    for i,s in enumerate(lex.token_names):
+        if not s or s[0] in "._'\"#": continue
+        f.write(f"#define TOK_{s} {i}\n")
+
     f.write("const char *toknames[] = {")
     for n in lex.token_names:
         if n is None:

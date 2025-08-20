@@ -1,6 +1,5 @@
 import pcre2, sys, types, numpy, itertools, collections
 from dataclasses import dataclass, field
-from en_basic import en_basic_words
 import config, utils, tokens
 
 # Still unused: ACK NAK SYN (and '\a', '\b', '\t', '\n', '\v', '\f', '\r')
@@ -335,12 +334,7 @@ class Tokenizer:
 
         morphemes = set()
         if self.cfg.with_words:
-            morphemes |= set(w for w in en_basic_words if len(w) > 1)
-            for k in [2,3]:
-                for w in en_basic_words:
-                    if len(w) <= k: continue
-                    for i in range(0,len(w)-k+1):
-                        morphemes.add(w[i:i+k])
+            morphemes |= set(open("lextokens.txt").read()[:100].split())
 
         for _,t in sorted((len(t),t) for t in morphemes):
             if len(t) < 2: continue

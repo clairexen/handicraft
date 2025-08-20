@@ -13,7 +13,6 @@ typedef char YYCTYPE;
 std::vector<char> buffer;
 std::vector<uint16_t> output;
 FILE *outfp = NULL;
-bool flag_O;
 
 /*!re2c
 	re2c:eof = 0;
@@ -32,10 +31,57 @@ void pushtok(uint16_t i) {
 	output.push_back(i);
 }
 
+void pushstr(const char *p) {
+	while (p)
+		pushtok(*(p++));
+}
+
+/*!rules:re2c:escape_special_chars
+    // ---- 1) Valid multi-byte UTF-8 (2–4 bytes, no surrogates/overlongs) ----
+    utf8_tail    = [\x80-\xBF];
+    utf8_2       = [\xC2-\xDF] utf8_tail;
+    utf8_3       = [\xE0] [\xA0-\xBF] utf8_tail
+		 | [\xE1-\xEC] utf8_tail utf8_tail
+		 | [\xED] [\x80-\x9F] utf8_tail
+		 | [\xEE-\xEF] utf8_tail utf8_tail;
+    utf8_4       = [\xF0] [\x90-\xBF] utf8_tail utf8_tail
+		 | [\xF1-\xF3] utf8_tail utf8_tail utf8_tail
+		 | [\xF4] [\x80-\x8F] utf8_tail utf8_tail;
+    utf8_mb      = utf8_2 | utf8_3 | utf8_4;
+
+    @p utf8_mb {
+	unsigned cp = 0;
+	const unsigned char b0 = p[0];
+	if ((b0 & 0xE0u) == 0xC0u) { // 2-byte
+	    cp = ((b0 & 0x1Fu) << 6) | (p[1] & 0x3Fu);
+	} else if ((b0 & 0xF0u) == 0xE0u) { // 3-byte
+	    cp = ((b0 & 0x0Fu) << 12) | ((p[1] & 0x3Fu) << 6) | (p[2] & 0x3Fu);
+	} else { // 4-byte
+	    cp = ((b0 & 0x07u) << 18) | ((p[1] & 0x3Fu) << 12) | ((p[2] & 0x3Fu) << 6) | (p[3] & 0x3Fu);
+	}
+	char buffer[16];
+	if (cp <= 0xFFFFu) {
+	    snprintf(buffer, 16, "\\u%04X", cp);
+	} else {
+	    snprintf(buffer, 16, "\\U%08X", cp);
+	}
+	pushstr(buffer);
+	continue;
+    }
+
+    // ---- 2) Any other special single byte (invalid UTF-8 or ASCII control char) ----
+    @p [^\n\t \x20-\x7E] {
+	char buffer[16];
+	snprintf(buffer, 16, "\\x%02X", (unsigned)p[0]);
+	pushstr(buffer);
+	continue;
+    }
+*/
+
 void encode_buffer() {
 	const char *YYCURSOR = buffer.data();
 	const char *YYLIMIT = buffer.data() + buffer.size();
-	const char *YYMARKER, *c;
+	const char *YYMARKER, *p, *yyt1;
 	bool str1, str2, str3;
 
 	if (0) {
@@ -117,9 +163,11 @@ str_re:
 			YYCURSOR = bak;
 		}
 		/*!re2c
-			@c [\a\b\t\n\033\040-\176] { pushtok(*c); continue; }
-
 			!use:pat_strtoks;
+
+			@p [\a\b\t\n\033\040-\176] { pushtok(*p); continue; }
+
+			!use:escape_special_chars;
 
 			[\000] { goto reset; }
 			$ { goto reset; }
@@ -142,10 +190,10 @@ int main(int argc, const char **argv) {
 	const char *arg = NULL;
 	for (int i=1; i < argc; i++) {
 		std::string_view a = argv[1];
-		if (a == "-O"sv) {
-			flag_O = 1;
-			continue;
-		}
+		// if (a == "-O"sv) {
+		//	flag_O = 1;
+		//	continue;
+		// }
 		if (!arg) {
 			arg = argv[i];
 			continue;

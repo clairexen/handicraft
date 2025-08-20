@@ -2,7 +2,7 @@
 # You cannot run it directly
 
 _ok=true
-for _f in activate.sh config.py en_basic.py formal.py parser.py tokens.py trainer_openwebtext.py; do
+for _f in activate.sh config.py formal.py parser.py tokens.py lextokens.txt; do
 	test -f $_f || { echo "activate.sh must be included from within the directory containing it!" 2>&1; _ok=false; break; }
 done
 if $_ok; then
