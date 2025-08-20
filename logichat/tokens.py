@@ -1,4 +1,4 @@
-import pcre2, sys, types, numpy, itertools, collections
+import re, sys, types, numpy, itertools, collections
 from dataclasses import dataclass, field
 import config, utils, tokens
 
@@ -334,7 +334,7 @@ class Tokenizer:
 
         morphemes = set()
         if self.cfg.with_words:
-            morphemes |= set(open("lextokens.txt").read()[:100].split())
+            morphemes |= set(open("lextokens.txt").read().split())
 
         for _,t in sorted((len(t),t) for t in morphemes):
             if len(t) < 2: continue
@@ -355,18 +355,18 @@ class Tokenizer:
 
         opnames = " | ".join(t for t in self.cfg.gates)
         objnames = " | ".join(t for t in self.token_names if t and t[0] in 'iqnodfa')
-        self.re_keywords = pcre2.compile(f"""
+        self.re_keywords = re.compile(f"""
             (?<![a-zA-Z0-9]) ( PROMPT | REPLY | QUERY | REM | TXT | TAG | MODULE | DIMS | PI | PO |
                     TABLE | PTABLE | GET | SET | CIRCUIT | OPS | DEF | ENDMOD | {opnames} | {objnames}) (?![a-zA-Z0-9])
-        """, pcre2.X)
+        """, re.X)
 
         if self.cfg.with_words:
             sorted_by_len = lambda l: [t for _,_,t in sorted((-len(t), t.lower(), t) for t in l)]
             morph_pattern = sorted_by_len(f"[{w[0]}{w[0].upper()}]{w[1:]}|{w.upper()}" for w in morphemes)
             morph_pattern = f" ?(?:{'|'.join(morph_pattern)}|[a-zA-Z0-9])"
-            self.re_morph = pcre2.compile(morph_pattern)
+            self.re_morph = re.compile(morph_pattern)
         else:
-            self.re_morph = pcre2.compile(r"[a-zA-Z0-9]")
+            self.re_morph = re.compile(r"[a-zA-Z0-9]")
 
         self.binext = "uint8" if len(self.token_names) < 256 else "uint16"
         self.bintype = numpy.uint8 if len(self.token_names) < 256 else numpy.uint16
