@@ -1095,6 +1095,19 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 			return true;
 		}
 
+		if (cmd == "+show"sv) {
+			doSetup();
+			while (doBatch()) { }
+			doShowTraps();
+			doMinMaxSweep();
+			doShowFirst();
+			doTrace();
+			doWrDotFile("wdroid.dot");
+			system("set -x ; dot -Tx11 wdroid.dot &");
+			return true;
+
+		}
+
 		return false;
 	}
 };
