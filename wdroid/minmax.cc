@@ -1103,7 +1103,8 @@ struct WordleDroidMinMax : public WordleDroidEngine<WordLen>
 			doShowFirst();
 			doTrace();
 			doWrDotFile("wdroid.dot");
-			system("set -x ; dot -Tx11 wdroid.dot &");
+			// system("set -x ; dot -Tx11 wdroid.dot &");
+			system("set -x ; xdot wdroid.dot &");
 			return true;
 
 		}
