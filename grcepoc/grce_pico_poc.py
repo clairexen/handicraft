@@ -2,9 +2,9 @@
 
 This script keeps the picoGPT spirit of being small and hackable while
 adding the Gated Recurrent Context Encoding (GRCE) channel described in
-``grce.md``. It trains a very small character-level Transformer on a tiny
-Shakespeare sample and shows how the recurrent context vector can be
-integrated with a stop-gradient constraint across time.
+``grce.md``. It trains a tiny character-level Transformer on the bundled
+Simple English Wikipedia split and shows how the recurrent context vector can
+be integrated with a stop-gradient constraint across time.
 """
 from __future__ import annotations
 
@@ -27,9 +27,7 @@ import torch.nn.functional as F
 
 def load_text_file(path: pathlib.Path) -> str:
     if not path.exists():
-        raise FileNotFoundError(
-            f"Could not find {path}. Provide --data-path with a plain text file."
-        )
+        raise FileNotFoundError(f"Could not find {path}. Provide a text file path.")
     return path.read_text(encoding="utf-8")
 
 
@@ -47,14 +45,9 @@ class CharTokenizer:
 
 
 @dataclass
-class ShakespeareDataset:
-    data: torch.Tensor
-    split: float = 0.9
-
-    def __post_init__(self) -> None:
-        n = int(self.split * len(self.data))
-        self.train = self.data[:n]
-        self.val = self.data[n:]
+class TextDataset:
+    train: torch.Tensor
+    test: torch.Tensor
 
     def get_batch(
         self,
@@ -63,7 +56,13 @@ class ShakespeareDataset:
         batch_size: int,
         device: torch.device,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        source = self.train if split == "train" else self.val
+        if split not in {"train", "test"}:
+            raise ValueError(f"Unknown split {split!r}")
+        source = self.train if split == "train" else self.test
+        if len(source) <= block_size:
+            raise ValueError(
+                f"Split {split} is too small for block size {block_size}."
+            )
         ix = torch.randint(0, len(source) - block_size - 1, (batch_size,))
         x = torch.stack([source[i : i + block_size] for i in ix])
         y = torch.stack([source[i + 1 : i + 1 + block_size] for i in ix])
@@ -239,13 +238,35 @@ class GRCEGPT(nn.Module):
 # -----------------------------------------------------------------------------
 
 
+def evaluate_split(
+    model: GRCEGPT,
+    dataset: TextDataset,
+    device: torch.device,
+    block_size: int,
+    batch_size: int,
+    split: str,
+    iters: int,
+) -> float:
+    losses = []
+    for _ in range(iters):
+        xb, yb = dataset.get_batch(split, block_size, batch_size, device)
+        _, _, loss = model.forward_autoreg(xb, yb)
+        losses.append(loss.item())
+    return sum(losses) / len(losses)
+
+
 def train_model(
     model: GRCEGPT,
-    dataset: ShakespeareDataset,
+    dataset: TextDataset,
     device: torch.device,
     steps: int,
     block_size: int,
     batch_size: int,
+    eval_interval: int,
+    eval_iters: int,
+    sample_prompt: torch.Tensor,
+    sample_chars: int,
+    tokenizer: CharTokenizer,
 ) -> None:
     optim = torch.optim.AdamW(model.parameters(), lr=3e-4)
     for step in range(1, steps + 1):
@@ -258,14 +279,25 @@ def train_model(
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optim.step()
 
-        if step % max(1, steps // 10) == 0 or step == 1:
+        if step == 1 or step % eval_interval == 0 or step == steps:
             model.eval()
             with torch.no_grad():
-                vb, vy = dataset.get_batch("val", block_size, batch_size, device)
-                _, _, vloss = model.forward_autoreg(vb, vy)
+                split_losses = {
+                    split: evaluate_split(
+                        model, dataset, device, block_size, batch_size, split, eval_iters
+                    )
+                    for split in ("train", "test")
+                }
+                sample_tokens = generate(
+                    model,
+                    sample_prompt.clone(),
+                    sample_chars,
+                )
             model.train()
+            sample_text = tokenizer.decode(sample_tokens[0].cpu()).replace("\n", " ")
             print(
-                f"step {step:04d} | train loss {loss.item():.3f} | val loss {vloss.item():.3f}"
+                f"step {step:04d} | train loss {split_losses['train']:.3f} | "
+                f"test loss {split_losses['test']:.3f} | sample: {sample_text}"
             )
 
 
@@ -292,12 +324,20 @@ def generate(
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
     parser.add_argument(
-        "--data-path",
+        "--train-path",
         type=pathlib.Path,
-        default=pathlib.Path("data/tiny_shakespeare_sample.txt"),
-        help="Path to a plain text corpus (default: tiny sample bundled with repo).",
+        default=pathlib.Path("data/simplewiki-train.asc"),
+        help="Training corpus file (default: Simple English Wikipedia split).",
+    )
+    parser.add_argument(
+        "--test-path",
+        type=pathlib.Path,
+        default=pathlib.Path("data/simplewiki-test.asc"),
+        help="Held-out corpus file for regular testing.",
     )
     parser.add_argument("--device", type=str, default="cpu", help="cpu or cuda")
     parser.add_argument("--steps", type=int, default=50, help="Training steps")
@@ -315,6 +355,30 @@ def parse_args() -> argparse.Namespace:
         help="Dimension of the recurrent context vector",
     )
     parser.add_argument(
+        "--eval-interval",
+        type=int,
+        default=25,
+        help="How often to run train/test evaluation steps.",
+    )
+    parser.add_argument(
+        "--eval-iters",
+        type=int,
+        default=5,
+        help="How many mini-batches to average for evaluation losses.",
+    )
+    parser.add_argument(
+        "--max-train-chars",
+        type=int,
+        default=0,
+        help="Optional limit on how many characters of the training file to use.",
+    )
+    parser.add_argument(
+        "--max-test-chars",
+        type=int,
+        default=0,
+        help="Optional limit on how many characters of the test file to use.",
+    )
+    parser.add_argument(
         "--generate",
         type=int,
         default=200,
@@ -323,7 +387,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--prompt",
         type=str,
-        default="ROMEO:",
+        default="Bigotry is",
         help="Prompt used for generation",
     )
     return parser.parse_args()
@@ -334,27 +398,48 @@ def main() -> None:
     torch.manual_seed(42)
     random.seed(42)
 
-    text = load_text_file(args.data_path)
-    tokenizer = CharTokenizer(text)
-    data = tokenizer.encode(text)
-    dataset = ShakespeareDataset(data)
+    train_text = load_text_file(args.train_path)
+    test_text = load_text_file(args.test_path)
+    if args.max_train_chars > 0:
+        train_text = train_text[: args.max_train_chars]
+    if args.max_test_chars > 0:
+        test_text = test_text[: args.max_test_chars]
+    tokenizer = CharTokenizer(train_text + test_text)
+    train_tokens = tokenizer.encode(train_text)
+    test_tokens = tokenizer.encode(test_text)
+    dataset = TextDataset(train_tokens, test_tokens)
+
+    device = torch.device(args.device)
+    try:
+        prompt_tokens = tokenizer.encode(args.prompt)
+    except KeyError as exc:  # pragma: no cover - user misconfiguration
+        raise ValueError(
+            "Prompt contains characters outside the tokenizer vocabulary. "
+            "Choose a simpler prompt or extend the dataset."
+        ) from exc
+    prompt_tokens = prompt_tokens.unsqueeze(0).to(device)
 
     config = ModelConfig(
         vocab_size=len(tokenizer.stoi),
         block_size=args.block_size,
         context_dim=args.context_dim,
     )
-    device = torch.device(args.device)
     model = GRCEGPT(config).to(device)
 
     print("Training GRCE picoGPT PoC ...")
-    train_model(model, dataset, device, args.steps, args.block_size, args.batch_size)
-
-    prompt_tokens = tokenizer.encode(args.prompt)
-    prompt_tokens = prompt_tokens.unsqueeze(0).to(device)
-    generated = generate(model, prompt_tokens, args.generate)
-    print("\n---- sample ----")
-    print(tokenizer.decode(generated[0].cpu()))
+    train_model(
+        model,
+        dataset,
+        device,
+        args.steps,
+        args.block_size,
+        args.batch_size,
+        args.eval_interval,
+        args.eval_iters,
+        prompt_tokens,
+        args.generate,
+        tokenizer,
+    )
 
 
 if __name__ == "__main__":

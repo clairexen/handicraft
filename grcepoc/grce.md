@@ -143,13 +143,14 @@ ein separater, gated, explizit rekurrenter Zustandskanal, der als additiver Kont
 [6]: https://smcnus.comp.nus.edu.sg/archive/pdf/2025/2025_when_attention.pdf?utm_source=chatgpt.com "when attention sink emerges"
 [7]: https://www.ibm.com/think/topics/prompt-tuning?utm_source=chatgpt.com "What is prompt tuning?"
 
-## Proof-of-Concept: picoGPT + Shakespeare
+## Proof-of-Concept: picoGPT + SimpleWiki + GRCE
 
 Der Ordner enthält jetzt ein kleines **picoGPT-inspiriertes Demo** (`grce_pico_poc.py`), das die Idee oben praktisch macht:
 
-- Architektur: char-level GPT (2 Layer, 2 Heads) + expliziter GRCE-Kanal. Token-Input bekommt einen additiven Bias aus dem vorwärts gereichten Kontextvektor. Der Kontext wird nach jedem Symbol mit einem kleinen MLP + Sigmoid-Gate aktualisiert; beim Einspeisen erfolgt `stop_grad`.
-- Training: sehr kleines Shakespeare-Teil-Corpus (`data/tiny_shakespeare_sample.txt`). Default sind 50 Schritte mit Batchgröße 8 und Block-Size 32, damit das Skript auch auf CPU in <1 Minute läuft.
-- Ausgabe: nach dem kurzen Training wird ausgehend vom Prompt `ROMEO:` Text generiert, so wie im picoGPT-Shakespeare-Beispiel.
+- **Architektur:** char-level GPT (2 Layer, 2 Heads) + expliziter GRCE-Kanal. Token-Input bekommt einen additiven Bias aus dem vorwärts gereichten Kontextvektor. Der Kontext wird nach jedem Symbol mit einem kleinen MLP + Sigmoid-Gate aktualisiert; beim Einspeisen erfolgt `stop_grad`.
+- **Daten:** Default ist das bereitgestellte Simple English Wikipedia Split (`data/simplewiki-train.asc`, `data/simplewiki-test.asc`). Für Quick-Tests kann die Menge via `--max-train-chars`/`--max-test-chars` begrenzt oder auf den alten Shakespeare-Schnipsel umgebogen werden.
+- **Regelmäßiges Testing:** Der Trainingsloop evaluiert nach jedem `--eval-interval`-ten Schritt sowohl auf `train` als auch `test` (mehrfach gemittelt über `--eval-iters` Batches). Damit ist klar sichtbar, wie stabil der zusätzliche Kontextkanal lernt.
+- **Ausgabe:** Nach jedem Evaluationszyklus wird mit einem SimpleWiki-kompatiblen Prompt (default `"Bigotry is"`) eine einzeilige Probe erzeugt; Länge gesteuert durch `--generate`.
 
 Verwendung (z.B. in einer lokalen venv):
 
@@ -157,13 +158,17 @@ Verwendung (z.B. in einer lokalen venv):
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-python grce_pico_poc.py --steps 80 --block-size 32 --batch-size 8 --generate 300
+python grce_pico_poc.py \
+  --steps 80 --block-size 64 --batch-size 8 \
+  --generate 300 --eval-interval 20 --eval-iters 5
 ```
 
 Wichtige Flags:
 
-- `--data-path`: beliebige Textdatei zur Wiederverwendung, standardmäßig das Bundled-Sample.
+- `--train-path` / `--test-path`: Textdateien für Training/Test (Default: SimpleWiki Split, auch in `.gitignore`).
+- `--max-train-chars` / `--max-test-chars`: begrenzen die geladenen Zeichen (hilfreich für schnelle lokale Tests).
+- `--eval-interval`, `--eval-iters`: wie oft und wie intensiv der Testing-Pass läuft.
 - `--context-dim`: Dimensionalität des GRCE-Zustands (Default 64, typischerweise = `n_embd`).
-- `--prompt`: Starttext für die Generierung.
+- `--prompt`: Starttext für die Generierung (Default `"Bigotry is"`).
 
 Damit lässt sich experimentell nachvollziehen, wie der zusätzliche, gefensterte Kontextkanal das Modellverhalten beeinflusst (z.B. durch Variation der Kontextdimension, des Gatings oder durch Abschalten von `stop_grad` in der `GRCEContextChannel.project`-Methode).
