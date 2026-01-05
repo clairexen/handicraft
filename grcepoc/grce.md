@@ -151,6 +151,7 @@ Der Ordner enthält jetzt ein kleines **picoGPT-inspiriertes Demo** (`grce_pico_
 - **Daten:** Default ist das bereitgestellte Simple English Wikipedia Split (`data/simplewiki-train.asc`, `data/simplewiki-test.asc`). Für Quick-Tests kann die Menge via `--max-train-chars`/`--max-test-chars` begrenzt oder auf den alten Shakespeare-Schnipsel umgebogen werden.
 - **Regelmäßiges Testing:** Der Trainingsloop evaluiert nach jedem `--eval-interval`-ten Schritt sowohl auf `train` als auch `test` (mehrfach gemittelt über `--eval-iters` Batches). Damit ist klar sichtbar, wie stabil der zusätzliche Kontextkanal lernt.
 - **Ausgabe:** Nach jedem Evaluationszyklus wird mit einem SimpleWiki-kompatiblen Prompt (default `"Bigotry is"`) eine einzeilige Probe erzeugt; Länge gesteuert durch `--generate`.
+- **Persistenz & Logging:** Für jede Modellkonfiguration entsteht in `model/` ein Checkpoint (`*.pt`) plus ein gleichnamiges `.log`, das automatisch alle Konsolenausgaben spiegelt, oben Timestamp + komplette Kommandozeile schreibt und am Ende Wall/CPU-Zeit ergänzt. Bei erneutem Lauf mit denselben Parametern wird das gespeicherte Modell geladen und weitertrainiert.
 
 Verwendung (z.B. in einer lokalen venv):
 

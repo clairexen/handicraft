@@ -12,7 +12,11 @@ import argparse
 import math
 import pathlib
 import random
+import shlex
+import sys
+import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Dict, Tuple
 
 import torch
@@ -29,6 +33,19 @@ def load_text_file(path: pathlib.Path) -> str:
     if not path.exists():
         raise FileNotFoundError(f"Could not find {path}. Provide a text file path.")
     return path.read_text(encoding="utf-8")
+
+
+class Tee:
+    def __init__(self, *streams):
+        self.streams = streams
+
+    def write(self, data: str) -> None:
+        for stream in self.streams:
+            stream.write(data)
+
+    def flush(self) -> None:
+        for stream in self.streams:
+            stream.flush()
 
 
 class CharTokenizer:
@@ -233,6 +250,13 @@ class GRCEGPT(nn.Module):
         return logits, context, loss
 
 
+def build_model_tag(config: ModelConfig) -> str:
+    return (
+        f"bs{config.block_size}_emb{config.n_embd}_ctx{config.context_dim}_"
+        f"layers{config.n_layer}_heads{config.n_head}"
+    )
+
+
 # -----------------------------------------------------------------------------
 # Training / generation helpers
 # -----------------------------------------------------------------------------
@@ -409,37 +433,72 @@ def main() -> None:
     test_tokens = tokenizer.encode(test_text)
     dataset = TextDataset(train_tokens, test_tokens)
 
-    device = torch.device(args.device)
-    try:
-        prompt_tokens = tokenizer.encode(args.prompt)
-    except KeyError as exc:  # pragma: no cover - user misconfiguration
-        raise ValueError(
-            "Prompt contains characters outside the tokenizer vocabulary. "
-            "Choose a simpler prompt or extend the dataset."
-        ) from exc
-    prompt_tokens = prompt_tokens.unsqueeze(0).to(device)
-
     config = ModelConfig(
         vocab_size=len(tokenizer.stoi),
         block_size=args.block_size,
         context_dim=args.context_dim,
     )
-    model = GRCEGPT(config).to(device)
+    model_tag = build_model_tag(config)
+    model_dir = pathlib.Path("model")
+    model_dir.mkdir(parents=True, exist_ok=True)
+    model_path = model_dir / f"{model_tag}.pt"
+    log_path = model_dir / f"{model_tag}.log"
 
-    print("Training GRCE picoGPT PoC ...")
-    train_model(
-        model,
-        dataset,
-        device,
-        args.steps,
-        args.block_size,
-        args.batch_size,
-        args.eval_interval,
-        args.eval_iters,
-        prompt_tokens,
-        args.generate,
-        tokenizer,
-    )
+    cmdline = " ".join(shlex.quote(arg) for arg in sys.argv)
+    timestamp = datetime.now(timezone.utc).isoformat()
+    log_file = log_path.open("a", encoding="utf-8")
+    log_file.write(f"\n[{timestamp}] {cmdline}\n")
+    log_file.flush()
+
+    orig_stdout, orig_stderr = sys.stdout, sys.stderr
+    sys.stdout = Tee(orig_stdout, log_file)
+    sys.stderr = Tee(orig_stderr, log_file)
+    start_wall = time.time()
+    start_cpu = time.process_time()
+    try:
+        device = torch.device(args.device)
+        try:
+            prompt_tokens = tokenizer.encode(args.prompt)
+        except KeyError as exc:  # pragma: no cover - user misconfiguration
+            raise ValueError(
+                "Prompt contains characters outside the tokenizer vocabulary. "
+                "Choose a simpler prompt or extend the dataset."
+            ) from exc
+        prompt_tokens = prompt_tokens.unsqueeze(0).to(device)
+
+        model = GRCEGPT(config).to(device)
+        if model_path.exists():
+            state = torch.load(model_path, map_location=device)
+            model.load_state_dict(state)
+            print(f"Loaded existing model from {model_path}")
+
+        print("Training GRCE picoGPT PoC ...")
+        train_model(
+            model,
+            dataset,
+            device,
+            args.steps,
+            args.block_size,
+            args.batch_size,
+            args.eval_interval,
+            args.eval_iters,
+            prompt_tokens,
+            args.generate,
+            tokenizer,
+        )
+
+        torch.save(model.state_dict(), model_path)
+        print(f"Saved model to {model_path}")
+    finally:
+        elapsed_wall = time.time() - start_wall
+        elapsed_cpu = time.process_time() - start_cpu
+        summary = f"[runtime] wall={elapsed_wall:.2f}s cpu={elapsed_cpu:.2f}s"
+        print(summary)
+        sys.stdout.flush()
+        sys.stderr.flush()
+        sys.stdout = orig_stdout
+        sys.stderr = orig_stderr
+        log_file.close()
 
 
 if __name__ == "__main__":
