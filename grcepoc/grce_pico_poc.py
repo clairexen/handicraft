@@ -749,11 +749,17 @@ def main() -> None:
     )
     tokenizer_path = tokenizer_dir / f"{tokenizer_key}.json"
     print(color_text(f"Tokenizer: {tokenizer_path}", Colors.BLUE))
+    tok_wall_start = time.time()
+    tok_cpu_start = time.process_time()
     tokenizer = GPT2TokenizerWrapper(
         train_text if vocab_limit == 0 else train_text[:vocab_limit],
         tokenizer_path,
         args.tokenizer_vocab,
     )
+    tok_summary = (
+        f"[tokenizer] wall={time.time()-tok_wall_start:.2f}s cpu={time.process_time()-tok_cpu_start:.2f}s"
+    )
+    print(tok_summary)
     train_tokens = tokenizer.encode_corpus(train_text)
     test_tokens = tokenizer.encode_corpus(test_text)
     train_bytes = len(train_text.encode("utf-8"))
