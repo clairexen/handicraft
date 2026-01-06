@@ -718,11 +718,12 @@ def main() -> None:
         test_text = test_text[: args.test_chars]
     if not train_text:
         raise ValueError("Training text is empty; provide a larger corpus or lower --train-chars")
-    tokenizer_dir = pathlib.Path("tokenizer")
+    tokenizer_dir = pathlib.Path("model")
     tokenizer_key = (
         f"{args.train_path.stem}_{args.train_chars or 'all'}_{args.tokenizer_vocab}"
     )
     tokenizer_path = tokenizer_dir / f"{tokenizer_key}.json"
+    print(color_text(f"Tokenizer: {tokenizer_path}", Colors.BLUE))
     tokenizer = GPT2TokenizerWrapper(train_text, tokenizer_path, args.tokenizer_vocab)
     train_tokens = tokenizer.encode_corpus(train_text)
     test_tokens = tokenizer.encode_corpus(test_text)
