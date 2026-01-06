@@ -396,10 +396,10 @@ class GRCEContextChannel(nn.Module):
             )
             self.gate = nn.Linear(config.n_embd, config.context_dim)
 
-    def project(self, context: torch.Tensor) -> torch.Tensor:
+    def project(self, context: torch.Tensor, token_emb: torch.Tensor) -> torch.Tensor:
         if self.disabled:
             raise RuntimeError("Context channel disabled; project should not be called.")
-        return self.reader(context)
+        return self.reader(context) + token_emb
 
     def update(self, writer_input: torch.Tensor, prev: torch.Tensor) -> torch.Tensor:
         if self.disabled:
@@ -429,15 +429,11 @@ class GRCEGPT(nn.Module):
         logits_steps = []
         for t in range(T):
             prefix = idx[:, : t + 1]
+            tok_last = self.core.tok_emb(prefix[:, -1])
             if self.context.disabled:
-                bias = torch.zeros(
-                    B,
-                    self.config.n_embd,
-                    device=device,
-                    dtype=self.core.tok_emb.weight.dtype,
-                )
+                bias = tok_last
             else:
-                bias = self.context.project(context.detach())
+                bias = self.context.project(context.detach(), tok_last)
             extra_bias = torch.zeros(
                 B,
                 prefix.size(1),

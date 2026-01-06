@@ -147,7 +147,7 @@ ein separater, gated, explizit rekurrenter Zustandskanal, der als additiver Kont
 -
 - Der Ordner enthält jetzt ein kleines **picoGPT-inspiriertes Demo** (`grce_pico_poc.py`), das die Idee oben praktisch macht:
 -
-- **Architektur:** GPT-ähnliches Decoder-Modell mit 8 Layern, 8 Köpfen, 512 Embedding-Dimensionen (vgl. GPT-2 base mit 12/12/768). Der explizite GRCE-Kanal bleibt wie beschrieben und nutzt `context_dim = n_embd`.
+- **Architektur:** GPT-ähnliches Decoder-Modell mit 8 Layern, 8 Köpfen, 512 Embedding-Dimensionen (vgl. GPT-2 base mit 12/12/768). Der explizite GRCE-Kanal bleibt wie beschrieben und nutzt `context_dim = n_embd`; sein Schreib-FFN verarbeitet den letzten Prä-FFN-State *und* das reale Token-Embedding (ohne Positionsanteil), sodass Kontext-Updates nicht vom vorhergesagten Token abhängen.
 - **Tokenisierung:** Eine GPT-2-Style Byte-Level-BPE (ByteLevel + BPE-Trainer) wird aus dem Trainings-Text gelernt (`--tokenizer-vocab` bestimmt die Vokabulargröße). Das resultierende Tokenizer-JSON landet in `tokenizer/` und wird wiederverwendet.
 - **Daten:** Default ist das bereitgestellte Simple English Wikipedia Split (`data/simplewiki-train.asc`, `data/simplewiki-test.asc`). Für Quick-Tests kann die Menge via `--train-chars`/`--test-chars` begrenzt oder auf den alten Shakespeare-Schnipsel umgebogen werden.
 - **Streaming + Regionen:** Zu Beginn jedes Trainingszyklus wird genau ein neues Chunk aus Train/Test eingelesen; beim Erreichen des Endes wird auf den Anfang “gewrappt”. Die zuletzt gelesenen Token- und Byte-Offsets werden im Modell-Checkpoint abgelegt, so dass der nächste Lauf nahtlos weiterliest. Beim Lesen printet das Skript die entsprechenden Byte-Bereiche (mit farblicher Hervorhebung im Terminal).
