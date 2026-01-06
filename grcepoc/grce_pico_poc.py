@@ -284,10 +284,10 @@ class TextDataset:
 class ModelConfig:
     vocab_size: int = 2000  # GPT-2 base supports ~50k merges; we stay small for the PoC.
     block_size: int = 64    # GPT-2 base uses 1024 tokens.
-    n_layer: int = 4        # GPT-2 base uses 12 layers.
-    n_head: int = 4         # GPT-2 base uses 12 attention heads.
-    n_embd: int = 256       # GPT-2 base uses 768 embedding dims.
-    n_grce: int = 128       # GRCE context dims.
+    n_layer: int = 8        # GPT-2 base uses 12 layers.
+    n_head: int = 8         # GPT-2 base uses 12 attention heads.
+    n_embd: int = 128       # GPT-2 base uses 768 embedding dims.
+    n_grce: int = 96        # GRCE context dims.
     dropout: float = 0.05
 
 
@@ -750,7 +750,6 @@ def main() -> None:
     )
     tokenizer_path = tokenizer_dir / f"{tokenizer_key}.json"
     print(color_text(f"Tokenizer: {tokenizer_path}", Colors.BLUE))
-    new_tokenizer = not tokenizer_path.exists()
     tok_wall_start = time.time()
     tok_cpu_start = time.process_time()
     vocab_source = train_text if vocab_limit == 0 else train_text[:vocab_limit]
@@ -759,17 +758,13 @@ def main() -> None:
         tokenizer_path,
         args.tokenizer_vocab,
     )
-    if new_tokenizer:
-        tok_summary = (
-            f"[tokenizer] wall={time.time()-tok_wall_start:.2f}s cpu={time.process_time()-tok_cpu_start:.2f}s\n"
-        )
-        print(tok_summary)
 
     print(color_text(f"Train Data: {args.train_path}", Colors.BLUE))
-    print(color_text(f"Test Data: {args.test_path}", Colors.BLUE))
-
     train_tokens = tokenizer.encode_corpus(train_text)
+
+    print(color_text(f"Test Data: {args.test_path}", Colors.BLUE))
     test_tokens = tokenizer.encode_corpus(test_text)
+
     train_bytes = len(train_text.encode("utf-8"))
     test_bytes = len(test_text.encode("utf-8"))
     dataset = TextDataset(
@@ -782,6 +777,11 @@ def main() -> None:
         train_path=args.train_path,
         test_path=args.test_path,
     )
+
+    tok_summary = (
+        f"[tokenizer] wall={time.time()-tok_wall_start:.2f}s cpu={time.process_time()-tok_cpu_start:.2f}s\n"
+    )
+    print(tok_summary)
 
     config = ModelConfig(
         vocab_size=tokenizer.vocab_size,
@@ -804,7 +804,7 @@ def main() -> None:
         for name, p in temp_model.named_parameters()
         if p.requires_grad and "tok_emb" not in name and "pos_emb" not in name
     )
-    print(color_text(f"Trainable model params (excl. embeddings): {non_emb_params:,}", Colors.BLUE))
+    print(f"Trainable model params (excl. embeddings): {non_emb_params:,}")
 
     cmdline = " ".join(shlex.quote(arg) for arg in sys.argv)
     timestamp = datetime.now(timezone.utc).isoformat()
