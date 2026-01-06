@@ -391,7 +391,9 @@ class GRCEContextChannel(nn.Module):
         if not self.disabled:
             concat_dim = (config.n_layer + 1) * config.n_embd
             self.writer = nn.Sequential(
-                nn.Linear(concat_dim, config.n_grce),
+                nn.Linear(concat_dim, 4 * config.n_embd),
+                nn.GELU(),
+                nn.Linear(4 * config.n_embd, config.n_grce),
                 nn.GELU(),
                 nn.Linear(config.n_grce, 4 * config.n_embd),
                 nn.GELU(),
