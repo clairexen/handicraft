@@ -19,7 +19,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Dict, Tuple
+from typing import Dict, List, Tuple
 
 import torch
 import torch.nn as nn
@@ -485,12 +485,15 @@ def train_model(
     batch_size: int,
     eval_interval: int,
     eval_iters: int,
+    start_step: int,
     sample_prompt: torch.Tensor,
     sample_chars: int,
     tokenizer: GPT2TokenizerWrapper,
     prompt_text: str,
-) -> None:
+) -> Tuple[int, List[Dict[str, float]]]:
     optim = torch.optim.AdamW(model.parameters(), lr=3e-4)
+    total_steps = start_step
+    history_updates: List[Dict[str, float]] = []
     for step in range(1, steps + 1):
         xb, yb = dataset.get_batch("train", block_size, batch_size, device)
         logits, _, loss = model.forward_autoreg(xb, yb)
@@ -500,6 +503,7 @@ def train_model(
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optim.step()
+        total_steps += 1
 
         if step == 1 or step % eval_interval == 0 or step == steps:
             model.eval()
@@ -534,7 +538,15 @@ def train_model(
                 + " | sample: "
                 + colored_sample
             )
-
+            history_updates.append(
+                {
+                    "step": total_steps,
+                    "train_loss": float(split_losses["train"]),
+                    "test_loss": float(split_losses["test"]),
+                }
+            )
+    
+    return total_steps, history_updates
 
 @torch.no_grad()
 def generate(
@@ -583,7 +595,12 @@ def parse_args() -> argparse.Namespace:
         default=defaults.block_size,
         help="Number of tokens per training sample",
     )
-    parser.add_argument("--batch-size", type=int, default=8)
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=8,
+        help="Number of sequences per optimization step.",
+    )
     parser.add_argument(
         "--n-layer",
         type=int,
@@ -738,12 +755,16 @@ def main() -> None:
         prompt_tokens = prompt_tokens.unsqueeze(0).to(device)
 
         model = GRCEGPT(config).to(device)
+        total_steps = 0
+        loss_history: List[Dict[str, float]] = []
         if model_path.exists():
             payload = torch.load(model_path, map_location=device)
             if isinstance(payload, dict) and "model" in payload:
                 model.load_state_dict(payload["model"])
                 if "dataset" in payload:
                     dataset.load_state(payload["dataset"])
+                total_steps = int(payload.get("total_steps", 0))
+                loss_history = list(payload.get("loss_history", []))
             else:
                 model.load_state_dict(payload)
             print(color_text(f"Loaded existing model from {model_path}", Colors.YELLOW))
@@ -757,7 +778,7 @@ def main() -> None:
             dataset.prepare_cycle("test", test_chars_cycle)
 
             print(color_text("Training GRCE picoGPT PoC ...", Colors.CYAN))
-            train_model(
+            total_steps, updates = train_model(
                 model,
                 dataset,
                 device,
@@ -766,14 +787,22 @@ def main() -> None:
                 args.batch_size,
                 args.eval_interval,
                 args.eval_iters,
+                total_steps,
                 prompt_tokens,
                 args.generate,
                 tokenizer,
                 args.prompt,
             )
+            loss_history.extend(updates)
+            print(color_text(f"Total steps so far: {total_steps}", Colors.YELLOW))
 
             torch.save(
-                {"model": model.state_dict(), "dataset": dataset.state_dict()},
+                {
+                    "model": model.state_dict(),
+                    "dataset": dataset.state_dict(),
+                    "total_steps": total_steps,
+                    "loss_history": loss_history,
+                },
                 model_path,
             )
             print(color_text(f"Saved model to {model_path}", Colors.GREEN))
