@@ -287,7 +287,7 @@ class ModelConfig:
     n_layer: int = 4        # GPT-2 base uses 12 layers.
     n_head: int = 4         # GPT-2 base uses 12 attention heads.
     n_embd: int = 256       # GPT-2 base uses 768 embedding dims.
-    context_dim: int = 128  # GRCE context dims.
+    n_grce: int = 128       # GRCE context dims.
     dropout: float = 0.05
 
 
@@ -345,11 +345,12 @@ class Block(nn.Module):
         self.ln2 = nn.LayerNorm(config.n_embd)
         self.ff = FeedForward(config)
 
-    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         x = x + self.attn(self.ln1(x))
         pre_ff = self.ln2(x)
-        x = x + self.ff(pre_ff)
-        return x, pre_ff
+        ff_out = self.ff(pre_ff)
+        x = x + ff_out
+        return x, pre_ff, ff_out
 
 
 class GPTCore(nn.Module):
@@ -373,40 +374,44 @@ class GPTCore(nn.Module):
         x = self.drop(tok + pos)
         if extra_bias is not None:
             x = x + extra_bias
-        pre_ff = None
+        ff_outputs: List[torch.Tensor] = []
         for block in self.blocks:
-            x, pre_ff = block(x)
-        assert pre_ff is not None
+            x, _, ff_out = block(x)
+            ff_outputs.append(ff_out)
         x = self.ln_f(x)
         logits = self.head(x)
-        return logits, pre_ff
+        return logits, ff_outputs
 
 
 class GRCEContextChannel(nn.Module):
     def __init__(self, config: ModelConfig) -> None:
         super().__init__()
-        self.disabled = config.context_dim <= 0
+        self.disabled = config.n_grce <= 0
         self.config = config
         if not self.disabled:
-            self.reader = nn.Linear(config.context_dim, config.n_embd)
+            concat_dim = (config.n_layer + 1) * config.n_embd
             self.writer = nn.Sequential(
-                nn.Linear(config.n_embd, 4 * config.context_dim),
+                nn.Linear(concat_dim, config.n_grce),
                 nn.GELU(),
-                nn.Linear(4 * config.context_dim, config.context_dim),
+                nn.Linear(config.n_grce, 4 * config.n_embd),
+                nn.GELU(),
+                nn.Linear(4 * config.n_embd, config.n_embd),
             )
-            self.gate = nn.Linear(config.n_embd, config.context_dim)
 
-    def project(self, context: torch.Tensor, token_emb: torch.Tensor) -> torch.Tensor:
+    def project(self, context: torch.Tensor) -> torch.Tensor:
         if self.disabled:
             raise RuntimeError("Context channel disabled; project should not be called.")
-        return self.reader(context) + token_emb
+        return context
 
-    def update(self, writer_input: torch.Tensor, prev: torch.Tensor) -> torch.Tensor:
+    def update(
+        self,
+        token_input: torch.Tensor,
+        prev_ff: List[torch.Tensor],
+    ) -> torch.Tensor:
         if self.disabled:
             raise RuntimeError("Context channel disabled; update should not be called.")
-        candidate = self.writer(writer_input)
-        gate = torch.sigmoid(self.gate(writer_input))
-        return gate * prev + (1.0 - gate) * candidate
+        fused = torch.cat([token_input] + prev_ff, dim=-1).detach()
+        return self.writer(fused)
 
 
 class GRCEGPT(nn.Module):
@@ -425,15 +430,22 @@ class GRCEGPT(nn.Module):
         device = idx.device
         context = None
         if not self.context.disabled:
-            context = torch.zeros(B, self.config.context_dim, device=device)
+            context = torch.zeros(B, self.config.n_embd, device=device)
+        prev_ff = [
+            torch.zeros(B, self.config.n_embd, device=device)
+            for _ in range(self.config.n_layer)
+        ]
         logits_steps = []
         for t in range(T):
             prefix = idx[:, : t + 1]
             tok_last = self.core.tok_emb(prefix[:, -1])
+            pos_ids = torch.full((B,), t, device=device, dtype=torch.long)
+            pos_emb = self.core.pos_emb(pos_ids)
             if self.context.disabled:
-                bias = tok_last
+                bias = torch.zeros_like(tok_last)
             else:
-                bias = self.context.project(context.detach(), tok_last)
+                bias = self.context.project(context.detach())
+            token_input = tok_last + pos_emb + bias
             extra_bias = torch.zeros(
                 B,
                 prefix.size(1),
@@ -442,9 +454,11 @@ class GRCEGPT(nn.Module):
                 dtype=self.core.tok_emb.weight.dtype,
             )
             extra_bias[:, -1, :] = bias
-            logits, pre_ff = self.core(prefix, extra_bias=extra_bias)
+            logits, ff_outputs = self.core(prefix, extra_bias=extra_bias)
+            curr_ff = [ff[:, -1, :] for ff in ff_outputs]
             if not self.context.disabled and context is not None:
-                context = self.context.update(pre_ff[:, -1, :], context.detach())
+                context = self.context.update(token_input, prev_ff)
+            prev_ff = [ff.detach() for ff in curr_ff]
             logits_steps.append(logits[:, -1:, :])
         logits = torch.cat(logits_steps, dim=1)
         loss = None
@@ -459,7 +473,7 @@ class GRCEGPT(nn.Module):
 def build_model_tag(config: ModelConfig) -> str:
     return (
         f"v{config.vocab_size}_bs{config.block_size}_emb{config.n_embd}_"
-        f"ctx{config.context_dim}_layers{config.n_layer}_heads{config.n_head}"
+        f"ctx{config.n_grce}_layers{config.n_layer}_heads{config.n_head}"
     )
 
 
@@ -629,9 +643,9 @@ def parse_args() -> argparse.Namespace:
         help="Embedding/hidden dimension (GPT-2 base uses 768).",
     )
     parser.add_argument(
-        "--context-dim",
+        "--n-grce",
         type=int,
-        default=defaults.context_dim,
+        default=defaults.n_grce,
         help="Dimension of the recurrent GRCE context; use 0 to disable the channel.",
     )
     parser.add_argument(
@@ -731,7 +745,7 @@ def main() -> None:
         n_layer=args.n_layer,
         n_head=args.n_head,
         n_embd=args.n_embd,
-        context_dim=args.context_dim,
+        n_grce=args.n_grce,
         dropout=args.dropout,
     )
     model_tag = build_model_tag(config)
