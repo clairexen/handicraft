@@ -285,12 +285,12 @@ class TextDataset:
 
 @dataclass
 class ModelConfig:
-    vocab_size: int = 2028  # GPT-2 base supports 32768 embeddings.
+    vocab_size: int = 2028  # GPT-2 base supports ~50k merges; we stay small for the PoC.
     block_size: int = 128   # GPT-2 base uses 1024 tokens.
     n_layer: int = 6        # GPT-2 base uses 12 layers.
     n_head: int = 8         # GPT-2 base uses 12 attention heads.
     n_embd: int = 512       # GPT-2 base uses 768 embedding dims.
-    context_dim: int = 256  # Keep GRCE state aligned with embedding width.
+    context_dim: int = 256  # Custom GRCE state width, tuned previously.
     dropout: float = 0.05
 
 
@@ -447,8 +447,8 @@ class GRCEGPT(nn.Module):
 
 def build_model_tag(config: ModelConfig) -> str:
     return (
-        f"bs{config.block_size}_emb{config.n_embd}_ctx{config.context_dim}_"
-        f"layers{config.n_layer}_heads{config.n_head}"
+        f"v{config.vocab_size}_bs{config.block_size}_emb{config.n_embd}_"
+        f"ctx{config.context_dim}_layers{config.n_layer}_heads{config.n_head}"
     )
 
 
@@ -657,7 +657,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--tokenizer-vocab",
         type=int,
-        default=32768,
+        default=defaults.vocab_size,
         help="Vocabulary size for the GPT-2 style byte-level BPE tokenizer.",
     )
     return parser.parse_args()
@@ -677,7 +677,9 @@ def main() -> None:
     if not train_text:
         raise ValueError("Training text is empty; provide a larger corpus or lower --train-chars")
     tokenizer_dir = pathlib.Path("tokenizer")
-    tokenizer_key = f"{args.train_path.stem}_{args.train_chars or 'all'}_{args.tokenizer_vocab}"
+    tokenizer_key = (
+        f"{args.train_path.stem}_{args.train_chars or 'all'}_{args.tokenizer_vocab}"
+    )
     tokenizer_path = tokenizer_dir / f"{tokenizer_key}.json"
     tokenizer = GPT2TokenizerWrapper(train_text, tokenizer_path, args.tokenizer_vocab)
     train_tokens = tokenizer.encode_corpus(train_text)
