@@ -104,7 +104,7 @@ class GPT2TokenizerWrapper:
             return self._configure_special_tokens(
                 GPT2TokenizerFast(tokenizer_file=str(cache_path))
             )
-        tokenizer = Tokenizer(BPE(unk_token="<|unk|>"))
+        tokenizer = Tokenizer(BPE(unk_token=None))
         tokenizer.pre_tokenizer = ByteLevel(add_prefix_space=False)
         tokenizer.decoder = ByteLevelDecoder()
         byte_values = sorted(set(train_text.encode("utf-8")))
@@ -112,7 +112,7 @@ class GPT2TokenizerWrapper:
         trainer = BpeTrainer(
             vocab_size=vocab_size,
             min_frequency=2,
-            special_tokens=["<|unk|>", "<|pad|>", "<|endoftext|>"],
+            special_tokens=[],
             initial_alphabet=initial_alphabet,
         )
         tokenizer.train_from_iterator([train_text], trainer=trainer)
@@ -122,13 +122,8 @@ class GPT2TokenizerWrapper:
         return self._configure_special_tokens(tk)
 
     def _configure_special_tokens(self, tk: GPT2TokenizerFast) -> GPT2TokenizerFast:
-        mapping = {
-            "pad_token": "<|pad|>",
-            "bos_token": "<|endoftext|>",
-            "eos_token": "<|endoftext|>",
-            "unk_token": "<|unk|>",
-        }
-        tk.add_special_tokens({k: v for k, v in mapping.items() if getattr(tk, k, None) is None})
+        # Suggested GPT-2 style special tokens (BOS/EOS/UNK/PAD) are omitted for now.
+        # tk.add_special_tokens({"pad_token": "<|pad|>", ...})  # enable if needed later.
         return tk
 
     def encode(self, text: str) -> torch.Tensor:
