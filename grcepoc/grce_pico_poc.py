@@ -286,11 +286,11 @@ class TextDataset:
 @dataclass
 class ModelConfig:
     vocab_size: int = 2028  # GPT-2 base supports ~50k merges; we stay small for the PoC.
-    block_size: int = 128   # GPT-2 base uses 1024 tokens.
-    n_layer: int = 6        # GPT-2 base uses 12 layers.
-    n_head: int = 8         # GPT-2 base uses 12 attention heads.
-    n_embd: int = 512       # GPT-2 base uses 768 embedding dims.
-    context_dim: int = 256  # Custom GRCE state width, tuned previously.
+    block_size: int = 64    # GPT-2 base uses 1024 tokens.
+    n_layer: int = 4        # GPT-2 base uses 12 layers.
+    n_head: int = 4         # GPT-2 base uses 12 attention heads.
+    n_embd: int = 256       # GPT-2 base uses 768 embedding dims.
+    context_dim: int = 128  # Custom GRCE state width, tuned previously.
     dropout: float = 0.05
 
 
@@ -651,7 +651,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--prompt",
         type=str,
-        default="Bigotry is",
+        default="bigotry is",
         help="Prompt used for generation",
     )
     parser.add_argument(
