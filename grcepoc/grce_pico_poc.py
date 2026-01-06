@@ -571,6 +571,15 @@ def train_model(
     
     return total_steps, history_updates
 
+
+def count_eval_calls(steps: int, eval_interval: int) -> int:
+    evals = 0
+    for step in range(1, steps + 1):
+        if step == 1 or step == steps or (eval_interval > 0 and step % eval_interval == 0):
+            evals += 1
+    return max(1, evals)
+
+
 @torch.no_grad()
 def generate(
     model: GRCEGPT,
@@ -592,6 +601,13 @@ def generate(
 # CLI
 # -----------------------------------------------------------------------------
 
+def parse_char_arg(value: str) -> int:
+    value = value.strip().lower()
+    if value.endswith("k"):
+        return int(float(value[:-1]) * 1_000)
+    if value.endswith("m"):
+        return int(float(value[:-1]) * 1_000_000)
+    return int(value)
 
 def parse_args() -> argparse.Namespace:
     defaults = MODEL_CONFIG_TEMPLATE
@@ -674,15 +690,21 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--train-chars",
-        type=int,
-        default=0,
+        type=str,
+        default="0",
         help="Optional limit on how many characters of the training file to use.",
     )
     parser.add_argument(
         "--test-chars",
-        type=int,
-        default=0,
+        type=str,
+        default="0",
         help="Optional limit on how many characters of the test file to use.",
+    )
+    parser.add_argument(
+        "--vocab-chars",
+        type=str,
+        default="0",
+        help="Optional limit on how many characters to feed into the tokenizer trainer.",
     )
     parser.add_argument(
         "--generate",
@@ -712,10 +734,13 @@ def main() -> None:
 
     train_text = load_text_file(args.train_path)
     test_text = load_text_file(args.test_path)
-    if args.train_chars > 0:
-        train_text = train_text[: args.train_chars]
-    if args.test_chars > 0:
-        test_text = test_text[: args.test_chars]
+    train_limit = parse_char_arg(args.train_chars)
+    test_limit = parse_char_arg(args.test_chars)
+    vocab_limit = parse_char_arg(args.vocab_chars)
+    if train_limit > 0:
+        train_text = train_text[:train_limit]
+    if test_limit > 0:
+        test_text = test_text[:test_limit]
     if not train_text:
         raise ValueError("Training text is empty; provide a larger corpus or lower --train-chars")
     tokenizer_dir = pathlib.Path("model")
@@ -724,7 +749,11 @@ def main() -> None:
     )
     tokenizer_path = tokenizer_dir / f"{tokenizer_key}.json"
     print(color_text(f"Tokenizer: {tokenizer_path}", Colors.BLUE))
-    tokenizer = GPT2TokenizerWrapper(train_text, tokenizer_path, args.tokenizer_vocab)
+    tokenizer = GPT2TokenizerWrapper(
+        train_text if vocab_limit == 0 else train_text[:vocab_limit],
+        tokenizer_path,
+        args.tokenizer_vocab,
+    )
     train_tokens = tokenizer.encode_corpus(train_text)
     test_tokens = tokenizer.encode_corpus(test_text)
     train_bytes = len(train_text.encode("utf-8"))
@@ -797,7 +826,11 @@ def main() -> None:
             print(color_text(f"\nCycle {cycle}/{args.cycles}", Colors.BLUE))
 
             train_chars_cycle = (args.block_size + 1) * args.batch_size * args.steps
-            test_chars_cycle = (args.block_size + 1) * args.batch_size * max(1, args.eval_iters)
+            test_chars_cycle = (
+                (args.block_size + 1)
+                * args.batch_size
+                * max(1, args.eval_iters * count_eval_calls(args.steps, args.eval_interval))
+            )
             dataset.prepare_cycle("train", train_chars_cycle)
             dataset.prepare_cycle("test", test_chars_cycle)
 

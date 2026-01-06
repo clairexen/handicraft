@@ -169,7 +169,8 @@ python grce_pico_poc.py \
 Wichtige Flags:
 
 - `--train-path` / `--test-path`: Textdateien für Training/Test (Default: SimpleWiki Split, auch in `.gitignore`).
-- `--train-chars` / `--test-chars`: begrenzen die geladenen Zeichen (hilfreich für schnelle lokale Tests und kleinere Zyklen).
+- `--train-chars` / `--test-chars`: begrenzen die geladenen Zeichen (Suffixe wie `10k`, `2M` sind erlaubt).
+- `--vocab-chars`: separater Ausschnitt für den Tokenizer (damit lässt sich ein kleines Vokabular mit denselben Kürzeln wie oben erzeugen).
 - `--eval-interval`, `--eval-iters`: wie oft und wie intensiv der Testing-Pass läuft.
 - `--cycles`: Anzahl der kompletten Trainingszyklen, die nacheinander ausgeführt werden.
 - `--tokenizer-vocab`: Größe der GPT-2-Style BPE, die einmalig aus dem Trainingstext gelernt und in `tokenizer/` gecacht wird.
