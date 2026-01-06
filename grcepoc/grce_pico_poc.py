@@ -107,11 +107,13 @@ class GPT2TokenizerWrapper:
         tokenizer = Tokenizer(BPE(unk_token="<|unk|>"))
         tokenizer.pre_tokenizer = ByteLevel(add_prefix_space=False)
         tokenizer.decoder = ByteLevelDecoder()
+        byte_values = sorted(set(train_text.encode("utf-8")))
+        initial_alphabet = [chr(b) for b in byte_values] or ByteLevel.alphabet()
         trainer = BpeTrainer(
             vocab_size=vocab_size,
             min_frequency=2,
             special_tokens=["<|unk|>", "<|pad|>", "<|endoftext|>"],
-            initial_alphabet=ByteLevel.alphabet(),
+            initial_alphabet=initial_alphabet,
         )
         tokenizer.train_from_iterator([train_text], trainer=trainer)
         tokenizer.post_processor = ByteLevelProcessor(trim_offsets=False)
