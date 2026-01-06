@@ -390,18 +390,25 @@ class GPTCore(nn.Module):
 class GRCEContextChannel(nn.Module):
     def __init__(self, config: ModelConfig) -> None:
         super().__init__()
-        self.reader = nn.Linear(config.context_dim, config.n_embd)
-        self.writer = nn.Sequential(
-            nn.Linear(config.n_embd, 4 * config.context_dim),
-            nn.GELU(),
-            nn.Linear(4 * config.context_dim, config.context_dim),
-        )
-        self.gate = nn.Linear(config.n_embd, config.context_dim)
+        self.disabled = config.context_dim <= 0
+        self.config = config
+        if not self.disabled:
+            self.reader = nn.Linear(config.context_dim, config.n_embd)
+            self.writer = nn.Sequential(
+                nn.Linear(config.n_embd, 4 * config.context_dim),
+                nn.GELU(),
+                nn.Linear(4 * config.context_dim, config.context_dim),
+            )
+            self.gate = nn.Linear(config.n_embd, config.context_dim)
 
     def project(self, context: torch.Tensor) -> torch.Tensor:
+        if self.disabled:
+            raise RuntimeError("Context channel disabled; project should not be called.")
         return self.reader(context)
 
     def update(self, writer_input: torch.Tensor, prev: torch.Tensor) -> torch.Tensor:
+        if self.disabled:
+            raise RuntimeError("Context channel disabled; update should not be called.")
         candidate = self.writer(writer_input)
         gate = torch.sigmoid(self.gate(writer_input))
         return gate * prev + (1.0 - gate) * candidate
@@ -421,11 +428,21 @@ class GRCEGPT(nn.Module):
     ) -> Tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
         B, T = idx.shape
         device = idx.device
-        context = torch.zeros(B, self.config.context_dim, device=device)
+        context = None
+        if not self.context.disabled:
+            context = torch.zeros(B, self.config.context_dim, device=device)
         logits_steps = []
         for t in range(T):
             prefix = idx[:, : t + 1]
-            bias = self.context.project(context.detach())
+            if self.context.disabled:
+                bias = torch.zeros(
+                    B,
+                    self.config.n_embd,
+                    device=device,
+                    dtype=self.core.tok_emb.weight.dtype,
+                )
+            else:
+                bias = self.context.project(context.detach())
             extra_bias = torch.zeros(
                 B,
                 prefix.size(1),
@@ -435,7 +452,8 @@ class GRCEGPT(nn.Module):
             )
             extra_bias[:, -1, :] = bias
             logits, pre_ff = self.core(prefix, extra_bias=extra_bias)
-            context = self.context.update(pre_ff[:, -1, :], context.detach())
+            if not self.context.disabled and context is not None:
+                context = self.context.update(pre_ff[:, -1, :], context.detach())
             logits_steps.append(logits[:, -1:, :])
         logits = torch.cat(logits_steps, dim=1)
         loss = None
@@ -623,7 +641,7 @@ def parse_args() -> argparse.Namespace:
         "--context-dim",
         type=int,
         default=defaults.context_dim,
-        help="Dimension of the recurrent context vector",
+        help="Dimension of the recurrent GRCE context; use 0 to disable the channel.",
     )
     parser.add_argument(
         "--dropout",
