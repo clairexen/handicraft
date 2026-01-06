@@ -829,6 +829,14 @@ def main() -> None:
         if p.requires_grad and "tok_emb" not in name and "pos_emb" not in name
     )
     print(f"Trainable model params (excl. embeddings): {non_emb_params:,}")
+    tok_vecs = temp_model.core.tok_emb.num_embeddings
+    pos_vecs = temp_model.core.pos_emb.num_embeddings
+    emb_vectors = tok_vecs + pos_vecs
+    emb_params = temp_model.core.tok_emb.weight.numel() + temp_model.core.pos_emb.weight.numel()
+    print(
+        f"Learned embedding vectors: {emb_vectors} "
+        f"(token={tok_vecs}, position={pos_vecs}); params={emb_params:,}"
+    )
 
     cmdline = " ".join(shlex.quote(arg) for arg in sys.argv)
     timestamp = datetime.now(timezone.utc).isoformat()
@@ -857,15 +865,24 @@ def main() -> None:
         loss_history: List[Dict[str, float]] = []
         if model_path.exists():
             payload = torch.load(model_path, map_location=device)
-            if isinstance(payload, dict) and "model" in payload:
-                model.load_state_dict(payload["model"])
-                if "dataset" in payload:
-                    dataset.load_state(payload["dataset"])
-                total_steps = int(payload.get("total_steps", 0))
-                loss_history = list(payload.get("loss_history", []))
-            else:
-                model.load_state_dict(payload)
-            print(color_text(f"Loaded existing model from {model_path}", Colors.YELLOW))
+            try:
+                if isinstance(payload, dict) and "model" in payload:
+                    model.load_state_dict(payload["model"])
+                    if "dataset" in payload:
+                        dataset.load_state(payload["dataset"])
+                    total_steps = int(payload.get("total_steps", 0))
+                    loss_history = list(payload.get("loss_history", []))
+                else:
+                    model.load_state_dict(payload)
+                print(color_text(f"Loaded existing model from {model_path}", Colors.YELLOW))
+            except RuntimeError as err:
+                print(
+                    color_text(
+                        "Checkpoint load failed (shape mismatch); starting fresh.",
+                        Colors.MAGENTA,
+                    )
+                )
+                print(color_text(str(err), Colors.GRAY))
 
         for cycle in range(1, args.cycles + 1):
             print(color_text(f"\nCycle {cycle}/{args.cycles}", Colors.BLUE))
