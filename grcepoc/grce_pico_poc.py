@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import os
 import pathlib
 import random
 import re
@@ -23,6 +24,18 @@ from typing import Dict, Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from tokenizers import Tokenizer
+from tokenizers.decoders import ByteLevel as ByteLevelDecoder
+from tokenizers.models import BPE
+from tokenizers.pre_tokenizers import ByteLevel
+from tokenizers.processors import ByteLevel as ByteLevelProcessor
+from tokenizers.trainers import BpeTrainer
+
+HF_CACHE_DIR = pathlib.Path(".cache_transformers")
+HF_CACHE_DIR.mkdir(exist_ok=True)
+os.environ.setdefault("HF_HOME", str(HF_CACHE_DIR.resolve()))
+
+from transformers import GPT2TokenizerFast
 
 
 # -----------------------------------------------------------------------------
@@ -72,17 +85,65 @@ class Tee:
             stream.flush()
 
 
-class CharTokenizer:
-    def __init__(self, text: str) -> None:
-        chars = sorted(list(set(text)))
-        self.stoi: Dict[str, int] = {ch: i for i, ch in enumerate(chars)}
-        self.itos: Dict[int, str] = {i: ch for ch, i in self.stoi.items()}
+class GPT2TokenizerWrapper:
+    def __init__(
+        self,
+        train_text: str,
+        cache_path: pathlib.Path,
+        vocab_size: int,
+    ) -> None:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        self.cache_path = cache_path
+        self.tokenizer = self._load_or_train(train_text, cache_path, vocab_size)
+        self.vocab_size = self.tokenizer.vocab_size
+
+    def _load_or_train(
+        self, train_text: str, cache_path: pathlib.Path, vocab_size: int
+    ) -> GPT2TokenizerFast:
+        if cache_path.exists():
+            return self._configure_special_tokens(
+                GPT2TokenizerFast(tokenizer_file=str(cache_path))
+            )
+        tokenizer = Tokenizer(BPE(unk_token="<|unk|>"))
+        tokenizer.pre_tokenizer = ByteLevel(add_prefix_space=False)
+        tokenizer.decoder = ByteLevelDecoder()
+        trainer = BpeTrainer(
+            vocab_size=vocab_size,
+            min_frequency=2,
+            special_tokens=["<|unk|>", "<|pad|>", "<|endoftext|>"],
+            initial_alphabet=ByteLevel.alphabet(),
+        )
+        tokenizer.train_from_iterator([train_text], trainer=trainer)
+        tokenizer.post_processor = ByteLevelProcessor(trim_offsets=False)
+        tokenizer.save(str(cache_path))
+        tk = GPT2TokenizerFast(tokenizer_file=str(cache_path))
+        return self._configure_special_tokens(tk)
+
+    def _configure_special_tokens(self, tk: GPT2TokenizerFast) -> GPT2TokenizerFast:
+        mapping = {
+            "pad_token": "<|pad|>",
+            "bos_token": "<|endoftext|>",
+            "eos_token": "<|endoftext|>",
+            "unk_token": "<|unk|>",
+        }
+        tk.add_special_tokens({k: v for k, v in mapping.items() if getattr(tk, k, None) is None})
+        return tk
 
     def encode(self, text: str) -> torch.Tensor:
-        return torch.tensor([self.stoi[c] for c in text], dtype=torch.long)
+        ids = self.tokenizer.encode(text, add_special_tokens=False)
+        return torch.tensor(ids, dtype=torch.long)
+
+    def encode_corpus(self, text: str, chunk_chars: int = 2048) -> torch.Tensor:
+        ids: list[int] = []
+        for i in range(0, len(text), chunk_chars):
+            piece = text[i : i + chunk_chars]
+            if not piece:
+                continue
+            ids.extend(self.tokenizer.encode(piece, add_special_tokens=False))
+        return torch.tensor(ids, dtype=torch.long)
 
     def decode(self, tokens: torch.Tensor) -> str:
-        return "".join(self.itos[int(i)] for i in tokens)
+        return self.tokenizer.decode(tokens.tolist())
 
 
 @dataclass
@@ -130,6 +191,8 @@ class TextDataset:
             total_chars = len(source)
         start = self.positions[split]
         chunk, parts_text = self._slice_with_wrap(source, text, start, total_chars)
+        if len(chunk) <= 1:
+            raise ValueError(f"Not enough tokens in {split} split to build a chunk")
         self.positions[split] = (start + total_chars) % len(source)
         segments = self._byte_segments(split, parts_text)
         self._log_segments(split, segments)
@@ -222,13 +285,16 @@ class TextDataset:
 
 @dataclass
 class ModelConfig:
-    vocab_size: int
-    block_size: int = 32
-    n_layer: int = 2
-    n_head: int = 2
-    n_embd: int = 64
-    context_dim: int = 64
+    vocab_size: int = 2028  # GPT-2 base supports 32768 embeddings.
+    block_size: int = 128   # GPT-2 base uses 1024 tokens.
+    n_layer: int = 6        # GPT-2 base uses 12 layers.
+    n_head: int = 8         # GPT-2 base uses 12 attention heads.
+    n_embd: int = 512       # GPT-2 base uses 768 embedding dims.
+    context_dim: int = 256  # Keep GRCE state aligned with embedding width.
     dropout: float = 0.05
+
+
+MODEL_CONFIG_TEMPLATE = ModelConfig()
 
 
 class CausalSelfAttention(nn.Module):
@@ -419,7 +485,7 @@ def train_model(
     eval_iters: int,
     sample_prompt: torch.Tensor,
     sample_chars: int,
-    tokenizer: CharTokenizer,
+    tokenizer: GPT2TokenizerWrapper,
     prompt_text: str,
 ) -> None:
     optim = torch.optim.AdamW(model.parameters(), lr=3e-4)
@@ -491,6 +557,7 @@ def generate(
 
 
 def parse_args() -> argparse.Namespace:
+    defaults = MODEL_CONFIG_TEMPLATE
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
@@ -511,15 +578,39 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--block-size",
         type=int,
-        default=32,
+        default=defaults.block_size,
         help="Number of tokens per training sample",
     )
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument(
+        "--n-layer",
+        type=int,
+        default=defaults.n_layer,
+        help="Number of transformer blocks (GPT-2 base uses 12).",
+    )
+    parser.add_argument(
+        "--n-head",
+        type=int,
+        default=defaults.n_head,
+        help="Number of attention heads per block (GPT-2 base uses 12).",
+    )
+    parser.add_argument(
+        "--n-embd",
+        type=int,
+        default=defaults.n_embd,
+        help="Embedding/hidden dimension (GPT-2 base uses 768).",
+    )
+    parser.add_argument(
         "--context-dim",
         type=int,
-        default=64,
+        default=defaults.context_dim,
         help="Dimension of the recurrent context vector",
+    )
+    parser.add_argument(
+        "--dropout",
+        type=float,
+        default=defaults.dropout,
+        help="Dropout probability inside attention/FFN blocks.",
     )
     parser.add_argument(
         "--eval-interval",
@@ -555,13 +646,19 @@ def parse_args() -> argparse.Namespace:
         "--generate",
         type=int,
         default=200,
-        help="Number of new characters to sample after training",
+        help="Number of new tokens to sample after training",
     )
     parser.add_argument(
         "--prompt",
         type=str,
         default="Bigotry is",
         help="Prompt used for generation",
+    )
+    parser.add_argument(
+        "--tokenizer-vocab",
+        type=int,
+        default=32768,
+        help="Vocabulary size for the GPT-2 style byte-level BPE tokenizer.",
     )
     return parser.parse_args()
 
@@ -577,9 +674,14 @@ def main() -> None:
         train_text = train_text[: args.train_chars]
     if args.test_chars > 0:
         test_text = test_text[: args.test_chars]
-    tokenizer = CharTokenizer(train_text + test_text)
-    train_tokens = tokenizer.encode(train_text)
-    test_tokens = tokenizer.encode(test_text)
+    if not train_text:
+        raise ValueError("Training text is empty; provide a larger corpus or lower --train-chars")
+    tokenizer_dir = pathlib.Path("tokenizer")
+    tokenizer_key = f"{args.train_path.stem}_{args.train_chars or 'all'}_{args.tokenizer_vocab}"
+    tokenizer_path = tokenizer_dir / f"{tokenizer_key}.json"
+    tokenizer = GPT2TokenizerWrapper(train_text, tokenizer_path, args.tokenizer_vocab)
+    train_tokens = tokenizer.encode_corpus(train_text)
+    test_tokens = tokenizer.encode_corpus(test_text)
     train_bytes = len(train_text.encode("utf-8"))
     test_bytes = len(test_text.encode("utf-8"))
     dataset = TextDataset(
@@ -594,9 +696,13 @@ def main() -> None:
     )
 
     config = ModelConfig(
-        vocab_size=len(tokenizer.stoi),
+        vocab_size=tokenizer.vocab_size,
         block_size=args.block_size,
+        n_layer=args.n_layer,
+        n_head=args.n_head,
+        n_embd=args.n_embd,
         context_dim=args.context_dim,
+        dropout=args.dropout,
     )
     model_tag = build_model_tag(config)
     model_dir = pathlib.Path("model")

@@ -2,3 +2,5 @@
 data/simplewiki-test.asc
 data/simplewiki-train.asc
 model/
+tokenizer/
+.cache_transformers/

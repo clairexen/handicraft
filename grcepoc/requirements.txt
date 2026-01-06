@@ -1,2 +1,4 @@
 numpy==2.4.0
 torch==2.9.1+cpu
+tokenizers==0.20.3
+transformers==4.46.2
