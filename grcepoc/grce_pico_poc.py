@@ -286,7 +286,7 @@ class ModelConfig:
     block_size: int = 64    # GPT-2 base uses 1024 tokens.
     n_layer: int = 8        # GPT-2 base uses 12 layers.
     n_head: int = 8         # GPT-2 base uses 12 attention heads.
-    n_embd: int = 128       # GPT-2 base uses 768 embedding dims.
+    n_embd: int = 192       # GPT-2 base uses 768 embedding dims.
     n_grce: int = 96        # GRCE context dims.
     dropout: float = 0.05
 
