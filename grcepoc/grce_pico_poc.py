@@ -393,10 +393,13 @@ class GRCEContextChannel(nn.Module):
             self.part_norms = nn.ModuleList(
                 nn.LayerNorm(config.n_embd) for _ in range(config.n_layer + 1)
             )
+            hidden = 4 * (config.n_embd + config.n_grce)
             self.writer = nn.Sequential(
-                nn.Linear(concat_dim, 4 * config.n_embd),
+                nn.Linear(concat_dim, hidden),
                 nn.GELU(),
-                nn.Linear(4 * config.n_embd, config.n_grce),
+                nn.Linear(hidden, hidden),
+                nn.GELU(),
+                nn.Linear(hidden, config.n_grce),
                 nn.LayerNorm(config.n_grce),
                 nn.GELU(),
                 nn.Linear(config.n_grce, 4 * config.n_grce),
@@ -407,7 +410,9 @@ class GRCEContextChannel(nn.Module):
                 nn.Sequential(
                     nn.Linear(config.n_grce, 4 * config.n_grce),
                     nn.GELU(),
-                    nn.Linear(4 * config.n_grce, config.n_embd),
+                    nn.Linear(4 * config.n_grce, 4 * config.n_embd),
+                    nn.GELU(),
+                    nn.Linear(4 * config.n_embd, config.n_embd),
                 )
                 for _ in range(config.n_layer)
             )
