@@ -711,6 +711,7 @@ def main() -> None:
     model_dir.mkdir(parents=True, exist_ok=True)
     model_path = model_dir / f"{model_tag}.pt"
     log_path = model_dir / f"{model_tag}.log"
+    print(color_text(f"Model: {model_path}", Colors.BLUE))
 
     cmdline = " ".join(shlex.quote(arg) for arg in sys.argv)
     timestamp = datetime.now(timezone.utc).isoformat()
