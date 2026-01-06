@@ -745,7 +745,7 @@ def main() -> None:
         raise ValueError("Training text is empty; provide a larger corpus or lower --train-chars")
     tokenizer_dir = pathlib.Path("model")
     tokenizer_key = (
-        f"{args.train_path.stem}_{args.train_chars or 'all'}_{args.tokenizer_vocab}"
+        f"{args.train_path.stem}_{int(args.train_chars) or 'all'}_{args.tokenizer_vocab}"
     )
     tokenizer_path = tokenizer_dir / f"{tokenizer_key}.json"
     print(color_text(f"Tokenizer: {tokenizer_path}", Colors.BLUE))
