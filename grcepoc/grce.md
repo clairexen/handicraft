@@ -148,10 +148,11 @@ ein separater, gated, explizit rekurrenter Zustandskanal, der als additiver Kont
 Der Ordner enthält jetzt ein kleines **picoGPT-inspiriertes Demo** (`grce_pico_poc.py`), das die Idee oben praktisch macht:
 
 - **Architektur:** char-level GPT (2 Layer, 2 Heads) + expliziter GRCE-Kanal. Token-Input bekommt einen additiven Bias aus dem vorwärts gereichten Kontextvektor. Der Kontext wird nach jedem Symbol mit einem kleinen MLP + Sigmoid-Gate aktualisiert; beim Einspeisen erfolgt `stop_grad`.
-- **Daten:** Default ist das bereitgestellte Simple English Wikipedia Split (`data/simplewiki-train.asc`, `data/simplewiki-test.asc`). Für Quick-Tests kann die Menge via `--max-train-chars`/`--max-test-chars` begrenzt oder auf den alten Shakespeare-Schnipsel umgebogen werden.
+- **Daten:** Default ist das bereitgestellte Simple English Wikipedia Split (`data/simplewiki-train.asc`, `data/simplewiki-test.asc`). Für Quick-Tests kann die Menge via `--train-chars`/`--test-chars` begrenzt oder auf den alten Shakespeare-Schnipsel umgebogen werden.
+- **Streaming + Regionen:** Zu Beginn jedes Trainingszyklus wird genau ein neues Chunk aus Train/Test gelesen; beim Erreichen des Endes wird auf den Anfang “gewrappt”. Die zuletzt gelesenen Zeichen- und Byte-Offsets werden im Modell-Checkpoint abgelegt, so dass der nächste Lauf nahtlos weiterliest. Beim Lesen printet das Skript die entsprechenden Byte-Bereiche (mit farblicher Hervorhebung im Terminal).
 - **Regelmäßiges Testing:** Der Trainingsloop evaluiert nach jedem `--eval-interval`-ten Schritt sowohl auf `train` als auch `test` (mehrfach gemittelt über `--eval-iters` Batches). Damit ist klar sichtbar, wie stabil der zusätzliche Kontextkanal lernt.
-- **Ausgabe:** Nach jedem Evaluationszyklus wird mit einem SimpleWiki-kompatiblen Prompt (default `"Bigotry is"`) eine einzeilige Probe erzeugt; Länge gesteuert durch `--generate`.
-- **Persistenz & Logging:** Für jede Modellkonfiguration entsteht in `model/` ein Checkpoint (`*.pt`) plus ein gleichnamiges `.log`, das automatisch alle Konsolenausgaben spiegelt, oben Timestamp + komplette Kommandozeile schreibt und am Ende Wall/CPU-Zeit ergänzt. Bei erneutem Lauf mit denselben Parametern wird das gespeicherte Modell geladen und weitertrainiert.
+- **Ausgabe:** Nach jedem Evaluationszyklus wird mit einem SimpleWiki-kompatiblen Prompt (default `"Bigotry is"`) eine einzeilige Probe erzeugt; Länge gesteuert durch `--generate`. Das Terminal nutzt Farben (grau für Prompt, weiß für Completion, weitere Farben für Status), während das `.log` farbfrei bleibt.
+- **Persistenz & Logging:** Für jede Modellkonfiguration entsteht in `model/` ein Checkpoint (`*.pt`) plus ein gleichnamiges `.log`, das automatisch alle Konsolenausgaben spiegelt, oben Timestamp + komplette Kommandozeile schreibt und am Ende Wall/CPU-Zeit ergänzt. Bei erneutem Lauf mit denselben Parametern wird das gespeicherte Modell geladen, inklusive der Streaming-Offsets.
 
 Verwendung (z.B. in einer lokalen venv):
 
@@ -167,8 +168,9 @@ python grce_pico_poc.py \
 Wichtige Flags:
 
 - `--train-path` / `--test-path`: Textdateien für Training/Test (Default: SimpleWiki Split, auch in `.gitignore`).
-- `--max-train-chars` / `--max-test-chars`: begrenzen die geladenen Zeichen (hilfreich für schnelle lokale Tests).
+- `--train-chars` / `--test-chars`: begrenzen die geladenen Zeichen (hilfreich für schnelle lokale Tests und kleinere Zyklen).
 - `--eval-interval`, `--eval-iters`: wie oft und wie intensiv der Testing-Pass läuft.
+- `--cycles`: Anzahl der kompletten Trainingszyklen, die nacheinander ausgeführt werden.
 - `--context-dim`: Dimensionalität des GRCE-Zustands (Default 64, typischerweise = `n_embd`).
 - `--prompt`: Starttext für die Generierung (Default `"Bigotry is"`).
 

@@ -12,10 +12,11 @@ import argparse
 import math
 import pathlib
 import random
+import re
 import shlex
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Dict, Tuple
 
@@ -35,16 +36,39 @@ def load_text_file(path: pathlib.Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+class Colors:
+    RESET = "\033[0m"
+    BOLD = "\033[1m"
+    BLUE = "\033[94m"
+    CYAN = "\033[96m"
+    GREEN = "\033[92m"
+    MAGENTA = "\033[95m"
+    YELLOW = "\033[93m"
+    GRAY = "\033[90m"
+    WHITE = "\033[97m"
+
+
+def color_text(text: str, color: str, *, bold: bool = False) -> str:
+    prefix = Colors.BOLD if bold else ""
+    return f"{prefix}{color}{text}{Colors.RESET}"
+
+
 class Tee:
-    def __init__(self, *streams):
+    def __init__(self, *streams: tuple):
         self.streams = streams
 
     def write(self, data: str) -> None:
-        for stream in self.streams:
-            stream.write(data)
+        for stream, strip in self.streams:
+            if strip:
+                stream.write(ANSI_RE.sub("", data))
+            else:
+                stream.write(data)
 
     def flush(self) -> None:
-        for stream in self.streams:
+        for stream, _ in self.streams:
             stream.flush()
 
 
@@ -63,8 +87,53 @@ class CharTokenizer:
 
 @dataclass
 class TextDataset:
-    train: torch.Tensor
-    test: torch.Tensor
+    train_tokens: torch.Tensor
+    test_tokens: torch.Tensor
+    train_text: str
+    test_text: str
+    train_bytes: int
+    test_bytes: int
+    train_path: pathlib.Path
+    test_path: pathlib.Path
+    positions: Dict[str, int] = field(
+        default_factory=lambda: {"train": 0, "test": 0}
+    )
+    byte_positions: Dict[str, int] = field(
+        default_factory=lambda: {"train": 0, "test": 0}
+    )
+    chunks: Dict[str, torch.Tensor] = field(default_factory=dict)
+
+    def state_dict(self) -> Dict[str, Dict[str, int]]:
+        return {
+            "positions": dict(self.positions),
+            "byte_positions": dict(self.byte_positions),
+        }
+
+    def load_state(self, state: Dict[str, Dict[str, int]]) -> None:
+        self.positions.update(state.get("positions", {}))
+        self.byte_positions.update(state.get("byte_positions", {}))
+        for split in ("train", "test"):
+            data = self.train_tokens if split == "train" else self.test_tokens
+            total = len(data)
+            if total:
+                self.positions[split] %= total
+            byte_total = self.train_bytes if split == "train" else self.test_bytes
+            if byte_total:
+                self.byte_positions[split] %= byte_total
+
+    def prepare_cycle(self, split: str, total_chars: int) -> None:
+        if split not in {"train", "test"}:
+            raise ValueError(f"Unknown split {split!r}")
+        source = self.train_tokens if split == "train" else self.test_tokens
+        text = self.train_text if split == "train" else self.test_text
+        if total_chars <= 0 or total_chars > len(source):
+            total_chars = len(source)
+        start = self.positions[split]
+        chunk, parts_text = self._slice_with_wrap(source, text, start, total_chars)
+        self.positions[split] = (start + total_chars) % len(source)
+        segments = self._byte_segments(split, parts_text)
+        self._log_segments(split, segments)
+        self.chunks[split] = chunk
 
     def get_batch(
         self,
@@ -73,17 +142,77 @@ class TextDataset:
         batch_size: int,
         device: torch.device,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        if split not in {"train", "test"}:
-            raise ValueError(f"Unknown split {split!r}")
-        source = self.train if split == "train" else self.test
-        if len(source) <= block_size:
-            raise ValueError(
-                f"Split {split} is too small for block size {block_size}."
+        chunk = self.chunks.get(split)
+        if chunk is None:
+            raise RuntimeError(
+                f"No cached chunk for split {split}. Call prepare_cycle first."
             )
-        ix = torch.randint(0, len(source) - block_size - 1, (batch_size,))
-        x = torch.stack([source[i : i + block_size] for i in ix])
-        y = torch.stack([source[i + 1 : i + 1 + block_size] for i in ix])
-        return x.to(device), y.to(device)
+        span = block_size + 1
+        if len(chunk) <= span:
+            raise ValueError(
+                f"Chunk for {split} must be larger than block size ({len(chunk)} <= {span})."
+            )
+        max_start = len(chunk) - span
+        ix = torch.randint(0, max_start + 1, (batch_size,))
+        windows = [chunk[i : i + span] for i in ix]
+        stacked = torch.stack(windows)
+        x = stacked[:, :-1].contiguous().to(device)
+        y = stacked[:, 1:].contiguous().to(device)
+        return x, y
+
+    def _slice_with_wrap(
+        self,
+        tokens: torch.Tensor,
+        text: str,
+        start: int,
+        needed: int,
+    ) -> Tuple[torch.Tensor, list[str]]:
+        n = len(tokens)
+        first_take = min(needed, n - start)
+        second_take = needed - first_take
+        parts = []
+        texts: list[str] = []
+        if first_take:
+            parts.append(tokens[start : start + first_take])
+            texts.append(text[start : start + first_take])
+        if second_take:
+            parts.append(tokens[:second_take])
+            texts.append(text[:second_take])
+        chunk = torch.cat(parts) if len(parts) > 1 else parts[0]
+        return chunk.contiguous(), texts
+
+    def _byte_segments(self, split: str, parts_text: list[str]) -> list[tuple[int, int]]:
+        segments = []
+        byte_pos = self.byte_positions[split]
+        total_bytes = self.train_bytes if split == "train" else self.test_bytes
+        if total_bytes == 0:
+            return segments
+        for idx, part in enumerate(parts_text):
+            part_bytes = len(part.encode("utf-8"))
+            if not part_bytes:
+                continue
+            if idx == 0:
+                start = byte_pos
+                end = start + part_bytes
+                byte_pos = end % total_bytes
+            else:
+                start = 0
+                end = part_bytes
+                byte_pos = part_bytes % total_bytes
+            if end > total_bytes and idx == 0:
+                end = total_bytes
+            segments.append((start, end))
+        self.byte_positions[split] = byte_pos % total_bytes
+        return segments
+
+    def _log_segments(self, split: str, segments: list[tuple[int, int]]) -> None:
+        if not segments:
+            return
+        label = "train" if split == "train" else "test"
+        color = Colors.MAGENTA if split == "train" else Colors.YELLOW
+        path = self.train_path if split == "train" else self.test_path
+        seg_text = " + ".join(f"[{s},{e})" for s, e in segments)
+        print(color_text(f"[{label}:{path.name}] bytes {seg_text}", color))
 
 
 # -----------------------------------------------------------------------------
@@ -291,6 +420,7 @@ def train_model(
     sample_prompt: torch.Tensor,
     sample_chars: int,
     tokenizer: CharTokenizer,
+    prompt_text: str,
 ) -> None:
     optim = torch.optim.AdamW(model.parameters(), lr=3e-4)
     for step in range(1, steps + 1):
@@ -319,9 +449,22 @@ def train_model(
                 )
             model.train()
             sample_text = tokenizer.decode(sample_tokens[0].cpu()).replace("\n", " ")
+            prefix = prompt_text.replace("\n", " ")
+            if not sample_text.startswith(prefix):
+                prefix = sample_text[: len(prefix)]
+            completion = sample_text[len(prefix) :]
+            colored_sample = prefix + color_text(completion, Colors.WHITE, bold=True)
+            loss_text = (
+                color_text(f"train loss {split_losses['train']:.3f}", Colors.GREEN)
+                + " | "
+                + color_text(f"test loss {split_losses['test']:.3f}", Colors.MAGENTA)
+            )
             print(
-                f"step {step:04d} | train loss {split_losses['train']:.3f} | "
-                f"test loss {split_losses['test']:.3f} | sample: {sample_text}"
+                color_text(f"step {step:04d}", Colors.CYAN)
+                + " | "
+                + loss_text
+                + " | sample: "
+                + colored_sample
             )
 
 
@@ -391,16 +534,22 @@ def parse_args() -> argparse.Namespace:
         help="How many mini-batches to average for evaluation losses.",
     )
     parser.add_argument(
-        "--max-train-chars",
+        "--train-chars",
         type=int,
         default=0,
         help="Optional limit on how many characters of the training file to use.",
     )
     parser.add_argument(
-        "--max-test-chars",
+        "--test-chars",
         type=int,
         default=0,
         help="Optional limit on how many characters of the test file to use.",
+    )
+    parser.add_argument(
+        "--cycles",
+        type=int,
+        default=1,
+        help="Repeat the full training/eval/update cycle N times.",
     )
     parser.add_argument(
         "--generate",
@@ -424,14 +573,25 @@ def main() -> None:
 
     train_text = load_text_file(args.train_path)
     test_text = load_text_file(args.test_path)
-    if args.max_train_chars > 0:
-        train_text = train_text[: args.max_train_chars]
-    if args.max_test_chars > 0:
-        test_text = test_text[: args.max_test_chars]
+    if args.train_chars > 0:
+        train_text = train_text[: args.train_chars]
+    if args.test_chars > 0:
+        test_text = test_text[: args.test_chars]
     tokenizer = CharTokenizer(train_text + test_text)
     train_tokens = tokenizer.encode(train_text)
     test_tokens = tokenizer.encode(test_text)
-    dataset = TextDataset(train_tokens, test_tokens)
+    train_bytes = len(train_text.encode("utf-8"))
+    test_bytes = len(test_text.encode("utf-8"))
+    dataset = TextDataset(
+        train_tokens=train_tokens,
+        test_tokens=test_tokens,
+        train_text=train_text,
+        test_text=test_text,
+        train_bytes=train_bytes,
+        test_bytes=test_bytes,
+        train_path=args.train_path,
+        test_path=args.test_path,
+    )
 
     config = ModelConfig(
         vocab_size=len(tokenizer.stoi),
@@ -451,8 +611,8 @@ def main() -> None:
     log_file.flush()
 
     orig_stdout, orig_stderr = sys.stdout, sys.stderr
-    sys.stdout = Tee(orig_stdout, log_file)
-    sys.stderr = Tee(orig_stderr, log_file)
+    sys.stdout = Tee((orig_stdout, False), (log_file, True))
+    sys.stderr = Tee((orig_stderr, False), (log_file, True))
     start_wall = time.time()
     start_cpu = time.process_time()
     try:
@@ -468,27 +628,44 @@ def main() -> None:
 
         model = GRCEGPT(config).to(device)
         if model_path.exists():
-            state = torch.load(model_path, map_location=device)
-            model.load_state_dict(state)
-            print(f"Loaded existing model from {model_path}")
+            payload = torch.load(model_path, map_location=device)
+            if isinstance(payload, dict) and "model" in payload:
+                model.load_state_dict(payload["model"])
+                if "dataset" in payload:
+                    dataset.load_state(payload["dataset"])
+            else:
+                model.load_state_dict(payload)
+            print(color_text(f"Loaded existing model from {model_path}", Colors.YELLOW))
 
-        print("Training GRCE picoGPT PoC ...")
-        train_model(
-            model,
-            dataset,
-            device,
-            args.steps,
-            args.block_size,
-            args.batch_size,
-            args.eval_interval,
-            args.eval_iters,
-            prompt_tokens,
-            args.generate,
-            tokenizer,
-        )
+        for cycle in range(1, args.cycles + 1):
+            print(color_text(f"\nCycle {cycle}/{args.cycles}", Colors.BLUE))
 
-        torch.save(model.state_dict(), model_path)
-        print(f"Saved model to {model_path}")
+            train_chars_cycle = (args.block_size + 1) * args.batch_size * args.steps
+            test_chars_cycle = (args.block_size + 1) * args.batch_size * max(1, args.eval_iters)
+            dataset.prepare_cycle("train", train_chars_cycle)
+            dataset.prepare_cycle("test", test_chars_cycle)
+
+            print(color_text("Training GRCE picoGPT PoC ...", Colors.CYAN))
+            train_model(
+                model,
+                dataset,
+                device,
+                args.steps,
+                args.block_size,
+                args.batch_size,
+                args.eval_interval,
+                args.eval_iters,
+                prompt_tokens,
+                args.generate,
+                tokenizer,
+                args.prompt,
+            )
+
+            torch.save(
+                {"model": model.state_dict(), "dataset": dataset.state_dict()},
+                model_path,
+            )
+            print(color_text(f"Saved model to {model_path}", Colors.GREEN))
     finally:
         elapsed_wall = time.time() - start_wall
         elapsed_cpu = time.process_time() - start_cpu
