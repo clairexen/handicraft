@@ -689,22 +689,22 @@ def parse_args() -> argparse.Namespace:
         help="How many mini-batches to average for evaluation losses.",
     )
     parser.add_argument(
+        "--vocab-chars",
+        type=str,
+        default="16M",
+        help="Optional limit on how many characters to feed into the tokenizer trainer.",
+    )
+    parser.add_argument(
         "--train-chars",
         type=str,
-        default="0",
+        default="16M",
         help="Optional limit on how many characters of the training file to use.",
     )
     parser.add_argument(
         "--test-chars",
         type=str,
-        default="0",
+        default="4M",
         help="Optional limit on how many characters of the test file to use.",
-    )
-    parser.add_argument(
-        "--vocab-chars",
-        type=str,
-        default="0",
-        help="Optional limit on how many characters to feed into the tokenizer trainer.",
     )
     parser.add_argument(
         "--generate",
@@ -744,22 +744,30 @@ def main() -> None:
     if not train_text:
         raise ValueError("Training text is empty; provide a larger corpus or lower --train-chars")
     tokenizer_dir = pathlib.Path("model")
+    tokenizer_limit = parse_char_arg(args.vocab_chars or args.train_chars)
     tokenizer_key = (
-        f"{args.train_path.stem}_{int(args.train_chars) or 'all'}_{args.tokenizer_vocab}"
+        f"{args.train_path.stem}_{tokenizer_limit or 'all'}_{args.tokenizer_vocab}"
     )
     tokenizer_path = tokenizer_dir / f"{tokenizer_key}.json"
     print(color_text(f"Tokenizer: {tokenizer_path}", Colors.BLUE))
+    new_tokenizer = not tokenizer_path.exists()
     tok_wall_start = time.time()
     tok_cpu_start = time.process_time()
+    vocab_source = train_text if vocab_limit == 0 else train_text[:vocab_limit]
     tokenizer = GPT2TokenizerWrapper(
-        train_text if vocab_limit == 0 else train_text[:vocab_limit],
+        vocab_source,
         tokenizer_path,
         args.tokenizer_vocab,
     )
-    tok_summary = (
-        f"[tokenizer] wall={time.time()-tok_wall_start:.2f}s cpu={time.process_time()-tok_cpu_start:.2f}s"
-    )
-    print(tok_summary)
+    if new_tokenizer:
+        tok_summary = (
+            f"[tokenizer] wall={time.time()-tok_wall_start:.2f}s cpu={time.process_time()-tok_cpu_start:.2f}s\n"
+        )
+        print(tok_summary)
+
+    print(color_text(f"Train Data: {args.train_path}", Colors.BLUE))
+    print(color_text(f"Test Data: {args.test_path}", Colors.BLUE))
+
     train_tokens = tokenizer.encode_corpus(train_text)
     test_tokens = tokenizer.encode_corpus(test_text)
     train_bytes = len(train_text.encode("utf-8"))
@@ -790,6 +798,13 @@ def main() -> None:
     model_path = model_dir / f"{model_tag}.pt"
     log_path = model_dir / f"{model_tag}.log"
     print(color_text(f"Model: {model_path}", Colors.BLUE))
+    temp_model = GRCEGPT(config)
+    non_emb_params = sum(
+        p.numel()
+        for name, p in temp_model.named_parameters()
+        if p.requires_grad and "tok_emb" not in name and "pos_emb" not in name
+    )
+    print(color_text(f"Trainable model params (excl. embeddings): {non_emb_params:,}", Colors.BLUE))
 
     cmdline = " ".join(shlex.quote(arg) for arg in sys.argv)
     timestamp = datetime.now(timezone.utc).isoformat()
