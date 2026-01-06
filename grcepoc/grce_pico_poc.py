@@ -611,7 +611,13 @@ def parse_args() -> argparse.Namespace:
         help="Held-out corpus file for regular testing.",
     )
     parser.add_argument("--device", type=str, default="cpu", help="cpu or cuda")
-    parser.add_argument("--steps", type=int, default=50, help="Training steps")
+    parser.add_argument("--steps", type=int, default=50, help="Training steps per cycle")
+    parser.add_argument(
+        "--cycles",
+        type=int,
+        default=1,
+        help="Repeat the full training/eval/update cycle N times.",
+    )
     parser.add_argument(
         "--block-size",
         type=int,
@@ -657,7 +663,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--eval-interval",
         type=int,
-        default=25,
+        default=1,
         help="How often to run train/test evaluation steps.",
     )
     parser.add_argument(
@@ -677,12 +683,6 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=0,
         help="Optional limit on how many characters of the test file to use.",
-    )
-    parser.add_argument(
-        "--cycles",
-        type=int,
-        default=1,
-        help="Repeat the full training/eval/update cycle N times.",
     )
     parser.add_argument(
         "--generate",
