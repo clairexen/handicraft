@@ -393,12 +393,15 @@ class GRCEContextChannel(nn.Module):
             self.part_norms = nn.ModuleList(
                 nn.LayerNorm(config.n_embd) for _ in range(config.n_layer + 1)
             )
+            self.stack_drop = nn.Dropout(config.dropout)
             hidden = 4 * (config.n_embd + config.n_grce)
             self.writer = nn.Sequential(
                 nn.Linear(concat_dim, hidden),
                 nn.GELU(),
+                nn.Dropout(config.dropout),
                 nn.Linear(hidden, hidden),
                 nn.GELU(),
+                nn.Dropout(config.dropout),
                 nn.Linear(hidden, config.n_grce),
                 nn.LayerNorm(config.n_grce),
             )
@@ -406,8 +409,10 @@ class GRCEContextChannel(nn.Module):
                 nn.Sequential(
                     nn.Linear(config.n_grce, 4 * config.n_grce),
                     nn.GELU(),
+                    nn.Dropout(config.dropout),
                     nn.Linear(4 * config.n_grce, 4 * config.n_embd),
                     nn.GELU(),
+                    nn.Dropout(config.dropout),
                     nn.Linear(4 * config.n_embd, config.n_embd),
                 )
                 for _ in range(config.n_layer)
@@ -427,7 +432,7 @@ class GRCEContextChannel(nn.Module):
             raise RuntimeError("Context channel disabled; update should not be called.")
         pieces = [token_input] + prev_ff
         normed = [norm(part) for norm, part in zip(self.part_norms, pieces)]
-        fused = torch.cat(normed, dim=-1).detach()
+        fused = self.stack_drop(torch.cat(normed, dim=-1)).detach()
         return self.writer(fused)
 
 
