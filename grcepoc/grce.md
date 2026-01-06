@@ -177,3 +177,8 @@ Wichtige Flags:
 - `--prompt`: Starttext für die Generierung (Default `"Bigotry is"`).
 
 Damit lässt sich experimentell nachvollziehen, wie der zusätzliche, gefensterte Kontextkanal das Modellverhalten beeinflusst (z.B. durch Variation der Kontextdimension, des Gatings oder durch Abschalten von `stop_grad` in der `GRCEContextChannel.project`-Methode).
+
+### Hypothesen zur Dynamik des Kontextvektors
+
+- **Überlagerte stabile vs. schnelle Komponenten:** Das rekurrente GRCE-Signal dürfte sich als Überlagerung zweier Einbettungsklassen äußern: (a) robuste, langsam variierende Komponenten, die globale Kontextmerkmale (Sprache, Rolle, Tonalität) tragen, und (b) schnell schaltende Komponenten, die lokale Informationen wie Satzposition oder grammatische Anforderungen für das nächste Token repräsentieren.
+- **Mismatch-Erkennung:** Trifft das nächste Token nicht zu den verhergesagten Kontextmerkmalen, entstehen Inkompatibilitäten zwischen Kontextvektor und Token-Embedding, und dann verliert die Überlagerung dieser Vektoren an Bedeutung. Das Modell könnte diese Situation erkennen, um einen speziellen Alarm-Token zu emittieren. Training auf Eingaben mit absichtlich falschem Letzt-Token würde solche Fälle markieren und das Netzwerk auf diese Art konsistenzkritische Positionen sensibilisieren.
