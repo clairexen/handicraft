@@ -399,9 +399,9 @@ class GRCEContextChannel(nn.Module):
                 nn.Linear(4 * config.n_embd, config.n_grce),
                 nn.LayerNorm(config.n_grce),
                 nn.GELU(),
-                nn.Linear(config.n_grce, 4 * config.n_embd),
+                nn.Linear(config.n_grce, 4 * config.n_grce),
                 nn.GELU(),
-                nn.Linear(4 * config.n_embd, config.n_embd),
+                nn.Linear(4 * config.n_grce, config.n_embd),
             )
 
     def project(self, context: torch.Tensor) -> torch.Tensor:
