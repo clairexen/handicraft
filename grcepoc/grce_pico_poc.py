@@ -1,7 +1,7 @@
 """GRCE proof-of-concept based on the picoGPT Shakespeare demo.
 
 This script keeps the picoGPT spirit of being small and hackable while
-adding the Gated Recurrent Context Encoding (GRCE) channel described in
+adding the Gradient-less Recurrent Context Encoding (GRCE) channel described in
 ``grce.md``. It trains a tiny character-level Transformer on the bundled
 Simple English Wikipedia split and shows how the recurrent context vector can
 be integrated with a stop-gradient constraint across time.

@@ -1,4 +1,4 @@
-# Gated Recurrent Context Encoding (GRCE) with stop-gradient across time
+# Gradiend-less Recurrent Context Encoding (GRCE)
 
 Prompt:
 
@@ -130,7 +130,7 @@ Du schlägst einen **explicit recurrent context state** (c_t) vor, der **additiv
 
 Wenn du das “paper-ready” labeln willst:
 
-**Gated Recurrent Context Encoding (GRCE)**:
+**Gradient-less Recurrent Context Encoding (GRCE)**:
 ein separater, gated, explizit rekurrenter Zustandskanal, der als additiver Kontextbias in die Token-Inputs eingespeist wird; optional mit **stop-gradient across time**.
 
 ---
