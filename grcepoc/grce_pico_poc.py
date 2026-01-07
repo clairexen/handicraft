@@ -394,7 +394,7 @@ class GRCEContextChannel(nn.Module):
                 nn.LayerNorm(config.n_embd) for _ in range(config.n_layer + 1)
             )
             self.stack_drop = nn.Dropout(config.dropout)
-            hidden = 4 * (config.n_embd + config.n_grce)
+            hidden = max(config.n_layer * config.n_grce, 4 * config.n_embd)
             self.writer = nn.Sequential(
                 nn.Linear(concat_dim, hidden),
                 nn.GELU(),
@@ -410,10 +410,7 @@ class GRCEContextChannel(nn.Module):
                     nn.Linear(config.n_grce, 4 * config.n_grce),
                     nn.GELU(),
                     nn.Dropout(config.dropout),
-                    nn.Linear(4 * config.n_grce, 4 * config.n_embd),
-                    nn.GELU(),
-                    nn.Dropout(config.dropout),
-                    nn.Linear(4 * config.n_embd, config.n_embd),
+                    nn.Linear(4 * config.n_grce, config.n_embd),
                 )
                 for _ in range(config.n_layer)
             )
