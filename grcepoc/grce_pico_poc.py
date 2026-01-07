@@ -1077,12 +1077,12 @@ def main() -> None:
         print(color_text("Interrupted by user; exiting cleanly.", Colors.MAGENTA))
 
     finally:
-        if log_file is not None:
-            log_file.close()
         sys.stdout.flush()
         sys.stderr.flush()
         sys.stdout = orig_stdout
         sys.stderr = orig_stderr
+        if log_file is not None:
+            log_file.close()
 
 
 if __name__ == "__main__":
