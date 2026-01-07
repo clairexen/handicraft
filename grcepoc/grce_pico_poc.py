@@ -846,14 +846,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--generate",
         type=int,
-        default=15,
+        default=10,
         help="Number of new tokens to sample after training",
     )
     parser.add_argument(
         "--prompt",
         type=str,
-        # default="bigotry is",  # hard prompt
-        default="children are",  # easy prompt
+        # default="bigotry is", # hard prompt
+        default="in summary, children are", # easy prompt
         help="Prompt used for generation",
     )
     parser.add_argument(
