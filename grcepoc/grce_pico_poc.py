@@ -429,31 +429,30 @@ class GRCEContextChannel(nn.Module):
         self.disabled = config.n_grce <= 0
         self.config = config
         if not self.disabled:
-            concat_dim = (config.n_layer + 1) * config.n_embd
-            self.part_norms = nn.ModuleList(
-                nn.LayerNorm(config.n_embd) for _ in range(config.n_layer + 1)
+            concat_dim = (config.n_layer + 1) * (config.n_embd // 4)
+            self.part_seq = nn.ModuleList(
+                nn.Sequential(
+                    nn.LayerNorm(config.n_embd),
+                    nn.Linear(config.n_embd, config.n_embd // 2),
+                    nn.GELU(),
+                    nn.Linear(config.n_embd // 2, config.n_embd // 4),
+                    nn.Dropout(config.dropout),
+                )
+                for _ in range(config.n_layer + 1)
             )
-            self.stack_drop = nn.Dropout(config.dropout)
             self.writer = nn.Sequential(
                 nn.Linear(concat_dim, 4 * config.n_grce),
                 nn.GELU(),
-                nn.Dropout(config.dropout),
-                nn.Linear(4 * config.n_grce, 4 * config.n_grce),
-                nn.GELU(),
-                nn.Dropout(config.dropout),
                 nn.Linear(4 * config.n_grce, config.n_grce),
+                nn.Dropout(config.dropout),
                 nn.LayerNorm(config.n_grce),
             )
             self.bias_generators = nn.ModuleList(
                 nn.Sequential(
-                    nn.Linear(config.n_grce, 4 * config.n_grce),
+                    nn.Linear(config.n_grce, 2 * (config.n_grce + config.n_embd)),
                     nn.GELU(),
+                    nn.Linear(2 * (config.n_grce + config.n_embd), config.n_embd),
                     nn.Dropout(config.dropout),
-                    nn.Linear(4 * config.n_grce, max(config.n_embd, config.n_grce)),
-                    nn.Linear(max(config.n_embd, config.n_grce), 4 * config.n_embd),
-                    nn.GELU(),
-                    nn.Dropout(config.dropout),
-                    nn.Linear(4 * config.n_embd, config.n_embd),
                 )
                 for _ in range(config.n_layer)
             )
@@ -470,9 +469,8 @@ class GRCEContextChannel(nn.Module):
     ) -> torch.Tensor:
         if self.disabled:
             raise RuntimeError("Context channel disabled; update should not be called.")
-        pieces = [block_input] + ffn_outputs
-        normed = [norm(part) for norm, part in zip(self.part_norms, pieces)]
-        fused = self.stack_drop(torch.cat(normed, dim=-1)).detach()
+        pieces = [piece.detach() for piece in [block_input] + ffn_outputs]
+        fused = torch.cat([norm(part) for norm, part in zip(self.part_seq, pieces)], dim=-1)
         return self.writer(fused)
 
 
