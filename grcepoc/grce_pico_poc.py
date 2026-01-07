@@ -366,21 +366,26 @@ class GPTCore(nn.Module):
 
     def forward(
         self, idx: torch.Tensor, block_biases: List[torch.Tensor] | None = None
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, List[torch.Tensor], torch.Tensor]:
         B, T = idx.shape
         device = idx.device
         tok = self.tok_emb(idx)
         pos = self.pos_emb(torch.arange(T, device=device))
         x = self.drop(tok + pos)
         ff_outputs: List[torch.Tensor] = []
+        first_block_input: torch.Tensor | None = None
         for layer_idx, block in enumerate(self.blocks):
             if block_biases is not None:
                 x = x + block_biases[layer_idx]
+            if first_block_input is None:
+                first_block_input = x
             x, _, ff_out = block(x)
             ff_outputs.append(ff_out)
         x = self.ln_f(x)
         logits = self.head(x)
-        return logits, ff_outputs
+        if first_block_input is None:
+            first_block_input = torch.zeros_like(x)  # pragma: no cover
+        return logits, ff_outputs, first_block_input
 
 
 class GRCEContextChannel(nn.Module):
@@ -422,12 +427,12 @@ class GRCEContextChannel(nn.Module):
 
     def update(
         self,
-        token_input: torch.Tensor,
-        prev_ff: List[torch.Tensor],
+        block_input: torch.Tensor,
+        ffn_outputs: List[torch.Tensor],
     ) -> torch.Tensor:
         if self.disabled:
             raise RuntimeError("Context channel disabled; update should not be called.")
-        pieces = [token_input] + prev_ff
+        pieces = [block_input] + ffn_outputs
         normed = [norm(part) for norm, part in zip(self.part_norms, pieces)]
         fused = self.stack_drop(torch.cat(normed, dim=-1)).detach()
         return self.writer(fused)
@@ -450,10 +455,6 @@ class GRCEGPT(nn.Module):
         context = None
         if not self.context.disabled:
             context = torch.zeros(B, self.config.n_grce, device=device)
-        prev_ff = [
-            torch.zeros(B, self.config.n_embd, device=device)
-            for _ in range(self.config.n_layer)
-        ]
         logits_steps = []
         for t in range(T):
             prefix = idx[:, : t + 1]
@@ -475,11 +476,13 @@ class GRCEGPT(nn.Module):
                     )
                     full[:, -1, :] = bias_vec
                     block_biases.append(full)
-            logits, ff_outputs = self.core(prefix, block_biases=block_biases)
+            logits, ff_outputs, block0_inputs = self.core(
+                prefix, block_biases=block_biases
+            )
             curr_ff = [ff[:, -1, :] for ff in ff_outputs]
             if not self.context.disabled and context is not None:
-                context = self.context.update(token_input, prev_ff)
-            prev_ff = [ff.detach() for ff in curr_ff]
+                block0_last = block0_inputs[:, -1, :]
+                context = self.context.update(block0_last, curr_ff)
             logits_steps.append(logits[:, -1:, :])
         logits = torch.cat(logits_steps, dim=1)
         loss = None
