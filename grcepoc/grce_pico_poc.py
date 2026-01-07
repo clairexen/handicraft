@@ -39,6 +39,7 @@ from transformers import GPT2TokenizerFast
 
 DISSONANCE_TOKEN = "<|?!|>"
 DISSONANCE_RATE = 0.01
+FANCY_SPACE = "\u2423"  # Open Box symbol for visible spaces
 
 
 # -----------------------------------------------------------------------------
@@ -632,7 +633,6 @@ def train_model(
     sample_prompt: torch.Tensor,
     sample_chars: int,
     tokenizer: GPT2TokenizerWrapper,
-    prompt_text: str,
 ) -> Tuple[int, List[Dict[str, float]]]:
     optim = torch.optim.AdamW(model.parameters(), lr=3e-4)
     total_steps = start_step
@@ -663,12 +663,25 @@ def train_model(
                     sample_chars,
                 )
             model.train()
-            sample_text = tokenizer.decode(sample_tokens[0].cpu()).replace("\n", " ")
-            prefix = prompt_text.replace("\n", " ")
-            if not sample_text.startswith(prefix):
-                prefix = sample_text[: len(prefix)]
-            completion = sample_text[len(prefix) :]
-            colored_sample = prefix + color_text(completion, Colors.WHITE, bold=True)
+            prompt_ids = sample_prompt[0].detach().cpu().tolist()
+            sample_ids = sample_tokens[0].detach().cpu().tolist()
+            completion_ids = sample_ids[len(prompt_ids) :]
+
+            def tidy(text: str) -> str:
+                return text.replace("\n", " ").replace(" ", FANCY_SPACE)
+
+            prefix_text = tidy(
+                tokenizer.tokenizer.decode(prompt_ids, clean_up_tokenization_spaces=False)
+            )
+            completion_parts: list[str] = []
+            for tok_id in completion_ids:
+                piece = tokenizer.tokenizer.decode([tok_id], clean_up_tokenization_spaces=False)
+                piece = tidy(piece)
+                if not piece:
+                    continue
+                first = color_text(piece[0], Colors.WHITE, bold=True)
+                completion_parts.append(first + piece[1:])
+            colored_sample = prefix_text + "".join(completion_parts)
             loss_text = (
                 color_text(f"train loss {split_losses['train']:.3f}", Colors.GREEN)
                 + " | "
@@ -1059,7 +1072,6 @@ def main() -> None:
                 prompt_tokens,
                 args.generate,
                 tokenizer,
-                args.prompt,
             )
             loss_history.extend(updates)
             print(color_text(f"Total steps so far: {total_steps}", Colors.YELLOW))
