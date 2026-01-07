@@ -25,6 +25,7 @@ from typing import Dict, List, Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import string
 from tokenizers import Tokenizer
 from tokenizers.decoders import ByteLevel as ByteLevelDecoder
 from tokenizers.models import BPE
@@ -41,6 +42,35 @@ from transformers import GPT2TokenizerFast
 DISSONANCE_TOKEN = "<|?!|>"
 DISSONANCE_RATE = 0.01
 FANCY_SPACE = "\u2423"  # Open Box symbol for visible spaces
+ASCII_LETTERS = set(string.ascii_letters)
+
+
+def _restrict_bpe_training_text(text: str) -> str:
+    pieces: list[str] = []
+    i = 0
+    length = len(text)
+    while i < length:
+        ch = text[i]
+        if ch in ASCII_LETTERS:
+            start = i
+            i += 1
+            while i < length and text[i] in ASCII_LETTERS:
+                i += 1
+            pieces.append(text[start:i])
+            continue
+        if ch == " ":
+            pieces.append(ch)
+            i += 1
+            continue
+        if ch in "\n\r\t":
+            pieces.append(ch)
+            i += 1
+            continue
+        pieces.append(" ")
+        pieces.append(ch)
+        pieces.append(" ")
+        i += 1
+    return "".join(pieces)
 
 
 # -----------------------------------------------------------------------------
@@ -51,6 +81,11 @@ FANCY_SPACE = "\u2423"  # Open Box symbol for visible spaces
 def load_text_file(path: pathlib.Path) -> str:
     if not path.exists():
         raise FileNotFoundError(f"Could not find {path}. Provide a text file path.")
+    if path.suffix == ".gz":
+        import gzip
+
+        with gzip.open(path, "rt", encoding="utf-8") as fh:
+            return fh.read()
     return path.read_text(encoding="utf-8")
 
 
@@ -129,7 +164,8 @@ class GPT2TokenizerWrapper:
             special_tokens=[],
             initial_alphabet=initial_alphabet,
         )
-        tokenizer.train_from_iterator([train_text], trainer=trainer)
+        sanitized = _restrict_bpe_training_text(train_text)
+        tokenizer.train_from_iterator([sanitized], trainer=trainer)
         tokenizer.post_processor = ByteLevelProcessor(trim_offsets=False)
         tokenizer.add_special_tokens([DISSONANCE_TOKEN])
         tokenizer.save(str(cache_path))
@@ -762,7 +798,7 @@ def parse_args() -> argparse.Namespace:
         "--data",
         type=str,
         default="simplewiki",
-        help="Dataset base name; expects data/<name>-train.asc and ...-test.asc.",
+        help="Dataset base name; expects data/<name>-train.txt.gz and ...-test.txt.gz.",
     )
     parser.add_argument("--device", type=str, default="cpu", help="cpu or cuda")
     parser.add_argument("--steps", type=int, default=10, help="Training steps per cycle")
@@ -879,8 +915,8 @@ def main() -> None:
     try:
         orig_stdout, orig_stderr, log_file = sys.stdout, sys.stderr, None
 
-        train_path = pathlib.Path("data") / f"{args.data}-train.asc"
-        test_path = pathlib.Path("data") / f"{args.data}-test.asc"
+        train_path = pathlib.Path("data") / f"{args.data}-train.txt.gz"
+        test_path = pathlib.Path("data") / f"{args.data}-test.txt.gz"
         train_limit = parse_char_arg(args.train_chars)
         test_limit = parse_char_arg(args.test_chars)
         vocab_limit = parse_char_arg(args.vocab_chars)

@@ -129,7 +129,7 @@ ein separater, gated, explizit rekurrenter Zustandskanal, der als additiver Kont
 
 - ## Proof-of-Concept: picoGPT + SimpleWiki + GRCE
 -
-- Der Ordner enthält jetzt ein kleines **picoGPT-inspiriertes Demo** (`grce_pico_poc.py`), das die Idee oben praktisch macht:
+- Der Ordner enthält jetzt ein kleines **picoGPT-inspiriertes Demo** (`grce.py`), das die Idee oben praktisch macht:
 -
 - **Architektur:** Standardmäßig `n_layer=8`, `n_head=8`, `n_embd=192`, `n_grce=96` und `block_size=64` (vergleichsweise kompakt; GPT-2 base liegt bei 12/12/768/1024). Der explizite GRCE-Kanal bildet die `stack vector` genannte Verkettung aus dem tatsächlichen Block-1-Eingang **und allen FFN-Ausgängen derselben Position** (`(n_layer+1)*n_embd`). Jede der `(n_layer+1)` Komponenten erhält zunächst eine eigene LayerNorm; die verkettete Stack-Vector wird danach gedropoutet und in das Writer-MLP `(stack → 4·n_grce → GELU → Dropout → 4·n_grce → GELU → Dropout → n_grce → LayerNorm)` eingespeist. Dieses normalisierte `n_grce`-Signal definieren wir als `context`. Für jeden Block existiert anschließend ein Bias-Generator `context → 4·n_grce → GELU → Dropout → max(n_grce,n_embd) → 4·n_embd → GELU → Dropout → n_embd`, dessen Ergebnis nur auf das neu angefügte Token im entsprechenden Block addiert wird. Der Gradientenfluss wird ausschließlich an der `stack vector` abgeschnitten; sowohl `context` als auch alle Bias-Pfade bleiben differentiabel.
 - **Dissonance-Marker:** Ein zusätzlicher Spezial-Token `<|?!|>` erweitert das Vokabular. Bei der Datenaufbereitung werden an ≈1 % der Positionen (train & test) künstliche Zweierfolgen eingefügt: ein zufällig gewählter Nicht-Spezial-Token gefolgt vom `<|?!|>`-Marker. Diese “Dissonance”-Ereignisse dienen als explizite Lernsignale für inkonsistente Zustände, die das Modell über den GRCE-Kanal erkennen oder propagieren kann.
@@ -147,7 +147,7 @@ Verwendung (z.B. in einer lokalen venv):
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-python grce_pico_poc.py \
+python grce.py \
   --steps 80 --block-size 512 --batch-size 8 \
   --generate 300 --eval-interval 20 --eval-iters 5
 ```
