@@ -1,6 +1,6 @@
 # Agent Notes
 
-- **Project focus:** Gradient-less Recurrent Context Encoding (GRCE) atop a picoGPT-style SimpleWiki language model.
+- **Project focus:** Gradient-sopped Recurrent Context Encoding (GRCE) atop a picoGPT-style SimpleWiki language model.
 - **Model defaults:** `n_layer=8`, `n_head=8`, `n_embd=192`, `n_grce=96`, `block_size=64`, `dropout=0.05`, `vocab_size=2000`.
 - **GRCE geometry:** `(n_layer+1)*n_embd → 4*n_embd → n_grce → 4*n_embd → n_embd` with stop-gradient at the concatenation of token input + previous FFN outputs.
 - **Tokenizer workflow:** Byte-level BPE trained on up to `--vocab-chars` of the training text; saved under `model/<trainstem>_<limit>_<vocab>.json` to stay colocated with checkpoints.
