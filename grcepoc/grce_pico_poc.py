@@ -670,9 +670,19 @@ def train_model(
             def tidy(text: str) -> str:
                 return text.replace("\n", " ").replace(" ", FANCY_SPACE)
 
-            prefix_text = tidy(
-                tokenizer.tokenizer.decode(prompt_ids, clean_up_tokenization_spaces=False)
-            )
+            prefix_tokens = [
+                tidy(
+                    tokenizer.tokenizer.decode([tok], clean_up_tokenization_spaces=False)
+                )
+                for tok in prompt_ids
+            ]
+            prefix_parts: list[str] = []
+            for piece in prefix_tokens:
+                if not piece:
+                    continue
+                first = color_text(piece[0], Colors.YELLOW, bold=True)
+                prefix_parts.append(first + piece[1:])
+            prefix_text = "".join(prefix_parts)
             completion_parts: list[str] = []
             for tok_id in completion_ids:
                 piece = tokenizer.tokenizer.decode([tok_id], clean_up_tokenization_spaces=False)
@@ -842,7 +852,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--prompt",
         type=str,
-        default="bigotry is",
+        # default="bigotry is",  # hard prompt
+        default="children are",  # easy prompt
         help="Prompt used for generation",
     )
     parser.add_argument(
