@@ -801,7 +801,7 @@ def parse_args() -> argparse.Namespace:
         help="Dataset base name; expects data/<name>-train.txt.gz and ...-test.txt.gz.",
     )
     parser.add_argument("--device", type=str, default="cpu", help="cpu or cuda")
-    parser.add_argument("--steps", type=int, default=10, help="Training steps per cycle")
+    parser.add_argument("--steps", type=int, default=100, help="Training steps per cycle")
     parser.add_argument(
         "--cycles",
         type=int,
@@ -817,7 +817,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=8,
+        default=64,
         help="Number of sequences per optimization step.",
     )
     parser.add_argument(
@@ -853,7 +853,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--eval-interval",
         type=int,
-        default=1,
+        default=10,
         help="How often to run train/test evaluation steps.",
     )
     parser.add_argument(
