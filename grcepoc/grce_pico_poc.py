@@ -410,12 +410,16 @@ class GRCEContextChannel(nn.Module):
                 nn.Linear(hidden, config.n_grce),
                 nn.LayerNorm(config.n_grce),
             )
+            hidden = 2 * (config.n_grce + config.n_embd)
             self.bias_generators = nn.ModuleList(
                 nn.Sequential(
-                    nn.Linear(config.n_grce, 4 * config.n_grce),
+                    nn.Linear(config.n_grce, hidden),
                     nn.GELU(),
                     nn.Dropout(config.dropout),
-                    nn.Linear(4 * config.n_grce, config.n_embd),
+                    nn.Linear(hidden, hidden),
+                    nn.GELU(),
+                    nn.Dropout(config.dropout),
+                    nn.Linear(hidden, config.n_embd),
                 )
                 for _ in range(config.n_layer)
             )
