@@ -452,20 +452,20 @@ class GPTCore(nn.Module):
         tok = self.tok_emb(idx)
         pos = self.pos_emb(torch.arange(T, device=device))
         x = self.drop(tok + pos)
-        ff_outputs: List[torch.Tensor] = []
+        block_outputs: List[torch.Tensor] = []
         first_block_input: torch.Tensor | None = None
         for layer_idx, block in enumerate(self.blocks):
             if block_biases is not None:
                 x = x + block_biases[layer_idx]
             if first_block_input is None:
                 first_block_input = x
-            x, _, ff_out = block(x)
-            ff_outputs.append(ff_out)
+            x, _, _ = block(x)
+            block_outputs.append(x)
         x = self.ln_f(x)
         logits = self.head(x)
         if first_block_input is None:
             first_block_input = torch.zeros_like(x)  # pragma: no cover
-        return logits, ff_outputs, first_block_input
+        return logits, block_outputs, first_block_input
 
 
 class GRCEContextChannel(nn.Module):
@@ -506,11 +506,11 @@ class GRCEContextChannel(nn.Module):
     def update(
         self,
         block_input: torch.Tensor,
-        ffn_outputs: List[torch.Tensor],
+        block_outputs: List[torch.Tensor],
     ) -> torch.Tensor:
         if self.disabled:
             raise RuntimeError("Context channel disabled; update should not be called.")
-        pieces = [piece.detach() for piece in [block_input] + ffn_outputs]
+        pieces = [piece.detach() for piece in [block_input] + block_outputs]
         projected = [proj(part) for proj, part in zip(self.part_seq, pieces)]
         fused = torch.stack(projected, dim=0).sum(dim=0)
         return self.writer(fused)
@@ -554,13 +554,13 @@ class GRCEGPT(nn.Module):
                     )
                     full[:, -1, :] = bias_vec
                     block_biases.append(full)
-            logits, ff_outputs, block0_inputs = self.core(
+            logits, block_outputs, block0_inputs = self.core(
                 prefix, block_biases=block_biases
             )
-            curr_ff = [ff[:, -1, :] for ff in ff_outputs]
+            curr_blocks = [bo[:, -1, :] for bo in block_outputs]
             if not self.context.disabled and context is not None:
                 block0_last = block0_inputs[:, -1, :]
-                context = self.context.update(block0_last, curr_ff)
+                context = self.context.update(block0_last, curr_blocks)
             logits_steps.append(logits[:, -1:, :])
         logits = torch.cat(logits_steps, dim=1)
         loss = None
