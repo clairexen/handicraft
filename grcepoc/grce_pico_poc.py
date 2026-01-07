@@ -429,30 +429,26 @@ class GRCEContextChannel(nn.Module):
         self.disabled = config.n_grce <= 0
         self.config = config
         if not self.disabled:
-            concat_dim = (config.n_layer + 1) * (config.n_embd // 4)
+            inner = (config.n_embd + config.n_grce) // 2
+            hidden = 2 * (config.n_embd + config.n_grce)
             self.part_seq = nn.ModuleList(
                 nn.Sequential(
                     nn.LayerNorm(config.n_embd),
-                    nn.Linear(config.n_embd, config.n_embd // 2),
+                    nn.Linear(config.n_embd, hidden),
                     nn.GELU(),
-                    nn.Linear(config.n_embd // 2, config.n_embd // 4),
+                    nn.Linear(hidden, inner),
                     nn.Dropout(config.dropout),
                 )
                 for _ in range(config.n_layer + 1)
             )
             self.writer = nn.Sequential(
-                nn.Linear(concat_dim, 4 * config.n_grce),
+                nn.Linear(inner, hidden),
                 nn.GELU(),
-                nn.Linear(4 * config.n_grce, config.n_grce),
-                nn.Dropout(config.dropout),
-                nn.LayerNorm(config.n_grce),
+                nn.Linear(hidden, config.n_grce),
             )
             self.bias_generators = nn.ModuleList(
                 nn.Sequential(
-                    nn.Linear(config.n_grce, 2 * (config.n_grce + config.n_embd)),
-                    nn.GELU(),
-                    nn.Linear(2 * (config.n_grce + config.n_embd), config.n_embd),
-                    nn.Dropout(config.dropout),
+                    nn.Linear(config.n_grce, config.n_embd),
                 )
                 for _ in range(config.n_layer)
             )
@@ -470,7 +466,8 @@ class GRCEContextChannel(nn.Module):
         if self.disabled:
             raise RuntimeError("Context channel disabled; update should not be called.")
         pieces = [piece.detach() for piece in [block_input] + ffn_outputs]
-        fused = torch.cat([norm(part) for norm, part in zip(self.part_seq, pieces)], dim=-1)
+        projected = [proj(part) for proj, part in zip(self.part_seq, pieces)]
+        fused = torch.stack(projected, dim=0).sum(dim=0)
         return self.writer(fused)
 
 
