@@ -153,7 +153,7 @@ python grce_pico_poc.py \
 
 Wichtige Flags:
 
-- `--train-path` / `--test-path`: Textdateien für Training/Test (Default: SimpleWiki Split, auch in `.gitignore`).
+- `--data`: Basisname des Korpus (Default `simplewiki`), sucht automatisch `data/<name>-train.asc` bzw. `...-test.asc`.
 - `--train-chars` / `--test-chars`: begrenzen die geladenen Zeichen (Suffixe wie `10k`, `2M` sind erlaubt).
 - `--vocab-chars`: separater Ausschnitt für den Tokenizer (damit lässt sich ein kleines Vokabular mit denselben Kürzeln wie oben erzeugen).
 - `--eval-interval`, `--eval-iters`: wie oft und wie intensiv der Testing-Pass läuft.

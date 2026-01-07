@@ -672,16 +672,10 @@ def parse_args() -> argparse.Namespace:
         description=__doc__, formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     parser.add_argument(
-        "--train-path",
-        type=pathlib.Path,
-        default=pathlib.Path("data/simplewiki-train.asc"),
-        help="Training corpus file (default: Simple English Wikipedia split).",
-    )
-    parser.add_argument(
-        "--test-path",
-        type=pathlib.Path,
-        default=pathlib.Path("data/simplewiki-test.asc"),
-        help="Held-out corpus file for regular testing.",
+        "--data",
+        type=str,
+        default="simplewiki",
+        help="Dataset base name; expects data/<name>-train.asc and ...-test.asc.",
     )
     parser.add_argument("--device", type=str, default="cpu", help="cpu or cuda")
     parser.add_argument("--steps", type=int, default=10, help="Training steps per cycle")
@@ -797,8 +791,10 @@ def main() -> None:
     try:
         orig_stdout, orig_stderr, log_file = sys.stdout, sys.stderr, None
 
-        train_text = load_text_file(args.train_path)
-        test_text = load_text_file(args.test_path)
+        train_path = pathlib.Path("data") / f"{args.data}-train.asc"
+        test_path = pathlib.Path("data") / f"{args.data}-test.asc"
+        train_text = load_text_file(train_path)
+        test_text = load_text_file(test_path)
         train_limit = parse_char_arg(args.train_chars)
         test_limit = parse_char_arg(args.test_chars)
         vocab_limit = parse_char_arg(args.vocab_chars)
@@ -810,9 +806,7 @@ def main() -> None:
             raise ValueError("Training text is empty; provide a larger corpus or lower --train-chars")
         tokenizer_dir = pathlib.Path("model")
         tokenizer_limit = parse_char_arg(args.vocab_chars or args.train_chars)
-        tokenizer_key = (
-            f"{args.train_path.stem}_{tokenizer_limit or 'all'}_{args.tokenizer_vocab}"
-        )
+        tokenizer_key = f"{train_path.stem}_{tokenizer_limit or 'all'}_{args.tokenizer_vocab}"
         tokenizer_path = tokenizer_dir / f"{tokenizer_key}.json"
         print(color_text(f"Tokenizer: {tokenizer_path}", Colors.BLUE))
         tok_wall_start = time.time()
@@ -824,7 +818,7 @@ def main() -> None:
             args.tokenizer_vocab,
         )
 
-        print(color_text(f"Train Data: {args.train_path}", Colors.BLUE))
+        print(color_text(f"Train Data: {train_path}", Colors.BLUE))
         train_tokens = tokenizer.encode_corpus(train_text)
         train_tokens, train_inserts = insert_dissonance_markers(
             train_tokens,
@@ -834,7 +828,7 @@ def main() -> None:
             random.Random(1234),
         )
 
-        print(color_text(f"Test Data: {args.test_path}", Colors.BLUE))
+        print(color_text(f"Test Data: {test_path}", Colors.BLUE))
         test_tokens = tokenizer.encode_corpus(test_text)
         test_tokens, test_inserts = insert_dissonance_markers(
             test_tokens,
@@ -862,8 +856,8 @@ def main() -> None:
             test_text=test_text,
             train_bytes=train_bytes,
             test_bytes=test_bytes,
-            train_path=args.train_path,
-            test_path=args.test_path,
+            train_path=train_path,
+            test_path=test_path,
         )
 
         tok_summary = (
