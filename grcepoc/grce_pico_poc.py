@@ -478,7 +478,10 @@ class GRCEContextChannel(nn.Module):
             self.n_hidden = min(3 * min(config.n_embd, config.n_grce), 2 * max(config.n_embd, config.n_grce))
             assert min(config.n_embd, config.n_grce) < self.n_inner < self.n_hidden
             assert self.n_inner < max(config.n_embd, config.n_grce)
-            self.part_seq = nn.ModuleList(
+
+            # Input: the block input/output vectors for layer _ at position N
+            # Output: a component of the "pre-link inner context vector", consolidate by vector addition
+            self.context_sampler = nn.ModuleList(
                 nn.Sequential(
                     nn.Linear(config.n_embd, self.n_hidden),
                     nn.GELU(),
@@ -487,6 +490,9 @@ class GRCEContextChannel(nn.Module):
                 )
                 for _ in range(config.n_layer + 1)
             )
+
+            # Input: the compiled "pre-link inner context vector" at position N
+            # Output: the "post-link inner context vector" at position N+1
             self.context_link = nn.Sequential(
                 nn.Linear(self.n_inner, config.n_grce),
                 nn.Dropout(config.dropout),
@@ -494,11 +500,16 @@ class GRCEContextChannel(nn.Module):
                 nn.Linear(config.n_grce, self.n_hidden),
                 nn.GELU(),
                 nn.Linear(self.n_hidden, self.n_inner),
-                nn.Dropout(config.dropout)
+                nn.Dropout(config.dropout),
             )
-            self.bias_generators = nn.ModuleList(
+
+            # Input: the "post-link inner context vector" at position N+1
+            # Output: the "context bias" for layer _ at position N+1
+            self.context_bias_gen = nn.ModuleList(
                 nn.Sequential(
-                    nn.Linear(self.n_inner, config.n_embd),
+                    nn.Linear(self.n_inner, self.n_hidden),
+                    nn.GELU(),
+                    nn.Linear(self.n_hidden, config.n_embd),
                     nn.Dropout(config.dropout),
                 )
                 for _ in range(config.n_layer)
@@ -519,7 +530,9 @@ class GRCEContextChannel(nn.Module):
         pieces = [piece.detach() for piece in [block_input] + block_outputs]
         projected = [proj(part) for proj, part in zip(self.part_seq, pieces)]
         fused = torch.stack(projected, dim=0).sum(dim=0)
-        return self.context_link(fused)
+        inner_state = self.context_link(fused)
+        self._last_inner = inner_state
+        return inner_state
 
 
 class GRCEGPT(nn.Module):
