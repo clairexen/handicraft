@@ -518,7 +518,7 @@ class GRCEContextChannel(nn.Module):
     def project(self, context: torch.Tensor) -> List[torch.Tensor]:
         if self.disabled:
             raise RuntimeError("Context channel disabled; project should not be called.")
-        return [gen(context) for gen in self.bias_generators]
+        return [gen(context) for gen in self.context_bias_gen]
 
     def update(
         self,
@@ -528,11 +528,9 @@ class GRCEContextChannel(nn.Module):
         if self.disabled:
             raise RuntimeError("Context channel disabled; update should not be called.")
         pieces = [piece.detach() for piece in [block_input] + block_outputs]
-        projected = [proj(part) for proj, part in zip(self.part_seq, pieces)]
-        fused = torch.stack(projected, dim=0).sum(dim=0)
-        inner_state = self.context_link(fused)
-        self._last_inner = inner_state
-        return inner_state
+        sampled = [sampler(part) for sampler, part in zip(self.context_sampler, pieces)]
+        fused = torch.stack(sampled, dim=0).sum(dim=0)
+        return self.context_link(fused)
 
 
 class GRCEGPT(nn.Module):
@@ -551,7 +549,8 @@ class GRCEGPT(nn.Module):
         device = idx.device
         context = None
         if not self.context.disabled:
-            context = torch.zeros(B, self.config.n_grce, device=device)
+            context_dim = self.context.n_inner
+            context = torch.zeros(B, context_dim, device=device)
         logits_steps = []
         for t in range(T):
             prefix = idx[:, : t + 1]
