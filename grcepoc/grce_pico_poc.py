@@ -806,7 +806,7 @@ def main() -> None:
             raise ValueError("Training text is empty; provide a larger corpus or lower --train-chars")
         tokenizer_dir = pathlib.Path("model")
         tokenizer_limit = parse_char_arg(args.vocab_chars or args.train_chars)
-        tokenizer_key = f"{train_path.stem}_{tokenizer_limit or 'all'}_{args.tokenizer_vocab}"
+        tokenizer_key = f"{args.data}_vocab_{tokenizer_limit or 'all'}_{args.tokenizer_vocab}"
         tokenizer_path = tokenizer_dir / f"{tokenizer_key}.json"
         print(color_text(f"Tokenizer: {tokenizer_path}", Colors.BLUE))
         tok_wall_start = time.time()
@@ -877,8 +877,9 @@ def main() -> None:
         model_tag = build_model_tag(config)
         model_dir = pathlib.Path("model")
         model_dir.mkdir(parents=True, exist_ok=True)
-        model_path = model_dir / f"{model_tag}.pt"
-        log_path = model_dir / f"{model_tag}.log"
+        prefix = f"{args.data}_model_"
+        model_path = model_dir / f"{prefix}{model_tag}.pt"
+        log_path = model_dir / f"{prefix}{model_tag}.log"
         print(color_text(f"Model: {model_path}", Colors.BLUE))
         temp_model = GRCEGPT(config)
         non_emb_params = sum(
