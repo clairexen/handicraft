@@ -474,31 +474,31 @@ class GRCEContextChannel(nn.Module):
         self.disabled = config.n_grce <= 0
         self.config = config
         if not self.disabled:
-            inner = (3 * min(config.n_embd, config.n_grce) + max(config.n_embd, config.n_grce)) // 4
-            hidden = min(3 * min(config.n_embd, config.n_grce), 2 * max(config.n_embd, config.n_grce))
-            assert min(config.n_embd, config.n_grce) < inner < hidden
-            assert inner < max(config.n_embd, config.n_grce)
+            self.n_inner = (3 * min(config.n_embd, config.n_grce) + max(config.n_embd, config.n_grce)) // 4
+            self.n_hidden = min(3 * min(config.n_embd, config.n_grce), 2 * max(config.n_embd, config.n_grce))
+            assert min(config.n_embd, config.n_grce) < self.n_inner < self.n_hidden
+            assert self.n_inner < max(config.n_embd, config.n_grce)
             self.part_seq = nn.ModuleList(
                 nn.Sequential(
-                    nn.Linear(config.n_embd, hidden),
+                    nn.Linear(config.n_embd, self.n_hidden),
                     nn.GELU(),
-                    nn.Linear(hidden, inner),
+                    nn.Linear(self.n_hidden, self.n_inner),
                     nn.Dropout(config.dropout),
                 )
                 for _ in range(config.n_layer + 1)
             )
             self.context_link = nn.Sequential(
-                nn.Linear(inner, config.n_grce),
+                nn.Linear(self.n_inner, config.n_grce),
                 nn.Dropout(config.dropout),
 
-                nn.Linear(config.n_grce, hidden),
+                nn.Linear(config.n_grce, self.n_hidden),
                 nn.GELU(),
-                nn.Linear(hidden, inner),
+                nn.Linear(self.n_hidden, self.n_inner),
                 nn.Dropout(config.dropout)
             )
             self.bias_generators = nn.ModuleList(
                 nn.Sequential(
-                    nn.Linear(inner, config.n_embd),
+                    nn.Linear(self.n_inner, config.n_embd),
                     nn.Dropout(config.dropout),
                 )
                 for _ in range(config.n_layer)
