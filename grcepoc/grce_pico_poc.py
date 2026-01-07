@@ -98,7 +98,7 @@ class GPT2TokenizerWrapper:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         self.cache_path = cache_path
         self.tokenizer = self._load_or_train(train_text, cache_path, vocab_size)
-        self.vocab_size = self.tokenizer.vocab_size
+        self.vocab_size = len(self.tokenizer)
         self.special_ids = set(self.tokenizer.all_special_ids)
         self.dissonance_id = self.tokenizer.convert_tokens_to_ids(DISSONANCE_TOKEN)
         if self.dissonance_id is None:
