@@ -1095,7 +1095,7 @@ def main() -> None:
         for cycle in range(1, args.cycles + 1):
             cycle_wall = time.time()
             cycle_cpu = time.process_time()
-            print(color_text(f"\nCycle {cycle}/{args.cycles}", Colors.BLUE))
+            print(color_text(f"\n[GPT{'+' if args.n_grce else ' wo/'}GRCE] Training Cycle {cycle}/{args.cycles} ...", Colors.BLUE))
 
             train_chars_cycle = (args.block_size + 1) * args.batch_size * args.steps
             test_chars_cycle = (
@@ -1106,7 +1106,6 @@ def main() -> None:
             dataset.prepare_cycle("train", train_chars_cycle)
             dataset.prepare_cycle("test", test_chars_cycle)
 
-            print(color_text("Training GRCE picoGPT PoC ...", Colors.CYAN))
             total_steps, updates = train_model(
                 model,
                 dataset,
