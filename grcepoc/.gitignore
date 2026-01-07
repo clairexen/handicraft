@@ -1,5 +1,6 @@
-.venv/
-data/simplewiki-test.asc
-data/simplewiki-train.asc
-model/
-.cache_transformers/
+/.venv/
+/data/simplewiki-test.asc
+/data/simplewiki-train.asc
+/model/
+/.cache_transformers/
+/__pycache__/
