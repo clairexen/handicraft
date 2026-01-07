@@ -367,7 +367,7 @@ class ModelConfig:
     n_layer: int = 8        # GPT-2 base uses 12 layers.
     n_head: int = 8         # GPT-2 base uses 12 attention heads.
     n_embd: int = 192       # GPT-2 base uses 768 embedding dims.
-    n_grce: int = 96        # GRCE context dims.
+    n_grce: int = 32        # GRCE context dims.
     dropout: float = 0.05
 
 
@@ -475,10 +475,10 @@ class GRCEContextChannel(nn.Module):
         self.config = config
         if not self.disabled:
             inner = (config.n_embd + config.n_grce) // 2
-            hidden = 2 * (config.n_embd + config.n_grce)
+            hidden = 1 * max(config.n_embd, config.n_grce) + \
+                     3 * min(config.n_embd, config.n_grce)
             self.part_seq = nn.ModuleList(
                 nn.Sequential(
-                    nn.LayerNorm(config.n_embd),
                     nn.Linear(config.n_embd, hidden),
                     nn.GELU(),
                     nn.Linear(hidden, inner),
@@ -487,14 +487,13 @@ class GRCEContextChannel(nn.Module):
                 for _ in range(config.n_layer + 1)
             )
             self.writer = nn.Sequential(
+                nn.LayerNorm(inner),
                 nn.Linear(inner, hidden),
                 nn.GELU(),
                 nn.Linear(hidden, config.n_grce),
             )
             self.bias_generators = nn.ModuleList(
-                nn.Sequential(
-                    nn.Linear(config.n_grce, config.n_embd),
-                )
+                nn.Linear(config.n_grce, config.n_embd)
                 for _ in range(config.n_layer)
             )
 
