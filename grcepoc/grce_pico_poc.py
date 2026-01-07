@@ -434,27 +434,26 @@ class GRCEContextChannel(nn.Module):
                 nn.LayerNorm(config.n_embd) for _ in range(config.n_layer + 1)
             )
             self.stack_drop = nn.Dropout(config.dropout)
-            hidden = max(config.n_layer * config.n_grce, 4 * config.n_embd)
             self.writer = nn.Sequential(
-                nn.Linear(concat_dim, hidden),
+                nn.Linear(concat_dim, 4 * config.n_grce),
                 nn.GELU(),
                 nn.Dropout(config.dropout),
-                nn.Linear(hidden, hidden),
+                nn.Linear(4 * config.n_grce, 4 * config.n_grce),
                 nn.GELU(),
                 nn.Dropout(config.dropout),
-                nn.Linear(hidden, config.n_grce),
+                nn.Linear(4 * config.n_grce, config.n_grce),
                 nn.LayerNorm(config.n_grce),
             )
-            hidden = 2 * (config.n_grce + config.n_embd)
             self.bias_generators = nn.ModuleList(
                 nn.Sequential(
-                    nn.Linear(config.n_grce, hidden),
+                    nn.Linear(config.n_grce, 4 * config.n_grce),
                     nn.GELU(),
                     nn.Dropout(config.dropout),
-                    nn.Linear(hidden, hidden),
+                    nn.Linear(4 * config.n_grce, max(config.n_embd, config.n_grce)),
+                    nn.Linear(max(config.n_embd, config.n_grce), 4 * config.n_embd),
                     nn.GELU(),
                     nn.Dropout(config.dropout),
-                    nn.Linear(hidden, config.n_embd),
+                    nn.Linear(4 * config.n_embd, config.n_embd),
                 )
                 for _ in range(config.n_layer)
             )
