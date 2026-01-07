@@ -24,55 +24,39 @@ Wir betrachten einen decoder-only Transformer (wie in *Attention Is All You Need
 * (p_t \in \mathbb{R}^d) das Positional Encoding (oder RoPE/relativ),
 * (x_t = e_t + p_t) der Standard-Input pro Position.
 
-Du fügst einen zusätzlichen, expliziten Zustandsvektor (c_t \in \mathbb{R}^{d_c}) ein (oft (d_c=d)), der *zwischen* Zeitschritten weitergereicht wird und als additive “Kontext-Bias”-Komponente (dein “kontext encoding”) in den nächsten Token-Input eingeht.
+Du fügst einen zusätzlichen, expliziten Zustandsvektor (c_t \in \mathbb{R}^{d_c}) ein (oft (d_c=d)), der *zwischen* Zeitschritten weitergereicht wird. Statt nur einen Bias vor dem ersten Block zu addieren, wird (c_{t-1}) für **jede** Transformer-Schicht in einen Block-spezifischen Bias übersetzt und ausschließlich auf die frisch hinzugefügte Token-Zeile im jeweiligen Blockinput addiert.
 
 ### 1) Input-Augmentation (Kontext-Encoding additiv wie Position)
 
-Definiere eine Projektion (\Pi:\mathbb{R}^{d_c}\to\mathbb{R}^d), z.B. linear:
+Definiere für jeden Block (\ell) eine Projektion (\Pi^{(\ell)}:\mathbb{R}^{d_c}\to\mathbb{R}^d). Damit entstehen Bias-Vektoren
 [
-k_t = \Pi(c_{t-1}) \in \mathbb{R}^{d}.
+b^{(\ell)}_t = \Pi^{(\ell)}(c_{t-1}).
 ]
-Dann wird der Eingangsvektor:
+Der rohe Token-Eingang bleibt (x_t = e_t + p_t). Für jedes Block-Input-Tensor (X^{(\ell-1)}) wird lediglich dessen letzte Zeitstufe (die Position (t)) um (b^{(\ell)}_t) verschoben (alle früheren Zeitschritte bleiben unverändert). Interpretation: Der Kontextkanal moduliert jede Schicht separat, ohne ältere Tokens im selben Batch zu stören.
+
+### 2) “Write”-Pfad: Stack-Vector → Kontext
+
+Statt nur eines einzelnen internen Vektors wird die komplette **Stack Vector**
 [
-x_t = e_t + p_t + k_t.
+\mathrm{stack}_t = [x_t \| f^{(1)}_{t-1} \| \dots \| f^{(L)}_{t-1}] \in \mathbb{R}^{(L+1)d}
 ]
-Interpretation: (k_t) ist ein *persistenter*, positionsunabhängiger Bias, der global “fokussierende / rollenhaltende” Information trägt.
-
-### 2) “Write”-Pfad: Kontext aus internem State extrahieren
-
-Wähle den internen Vektor, aus dem du schreibst, z.B. **Pre-FFN** des letzten Blocks an Position (t):
-
-* Standardblock (Pre-LN): (h^{\ell}_t = h^{\ell-1}_t + \mathrm{MHA}(\mathrm{LN}(h^{\ell-1}_t))), dann (h^{\ell}_t = h^{\ell}_t + \mathrm{FFN}(\mathrm{LN}(h^{\ell}_t))).
-  Nimm den Input in das letzte FFN, z.B.
-  [
-  u_t := \mathrm{LN}(h^{L}_t) \in \mathbb{R}^d.
-  ]
-  Dann berechne einen Kandidatenzustand (\tilde c_t) über ein (gleichdimensionales) MLP/FFN:
-  [
-  \tilde c_t = W_2 ,\sigma(W_1 u_t) \in \mathbb{R}^{d_c}.
-  ]
-  (Genau das ist dein “gleich dimensioniertes feed-forward Netzwerk”.)
-
-### 3) Gating / Leak-Integration (SST/VIP-Analogie als “Stabilitätskanal”)
-
-Update über ein Gate (g_t\in(0,1)^{d_c}):
+verwendet, wobei (f^{(\ell)}_{t-1}) die FFN-Ausgänge des vorangegangenen Tokens sind. Jede der (L+1) Komponenten erhält eine eigene LayerNorm; anschließend wird die Verkettung gedropoutet und durch ein Writer-MLP geführt:
 [
-g_t = \sigma(W_g u_t + b_g),
+\mathrm{stack} \to 4(d+d_c) \to \mathrm{GELU} \to \mathrm{Dropout} \to 4(d+d_c) \to \mathrm{GELU} \to \mathrm{Dropout} \to d_c \to \mathrm{LayerNorm}.
 ]
+Das Ergebnis ist der nächste Kontextvektor (c_t).
+
+### 3) Kontext → Block-Bias pro Layer
+
+Für jede Schicht existiert ein separates Bias-MLP
 [
-c_t = g_t \odot c_{t-1} + (1-g_t)\odot \tilde c_t.
+c_{t-1} \to 4 d_c \to \mathrm{GELU} \to \mathrm{Dropout} \to 4 d \to \mathrm{GELU} \to \mathrm{Dropout} \to d,
 ]
-Das ist eine per-Dimension “leaky integrator”-Dynamik: Inhalte, die “immer verfügbar” sein sollen, können im Gate in Richtung *retain* laufen (hohes (g_t)), während kurzfristige Anpassungen über (\tilde c_t) einfließen.
+dessen Ausgabe (b^{(\ell)}_t) nur auf die neueste Zeitstufe im jeweiligen Block addiert wird. Damit besitzt jede Schicht einen eigenen “Fokus-Bias”. Ein explizites Gating entfällt; die Writer-/Bias-MLPs entscheiden implizit, welche Informationen persistent bleiben.
 
-### 4) Kein Lernen “über die Symbol-Boundary” (Stop-Gradient / Truncated BPTT)
+### 4) Gradient-Stopp nur auf der Stack-Vector
 
-Deine Postulierung entspricht einer expliziten Entkopplung der Gradienten über den rekurrenten Kanal:
-[
-x_t = e_t + p_t + \Pi(\mathrm{stopgrad}(c_{t-1})).
-]
-Damit kann der Forward-Pfad weiterhin *Fokus* halten, aber der Backprop muss nicht durch die Zeit über (c) laufen (stabiler, weniger Credit-Assignment über Zeit). Das ist konzeptionell nahe an “truncated BPTT” – nur dass du den RNN-artigen Teil bewusst als *steuernden Bias-Kanal* nutzt, nicht als Hauptgedächtnis.
-
-> Wichtig: Auch ohne Gradienten “durch die Zeit” kann (c) **nützlich** sein, weil (u_t) ja bereits (per Attention) den bisherigen Kontext sieht und lernen kann, was in (c_t) stabil abgelegt werden sollte. Du verlierst “über-Zeit Credit Assignment” speziell für den (c)-Kanal, nicht die normale Kontextverarbeitung innerhalb des Transformers.
+Die Verkettung (\mathrm{stack}_t) wird vor dem Writer **stop-gradiented**, alle nachfolgenden Schichten (Writer, Bias-Generatoren, Transformer-Blöcke) bleiben jedoch voll differentiabel. So verhinderst du Backpropagation durch die Zeit entlang des rekurrenten Kanals, behältst aber Lernfähigkeit innerhalb eines Zeitschritts.
 
 ---
 
@@ -86,7 +70,7 @@ Eine saubere Formulierung ist ein zweiphasiger Modus:
    Du fütterst echte Eingabetokens (s_1..s_T) als (e_t), berechnest fortlaufend (c_t) wie oben, aber ignorierst Logits. Ergebnis: Endzustand (c_T) (oder eine Sequenz (c_{1..T})).
 
 2. **Generate-Pass (normal autoregressiv):**
-   Initialisiere (c_0 := c_T) (oder eine Funktion davon) und generiere Ausgabetokens (y_1..y_N) mit (x_t = e_t+p_t+\Pi(c_{t-1})).
+   Initialisiere (c_0 := c_T) (oder eine Funktion davon) und generiere Ausgabetokens (y_1..y_N), indem jede Schicht denselben Mechanismus wie oben nutzt: (x_t = e_t + p_t) und die Bias-Generatoren liefern (b^{(\ell)}_t = \Pi^{(\ell)}(c_{t-1})) für die aktuelle Zeitstufe.
 
 Das ist ein **expliziter “state channel”** parallel zur Attention, der für Rollen-/Fokus-Information reserviert ist (also genau dein “keine resource-pressure/conflicts mit attention heads”).
 
