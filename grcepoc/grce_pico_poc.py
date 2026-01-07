@@ -474,9 +474,10 @@ class GRCEContextChannel(nn.Module):
         self.disabled = config.n_grce <= 0
         self.config = config
         if not self.disabled:
-            inner = (config.n_embd + config.n_grce) // 2
-            hidden = 1 * max(config.n_embd, config.n_grce) + \
-                     3 * min(config.n_embd, config.n_grce)
+            inner = (3 * min(config.n_embd, config.n_grce) + max(config.n_embd, config.n_grce)) // 4
+            hidden = min(3 * min(config.n_embd, config.n_grce), 2 * max(config.n_embd, config.n_grce))
+            assert min(config.n_embd, config.n_grce) < inner < hidden
+            assert inner < max(config.n_embd, config.n_grce)
             self.part_seq = nn.ModuleList(
                 nn.Sequential(
                     nn.Linear(config.n_embd, hidden),
@@ -486,14 +487,20 @@ class GRCEContextChannel(nn.Module):
                 )
                 for _ in range(config.n_layer + 1)
             )
-            self.writer = nn.Sequential(
-                nn.LayerNorm(inner),
-                nn.Linear(inner, hidden),
+            self.context_link = nn.Sequential(
+                nn.Linear(inner, config.n_grce),
+                nn.Dropout(config.dropout),
+
+                nn.Linear(config.n_grce, hidden),
                 nn.GELU(),
-                nn.Linear(hidden, config.n_grce),
+                nn.Linear(hidden, inner),
+                nn.Dropout(config.dropout)
             )
             self.bias_generators = nn.ModuleList(
-                nn.Linear(config.n_grce, config.n_embd)
+                nn.Sequential(
+                    nn.Linear(inner, config.n_embd),
+                    nn.Dropout(config.dropout),
+                )
                 for _ in range(config.n_layer)
             )
 
@@ -512,7 +519,7 @@ class GRCEContextChannel(nn.Module):
         pieces = [piece.detach() for piece in [block_input] + block_outputs]
         projected = [proj(part) for proj, part in zip(self.part_seq, pieces)]
         fused = torch.stack(projected, dim=0).sum(dim=0)
-        return self.writer(fused)
+        return self.context_link(fused)
 
 
 class GRCEGPT(nn.Module):
