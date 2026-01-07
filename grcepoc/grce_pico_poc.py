@@ -906,8 +906,6 @@ def main() -> None:
     orig_stdout, orig_stderr = sys.stdout, sys.stderr
     sys.stdout = Tee((orig_stdout, False), (log_file, True))
     sys.stderr = Tee((orig_stderr, False), (log_file, True))
-    start_wall = time.time()
-    start_cpu = time.process_time()
     try:
         device = torch.device(args.device)
         try:
@@ -944,6 +942,8 @@ def main() -> None:
                 print(color_text(str(err), Colors.GRAY))
 
         for cycle in range(1, args.cycles + 1):
+            cycle_wall = time.time()
+            cycle_cpu = time.process_time()
             print(color_text(f"\nCycle {cycle}/{args.cycles}", Colors.BLUE))
 
             train_chars_cycle = (args.block_size + 1) * args.batch_size * args.steps
@@ -984,11 +984,15 @@ def main() -> None:
                 model_path,
             )
             print(color_text(f"Saved model to {model_path}", Colors.GREEN))
+            cycle_elapsed_wall = time.time() - cycle_wall
+            cycle_elapsed_cpu = time.process_time() - cycle_cpu
+            print(
+                color_text(
+                    f"[cycle {cycle}] wall={cycle_elapsed_wall:.2f}s cpu={cycle_elapsed_cpu:.2f}s",
+                    Colors.GRAY,
+                )
+            )
     finally:
-        elapsed_wall = time.time() - start_wall
-        elapsed_cpu = time.process_time() - start_cpu
-        summary = f"[runtime] wall={elapsed_wall:.2f}s cpu={elapsed_cpu:.2f}s"
-        print(summary)
         sys.stdout.flush()
         sys.stderr.flush()
         sys.stdout = orig_stdout
