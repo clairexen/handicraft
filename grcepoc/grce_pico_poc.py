@@ -314,6 +314,7 @@ def insert_dissonance_markers(
 
 def load_or_prepare_tokens(
     split: str,
+    text_path: str,
     text: str | None,
     limit: int,
     cache_path: pathlib.Path,
@@ -328,8 +329,10 @@ def load_or_prepare_tokens(
         trimmed_text = None
         if text is not None:
             trimmed_text = text if limit <= 0 else text[:limit]
-        print(color_text(f"Loaded cached {split} tokens from {cache_path}", Colors.GRAY))
+        print(color_text(f"Loaded cached {split} tokens from {cache_path}", Colors.YELLOW))
         return tokens, trimmed_text, bytes_count, inserts
+
+    print(color_text(f"Tokenizing raw {split} data: {text_path}...", Colors.BLUE))
 
     if text is None:
         raise FileNotFoundError(
@@ -348,7 +351,7 @@ def load_or_prepare_tokens(
     )
     bytes_count = len(trimmed_text.encode("utf-8"))
     torch.save({"tokens": tokens, "bytes": bytes_count, "inserts": inserts}, cache_path)
-    print(color_text(f"Saved {split} token cache to {cache_path}", Colors.GRAY))
+    print(color_text(f"Saved {split} token cache to {cache_path}", Colors.YELLOW))
     return tokens, trimmed_text, bytes_count, inserts
 
 
@@ -887,9 +890,9 @@ def main() -> None:
             args.tokenizer_vocab,
         )
 
-        print(color_text(f"Train Data: {train_path}", Colors.BLUE))
         train_tokens, train_text, train_bytes, train_inserts = load_or_prepare_tokens(
             "train",
+            train_path,
             full_train_text,
             train_limit,
             train_cache_path,
@@ -897,9 +900,9 @@ def main() -> None:
             seed=1234,
         )
 
-        print(color_text(f"Test Data: {test_path}", Colors.BLUE))
         test_tokens, test_text, test_bytes, test_inserts = load_or_prepare_tokens(
             "test",
+            test_path,
             full_test_text,
             test_limit,
             test_cache_path,
