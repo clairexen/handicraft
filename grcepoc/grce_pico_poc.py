@@ -37,6 +37,9 @@ os.environ.setdefault("HF_HOME", str(HF_CACHE_DIR.resolve()))
 
 from transformers import GPT2TokenizerFast
 
+DISSONANCE_TOKEN = "<|?!|>"
+DISSONANCE_RATE = 0.01
+
 
 # -----------------------------------------------------------------------------
 # Data utilities (borrow the spirit of picoGPT's Shakespeare example)
@@ -96,6 +99,15 @@ class GPT2TokenizerWrapper:
         self.cache_path = cache_path
         self.tokenizer = self._load_or_train(train_text, cache_path, vocab_size)
         self.vocab_size = self.tokenizer.vocab_size
+        self.special_ids = set(self.tokenizer.all_special_ids)
+        self.dissonance_id = self.tokenizer.convert_tokens_to_ids(DISSONANCE_TOKEN)
+        if self.dissonance_id is None:
+            raise ValueError("Failed to add dissonance token to tokenizer vocabulary")
+        self.non_special_ids = [
+            tok_id for tok_id in range(self.vocab_size) if tok_id not in self.special_ids
+        ]
+        if not self.non_special_ids:
+            raise ValueError("Tokenizer has no non-special tokens for dissonance markers")
 
     def _load_or_train(
         self, train_text: str, cache_path: pathlib.Path, vocab_size: int
@@ -117,13 +129,14 @@ class GPT2TokenizerWrapper:
         )
         tokenizer.train_from_iterator([train_text], trainer=trainer)
         tokenizer.post_processor = ByteLevelProcessor(trim_offsets=False)
+        tokenizer.add_special_tokens([DISSONANCE_TOKEN])
         tokenizer.save(str(cache_path))
         tk = GPT2TokenizerFast(tokenizer_file=str(cache_path))
         return self._configure_special_tokens(tk)
 
     def _configure_special_tokens(self, tk: GPT2TokenizerFast) -> GPT2TokenizerFast:
         # Suggested GPT-2 style special tokens (BOS/EOS/UNK/PAD) are omitted for now.
-        # tk.add_special_tokens({"pad_token": "<|pad|>", ...})  # enable if needed later.
+        tk.add_special_tokens({"additional_special_tokens": [DISSONANCE_TOKEN]})
         return tk
 
     def encode(self, text: str) -> torch.Tensor:
@@ -273,6 +286,28 @@ class TextDataset:
         path = self.train_path if split == "train" else self.test_path
         seg_text = " + ".join(f"[{s},{e})" for s, e in segments)
         print(color_text(f"[{label}:{path.name}] bytes {seg_text}", color))
+
+
+def insert_dissonance_markers(
+    tokens: torch.Tensor,
+    non_special_ids: List[int],
+    marker_id: int,
+    rate: float,
+    rng: random.Random,
+) -> Tuple[torch.Tensor, int]:
+    if not (0.0 < rate < 1.0):
+        return tokens.clone(), 0
+    base = tokens.tolist()
+    augmented: List[int] = []
+    inserts = 0
+    for tok in base:
+        augmented.append(int(tok))
+        if rng.random() < rate:
+            filler = rng.choice(non_special_ids)
+            augmented.append(filler)
+            augmented.append(marker_id)
+            inserts += 1
+    return torch.tensor(augmented, dtype=torch.long), inserts
 
 
 # -----------------------------------------------------------------------------
@@ -789,9 +824,32 @@ def main() -> None:
 
     print(color_text(f"Train Data: {args.train_path}", Colors.BLUE))
     train_tokens = tokenizer.encode_corpus(train_text)
+    train_tokens, train_inserts = insert_dissonance_markers(
+        train_tokens,
+        tokenizer.non_special_ids,
+        tokenizer.dissonance_id,
+        DISSONANCE_RATE,
+        random.Random(1234),
+    )
 
     print(color_text(f"Test Data: {args.test_path}", Colors.BLUE))
     test_tokens = tokenizer.encode_corpus(test_text)
+    test_tokens, test_inserts = insert_dissonance_markers(
+        test_tokens,
+        tokenizer.non_special_ids,
+        tokenizer.dissonance_id,
+        DISSONANCE_RATE,
+        random.Random(5678),
+    )
+    print(
+        color_text(
+            (
+                f"Dissonance injections (train/test): "
+                f"{train_inserts}/{test_inserts} sequences"
+            ),
+            Colors.CYAN,
+        )
+    )
 
     train_bytes = len(train_text.encode("utf-8"))
     test_bytes = len(test_text.encode("utf-8"))
