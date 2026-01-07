@@ -781,6 +781,11 @@ def parse_args() -> argparse.Namespace:
         default=defaults.vocab_size,
         help="Vocabulary size for the GPT-2 style byte-level BPE tokenizer.",
     )
+    parser.add_argument(
+        "--debug-interrupt",
+        action="store_true",
+        help="If set, re-raise KeyboardInterrupt with a full stack trace.",
+    )
     return parser.parse_args()
 
 
@@ -789,121 +794,123 @@ def main() -> None:
     torch.manual_seed(42)
     random.seed(42)
 
-    train_text = load_text_file(args.train_path)
-    test_text = load_text_file(args.test_path)
-    train_limit = parse_char_arg(args.train_chars)
-    test_limit = parse_char_arg(args.test_chars)
-    vocab_limit = parse_char_arg(args.vocab_chars)
-    if train_limit > 0:
-        train_text = train_text[:train_limit]
-    if test_limit > 0:
-        test_text = test_text[:test_limit]
-    if not train_text:
-        raise ValueError("Training text is empty; provide a larger corpus or lower --train-chars")
-    tokenizer_dir = pathlib.Path("model")
-    tokenizer_limit = parse_char_arg(args.vocab_chars or args.train_chars)
-    tokenizer_key = (
-        f"{args.train_path.stem}_{tokenizer_limit or 'all'}_{args.tokenizer_vocab}"
-    )
-    tokenizer_path = tokenizer_dir / f"{tokenizer_key}.json"
-    print(color_text(f"Tokenizer: {tokenizer_path}", Colors.BLUE))
-    tok_wall_start = time.time()
-    tok_cpu_start = time.process_time()
-    vocab_source = train_text if vocab_limit == 0 else train_text[:vocab_limit]
-    tokenizer = GPT2TokenizerWrapper(
-        vocab_source,
-        tokenizer_path,
-        args.tokenizer_vocab,
-    )
-
-    print(color_text(f"Train Data: {args.train_path}", Colors.BLUE))
-    train_tokens = tokenizer.encode_corpus(train_text)
-    train_tokens, train_inserts = insert_dissonance_markers(
-        train_tokens,
-        tokenizer.non_special_ids,
-        tokenizer.dissonance_id,
-        DISSONANCE_RATE,
-        random.Random(1234),
-    )
-
-    print(color_text(f"Test Data: {args.test_path}", Colors.BLUE))
-    test_tokens = tokenizer.encode_corpus(test_text)
-    test_tokens, test_inserts = insert_dissonance_markers(
-        test_tokens,
-        tokenizer.non_special_ids,
-        tokenizer.dissonance_id,
-        DISSONANCE_RATE,
-        random.Random(5678),
-    )
-    print(
-        color_text(
-            (
-                f"Dissonance injections (train/test): "
-                f"{train_inserts}/{test_inserts} sequences"
-            ),
-            Colors.CYAN,
-        )
-    )
-
-    train_bytes = len(train_text.encode("utf-8"))
-    test_bytes = len(test_text.encode("utf-8"))
-    dataset = TextDataset(
-        train_tokens=train_tokens,
-        test_tokens=test_tokens,
-        train_text=train_text,
-        test_text=test_text,
-        train_bytes=train_bytes,
-        test_bytes=test_bytes,
-        train_path=args.train_path,
-        test_path=args.test_path,
-    )
-
-    tok_summary = (
-        f"[tokenizer] wall={time.time()-tok_wall_start:.2f}s cpu={time.process_time()-tok_cpu_start:.2f}s\n"
-    )
-    print(tok_summary)
-
-    config = ModelConfig(
-        vocab_size=tokenizer.vocab_size,
-        block_size=args.block_size,
-        n_layer=args.n_layer,
-        n_head=args.n_head,
-        n_embd=args.n_embd,
-        n_grce=args.n_grce,
-        dropout=args.dropout,
-    )
-    model_tag = build_model_tag(config)
-    model_dir = pathlib.Path("model")
-    model_dir.mkdir(parents=True, exist_ok=True)
-    model_path = model_dir / f"{model_tag}.pt"
-    log_path = model_dir / f"{model_tag}.log"
-    print(color_text(f"Model: {model_path}", Colors.BLUE))
-    temp_model = GRCEGPT(config)
-    non_emb_params = sum(
-        p.numel()
-        for name, p in temp_model.named_parameters()
-        if p.requires_grad and "tok_emb" not in name and "pos_emb" not in name
-    )
-    print(f"Trainable model params (excl. embeddings): {non_emb_params:,}")
-    tok_vecs = temp_model.core.tok_emb.num_embeddings
-    pos_vecs = temp_model.core.pos_emb.num_embeddings
-    emb_vectors = tok_vecs + pos_vecs
-    emb_params = temp_model.core.tok_emb.weight.numel() + temp_model.core.pos_emb.weight.numel()
-    print(
-        f"Learned embedding vectors: {emb_vectors} "
-        f"(token={tok_vecs}, position={pos_vecs}); params={emb_params:,}"
-    )
-
-    cmdline = " ".join(shlex.quote(arg) for arg in sys.argv)
-    timestamp = datetime.now(timezone.utc).isoformat()
-    log_file = log_path.open("a", encoding="utf-8")
-    log_file.write(f"\n[{timestamp}] {cmdline}\n")
-    log_file.flush()
-
-    orig_stdout, orig_stderr = sys.stdout, sys.stderr
-    sys.stdout = Tee((orig_stdout, False), (log_file, True))
-    sys.stderr = Tee((orig_stderr, False), (log_file, True))
     try:
+        orig_stdout, orig_stderr, log_file = sys.stdout, sys.stderr, None
+
+        train_text = load_text_file(args.train_path)
+        test_text = load_text_file(args.test_path)
+        train_limit = parse_char_arg(args.train_chars)
+        test_limit = parse_char_arg(args.test_chars)
+        vocab_limit = parse_char_arg(args.vocab_chars)
+        if train_limit > 0:
+            train_text = train_text[:train_limit]
+        if test_limit > 0:
+            test_text = test_text[:test_limit]
+        if not train_text:
+            raise ValueError("Training text is empty; provide a larger corpus or lower --train-chars")
+        tokenizer_dir = pathlib.Path("model")
+        tokenizer_limit = parse_char_arg(args.vocab_chars or args.train_chars)
+        tokenizer_key = (
+            f"{args.train_path.stem}_{tokenizer_limit or 'all'}_{args.tokenizer_vocab}"
+        )
+        tokenizer_path = tokenizer_dir / f"{tokenizer_key}.json"
+        print(color_text(f"Tokenizer: {tokenizer_path}", Colors.BLUE))
+        tok_wall_start = time.time()
+        tok_cpu_start = time.process_time()
+        vocab_source = train_text if vocab_limit == 0 else train_text[:vocab_limit]
+        tokenizer = GPT2TokenizerWrapper(
+            vocab_source,
+            tokenizer_path,
+            args.tokenizer_vocab,
+        )
+
+        print(color_text(f"Train Data: {args.train_path}", Colors.BLUE))
+        train_tokens = tokenizer.encode_corpus(train_text)
+        train_tokens, train_inserts = insert_dissonance_markers(
+            train_tokens,
+            tokenizer.non_special_ids,
+            tokenizer.dissonance_id,
+            DISSONANCE_RATE,
+            random.Random(1234),
+        )
+
+        print(color_text(f"Test Data: {args.test_path}", Colors.BLUE))
+        test_tokens = tokenizer.encode_corpus(test_text)
+        test_tokens, test_inserts = insert_dissonance_markers(
+            test_tokens,
+            tokenizer.non_special_ids,
+            tokenizer.dissonance_id,
+            DISSONANCE_RATE,
+            random.Random(5678),
+        )
+        print(
+            color_text(
+                (
+                    f"Dissonance injections (train/test): "
+                    f"{train_inserts}/{test_inserts} sequences"
+                ),
+                Colors.CYAN,
+            )
+        )
+
+        train_bytes = len(train_text.encode("utf-8"))
+        test_bytes = len(test_text.encode("utf-8"))
+        dataset = TextDataset(
+            train_tokens=train_tokens,
+            test_tokens=test_tokens,
+            train_text=train_text,
+            test_text=test_text,
+            train_bytes=train_bytes,
+            test_bytes=test_bytes,
+            train_path=args.train_path,
+            test_path=args.test_path,
+        )
+
+        tok_summary = (
+            f"[tokenizer] wall={time.time()-tok_wall_start:.2f}s cpu={time.process_time()-tok_cpu_start:.2f}s\n"
+        )
+        print(tok_summary)
+
+        config = ModelConfig(
+            vocab_size=tokenizer.vocab_size,
+            block_size=args.block_size,
+            n_layer=args.n_layer,
+            n_head=args.n_head,
+            n_embd=args.n_embd,
+            n_grce=args.n_grce,
+            dropout=args.dropout,
+        )
+        model_tag = build_model_tag(config)
+        model_dir = pathlib.Path("model")
+        model_dir.mkdir(parents=True, exist_ok=True)
+        model_path = model_dir / f"{model_tag}.pt"
+        log_path = model_dir / f"{model_tag}.log"
+        print(color_text(f"Model: {model_path}", Colors.BLUE))
+        temp_model = GRCEGPT(config)
+        non_emb_params = sum(
+            p.numel()
+            for name, p in temp_model.named_parameters()
+            if p.requires_grad and "tok_emb" not in name and "pos_emb" not in name
+        )
+        print(f"Trainable model params (excl. embeddings): {non_emb_params:,}")
+        tok_vecs = temp_model.core.tok_emb.num_embeddings
+        pos_vecs = temp_model.core.pos_emb.num_embeddings
+        emb_vectors = tok_vecs + pos_vecs
+        emb_params = temp_model.core.tok_emb.weight.numel() + temp_model.core.pos_emb.weight.numel()
+        print(
+            f"Learned embedding vectors: {emb_vectors} "
+            f"(token={tok_vecs}, position={pos_vecs}); params={emb_params:,}"
+        )
+
+        cmdline = " ".join(shlex.quote(arg) for arg in sys.argv)
+        timestamp = datetime.now(timezone.utc).isoformat()
+        log_file = log_path.open("a", encoding="utf-8")
+        log_file.write(f"\n[{timestamp}] {cmdline}\n")
+        log_file.flush()
+
+        sys.stdout = Tee((orig_stdout, False), (log_file, True))
+        sys.stderr = Tee((orig_stderr, False), (log_file, True))
+
         device = torch.device(args.device)
         try:
             prompt_tokens = tokenizer.encode(args.prompt)
@@ -989,12 +996,19 @@ def main() -> None:
                     Colors.GRAY,
                 )
             )
+
+    except KeyboardInterrupt:
+        if args.debug_interrupt:
+            raise
+        print(color_text("Interrupted by user; exiting cleanly.", Colors.MAGENTA))
+
     finally:
+        if log_file is not None:
+            log_file.close()
         sys.stdout.flush()
         sys.stderr.flush()
         sys.stdout = orig_stdout
         sys.stderr = orig_stderr
-        log_file.close()
 
 
 if __name__ == "__main__":
