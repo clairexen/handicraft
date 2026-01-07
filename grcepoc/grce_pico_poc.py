@@ -1,4 +1,5 @@
-"""GRCE proof-of-concept based on the picoGPT Shakespeare demo.
+"""GRCE proof-of-concept. Most of it is written by ChatGPT/Codex. I told
+it to base it loosely the picoGPT.
 
 This script keeps the picoGPT spirit of being small and hackable while
 adding the Gradient-stopped Recurrent Context Encoding (GRCE) channel described in
