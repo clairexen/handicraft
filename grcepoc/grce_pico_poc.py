@@ -160,8 +160,8 @@ class GPT2TokenizerWrapper:
 class TextDataset:
     train_tokens: torch.Tensor
     test_tokens: torch.Tensor
-    train_text: str
-    test_text: str
+    train_text: str | None
+    test_text: str | None
     train_bytes: int
     test_bytes: int
     train_path: pathlib.Path
@@ -247,10 +247,12 @@ class TextDataset:
         texts: list[str] = []
         if first_take:
             parts.append(tokens[start : start + first_take])
-            texts.append(text[start : start + first_take])
+            if text is not None:
+                texts.append(text[start : start + first_take])
         if second_take:
             parts.append(tokens[:second_take])
-            texts.append(text[:second_take])
+            if text is not None:
+                texts.append(text[:second_take])
         chunk = torch.cat(parts) if len(parts) > 1 else parts[0]
         return chunk.contiguous(), texts
 
@@ -308,6 +310,46 @@ def insert_dissonance_markers(
             augmented.append(marker_id)
             inserts += 1
     return torch.tensor(augmented, dtype=torch.long), inserts
+
+
+def load_or_prepare_tokens(
+    split: str,
+    text: str | None,
+    limit: int,
+    cache_path: pathlib.Path,
+    tokenizer: GPT2TokenizerWrapper,
+    seed: int,
+) -> Tuple[torch.Tensor, str | None, int, int]:
+    if cache_path.exists():
+        payload = torch.load(cache_path)
+        tokens = payload["tokens"].long()
+        bytes_count = int(payload.get("bytes", 0))
+        inserts = int(payload.get("inserts", 0))
+        trimmed_text = None
+        if text is not None:
+            trimmed_text = text if limit <= 0 else text[:limit]
+        print(color_text(f"Loaded cached {split} tokens from {cache_path}", Colors.GRAY))
+        return tokens, trimmed_text, bytes_count, inserts
+
+    if text is None:
+        raise FileNotFoundError(
+            f"No cached tokens at {cache_path} and source text missing for {split}."
+        )
+    trimmed_text = text if limit <= 0 else text[:limit]
+    if not trimmed_text:
+        raise ValueError(f"Text for {split} split is empty after applying character limit")
+    tokens = tokenizer.encode_corpus(trimmed_text)
+    tokens, inserts = insert_dissonance_markers(
+        tokens,
+        tokenizer.non_special_ids,
+        tokenizer.dissonance_id,
+        DISSONANCE_RATE,
+        random.Random(seed),
+    )
+    bytes_count = len(trimmed_text.encode("utf-8"))
+    torch.save({"tokens": tokens, "bytes": bytes_count, "inserts": inserts}, cache_path)
+    print(color_text(f"Saved {split} token cache to {cache_path}", Colors.GRAY))
+    return tokens, trimmed_text, bytes_count, inserts
 
 
 # -----------------------------------------------------------------------------
@@ -793,25 +835,52 @@ def main() -> None:
 
         train_path = pathlib.Path("data") / f"{args.data}-train.asc"
         test_path = pathlib.Path("data") / f"{args.data}-test.asc"
-        train_text = load_text_file(train_path)
-        test_text = load_text_file(test_path)
         train_limit = parse_char_arg(args.train_chars)
         test_limit = parse_char_arg(args.test_chars)
         vocab_limit = parse_char_arg(args.vocab_chars)
-        if train_limit > 0:
-            train_text = train_text[:train_limit]
-        if test_limit > 0:
-            test_text = test_text[:test_limit]
-        if not train_text:
-            raise ValueError("Training text is empty; provide a larger corpus or lower --train-chars")
-        tokenizer_dir = pathlib.Path("model")
         tokenizer_limit = parse_char_arg(args.vocab_chars or args.train_chars)
-        tokenizer_key = f"{args.data}_vocab_{tokenizer_limit or 'all'}_{args.tokenizer_vocab}"
-        tokenizer_path = tokenizer_dir / f"{tokenizer_key}.json"
+
+        model_dir = pathlib.Path("model")
+        model_dir.mkdir(parents=True, exist_ok=True)
+
+        def limit_label(value: int) -> str:
+            return str(value if value > 0 else "all")
+
+        train_cache_path = (
+            model_dir
+            / f"{args.data}_tokens_train_{limit_label(train_limit)}_{args.tokenizer_vocab}.pt"
+        )
+        test_cache_path = (
+            model_dir
+            / f"{args.data}_tokens_test_{limit_label(test_limit)}_{args.tokenizer_vocab}.pt"
+        )
+
+        try:
+            full_train_text = load_text_file(train_path)
+        except FileNotFoundError:
+            if not train_cache_path.exists():
+                raise
+            full_train_text = None
+
+        try:
+            full_test_text = load_text_file(test_path)
+        except FileNotFoundError:
+            if not test_cache_path.exists():
+                raise
+            full_test_text = None
+
+        tokenizer_key = f"{args.data}_vocab_{limit_label(tokenizer_limit)}_{args.tokenizer_vocab}"
+        tokenizer_path = model_dir / f"{tokenizer_key}.json"
+        if not tokenizer_path.exists() and full_train_text is None:
+            raise FileNotFoundError(
+                f"Tokenizer cache {tokenizer_path} not found and training text is unavailable."
+            )
         print(color_text(f"Tokenizer: {tokenizer_path}", Colors.BLUE))
         tok_wall_start = time.time()
         tok_cpu_start = time.process_time()
-        vocab_source = train_text if vocab_limit == 0 else train_text[:vocab_limit]
+        vocab_source = ""
+        if full_train_text is not None:
+            vocab_source = full_train_text if vocab_limit == 0 else full_train_text[:vocab_limit]
         tokenizer = GPT2TokenizerWrapper(
             vocab_source,
             tokenizer_path,
@@ -819,23 +888,23 @@ def main() -> None:
         )
 
         print(color_text(f"Train Data: {train_path}", Colors.BLUE))
-        train_tokens = tokenizer.encode_corpus(train_text)
-        train_tokens, train_inserts = insert_dissonance_markers(
-            train_tokens,
-            tokenizer.non_special_ids,
-            tokenizer.dissonance_id,
-            DISSONANCE_RATE,
-            random.Random(1234),
+        train_tokens, train_text, train_bytes, train_inserts = load_or_prepare_tokens(
+            "train",
+            full_train_text,
+            train_limit,
+            train_cache_path,
+            tokenizer,
+            seed=1234,
         )
 
         print(color_text(f"Test Data: {test_path}", Colors.BLUE))
-        test_tokens = tokenizer.encode_corpus(test_text)
-        test_tokens, test_inserts = insert_dissonance_markers(
-            test_tokens,
-            tokenizer.non_special_ids,
-            tokenizer.dissonance_id,
-            DISSONANCE_RATE,
-            random.Random(5678),
+        test_tokens, test_text, test_bytes, test_inserts = load_or_prepare_tokens(
+            "test",
+            full_test_text,
+            test_limit,
+            test_cache_path,
+            tokenizer,
+            seed=5678,
         )
         print(
             color_text(
@@ -847,8 +916,11 @@ def main() -> None:
             )
         )
 
-        train_bytes = len(train_text.encode("utf-8"))
-        test_bytes = len(test_text.encode("utf-8"))
+        if train_text is None and train_bytes == 0:
+            train_bytes = len(train_tokens)  # fallback when text absent
+        if test_text is None and test_bytes == 0:
+            test_bytes = len(test_tokens)
+
         dataset = TextDataset(
             train_tokens=train_tokens,
             test_tokens=test_tokens,
@@ -875,8 +947,6 @@ def main() -> None:
             dropout=args.dropout,
         )
         model_tag = build_model_tag(config)
-        model_dir = pathlib.Path("model")
-        model_dir.mkdir(parents=True, exist_ok=True)
         prefix = f"{args.data}_model_"
         model_path = model_dir / f"{prefix}{model_tag}.pt"
         log_path = model_dir / f"{prefix}{model_tag}.log"
