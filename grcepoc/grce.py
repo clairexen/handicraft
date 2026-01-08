@@ -731,8 +731,8 @@ def train_model(
                     color_index += 1
                 return "".join(parts)
 
-            prefix_text = color_tokens(prompt_ids, [Colors.YELLOW, Colors.MAGENTA])
-            completion_text = color_tokens(completion_ids, [Colors.CYAN, Colors.GREEN])
+            prefix_text = color_tokens(prompt_ids, [Colors.CYAN, Colors.GREEN])
+            completion_text = color_tokens(completion_ids, [Colors.YELLOW, Colors.MAGENTA])
             colored_sample = prefix_text + completion_text
             loss_text = (
                 color_text(f"train loss {split_losses['train']:.3f}", Colors.GREEN)
