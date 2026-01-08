@@ -707,28 +707,24 @@ def train_model(
             def tidy(text: str) -> str:
                 return text.replace("\n", " ").replace(" ", FANCY_SPACE)
 
-            prefix_tokens = [
-                tidy(
-                    tokenizer.tokenizer.decode([tok], clean_up_tokenization_spaces=False)
-                )
-                for tok in prompt_ids
-            ]
-            prefix_parts: list[str] = []
-            for piece in prefix_tokens:
-                if not piece:
-                    continue
-                first = color_text(piece[0], Colors.YELLOW, bold=True)
-                prefix_parts.append(first + piece[1:])
-            prefix_text = "".join(prefix_parts)
-            completion_parts: list[str] = []
-            for tok_id in completion_ids:
-                piece = tokenizer.tokenizer.decode([tok_id], clean_up_tokenization_spaces=False)
-                piece = tidy(piece)
-                if not piece:
-                    continue
-                first = color_text(piece[0], Colors.WHITE, bold=True)
-                completion_parts.append(first + piece[1:])
-            colored_sample = prefix_text + "".join(completion_parts)
+            def color_tokens(tokens: list[int], colors: list[str]) -> str:
+                parts: list[str] = []
+                color_index = 0
+                for tok in tokens:
+                    piece = tokenizer.tokenizer.decode(
+                        [tok], clean_up_tokenization_spaces=False
+                    )
+                    piece = tidy(piece)
+                    if not piece:
+                        continue
+                    color = colors[color_index % len(colors)]
+                    parts.append(color_text(piece, color, bold=True))
+                    color_index += 1
+                return "".join(parts)
+
+            prefix_text = color_tokens(prompt_ids, [Colors.YELLOW, Colors.MAGENTA])
+            completion_text = color_tokens(completion_ids, [Colors.CYAN, Colors.GREEN])
+            colored_sample = prefix_text + completion_text
             loss_text = (
                 color_text(f"train loss {split_losses['train']:.3f}", Colors.GREEN)
                 + " | "

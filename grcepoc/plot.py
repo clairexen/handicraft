@@ -9,7 +9,7 @@ from typing import Iterable, List
 import matplotlib.pyplot as plt
 
 
-MARKER_CUTOFF = 200  # hide markers when too many points crowd the chart
+MARKER_CUTOFF = 50  # hide markers when too many points crowd the chart
 
 
 @dataclass
