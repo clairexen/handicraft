@@ -716,7 +716,9 @@ def train_model(
             def tidy(text: str) -> str:
                 return text.replace("\n", " ").replace(" ", FANCY_SPACE)
 
-            def color_tokens(tokens: list[int], colors: list[str]) -> str:
+            def color_tokens(
+                tokens: list[int], colors: list[str], *, bold: bool = True
+            ) -> str:
                 parts: list[str] = []
                 color_index = 0
                 for tok in tokens:
@@ -727,12 +729,16 @@ def train_model(
                     if not piece:
                         continue
                     color = colors[color_index % len(colors)]
-                    parts.append(color_text(piece, color, bold=True))
+                    parts.append(color_text(piece, color, bold=bold))
                     color_index += 1
                 return "".join(parts)
 
-            prefix_text = color_tokens(prompt_ids, [Colors.CYAN, Colors.GREEN])
-            completion_text = color_tokens(completion_ids, [Colors.YELLOW, Colors.MAGENTA])
+            prefix_text = color_tokens(
+                prompt_ids, [Colors.CYAN, Colors.GREEN], bold=False
+            )
+            completion_text = color_tokens(
+                completion_ids, [Colors.YELLOW, Colors.MAGENTA]
+            )
             colored_sample = prefix_text + completion_text
             loss_text = (
                 color_text(f"train loss {split_losses['train']:.3f}", Colors.GREEN)
