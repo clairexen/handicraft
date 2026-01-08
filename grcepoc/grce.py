@@ -131,19 +131,23 @@ class GPT2TokenizerWrapper:
         train_text: str,
         cache_path: pathlib.Path,
         vocab_size: int,
+        use_special: bool,
     ) -> None:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         self.cache_path = cache_path
+        self.use_special = use_special
         self.tokenizer = self._load_or_train(train_text, cache_path, vocab_size)
         self.vocab_size = len(self.tokenizer)
         self.special_ids = set(self.tokenizer.all_special_ids)
-        self.dissonance_id = self.tokenizer.convert_tokens_to_ids(DISSONANCE_TOKEN)
-        if self.dissonance_id is None:
-            raise ValueError("Failed to add dissonance token to tokenizer vocabulary")
+        self.dissonance_id = None
+        if self.use_special:
+            self.dissonance_id = self.tokenizer.convert_tokens_to_ids(DISSONANCE_TOKEN)
+            if self.dissonance_id is None:
+                raise ValueError("Failed to add dissonance token to tokenizer vocabulary")
         self.non_special_ids = [
             tok_id for tok_id in range(self.vocab_size) if tok_id not in self.special_ids
         ]
-        if not self.non_special_ids:
+        if self.use_special and not self.non_special_ids:
             raise ValueError("Tokenizer has no non-special tokens for dissonance markers")
 
     def _load_or_train(
@@ -167,14 +171,16 @@ class GPT2TokenizerWrapper:
         sanitized = _restrict_bpe_training_text(train_text)
         tokenizer.train_from_iterator([sanitized], trainer=trainer)
         tokenizer.post_processor = ByteLevelProcessor(trim_offsets=False)
-        tokenizer.add_special_tokens([DISSONANCE_TOKEN])
+        if self.use_special:
+            tokenizer.add_special_tokens([DISSONANCE_TOKEN])
         tokenizer.save(str(cache_path))
         tk = GPT2TokenizerFast(tokenizer_file=str(cache_path))
         return self._configure_special_tokens(tk)
 
     def _configure_special_tokens(self, tk: GPT2TokenizerFast) -> GPT2TokenizerFast:
         # Suggested GPT-2 style special tokens (BOS/EOS/UNK/PAD) are omitted for now.
-        tk.add_special_tokens({"additional_special_tokens": [DISSONANCE_TOKEN]})
+        if self.use_special:
+            tk.add_special_tokens({"additional_special_tokens": [DISSONANCE_TOKEN]})
         return tk
 
     def encode(self, text: str) -> torch.Tensor:
@@ -358,6 +364,7 @@ def load_or_prepare_tokens(
     cache_path: pathlib.Path,
     tokenizer: GPT2TokenizerWrapper,
     seed: int,
+    use_special: bool,
 ) -> Tuple[torch.Tensor, str | None, int, int]:
     if cache_path.exists():
         payload = torch.load(cache_path)
@@ -380,13 +387,15 @@ def load_or_prepare_tokens(
     if not trimmed_text:
         raise ValueError(f"Text for {split} split is empty after applying character limit")
     tokens = tokenizer.encode_corpus(trimmed_text)
-    tokens, inserts = insert_dissonance_markers(
-        tokens,
-        tokenizer.non_special_ids,
-        tokenizer.dissonance_id,
-        DISSONANCE_RATE,
-        random.Random(seed),
-    )
+    inserts = 0
+    if use_special:
+        tokens, inserts = insert_dissonance_markers(
+            tokens,
+            tokenizer.non_special_ids,
+            tokenizer.dissonance_id,
+            DISSONANCE_RATE,
+            random.Random(seed),
+        )
     bytes_count = len(trimmed_text.encode("utf-8"))
     torch.save({"tokens": tokens, "bytes": bytes_count, "inserts": inserts}, cache_path)
     print(color_text(f"Saved {split} token cache to {cache_path}", Colors.YELLOW))
@@ -896,6 +905,11 @@ def parse_args() -> argparse.Namespace:
         help="Vocabulary size for the GPT-2 style byte-level BPE tokenizer.",
     )
     parser.add_argument(
+        "--special",
+        action="store_true",
+        help="Enable dissonance special tokens and insert markers into the dataset.",
+    )
+    parser.add_argument(
         "--debug-interrupt",
         action="store_true",
         help="If set, re-raise KeyboardInterrupt with a full stack trace.",
@@ -924,13 +938,14 @@ def main() -> None:
         def limit_label(value: int) -> str:
             return str(value if value > 0 else "all")
 
+        special_tag = "special" if args.special else "plain"
         train_cache_path = (
             model_dir
-            / f"{args.data}_tokens_train_{limit_label(train_limit)}_{args.tokenizer_vocab}.pt"
+            / f"{args.data}_tokens_train_{limit_label(train_limit)}_{args.tokenizer_vocab}_{special_tag}.pt"
         )
         test_cache_path = (
             model_dir
-            / f"{args.data}_tokens_test_{limit_label(test_limit)}_{args.tokenizer_vocab}.pt"
+            / f"{args.data}_tokens_test_{limit_label(test_limit)}_{args.tokenizer_vocab}_{special_tag}.pt"
         )
 
         try:
@@ -947,7 +962,9 @@ def main() -> None:
                 raise
             full_test_text = None
 
-        tokenizer_key = f"{args.data}_vocab_{limit_label(tokenizer_limit)}_{args.tokenizer_vocab}"
+        tokenizer_key = (
+            f"{args.data}_vocab_{limit_label(tokenizer_limit)}_{args.tokenizer_vocab}_{special_tag}"
+        )
         tokenizer_path = model_dir / f"{tokenizer_key}.json"
         if not tokenizer_path.exists() and full_train_text is None:
             raise FileNotFoundError(
@@ -963,6 +980,7 @@ def main() -> None:
             vocab_source,
             tokenizer_path,
             args.tokenizer_vocab,
+            args.special,
         )
 
         train_tokens, train_text, train_bytes, train_inserts = load_or_prepare_tokens(
@@ -973,6 +991,7 @@ def main() -> None:
             train_cache_path,
             tokenizer,
             seed=1234,
+            use_special=args.special,
         )
 
         test_tokens, test_text, test_bytes, test_inserts = load_or_prepare_tokens(
@@ -983,16 +1002,25 @@ def main() -> None:
             test_cache_path,
             tokenizer,
             seed=5678,
+            use_special=args.special,
         )
-        print(
-            color_text(
-                (
-                    f"Dissonance injections (train/test): "
-                    f"{train_inserts}/{test_inserts} sequences"
-                ),
-                Colors.CYAN,
+        if args.special:
+            print(
+                color_text(
+                    (
+                        f"Dissonance injections (train/test): "
+                        f"{train_inserts}/{test_inserts} sequences"
+                    ),
+                    Colors.CYAN,
+                )
             )
-        )
+        else:
+            print(
+                color_text(
+                    "Special token insertions disabled (--special not set)",
+                    Colors.GRAY,
+                )
+            )
 
         if train_text is None and train_bytes == 0:
             train_bytes = len(train_tokens)  # fallback when text absent
