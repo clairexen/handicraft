@@ -5,3 +5,4 @@
 /model/
 /.cache_transformers/
 /__pycache__/
+/.podssh
