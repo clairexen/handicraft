@@ -416,6 +416,7 @@ class ModelConfig:
     n_embd: int = 192       # GPT-2 base uses 768 embedding dims.
     n_grce: int = 32        # GRCE context dims.
     dropout: float = 0.05
+    alternate_stop: bool = False  # Only detach gradients on alternating positions.
 
 
 MODEL_CONFIG_TEMPLATE = ModelConfig()
@@ -520,6 +521,7 @@ class GRCEContextChannel(nn.Module):
         super().__init__()
         self.disabled = config.n_grce <= 0
         self.config = config
+        self.alternate_stop = config.alternate_stop
         if not self.disabled:
             self.n_inner = (3 * min(config.n_embd, config.n_grce) + max(config.n_embd, config.n_grce)) // 4
             self.n_hidden = min(3 * min(config.n_embd, config.n_grce), 2 * max(config.n_embd, config.n_grce))
@@ -571,10 +573,14 @@ class GRCEContextChannel(nn.Module):
         self,
         block_input: torch.Tensor,
         block_outputs: List[torch.Tensor],
+        *,
+        stop_grad: bool,
     ) -> torch.Tensor:
         if self.disabled:
             raise RuntimeError("Context channel disabled; update should not be called.")
-        pieces = [piece.detach() for piece in [block_input] + block_outputs]
+        pieces = []
+        for piece in [block_input] + block_outputs:
+            pieces.append(piece.detach() if stop_grad else piece)
         sampled = [sampler(part) for sampler, part in zip(self.context_sampler, pieces)]
         fused = torch.stack(sampled, dim=0).sum(dim=0)
         return self.context_link(fused)
@@ -625,7 +631,10 @@ class GRCEGPT(nn.Module):
             curr_blocks = [bo[:, -1, :] for bo in block_outputs]
             if not self.context.disabled and context is not None:
                 block0_last = block0_inputs[:, -1, :]
-                context = self.context.update(block0_last, curr_blocks)
+                stop_grad = True
+                if self.context.alternate_stop:
+                    stop_grad = (t % 2 == 0)
+                context = self.context.update(block0_last, curr_blocks, stop_grad=stop_grad)
             logits_steps.append(logits[:, -1:, :])
         logits = torch.cat(logits_steps, dim=1)
         loss = None
@@ -640,7 +649,8 @@ class GRCEGPT(nn.Module):
 def build_model_tag(config: ModelConfig) -> str:
     return (
         f"v{config.vocab_size}_bs{config.block_size}_emb{config.n_embd}_"
-        f"ctx{config.n_grce}_layers{config.n_layer}_heads{config.n_head}"
+        f"ctx{config.n_grce}_layers{config.n_layer}_heads{config.n_head}_"
+        f"altstop{int(config.alternate_stop)}"
     )
 
 
@@ -856,6 +866,11 @@ def parse_args() -> argparse.Namespace:
         help="Dimension of the recurrent GRCE context; use 0 to disable the channel.",
     )
     parser.add_argument(
+        "--alternate-stop",
+        action="store_true",
+        help="Only stop gradients every other position when updating the GRCE channel.",
+    )
+    parser.add_argument(
         "--dropout",
         type=float,
         default=defaults.dropout,
@@ -1057,6 +1072,7 @@ def main() -> None:
             n_embd=args.n_embd,
             n_grce=args.n_grce,
             dropout=args.dropout,
+            alternate_stop=args.alternate_stop,
         )
         model_tag = build_model_tag(config)
         prefix = f"{args.data}_model_"
