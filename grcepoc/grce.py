@@ -915,8 +915,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--prompt",
         type=str,
-        # default="bigotry is",
-        # default="as pope bobby once said:",
         default="ai will",
         help="Prompt used for generation",
     )
