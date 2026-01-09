@@ -31,9 +31,12 @@ run_ssh() {
     "$SSH_BIN" "${SSH_OPTS[@]}" "$REMOTE_HOST" "$@"
 }
 
+rsync_update() {
+    rsync "${RSYNC_COMMON[@]}" -e "$(join_cmd "${RSYNC_SSH[@]}")" "$ROOT_DIR/grce.py" "${REMOTE_HOST}:${REMOTE_DIR}/"
+}
+
 rsync_push() {
     run_ssh "mkdir -p $REMOTE_DIR $REMOTE_DIR/model"
-    rsync "${RSYNC_COMMON[@]}" -e "$(join_cmd "${RSYNC_SSH[@]}")" "$ROOT_DIR/grce.py" "${REMOTE_HOST}:${REMOTE_DIR}/"
     if [[ -d "$ROOT_DIR/model" ]]; then
         rsync "${RSYNC_COMMON[@]}" -e "$(join_cmd "${RSYNC_SSH[@]}")" "$ROOT_DIR/model/" "${REMOTE_HOST}:${REMOTE_DIR}/model/"
     else
@@ -43,11 +46,13 @@ rsync_push() {
 
 rsync_pull() {
     mkdir -p "$ROOT_DIR/model"
-    #rsync "${RSYNC_COMMON[@]}" -e "$(join_cmd "${RSYNC_SSH[@]}")" "${REMOTE_HOST}:${REMOTE_DIR}/grce.py" "$ROOT_DIR/"
     rsync "${RSYNC_COMMON[@]}" -e "$(join_cmd "${RSYNC_SSH[@]}")" "${REMOTE_HOST}:${REMOTE_DIR}/model/" "$ROOT_DIR/model/"
 }
 
 case "${1:-}" in
+    update)
+        rsync_update
+	;;
     push)
         rsync_push
         ;;
