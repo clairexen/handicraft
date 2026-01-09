@@ -406,7 +406,7 @@ class ModelConfig:
     n_embd: int = 192       # GPT-2 base uses 768 embedding dims.
     n_grce: int = 32        # GRCE context dims.
     dropout: float = 0.05
-    context_span: int = 1   # Detach gradients every N positions (0 disables detaching).
+    context_span: int = 2   # Detach gradients every N positions (0 disables detaching).
 
 
 MODEL_CONFIG_TEMPLATE = ModelConfig()
@@ -847,7 +847,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--context-span",
         type=int,
-        default=1,
+        default=2,
         help="Detach GRCE context gradients every N positions (0 disables detaching).",
     )
     parser.add_argument(
