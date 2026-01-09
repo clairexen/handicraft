@@ -494,7 +494,7 @@ class GPTCore(nn.Module):
         for layer_idx, block in enumerate(self.blocks):
             if block_biases is not None:
                 x = x + block_biases[layer_idx]
-            block_inputs.append(x)
+            block_inputs.append(x[:, -1, :])
             x, _, _ = block(x)
         x = self.ln_f(x)
         logits = self.head(x)
@@ -610,8 +610,11 @@ class GRCEGPT(nn.Module):
             logits, block_inputs = self.core(prefix, block_biases=block_biases)
             if not self.context.disabled and context is not None:
                 span = self.context.context_span
-                stop_grad = span != 0
-                if span > 1:
+                if span <= 0:
+                    stop_grad = False
+                elif span == 1:
+                    stop_grad = True
+                else:
                     stop_grad = (t % span == 0)
                 context = self.context.update(block_inputs, stop_grad=stop_grad)
             logits_steps.append(logits[:, -1:, :])

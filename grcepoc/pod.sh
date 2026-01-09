@@ -40,6 +40,16 @@ rsync_update() {
     rsync "${RSYNC_COMMON[@]}" -e "$(join_cmd "${RSYNC_SSH[@]}")" "$ROOT_DIR/grce.py" "${REMOTE_HOST}:${REMOTE_DIR}/"
 }
 
+rsync_put() {
+    ensure_remote_dirs
+    rsync_update
+    if [[ -d "$ROOT_DIR/data" ]]; then
+        rsync "${RSYNC_COMMON[@]}" -e "$(join_cmd "${RSYNC_SSH[@]}")" "$ROOT_DIR/data/" "${REMOTE_HOST}:${REMOTE_DIR}/data/"
+    else
+        echo "Warning: $ROOT_DIR/data directory not found; skipping." >&2
+    fi
+}
+
 rsync_push() {
     ensure_remote_dirs
     rsync_update
@@ -73,6 +83,9 @@ case "${1:-}" in
         ;;
     update)
         rsync_update
+        ;;
+    put)
+        rsync_put
         ;;
     push)
         rsync_push
