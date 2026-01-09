@@ -803,7 +803,7 @@ def parse_args() -> argparse.Namespace:
         default="simplewiki",
         help="Dataset base name; expects data/<name>-train.txt.gz and ...-test.txt.gz.",
     )
-    parser.add_argument("--device", type=str, default="cpu", help="cpu or cuda")
+    parser.add_argument("--device", type=str, default="cuda", help="cpu or cuda")
     parser.add_argument("--steps", type=int, default=100, help="Training steps per cycle")
     parser.add_argument(
         "--cycles",
