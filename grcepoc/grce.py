@@ -416,7 +416,7 @@ class ModelConfig:
     n_embd: int = 192       # GPT-2 base uses 768 embedding dims.
     n_grce: int = 32        # GRCE context dims.
     dropout: float = 0.05
-    alternate_stop: bool = False  # Only detach gradients on alternating positions.
+    context_span: int = 1   # Detach gradients every N positions (0 disables detaching).
 
 
 MODEL_CONFIG_TEMPLATE = ModelConfig()
@@ -521,7 +521,7 @@ class GRCEContextChannel(nn.Module):
         super().__init__()
         self.disabled = config.n_grce <= 0
         self.config = config
-        self.alternate_stop = config.alternate_stop
+        self.context_span = max(0, int(config.context_span))
         if not self.disabled:
             self.n_inner = (3 * min(config.n_embd, config.n_grce) + max(config.n_embd, config.n_grce)) // 4
             self.n_hidden = min(3 * min(config.n_embd, config.n_grce), 2 * max(config.n_embd, config.n_grce))
@@ -631,9 +631,10 @@ class GRCEGPT(nn.Module):
             curr_blocks = [bo[:, -1, :] for bo in block_outputs]
             if not self.context.disabled and context is not None:
                 block0_last = block0_inputs[:, -1, :]
-                stop_grad = True
-                if self.context.alternate_stop:
-                    stop_grad = (t % 2 == 0)
+                span = self.context.context_span
+                stop_grad = span != 0
+                if span > 1:
+                    stop_grad = (t % span == 0)
                 context = self.context.update(block0_last, curr_blocks, stop_grad=stop_grad)
             logits_steps.append(logits[:, -1:, :])
         logits = torch.cat(logits_steps, dim=1)
@@ -650,7 +651,7 @@ def build_model_tag(config: ModelConfig) -> str:
     return (
         f"v{config.vocab_size}_bs{config.block_size}_emb{config.n_embd}_"
         f"ctx{config.n_grce}_layers{config.n_layer}_heads{config.n_head}_"
-        f"altstop{int(config.alternate_stop)}"
+        f"span{config.context_span}"
     )
 
 
@@ -866,9 +867,10 @@ def parse_args() -> argparse.Namespace:
         help="Dimension of the recurrent GRCE context; use 0 to disable the channel.",
     )
     parser.add_argument(
-        "--alternate-stop",
-        action="store_true",
-        help="Only stop gradients every other position when updating the GRCE channel.",
+        "--context-span",
+        type=int,
+        default=1,
+        help="Detach GRCE context gradients every N positions (0 disables detaching).",
     )
     parser.add_argument(
         "--dropout",
@@ -1071,7 +1073,7 @@ def main() -> None:
             n_embd=args.n_embd,
             n_grce=args.n_grce,
             dropout=args.dropout,
-            alternate_stop=args.alternate_stop,
+            context_span=max(0, args.context_span),
         )
         model_tag = build_model_tag(config)
         prefix = f"{args.data}_model_"
