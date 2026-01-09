@@ -31,12 +31,18 @@ run_ssh() {
     "$SSH_BIN" "${SSH_OPTS[@]}" "$REMOTE_HOST" "$@"
 }
 
+ensure_remote_dirs() {
+    run_ssh "mkdir -p $REMOTE_DIR $REMOTE_DIR/model"
+}
+
 rsync_update() {
+    ensure_remote_dirs
     rsync "${RSYNC_COMMON[@]}" -e "$(join_cmd "${RSYNC_SSH[@]}")" "$ROOT_DIR/grce.py" "${REMOTE_HOST}:${REMOTE_DIR}/"
 }
 
 rsync_push() {
-    run_ssh "mkdir -p $REMOTE_DIR $REMOTE_DIR/model"
+    ensure_remote_dirs
+    rsync_update
     if [[ -d "$ROOT_DIR/model" ]]; then
         rsync "${RSYNC_COMMON[@]}" -e "$(join_cmd "${RSYNC_SSH[@]}")" "$ROOT_DIR/model/" "${REMOTE_HOST}:${REMOTE_DIR}/model/"
     else
@@ -49,10 +55,25 @@ rsync_pull() {
     rsync "${RSYNC_COMMON[@]}" -e "$(join_cmd "${RSYNC_SSH[@]}")" "${REMOTE_HOST}:${REMOTE_DIR}/model/" "$ROOT_DIR/model/"
 }
 
+open_shell() {
+    "$SSH_BIN" "${SSH_OPTS[@]}" "$REMOTE_HOST"
+}
+
 case "${1:-}" in
+    init)
+        ensure_remote_dirs
+        rsync_update
+        ;;
+    go)
+        ensure_remote_dirs
+        run_ssh "apt update && apt install -y rsync"
+        run_ssh "cd $REMOTE_DIR && pip install tokenizers transformers"
+        rsync_update
+        open_shell
+        ;;
     update)
         rsync_update
-	;;
+        ;;
     push)
         rsync_push
         ;;
@@ -60,7 +81,7 @@ case "${1:-}" in
         rsync_pull
         ;;
     *)
-        echo "Usage: bash pod.sh {push|pull}" >&2
+        echo "Usage: bash pod.sh {init|go|update|push|pull}" >&2
         exit 1
         ;;
 esac
