@@ -2,10 +2,10 @@
 it to base it loosely the picoGPT.
 
 This script keeps the picoGPT spirit of being small and hackable while
-adding the Gradient-stopped Recurrent Context Encoding (GRCE) channel described in
+adding the Gradient-limited Recurrent Context Encoding (GRCE) channel described in
 ``grce.md``. It trains a tiny character-level Transformer on the bundled
 Simple English Wikipedia split and shows how the recurrent context vector can
-be integrated with a stop-gradient constraint across time.
+be integrated with a configurable gradient-limiting constraint across time.
 """
 from __future__ import annotations
 
@@ -484,26 +484,21 @@ class GPTCore(nn.Module):
 
     def forward(
         self, idx: torch.Tensor, block_biases: List[torch.Tensor] | None = None
-    ) -> Tuple[torch.Tensor, List[torch.Tensor], torch.Tensor]:
+    ) -> Tuple[torch.Tensor, List[torch.Tensor]]:
         B, T = idx.shape
         device = idx.device
         tok = self.tok_emb(idx)
         pos = self.pos_emb(torch.arange(T, device=device))
         x = self.drop(tok + pos)
-        block_outputs: List[torch.Tensor] = []
-        first_block_input: torch.Tensor | None = None
+        block_inputs: List[torch.Tensor] = []
         for layer_idx, block in enumerate(self.blocks):
             if block_biases is not None:
                 x = x + block_biases[layer_idx]
-            if first_block_input is None:
-                first_block_input = x
+            block_inputs.append(x)
             x, _, _ = block(x)
-            block_outputs.append(x)
         x = self.ln_f(x)
         logits = self.head(x)
-        if first_block_input is None:
-            first_block_input = torch.zeros_like(x)  # pragma: no cover
-        return logits, block_outputs, first_block_input
+        return logits, block_inputs
 
 
 class GRCEContextChannel(nn.Module):
@@ -518,7 +513,7 @@ class GRCEContextChannel(nn.Module):
             assert min(config.n_embd, config.n_grce) < self.n_inner < self.n_hidden
             assert self.n_inner < max(config.n_embd, config.n_grce)
 
-            # Input: the block input/output vectors for layer _ at position N
+            # Input: the per-layer transformer inputs at position N
             # Output: a component of the "pre-link inner context vector", consolidate by vector addition
             self.context_sampler = nn.ModuleList(
                 nn.Sequential(
@@ -527,7 +522,7 @@ class GRCEContextChannel(nn.Module):
                     nn.Linear(self.n_hidden, self.n_inner),
                     nn.Dropout(config.dropout),
                 )
-                for _ in range(config.n_layer + 1)
+                for _ in range(config.n_layer)
             )
 
             # Input: the compiled "pre-link inner context vector" at position N
@@ -561,16 +556,13 @@ class GRCEContextChannel(nn.Module):
 
     def update(
         self,
-        block_input: torch.Tensor,
-        block_outputs: List[torch.Tensor],
+        block_inputs: List[torch.Tensor],
         *,
         stop_grad: bool,
     ) -> torch.Tensor:
         if self.disabled:
             raise RuntimeError("Context channel disabled; update should not be called.")
-        pieces = []
-        for piece in [block_input] + block_outputs:
-            pieces.append(piece.detach() if stop_grad else piece)
+        pieces = [inp.detach() if stop_grad else inp for inp in block_inputs]
         sampled = [sampler(part) for sampler, part in zip(self.context_sampler, pieces)]
         fused = torch.stack(sampled, dim=0).sum(dim=0)
         return self.context_link(fused)
@@ -615,17 +607,13 @@ class GRCEGPT(nn.Module):
                     )
                     full[:, -1, :] = bias_vec
                     block_biases.append(full)
-            logits, block_outputs, block0_inputs = self.core(
-                prefix, block_biases=block_biases
-            )
-            curr_blocks = [bo[:, -1, :] for bo in block_outputs]
+            logits, block_inputs = self.core(prefix, block_biases=block_biases)
             if not self.context.disabled and context is not None:
-                block0_last = block0_inputs[:, -1, :]
                 span = self.context.context_span
                 stop_grad = span != 0
                 if span > 1:
                     stop_grad = (t % span == 0)
-                context = self.context.update(block0_last, curr_blocks, stop_grad=stop_grad)
+                context = self.context.update(block_inputs, stop_grad=stop_grad)
             logits_steps.append(logits[:, -1:, :])
         logits = torch.cat(logits_steps, dim=1)
         loss = None
