@@ -248,8 +248,7 @@ class TextDataset:
         if len(chunk) <= 1:
             raise ValueError(f"Not enough tokens in {split} split to build a chunk")
         self.positions[split] = (start + total_chars) % len(source)
-        segments = self._byte_segments(split, parts_text)
-        self._log_segments(split, segments)
+        self._byte_segments(split, parts_text)
         self.chunks[split] = chunk
 
     def get_batch(
@@ -323,15 +322,6 @@ class TextDataset:
             segments.append((start, end))
         self.byte_positions[split] = byte_pos % total_bytes
         return segments
-
-    def _log_segments(self, split: str, segments: list[tuple[int, int]]) -> None:
-        if not segments:
-            return
-        label = "train" if split == "train" else "test"
-        color = Colors.MAGENTA if split == "train" else Colors.YELLOW
-        path = self.train_path if split == "train" else self.test_path
-        seg_text = " + ".join(f"[{s},{e})" for s, e in segments)
-        print(color_text(f"[{label}:{path.name}] bytes {seg_text}", color))
 
 
 def insert_dissonance_markers(
