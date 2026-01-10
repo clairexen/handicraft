@@ -1,7 +1,5 @@
 /.venv/
 /.backup/
-/data/simplewiki-test.txt.gz
-/data/simplewiki-train.txt.gz
 /model/
 /.cache_transformers/
 /__pycache__/
