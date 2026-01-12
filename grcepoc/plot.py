@@ -9,9 +9,6 @@ from typing import Iterable, List
 import matplotlib.pyplot as plt
 
 
-MARKER_CUTOFF = 30  # hide markers when too many points crowd the chart
-
-
 @dataclass
 class LossRecord:
     model_path: pathlib.Path
@@ -86,14 +83,13 @@ def main() -> None:
     fig, ax = plt.subplots()
     for rec in records:
         label = rec.model_path.stem
-        marker_enabled = len(rec.steps) <= MARKER_CUTOFF
         if show_train:
             ax.plot(
                 rec.steps,
                 rec.train,
                 label=f"{label} train",
                 linestyle="--",
-                marker="x" if marker_enabled else None,
+                marker=None
             )
         if show_test:
             ax.plot(
@@ -101,7 +97,7 @@ def main() -> None:
                 rec.test,
                 label=f"{label} test",
                 linestyle="-",
-                marker="o" if marker_enabled else None,
+                marker=None
             )
 
     ax.set_xlabel("Steps")
