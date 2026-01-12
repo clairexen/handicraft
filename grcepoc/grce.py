@@ -759,7 +759,12 @@ def generate(
         idx_cond = idx[:, -model.config.block_size :]
         logits, _, _ = model.forward_autoreg(idx_cond)
         logits_last = logits[:, -1, :]
+        logits_last = torch.nan_to_num(logits_last, nan=0.0, posinf=1e4, neginf=-1e4)
         probs = F.softmax(logits_last, dim=-1)
+        probs = torch.nan_to_num(probs, nan=0.0)
+        probs_sum = probs.sum(dim=-1, keepdim=True)
+        fallback = torch.full_like(probs, 1.0 / probs.size(-1))
+        probs = torch.where(probs_sum > 0, probs / probs_sum.clamp_min(1e-12), fallback)
         next_token = torch.multinomial(probs, num_samples=1)
         idx = torch.cat([idx, next_token], dim=1)
     return idx
