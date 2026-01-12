@@ -4,7 +4,9 @@ from __future__ import annotations
 import argparse
 import pathlib
 from dataclasses import dataclass
-from typing import Iterable, List
+from typing import Iterable, List, Optional
+
+import json
 
 import matplotlib.pyplot as plt
 
@@ -40,6 +42,33 @@ def torch_load(path: pathlib.Path):
     return torch.load(path, map_location="cpu")
 
 
+def load_store(path: pathlib.Path) -> Optional[LossRecord]:
+    if not path.exists():
+        print(f"warning: stored file {path} not found")
+        return None
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return LossRecord(
+        model_path=path,
+        steps=list(map(int, payload.get("steps", []))),
+        train=list(map(float, payload.get("train", []))),
+        test=list(map(float, payload.get("test", []))),
+    )
+
+
+def store_records(records: List[LossRecord], out_path: pathlib.Path) -> None:
+    payload = [
+        {
+            "model": rec.model_path.name,
+            "steps": rec.steps,
+            "train": rec.train,
+            "test": rec.test,
+        }
+        for rec in records
+    ]
+    out_path.write_text(json.dumps(payload), encoding="utf-8")
+    print(f"stored {len(records)} record(s) to {out_path}")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -48,10 +77,15 @@ def parse_args() -> argparse.Namespace:
         type=pathlib.Path,
         help=".pt checkpoint files (defaults to model/*.pt if omitted)",
     )
-    mode = parser.add_mutually_exclusive_group()
-    mode.add_argument("--train", action="store_true", help="plot train losses only")
-    mode.add_argument("--test", action="store_true", help="plot test losses only")
-    mode.add_argument("--both", action="store_true", help="plot both train and test losses")
+    parser.add_argument("--train", action="store_true", help="plot train losses only")
+    parser.add_argument("--test", action="store_true", help="plot test losses only")
+    parser.add_argument("--both", action="store_true", help="plot both train and test losses")
+    parser.add_argument("--store", type=pathlib.Path, help="write loss curves to JSON file")
+    parser.add_argument(
+        "--stored",
+        type=pathlib.Path,
+        help="load JSON file produced by --store (skips .pt loading)",
+    )
     return parser.parse_args()
 
 
@@ -64,11 +98,21 @@ def discover_paths(explicit: List[pathlib.Path]) -> List[pathlib.Path]:
 
 def main() -> None:
     args = parse_args()
-    pt_paths = discover_paths(args.paths)
-    records = load_records(pt_paths)
+    if args.stored:
+        record = load_store(args.stored)
+        records = [record] if record else []
+    else:
+        pt_paths = discover_paths(args.paths)
+        records = load_records(pt_paths)
+        if not records and args.store and args.store.exists():
+            record = load_store(args.store)
+            records = [record] if record else []
     if not records:
         print("No loss history found.")
         return
+
+    if args.store and records:
+        store_records(records, args.store)
 
     if args.both:
         show_train = show_test = True
