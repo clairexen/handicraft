@@ -12,6 +12,14 @@ This mechanism creates an explicit channel for time-domain (i.e. recurrent) sign
 - **Long-term, semi-stable patterns** that act like on/off switches describing style, role, or tone and remain active across many positions.
 - **Short-term, rapidly changing patterns** that behave like token-to-token controllers (grammar states, agreement markers, etc.) and flicker as the model advances.
 
+## Parameter count (dominant terms)
+Ignoring embeddings and other lower-order pieces, the learned weights are dominated by two expressions:
+
+- Position-domain Transformer stack: `~ 12 * n_layer * n_embd^2`
+- Time-domain GRCE network (only if `n_grce > 0`): `~ 8 * n_layer * (n_embd * n_grce + n_grce^2)`
+
+These come directly from the quadratic QKV/FFN projections and the two GRCE MLPs; everything else is small compared to the squared terms.
+
 ## Running it
 Use `python grce.py --help` for CLI options. Main experiment:
 
