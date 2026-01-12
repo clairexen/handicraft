@@ -1090,7 +1090,11 @@ def main() -> None:
         total_steps = 0
         loss_history: List[Dict[str, float]] = []
         if model_path.exists():
-            payload = torch.load(model_path, map_location=device)
+            payload = torch.load(
+                model_path,
+                map_location=device,
+                weights_only=False,  # checkpoints also store dataset offsets/counters
+            )
             try:
                 if isinstance(payload, dict) and "model" in payload:
                     model.load_state_dict(payload["model"])
