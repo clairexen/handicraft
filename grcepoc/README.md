@@ -8,13 +8,11 @@ This repo extends a tiny picoGPT-style language model with a recurrent context c
 3. **Context propagation.** The `n_layer` sampler outputs are summed to form the single context vector for the next position—nothing else persists across time.
 4. **Bias injection.** At the next position every block applies its own generator `n_grce → 2*(n_embd + n_grce) → ReLU → n_embd`. The generated biases are added only to the newest token row of each block input, so the rest of the sequence remains untouched while the context acts as an additive steering signal.
 
-This mechanism creates an explicit channel for slow-changing control signals without interfering with self-attention capacity. Because the context vector is the sole cross-time carrier, we expect it to split into two behavioral bands:
+This mechanism creates an explicit channel for time-domain (i.e. recurrent) signals without interfering with self-attention capacity. Because the context vector is the sole cross-time carrier, we expect it to split into two behavioral bands:
 - **Long-term, semi-stable patterns** that act like on/off switches describing style, role, or tone and remain active across many positions.
 - **Short-term, rapidly changing patterns** that behave like token-to-token controllers (grammar states, agreement markers, etc.) and flicker as the model advances.
 
-Tuning `--context-span` lets you decide how much of the vector learns long vs. short horizon behavior: larger spans enforce more stability, while span 0 leaves everything plastic.
-
 ## Running it
-Use `python grce.py --help` for CLI options. Typical runs specify dataset (`--data`), model size (`--n-layer`, `--n-head`, `--n-embd`, `--n-grce`), and optional knobs such as `--special` (injecting dissonance markers) or `--context-span`.
+Use `python grce.py --help` for CLI options.
 
 (pretty much all code in this repo is ai-generated. but of course only under my strong supervision.. ~Claire ;)
