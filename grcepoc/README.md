@@ -13,6 +13,16 @@ This mechanism creates an explicit channel for time-domain (i.e. recurrent) sign
 - **Short-term, rapidly changing patterns** that behave like token-to-token controllers (grammar states, agreement markers, etc.) and flicker as the model advances.
 
 ## Running it
-Use `python grce.py --help` for CLI options.
+Use `python grce.py --help` for CLI options. Main experiment:
+
+```
+for cy in 2 3 5 10 20; do
+	python grce.py --cycles $cy --n-grce 0
+	python grce.py --cycles $cy --context-span 0
+	python grce.py --cycles $cy --context-span 1
+	python grce.py --cycles $cy --context-span 2
+	python grce.py --cycles $cy --context-span 3
+done
+```
 
 (pretty much all code in this repo is ai-generated. but of course only under my strong supervision.. ~Claire ;)
