@@ -508,43 +508,26 @@ class GRCEContextChannel(nn.Module):
         self.config = config
         self.context_span = max(0, int(config.context_span))
         if not self.disabled:
-            self.n_inner = (3 * min(config.n_embd, config.n_grce) + max(config.n_embd, config.n_grce)) // 4
-            self.n_hidden = min(3 * min(config.n_embd, config.n_grce), 2 * max(config.n_embd, config.n_grce))
-            assert min(config.n_embd, config.n_grce) < self.n_inner < self.n_hidden
-            assert self.n_inner < max(config.n_embd, config.n_grce)
+            hidden = 2 * (config.n_embd + config.n_grce)
 
-            # Input: the per-layer transformer inputs at position N
-            # Output: a component of the "pre-link inner context vector", consolidate by vector addition
+            # Input: per-layer transformer inputs at position N
+            # Output: n_grce contribution summed across layers and passed to next step
             self.context_sampler = nn.ModuleList(
                 nn.Sequential(
-                    nn.Linear(config.n_embd, self.n_hidden),
-                    nn.GELU(),
-                    nn.Linear(self.n_hidden, self.n_inner),
-                    nn.Dropout(config.dropout),
+                    nn.Linear(config.n_embd, hidden),
+                    nn.ReLU(),
+                    nn.Linear(hidden, config.n_grce),
                 )
                 for _ in range(config.n_layer)
             )
 
-            # Input: the compiled "pre-link inner context vector" at position N
-            # Output: the "post-link inner context vector" at position N+1
-            self.context_link = nn.Sequential(
-                nn.Linear(self.n_inner, config.n_grce),
-                nn.Dropout(config.dropout),
-
-                nn.Linear(config.n_grce, self.n_hidden),
-                nn.GELU(),
-                nn.Linear(self.n_hidden, self.n_inner),
-                nn.Dropout(config.dropout),
-            )
-
-            # Input: the "post-link inner context vector" at position N+1
-            # Output: the "context bias" for layer _ at position N+1
+            # Input: next-step context vector
+            # Output: per-layer bias for position N+1
             self.context_bias_gen = nn.ModuleList(
                 nn.Sequential(
-                    nn.Linear(self.n_inner, self.n_hidden),
-                    nn.GELU(),
-                    nn.Linear(self.n_hidden, config.n_embd),
-                    nn.Dropout(config.dropout),
+                    nn.Linear(config.n_grce, hidden),
+                    nn.ReLU(),
+                    nn.Linear(hidden, config.n_embd),
                 )
                 for _ in range(config.n_layer)
             )
@@ -564,8 +547,7 @@ class GRCEContextChannel(nn.Module):
             raise RuntimeError("Context channel disabled; update should not be called.")
         pieces = [inp.detach() if stop_grad else inp for inp in block_inputs]
         sampled = [sampler(part) for sampler, part in zip(self.context_sampler, pieces)]
-        fused = torch.stack(sampled, dim=0).sum(dim=0)
-        return self.context_link(fused)
+        return torch.stack(sampled, dim=0).sum(dim=0)
 
 
 class GRCEGPT(nn.Module):
