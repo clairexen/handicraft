@@ -507,6 +507,7 @@ class GRCEContextChannel(nn.Module):
         self.disabled = config.n_grce <= 0
         self.config = config
         self.context_span = max(0, int(config.context_span))
+        self.context_dim = config.n_grce
         if not self.disabled:
             hidden = 2 * (config.n_embd + config.n_grce)
 
@@ -566,7 +567,7 @@ class GRCEGPT(nn.Module):
         device = idx.device
         context = None
         if not self.context.disabled:
-            context_dim = self.context.n_inner
+            context_dim = self.context.context_dim
             context = torch.zeros(B, context_dim, device=device)
         logits_steps = []
         for t in range(T):
