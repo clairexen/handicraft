@@ -515,8 +515,10 @@ class GRCEContextChannel(nn.Module):
             # Output: n_grce contribution summed across layers and passed to next step
             self.context_sampler = nn.ModuleList(
                 nn.Sequential(
+                    nn.LayerNorm(config.n_embd),
                     nn.Linear(config.n_embd, hidden),
                     nn.ReLU(),
+                    nn.Dropout(config.dropout),
                     nn.Linear(hidden, config.n_grce),
                 )
                 for _ in range(config.n_layer)
@@ -526,8 +528,10 @@ class GRCEContextChannel(nn.Module):
             # Output: per-layer bias for position N+1
             self.context_bias_gen = nn.ModuleList(
                 nn.Sequential(
+                    nn.LayerNorm(config.n_grce),
                     nn.Linear(config.n_grce, hidden),
                     nn.ReLU(),
+                    nn.Dropout(config.dropout),
                     nn.Linear(hidden, config.n_embd),
                 )
                 for _ in range(config.n_layer)
@@ -548,7 +552,8 @@ class GRCEContextChannel(nn.Module):
             raise RuntimeError("Context channel disabled; update should not be called.")
         pieces = [inp.detach() if stop_grad else inp for inp in block_inputs]
         sampled = [sampler(part) for sampler, part in zip(self.context_sampler, pieces)]
-        return torch.stack(sampled, dim=0).sum(dim=0)
+        fused = torch.stack(sampled, dim=0).mean(dim=0)
+        return torch.tanh(fused)
 
 
 class GRCEGPT(nn.Module):
