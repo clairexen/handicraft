@@ -534,7 +534,6 @@ class GRCEContextChannel(nn.Module):
                 )
                 for _ in range(config.n_layer)
             )
-            # Uncomment to experiment with "pre" behavior:
             self.pre_norms = nn.ModuleList(
                 nn.LayerNorm(config.n_embd) for _ in range(config.n_layer)
             )
@@ -556,7 +555,6 @@ class GRCEContextChannel(nn.Module):
         pieces = [inp.detach() if stop_grad else inp for inp in block_inputs]
         sampled = []
         for idx, (sampler, part) in enumerate(zip(self.context_sampler, pieces)):
-            # Example pre-normalization:
             part = self.pre_norms[idx](part)
             sampled.append(sampler(part))
         fused = torch.stack(sampled, dim=0).mean(dim=0)
