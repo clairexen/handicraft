@@ -509,40 +509,34 @@ class GRCEContextChannel(nn.Module):
         self.context_span = max(0, int(config.context_span))
         self.context_dim = config.n_grce
         if not self.disabled:
-            hidden = max(config.n_grce, 2 * (config.n_embd + config.n_grce) // max(1, config.n_layer))
-
-            # Input: per-layer transformer inputs at position N
-            # Output: n_grce contribution summed across layers and passed to next step
-            self.context_sampler = nn.ModuleList(
-                nn.Sequential(
-                    nn.Linear(config.n_embd, hidden),
-                    nn.ReLU(),
-                    nn.Dropout(config.dropout),
-                    nn.Linear(hidden, config.n_grce),
-                )
-                for _ in range(config.n_layer)
+            hidden = max(
+                config.n_grce,
+                2 * (config.n_embd + config.n_grce) // max(1, config.n_layer),
             )
+            concat_dim = config.n_layer * config.n_embd
 
-            # Input: next-step context vector
-            # Output: per-layer bias for position N+1
-            self.context_bias_gen = nn.ModuleList(
-                nn.Sequential(
-                    nn.Linear(config.n_grce, hidden),
-                    nn.ReLU(),
-                    nn.Dropout(config.dropout),
-                    nn.Linear(hidden, config.n_embd),
-                )
-                for _ in range(config.n_layer)
-            )
             self.pre_norms = nn.ModuleList(
                 nn.LayerNorm(config.n_embd) for _ in range(config.n_layer)
             )
-            self.post_norm = nn.LayerNorm(config.n_grce)
+            self.concat_linear = nn.Linear(concat_dim, hidden)
+            self.concat_dropout = nn.Dropout(config.dropout)
+            self.context_linear = nn.Linear(hidden, config.n_grce)
+            self.context_norm = nn.LayerNorm(config.n_grce)
+
+            self.bias_linear = nn.Linear(config.n_grce, hidden)
+            self.bias_dropout = nn.Dropout(config.dropout)
+            self.bias_out = nn.Linear(hidden, concat_dim)
 
     def project(self, context: torch.Tensor) -> List[torch.Tensor]:
         if self.disabled:
             raise RuntimeError("Context channel disabled; project should not be called.")
-        return [gen(context) for gen in self.context_bias_gen]
+        if self.disabled:
+            raise RuntimeError("Context channel disabled; project should not be called.")
+        hidden = F.relu(self.bias_linear(context))
+        hidden = self.bias_dropout(hidden)
+        fused = self.bias_out(hidden)
+        fused = fused.view(fused.size(0), self.config.n_layer, self.config.n_embd)
+        return [fused[:, idx, :] for idx in range(self.config.n_layer)]
 
     def update(
         self,
@@ -553,14 +547,14 @@ class GRCEContextChannel(nn.Module):
         if self.disabled:
             raise RuntimeError("Context channel disabled; update should not be called.")
         pieces = [inp.detach() if stop_grad else inp for inp in block_inputs]
-        sampled = []
-        for idx, (sampler, part) in enumerate(zip(self.context_sampler, pieces)):
-            part = self.pre_norms[idx](part)
-            sampled.append(sampler(part))
-        fused = torch.stack(sampled, dim=0).mean(dim=0)
-        fused = torch.tanh(fused)
-        fused = self.post_norm(fused)
-        return fused
+        normed = [ln(part) for ln, part in zip(self.pre_norms, pieces)]
+        concat = torch.cat(normed, dim=-1)
+        hidden = F.relu(self.concat_linear(concat))
+        hidden = self.concat_dropout(hidden)
+        context = self.context_linear(hidden)
+        context = torch.tanh(context)
+        context = self.context_norm(context)
+        return context
 
 
 class GRCEGPT(nn.Module):
