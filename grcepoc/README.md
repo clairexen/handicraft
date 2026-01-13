@@ -24,13 +24,6 @@ These come directly from the quadratic QKV/FFN projections and the two GRCE MLPs
 Use `python grce.py --help` for CLI options. Main experiment:
 
 ```
-set -x
-for cy in 2 3 5 10 20; do
-	python grce.py --cycles $cy --context-norm pre
-	python grce.py --cycles $cy --context-norm per
-	python grce.py --cycles $cy --context-norm post
-done
-
 for cy in 2 3 5 10 20; do
 	python grce.py --cycles $cy --n-grce 0
 	python grce.py --cycles $cy --context-span 0
