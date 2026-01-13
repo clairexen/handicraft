@@ -535,9 +535,9 @@ class GRCEContextChannel(nn.Module):
                 for _ in range(config.n_layer)
             )
             # Uncomment to experiment with "pre" behavior:
-            # self.pre_norms = nn.ModuleList(
-            #     nn.LayerNorm(config.n_embd) for _ in range(config.n_layer)
-            # )
+            self.pre_norms = nn.ModuleList(
+                nn.LayerNorm(config.n_embd) for _ in range(config.n_layer)
+            )
             self.post_norm = nn.LayerNorm(config.n_grce)
 
     def project(self, context: torch.Tensor) -> List[torch.Tensor]:
@@ -557,7 +557,7 @@ class GRCEContextChannel(nn.Module):
         sampled = []
         for idx, (sampler, part) in enumerate(zip(self.context_sampler, pieces)):
             # Example pre-normalization:
-            # part = self.pre_norms[idx](part)
+            part = self.pre_norms[idx](part)
             sampled.append(sampler(part))
         fused = torch.stack(sampled, dim=0).mean(dim=0)
         fused = torch.tanh(fused)
@@ -631,7 +631,7 @@ def build_model_tag(config: ModelConfig) -> str:
         f"layers{config.n_layer}_heads{config.n_head}_ctx{config.n_grce}"
     )
     if config.n_grce > 0:
-        tag += f"_span{config.context_span}_normpost"
+        tag += f"_span{config.context_span}"
     return tag
 
 
