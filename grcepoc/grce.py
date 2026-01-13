@@ -407,7 +407,6 @@ class ModelConfig:
     n_grce: int = 64        # GRCE context dims.
     dropout: float = 0.05
     context_span: int = 2   # Detach gradients every N positions (0 disables detaching).
-    context_norm: str = "post"  # Where to apply the single LayerNorm (pre/per/post).
 
 
 MODEL_CONFIG_TEMPLATE = ModelConfig()
@@ -508,7 +507,6 @@ class GRCEContextChannel(nn.Module):
         self.disabled = config.n_grce <= 0
         self.config = config
         self.context_span = max(0, int(config.context_span))
-        self.norm_mode = config.context_norm
         self.context_dim = config.n_grce
         if not self.disabled:
             hidden = 4 * config.n_grce
@@ -536,17 +534,11 @@ class GRCEContextChannel(nn.Module):
                 )
                 for _ in range(config.n_layer)
             )
-
-            if self.norm_mode == "pre":
-                self.norm_layers = nn.ModuleList(
-                    nn.LayerNorm(config.n_embd) for _ in range(config.n_layer)
-                )
-            elif self.norm_mode == "per":
-                self.norm_layers = nn.ModuleList(
-                    nn.LayerNorm(config.n_grce) for _ in range(config.n_layer)
-                )
-            else:  # post
-                self.norm_layers = nn.LayerNorm(config.n_grce)
+            # Uncomment to experiment with "pre" behavior:
+            # self.pre_norms = nn.ModuleList(
+            #     nn.LayerNorm(config.n_embd) for _ in range(config.n_layer)
+            # )
+            self.post_norm = nn.LayerNorm(config.n_grce)
 
     def project(self, context: torch.Tensor) -> List[torch.Tensor]:
         if self.disabled:
@@ -564,16 +556,12 @@ class GRCEContextChannel(nn.Module):
         pieces = [inp.detach() if stop_grad else inp for inp in block_inputs]
         sampled = []
         for idx, (sampler, part) in enumerate(zip(self.context_sampler, pieces)):
-            if self.norm_mode == "pre":
-                part = self.norm_layers[idx](part)
-            out = sampler(part)
-            if self.norm_mode == "per":
-                out = self.norm_layers[idx](out)
-            sampled.append(out)
+            # Example pre-normalization:
+            # part = self.pre_norms[idx](part)
+            sampled.append(sampler(part))
         fused = torch.stack(sampled, dim=0).mean(dim=0)
         fused = torch.tanh(fused)
-        if self.norm_mode == "post":
-            fused = self.norm_layers(fused)
+        fused = self.post_norm(fused)
         return fused
 
 
@@ -643,7 +631,7 @@ def build_model_tag(config: ModelConfig) -> str:
         f"layers{config.n_layer}_heads{config.n_head}_ctx{config.n_grce}"
     )
     if config.n_grce > 0:
-        tag += f"_span{config.context_span}_norm{config.context_norm}"
+        tag += f"_span{config.context_span}_normpost"
     return tag
 
 
@@ -865,13 +853,6 @@ def parse_args() -> argparse.Namespace:
         help="Detach GRCE context gradients every N positions (0 disables detaching).",
     )
     parser.add_argument(
-        "--context-norm",
-        type=str,
-        default="post",
-        choices=["pre", "per", "post"],
-        help="Where to apply LayerNorm in the GRCE path.",
-    )
-    parser.add_argument(
         "--dropout",
         type=float,
         default=defaults.dropout,
@@ -1073,7 +1054,6 @@ def main() -> None:
             n_grce=args.n_grce,
             dropout=args.dropout,
             context_span=max(0, args.context_span),
-            context_norm=args.context_norm,
         )
         model_tag = build_model_tag(config)
         prefix = f"{args.data}_model_"
