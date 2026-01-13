@@ -509,7 +509,7 @@ class GRCEContextChannel(nn.Module):
         self.context_span = max(0, int(config.context_span))
         self.context_dim = config.n_grce
         if not self.disabled:
-            hidden = 4 * config.n_grce
+            hidden = max(config.n_grce, 2 * (config.n_embd + config.n_grce) // max(1, config.n_layer))
 
             # Input: per-layer transformer inputs at position N
             # Output: n_grce contribution summed across layers and passed to next step
