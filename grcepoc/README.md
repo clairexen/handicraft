@@ -8,6 +8,8 @@ This repo extends a tiny picoGPT-style language model with a recurrent context c
 3. **Context propagation.** The `n_layer` sampler outputs are averaged, squashed with `tanh`, and forwarded as the single context vector for the next position—nothing else persists across time.
 4. **Bias injection.** At the next position every block applies its own generator `LayerNorm → n_grce → 4*n_grce → ReLU → Dropout → n_embd`. The generated biases are added only to the newest token row of each block input, so the rest of the sequence remains untouched while the context acts as an additive steering signal.
 
+Normalization can happen at three points in the time-domain path (`--context-norm`): before aggregation (`pre`, default), per-layer after sampling (`per`), or once after the averaged/tanh-clamped vector (`post`).
+
 This mechanism creates an explicit channel for time-domain (i.e. recurrent) signals without interfering with self-attention capacity. Because the context vector is the sole cross-time carrier, we expect it to split into two behavioral bands:
 - **Long-term, semi-stable patterns** that act like on/off switches describing style, role, or tone and remain active across many positions.
 - **Short-term, rapidly changing patterns** that behave like token-to-token controllers (grammar states, agreement markers, etc.) and flicker as the model advances.
@@ -25,6 +27,12 @@ Use `python grce.py --help` for CLI options. Main experiment:
 
 ```
 set -x
+for cy in 2 3 5 10 20; do
+	python grce.py --cycles $cy --context-norm pre
+	python grce.py --cycles $cy --context-norm per
+	python grce.py --cycles $cy --context-norm post
+done
+
 for cy in 2 3 5 10 20; do
 	python grce.py --cycles $cy --n-grce 0
 	python grce.py --cycles $cy --context-span 0

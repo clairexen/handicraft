@@ -407,6 +407,7 @@ class ModelConfig:
     n_grce: int = 64        # GRCE context dims.
     dropout: float = 0.05
     context_span: int = 2   # Detach gradients every N positions (0 disables detaching).
+    context_norm: str = "pre"  # "pre" (default), "per", or "post".
 
 
 MODEL_CONFIG_TEMPLATE = ModelConfig()
@@ -507,6 +508,7 @@ class GRCEContextChannel(nn.Module):
         self.disabled = config.n_grce <= 0
         self.config = config
         self.context_span = max(0, int(config.context_span))
+        self.norm_mode = config.context_norm
         self.context_dim = config.n_grce
         if not self.disabled:
             hidden = 4 * config.n_grce
@@ -551,9 +553,22 @@ class GRCEContextChannel(nn.Module):
         if self.disabled:
             raise RuntimeError("Context channel disabled; update should not be called.")
         pieces = [inp.detach() if stop_grad else inp for inp in block_inputs]
-        sampled = [sampler(part) for sampler, part in zip(self.context_sampler, pieces)]
-        fused = torch.stack(sampled, dim=0).mean(dim=0)
-        return torch.tanh(fused)
+        sampled = []
+        for sampler, part in zip(self.context_sampler, pieces):
+            out = sampler(part)
+            if self.norm_mode == "per":
+                out = F.layer_norm(out, (out.size(-1),))
+            sampled.append(out)
+        fused = torch.stack(sampled, dim=0)
+        if self.norm_mode == "pre":
+            fused = fused.mean(dim=0)
+            fused = F.layer_norm(fused, (fused.size(-1),))
+        else:
+            fused = fused.mean(dim=0)
+        fused = torch.tanh(fused)
+        if self.norm_mode == "post":
+            fused = F.layer_norm(fused, (fused.size(-1),))
+        return fused
 
 
 class GRCEGPT(nn.Module):
@@ -622,7 +637,7 @@ def build_model_tag(config: ModelConfig) -> str:
         f"layers{config.n_layer}_heads{config.n_head}_ctx{config.n_grce}"
     )
     if config.n_grce > 0:
-        tag += f"_span{config.context_span}"
+        tag += f"_span{config.context_span}_norm{config.context_norm}"
     return tag
 
 
@@ -844,6 +859,13 @@ def parse_args() -> argparse.Namespace:
         help="Detach GRCE context gradients every N positions (0 disables detaching).",
     )
     parser.add_argument(
+        "--context-norm",
+        type=str,
+        default="pre",
+        choices=["pre", "per", "post"],
+        help="Where to apply LayerNorm in the GRCE path (pre/per/post).",
+    )
+    parser.add_argument(
         "--dropout",
         type=float,
         default=defaults.dropout,
@@ -1045,6 +1067,7 @@ def main() -> None:
             n_grce=args.n_grce,
             dropout=args.dropout,
             context_span=max(0, args.context_span),
+            context_norm=args.context_norm,
         )
         model_tag = build_model_tag(config)
         prefix = f"{args.data}_model_"
