@@ -642,10 +642,14 @@ def evaluate_split(
     iters: int,
     *,
     disable_context: bool = False,
+    batches: list[tuple[torch.Tensor, torch.Tensor]] | None = None,
 ) -> float:
     losses = []
-    for _ in range(iters):
-        xb, yb = dataset.get_batch(split, block_size, batch_size, device)
+    if batches is None:
+        batches = [
+            dataset.get_batch(split, block_size, batch_size, device) for _ in range(iters)
+        ]
+    for xb, yb in batches:
         _, _, loss = model.forward_autoreg(xb, yb, disable_context=disable_context)
         losses.append(loss.item())
     return sum(losses) / len(losses)
@@ -683,7 +687,12 @@ def train_model(
             model.eval()
             with torch.no_grad():
                 split_losses: dict[str, float] = {}
+                cached_batches: dict[str, list[tuple[torch.Tensor, torch.Tensor]]] = {}
                 for split in ("train", "test"):
+                    cached_batches[split] = [
+                        dataset.get_batch(split, block_size, batch_size, device)
+                        for _ in range(eval_iters)
+                    ]
                     for suffix, disable in (("", False), ("_nogrce", True)):
                         split_losses[f"{split}{suffix}"] = evaluate_split(
                             model,
@@ -694,6 +703,7 @@ def train_model(
                             split,
                             eval_iters,
                             disable_context=disable,
+                            batches=cached_batches[split],
                         )
                 sample_tokens = generate(
                     model,
