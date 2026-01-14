@@ -45,6 +45,8 @@ FANCY_SPACE = "\u2423"  # Open Box symbol for visible spaces
 FANCY_ENTER = "\u23CE"  # Return symbol for visible newlines
 THINK_TOKEN = "<think>"
 THINK_SYMBOL = "\u2754"  # white question mark
+UNDO_TOKEN = "<undo>"
+UNDO_SYMBOL = "\u21A9"  # leftwards arrow with hook
 ASCII_LETTERS = set(string.ascii_letters)
 
 
@@ -136,16 +138,20 @@ class GPT2TokenizerWrapper:
         vocab_size: int,
         use_special: bool,
         use_think: bool,
+        use_undo: bool,
     ) -> None:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         self.cache_path = cache_path
         self.use_special = use_special
         self.use_think = use_think
+        self.use_undo = use_undo
         self.extra_special_tokens: list[str] = []
         if self.use_special:
             self.extra_special_tokens.append(DISSONANCE_TOKEN)
         if self.use_think:
             self.extra_special_tokens.append(THINK_TOKEN)
+        if self.use_undo:
+            self.extra_special_tokens.append(UNDO_TOKEN)
         self.tokenizer = self._load_or_train(
             train_text,
             cache_path,
@@ -164,6 +170,11 @@ class GPT2TokenizerWrapper:
             self.think_id = self.tokenizer.convert_tokens_to_ids(THINK_TOKEN)
             if self.think_id is None:
                 raise ValueError("Failed to add think token to tokenizer vocabulary")
+        self.undo_id = None
+        if self.use_undo:
+            self.undo_id = self.tokenizer.convert_tokens_to_ids(UNDO_TOKEN)
+            if self.undo_id is None:
+                raise ValueError("Failed to add undo token to tokenizer vocabulary")
         self.non_special_ids = [
             tok_id for tok_id in range(self.vocab_size) if tok_id not in self.special_ids
         ]
@@ -361,6 +372,21 @@ class ThinkSettings:
         return self.max_steps > 0 and self.token_id is not None
 
 
+@dataclass
+class UndoSettings:
+    max_pairs: int = 0
+    token_id: int | None = None
+    fill_choices: list[int] = field(default_factory=list)
+
+    @property
+    def enabled(self) -> bool:
+        return (
+            self.max_pairs > 0
+            and self.token_id is not None
+            and bool(self.fill_choices)
+        )
+
+
 def insert_dissonance_markers(
     tokens: torch.Tensor,
     non_special_ids: List[int],
@@ -381,6 +407,115 @@ def insert_dissonance_markers(
             augmented.append(marker_id)
             inserts += 1
     return torch.tensor(augmented, dtype=torch.long), inserts
+
+
+def augment_training_batch(
+    model: GRCEGPT,
+    inputs: torch.Tensor,
+    targets: torch.Tensor,
+    think: ThinkSettings | None,
+    undo: UndoSettings | None,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
+    think_enabled = think is not None and think.enabled
+    undo_enabled = undo is not None and undo.enabled
+    if not think_enabled and not undo_enabled:
+        return inputs, targets, None
+    B, block_size = inputs.shape
+    device = inputs.device
+    new_inputs = inputs.clone()
+    new_targets = targets.clone()
+    random_mask = None
+    if undo_enabled:
+        random_mask = torch.zeros_like(inputs, dtype=torch.bool, device=device)
+    think_scores = None
+    prev_mode = model.training
+    if think_enabled:
+        model.eval()
+        with torch.no_grad():
+            logits, _, _ = model.forward_autoreg(inputs)
+            think_scores = logits[..., think.token_id]
+        if prev_mode:
+            model.train()
+    for row in range(B):
+        max_insert_budget = block_size - 1
+        think_cap = think.max_steps if think_enabled else 0
+        think_cap = min(max_insert_budget, think_cap)
+        think_count = random.randint(0, think_cap) if think_cap > 0 else 0
+        remaining_budget = max_insert_budget - think_count
+        undo_cap = undo.max_pairs if undo_enabled else 0
+        undo_cap = min(undo_cap, remaining_budget // 2)
+        undo_pairs = random.randint(0, undo_cap) if undo_cap > 0 else 0
+        max_think_allowed = (block_size - 2 * undo_pairs) // 2
+        if think_count > max_think_allowed:
+            think_count = max_think_allowed
+        keep_len = block_size - think_count - 2 * undo_pairs
+        keep_len = max(1, keep_len)
+        seq_entries = [
+            {
+                "token": int(inputs[row, idx].item()),
+                "tag": "base",
+                "base_index": idx,
+            }
+            for idx in range(keep_len)
+        ]
+        tail_token = int(targets[row, keep_len - 1].item())
+        seq_entries.append({"token": tail_token, "tag": "base", "base_index": None})
+
+        if undo_enabled and undo_pairs > 0:
+            if not undo.fill_choices:
+                raise ValueError("Undo mode requires non-empty filler token choices")
+            for _ in range(undo_pairs):
+                filler = int(random.choice(undo.fill_choices))
+                insert_limit = max(0, len(seq_entries) - 1)
+                insert_pos = random.randint(0, insert_limit)
+                seq_entries.insert(
+                    insert_pos,
+                    {"token": filler, "tag": "undo_filler", "base_index": None},
+                )
+                seq_entries.insert(
+                    insert_pos + 1,
+                    {
+                        "token": int(undo.token_id),
+                        "tag": "undo_marker",
+                        "base_index": None,
+                    },
+                )
+
+        if think_enabled and think_count > 0 and think_scores is not None:
+            scores = think_scores[row, :keep_len]
+            if scores.numel() > 0:
+                topk = torch.topk(scores, think_count).indices.tolist()
+                topk.sort()
+                for pos in topk:
+                    insert_idx = None
+                    for idx, entry in enumerate(seq_entries):
+                        if entry.get("base_index") == pos:
+                            insert_idx = idx
+                            break
+                    if insert_idx is None:
+                        insert_idx = len(seq_entries) - 1
+                    seq_entries.insert(
+                        insert_idx,
+                        {
+                            "token": int(think.token_id),
+                            "tag": "think",
+                            "base_index": None,
+                        },
+                    )
+
+        seq_tensor = torch.tensor(
+            [entry["token"] for entry in seq_entries], dtype=inputs.dtype, device=device
+        )
+        new_inputs[row] = seq_tensor[:-1]
+        new_targets[row] = seq_tensor[1:]
+        if random_mask is not None:
+            for idx, entry in enumerate(seq_entries[:-1]):
+                if entry.get("tag") == "undo_filler":
+                    target_idx = idx - 1
+                    if 0 <= target_idx < block_size:
+                        random_mask[row, target_idx] = True
+
+    return new_inputs, new_targets, random_mask
 
 
 def load_or_prepare_tokens(
@@ -607,7 +742,6 @@ class GRCEGPT(nn.Module):
         *,
         disable_context: bool = False,
         drop_mask: set[int] | None = None,
-        ignore_index: int | None = None,
     ) -> Tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
         B, T = idx.shape
         device = idx.device
@@ -657,17 +791,7 @@ class GRCEGPT(nn.Module):
                     context = self.context.update(block_inputs, stop_grad=stop_grad)
             logits_steps.append(logits[:, -1:, :])
         logits = torch.cat(logits_steps, dim=1)
-        loss = None
-        if targets is not None:
-            kwargs: dict[str, int] = {}
-            if ignore_index is not None:
-                kwargs["ignore_index"] = ignore_index
-            loss = F.cross_entropy(
-                logits.view(B * T, -1),
-                targets.view(B * T),
-                **kwargs,
-            )
-        return logits, context, loss
+        return logits, context, None
 
 
 def build_model_tag(config: ModelConfig) -> str:
@@ -680,55 +804,6 @@ def build_model_tag(config: ModelConfig) -> str:
         if config.context_dropout > 0:
             tag += f"_drop{config.context_dropout}"
     return tag
-
-
-def maybe_prepare_think_batch(
-    model: GRCEGPT,
-    inputs: torch.Tensor,
-    targets: torch.Tensor,
-    think: ThinkSettings | None,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    if think is None or not think.enabled:
-        return inputs, targets
-    block_size = inputs.size(1)
-    if block_size == 0 or think.token_id is None:
-        return inputs, targets
-    max_inserts = min(think.max_steps, block_size // 2)
-    if max_inserts <= 0:
-        return inputs, targets
-    batch = inputs.size(0)
-    counts = torch.randint(0, max_inserts + 1, (batch,), device=inputs.device)
-    if int(counts.sum().item()) == 0:
-        return inputs, targets
-    prev_mode = model.training
-    model.eval()
-    with torch.no_grad():
-        logits, _, _ = model.forward_autoreg(inputs)
-        think_scores = logits[..., think.token_id]
-    model.train(prev_mode)
-    new_inputs = inputs.clone()
-    new_targets = targets.clone()
-    for row in range(batch):
-        inserts = int(counts[row].item())
-        if inserts <= 0:
-            continue
-        keep_len = block_size - inserts
-        if keep_len <= 0:
-            continue
-        tail_token = targets[row, keep_len - 1].unsqueeze(0)
-        seq_tokens = torch.cat((inputs[row, :keep_len], tail_token))
-        seq_list = seq_tokens.tolist()
-        scores = think_scores[row, :keep_len]
-        topk = torch.topk(scores, inserts).indices.tolist()
-        topk.sort()
-        offset = 0
-        for pos in topk:
-            seq_list.insert(pos + offset, int(think.token_id))
-            offset += 1
-        seq_tensor = torch.tensor(seq_list, dtype=inputs.dtype, device=inputs.device)
-        new_inputs[row] = seq_tensor[:-1]
-        new_targets[row] = seq_tensor[1:]
-    return new_inputs, new_targets
 
 
 def compute_think_penalty(
@@ -765,6 +840,26 @@ def compute_think_penalty(
     prob_tensor = torch.stack(entries)
     label_tensor = prob_tensor.new_tensor(labels)
     return F.binary_cross_entropy(prob_tensor, label_tensor)
+
+
+LOSS_IGNORE_INDEX = -100
+
+
+def build_loss_targets(
+    targets: torch.Tensor,
+    think: ThinkSettings | None,
+    random_mask: torch.Tensor | None,
+) -> torch.Tensor:
+    mask: torch.Tensor | None = None
+    if think is not None and think.enabled and think.token_id is not None:
+        mask = targets == think.token_id
+    if random_mask is not None:
+        mask = random_mask if mask is None else (mask | random_mask)
+    if mask is None or not mask.any():
+        return targets
+    masked = targets.clone()
+    masked[mask] = LOSS_IGNORE_INDEX
+    return masked
 
 
 def expand_prompt_with_thinking(
@@ -809,23 +904,31 @@ def evaluate_split(
     *,
     disable_context: bool = False,
     think_settings: ThinkSettings | None = None,
+    undo_settings: UndoSettings | None = None,
     batches: list[tuple[torch.Tensor, torch.Tensor]] | None = None,
 ) -> float:
     losses = []
-    ignore_index = None
-    if think_settings is not None and think_settings.enabled:
-        ignore_index = think_settings.token_id
     if batches is None:
         batches = [
             dataset.get_batch(split, block_size, batch_size, device) for _ in range(iters)
         ]
     for xb, yb in batches:
-        think_xb, think_yb = maybe_prepare_think_batch(model, xb, yb, think_settings)
-        _, _, loss = model.forward_autoreg(
-            think_xb,
-            think_yb,
+        aug_xb, aug_yb, random_mask = augment_training_batch(
+            model,
+            xb,
+            yb,
+            think_settings,
+            undo_settings,
+        )
+        logits, _, _ = model.forward_autoreg(
+            aug_xb,
             disable_context=disable_context,
-            ignore_index=ignore_index,
+        )
+        loss_targets = build_loss_targets(aug_yb, think_settings, random_mask)
+        loss = F.cross_entropy(
+            logits.view(-1, logits.size(-1)),
+            loss_targets.view(-1),
+            ignore_index=LOSS_IGNORE_INDEX,
         )
         losses.append(loss.item())
     return sum(losses) / len(losses)
@@ -849,18 +952,22 @@ def train_model(
     drop_positions: list[set[int]] | None,
     think_settings: ThinkSettings | None,
     suppress_think_output: bool,
+    undo_settings: UndoSettings | None,
 ) -> Tuple[int, List[Dict[str, float]]]:
     optim = torch.optim.AdamW(model.parameters(), lr=3e-4)
     total_steps = start_step
     history_updates: List[Dict[str, float]] = []
-    loss_ignore_index = None
-    if think_settings is not None and think_settings.enabled:
-        loss_ignore_index = think_settings.token_id
     printed_header = False
     show_think_columns = think_settings is not None and think_settings.enabled
     for step in range(1, steps + 1):
         xb, yb = dataset.get_batch("train", block_size, batch_size, device)
-        xb, yb = maybe_prepare_think_batch(model, xb, yb, think_settings)
+        xb, yb, random_mask = augment_training_batch(
+            model,
+            xb,
+            yb,
+            think_settings,
+            undo_settings,
+        )
         drop_mask = None
         if drop_positions is not None and 0 <= step - 1 < len(drop_positions):
             drop_mask = drop_positions[step - 1]
@@ -870,15 +977,12 @@ def train_model(
             drop_mask=drop_mask,
         )
         logits_flat = logits.view(-1, logits.size(-1))
-        targets_flat = yb.view(-1)
-        if loss_ignore_index is not None:
-            main_loss = F.cross_entropy(
-                logits_flat,
-                targets_flat,
-                ignore_index=loss_ignore_index,
-            )
-        else:
-            main_loss = F.cross_entropy(logits_flat, targets_flat)
+        loss_targets = build_loss_targets(yb, think_settings, random_mask)
+        main_loss = F.cross_entropy(
+            logits_flat,
+            loss_targets.view(-1),
+            ignore_index=LOSS_IGNORE_INDEX,
+        )
         think_loss = logits.new_tensor(0.0)
         if think_settings is not None and think_settings.enabled:
             think_loss = compute_think_penalty(
@@ -914,6 +1018,7 @@ def train_model(
                             eval_iters,
                             disable_context=disable,
                             think_settings=think_settings,
+                            undo_settings=undo_settings,
                             batches=cached_batches[split],
                         )
                     if think_settings is not None and think_settings.enabled:
@@ -927,6 +1032,7 @@ def train_model(
                             eval_iters,
                             disable_context=False,
                             think_settings=None,
+                            undo_settings=undo_settings,
                             batches=cached_batches[split],
                         )
                 sample_tokens = generate(
@@ -949,12 +1055,14 @@ def train_model(
                 [Colors.CYAN, Colors.GREEN],
                 bold=False,
                 think_token_id=tokenizer.think_id,
+                undo_token_id=tokenizer.undo_id,
             )
             completion_text = color_tokens(
                 tokenizer,
                 completion_ids,
                 [Colors.YELLOW, Colors.MAGENTA],
                 think_token_id=tokenizer.think_id,
+                undo_token_id=tokenizer.undo_id,
             )
             colored_sample = prefix_text + completion_text
             if not printed_header:
@@ -1043,12 +1151,14 @@ def run_report_mode(
                 [Colors.CYAN, Colors.GREEN],
                 bold=False,
                 think_token_id=tokenizer.think_id,
+                undo_token_id=tokenizer.undo_id,
             )
             completion_text = color_tokens(
                 tokenizer,
                 completion_ids,
                 [Colors.YELLOW, Colors.MAGENTA],
                 think_token_id=tokenizer.think_id,
+                undo_token_id=tokenizer.undo_id,
             )
             print(
                 color_text(f"[report {idx:02d}]", Colors.CYAN)
@@ -1077,6 +1187,7 @@ def color_tokens(
     bold: bool = True,
     replace_newline: str = FANCY_ENTER,
     think_token_id: int | None = None,
+    undo_token_id: int | None = None,
 ) -> str:
     parts: list[str] = []
     color_index = 0
@@ -1084,6 +1195,12 @@ def color_tokens(
         if think_token_id is not None and tok == think_token_id:
             piece = THINK_SYMBOL
             color = Colors.WHITE
+            parts.append(color_text(piece, color, bold=True))
+            color_index += 1
+            continue
+        if undo_token_id is not None and tok == undo_token_id:
+            piece = UNDO_SYMBOL
+            color = Colors.BLUE
             parts.append(color_text(piece, color, bold=True))
             color_index += 1
             continue
@@ -1285,6 +1402,12 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--undo",
+        type=int,
+        default=0,
+        help="Enable undo pairs with up to N random+undo sequences per block",
+    )
+    parser.add_argument(
         "--prompt",
         type=str,
         default="ai will",
@@ -1314,6 +1437,8 @@ def main() -> None:
     args.prompt = normalize_prompt(args.prompt)
     if args.think > 0:
         args.prompt = args.prompt.replace(THINK_SYMBOL, THINK_TOKEN)
+    if args.undo > 0:
+        args.prompt = args.prompt.replace(UNDO_SYMBOL, UNDO_TOKEN)
     torch.manual_seed(42)
     random.seed(42)
 
@@ -1335,13 +1460,14 @@ def main() -> None:
 
         special_tag = "special" if args.special else "plain"
         think_tag = f"think{args.think}" if args.think > 0 else "nothink"
+        undo_tag = f"undo{args.undo}" if args.undo > 0 else "noundo"
         train_cache_path = (
             model_dir
-            / f"{args.data}_tokens_train_{limit_label(train_limit)}_{args.tokenizer_vocab}_{special_tag}_{think_tag}.pt"
+            / f"{args.data}_tokens_train_{limit_label(train_limit)}_{args.tokenizer_vocab}_{special_tag}_{think_tag}_{undo_tag}.pt"
         )
         test_cache_path = (
             model_dir
-            / f"{args.data}_tokens_test_{limit_label(test_limit)}_{args.tokenizer_vocab}_{special_tag}_{think_tag}.pt"
+            / f"{args.data}_tokens_test_{limit_label(test_limit)}_{args.tokenizer_vocab}_{special_tag}_{think_tag}_{undo_tag}.pt"
         )
 
         try:
@@ -1359,7 +1485,7 @@ def main() -> None:
             full_test_text = None
 
         tokenizer_key = (
-            f"{args.data}_vocab_{limit_label(tokenizer_limit)}_{args.tokenizer_vocab}_{special_tag}_{think_tag}"
+            f"{args.data}_vocab_{limit_label(tokenizer_limit)}_{args.tokenizer_vocab}_{special_tag}_{think_tag}_{undo_tag}"
         )
         tokenizer_path = model_dir / f"{tokenizer_key}.json"
         if not tokenizer_path.exists() and full_train_text is None:
@@ -1378,6 +1504,7 @@ def main() -> None:
             args.tokenizer_vocab,
             args.special,
             args.think > 0,
+            args.undo > 0,
         )
 
         newline_token_id = None
@@ -1386,6 +1513,11 @@ def main() -> None:
             newline_token_id = newline_tokens[0]
 
         think_settings = ThinkSettings(max_steps=args.think, token_id=tokenizer.think_id)
+        undo_settings = UndoSettings(
+            max_pairs=args.undo,
+            token_id=tokenizer.undo_id,
+            fill_choices=tokenizer.non_special_ids,
+        )
 
         train_tokens, train_text, train_bytes, train_inserts = load_or_prepare_tokens(
             "train",
@@ -1461,6 +1593,8 @@ def main() -> None:
         model_tag = build_model_tag(config)
         if args.think > 0:
             model_tag += f"_think{args.think}"
+        if args.undo > 0:
+            model_tag += f"_undo{args.undo}"
         prefix = f"{args.data}_model_"
         model_path = model_dir / f"{prefix}{model_tag}.pt"
         log_path = model_dir / f"{prefix}{model_tag}.log"
@@ -1588,6 +1722,7 @@ def main() -> None:
                 drop_positions=drop_positions,
                 think_settings=think_settings,
                 suppress_think_output=args.no_think,
+                undo_settings=undo_settings,
             )
             loss_history.extend(updates)
             print(color_text(f"Total steps so far: {total_steps}", Colors.YELLOW))

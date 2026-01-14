@@ -38,9 +38,14 @@ Ignoring embeddings and other lower-order pieces, two terms dominate:
 
 The optional `--think N` mode lets the model reserve a special `<think>` token for internal reasoning bursts. During training we pick a random `T≤N` per block, run the forward pass without thinking tokens, score where the model most wants to emit `<think>`, and splice those slots back into the batch. Losses ignore `<think>` targets so experiments remain comparable to plain runs, while an auxiliary penalty rewards thinking only when the following prediction matches its ground-truth token. Evaluation reports both the usual GRCE-enabled traces plus a `nothink` pass (no thinking tokens inserted) so you can see how much the extra capacity matters. Sampling/reporting highlight `<think>` as a nice `❔` symbol, and `--no-think` suppresses both prompt expansion and completion of those markers when you want clean output or to measure downstream effects.
 
+## Undo tokens
+
+`--undo N` injects up to `U≤N` *undo pairs* into every training block. Each pair contributes a random filler token immediately followed by a dedicated `<undo>` marker (rendered as `↩` in the logs). We shorten the base chunk to `block_size - T - 2U` tokens so the augmented sample still fits the configured block size, splice the undo pairs in sequence (allowing nesting when a later pair lands inside an earlier one), and only then insert the `T` think tokens. During loss computation the filler tokens are ignored entirely, while the `<undo>` tokens are enforced like any other label so the model learns to clean up after each random detour. Undo pairs stay in-place for all evaluations, keeping the reported losses comparable to standard runs while giving the sampler a reversible scratch pad it can lean on during training.
+
 ## Running it
 Use `python grce.py --help` for CLI options. Main experiment:
 - `--think N` enables the above thinking-token workflow (set `--no-think` to keep sampling clean while still training with thinking tokens).
+- `--undo N` inserts up to `N` random+undo pairs per block (filler loss ignored, undo enforced).
 - `--report-count N` skips training entirely, loads the latest checkpoint (if any), and prints `N` completions of the configured prompt.
 - `--no-newlines` keeps the sampler from emitting newline tokens so completions stay on one line.
 - `--grce-dropout M` randomly disables the context channel per position (for `M=1`, each block selects a fixed set of drop points; for `M>1`, every position drops independently with probability `1/M`).
@@ -72,6 +77,7 @@ done
 
 ## Spare notes
 - Remember: when `--think` is on, run at least one evaluation with `--no-think` to capture clean completions alongside the highlighted reasoning traces.
+- Undo filler tokens are ignored for CE loss but their paired `↩` markers are enforced—watch the console to ensure the model learns to undo immediately after each random insert.
 
 ## Dev notes & agent cheat sheet
 - **Project focus:** Gradient-limited Recurrent Context Encoding (GRCE) atop a picoGPT-style SimpleWiki language model.
