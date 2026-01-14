@@ -34,8 +34,13 @@ Ignoring embeddings and other lower-order pieces, two terms dominate:
 - Position-domain Transformer stack: `~ 12 * n_layer * n_embd^2`
 - Time-domain GRCE network (only if `n_grce > 0`): `~ 2 * n_layer * n_embd * n_grce + 4 * n_grce^2`
 
+## Think tokens
+
+The optional `--think N` mode lets the model reserve a special `<think>` token for internal reasoning bursts. During training we pick a random `T≤N` per block, run the forward pass without thinking tokens, score where the model most wants to emit `<think>`, and splice those slots back into the batch. Losses ignore `<think>` targets so experiments remain comparable to plain runs, while an auxiliary penalty rewards thinking only when the following prediction matches its ground-truth token. Evaluation reports both the usual GRCE-enabled traces plus a `nothink` pass (no thinking tokens inserted) so you can see how much the extra capacity matters. Sampling/reporting highlight `<think>` as a nice `❔` symbol, and `--no-think` suppresses both prompt expansion and completion of those markers when you want clean output or to measure downstream effects.
+
 ## Running it
 Use `python grce.py --help` for CLI options. Main experiment:
+- `--think N` enables the above thinking-token workflow (set `--no-think` to keep sampling clean while still training with thinking tokens).
 - `--report-count N` skips training entirely, loads the latest checkpoint (if any), and prints `N` completions of the configured prompt.
 - `--no-newlines` keeps the sampler from emitting newline tokens so completions stay on one line.
 - `--grce-dropout M` randomly disables the context channel per position (for `M=1`, each block selects a fixed set of drop points; for `M>1`, every position drops independently with probability `1/M`).
@@ -64,6 +69,9 @@ done
 ```
 
 (pretty much all code in this repo is ai-generated. but of course only under my strong supervision.. ~Claire ;)
+
+## Spare notes
+- Remember: when `--think` is on, run at least one evaluation with `--no-think` to capture clean completions alongside the highlighted reasoning traces.
 
 ## Dev notes & agent cheat sheet
 - **Project focus:** Gradient-limited Recurrent Context Encoding (GRCE) atop a picoGPT-style SimpleWiki language model.
