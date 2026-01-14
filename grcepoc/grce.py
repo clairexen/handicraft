@@ -1301,6 +1301,8 @@ def main() -> None:
                 },
                 model_path,
             )
+            if log_file is not None:
+                log_file.flush()
             print(color_text(f"Saved model to {model_path}", Colors.GREEN))
             cycle_elapsed_wall = time.time() - cycle_wall
             cycle_elapsed_cpu = time.process_time() - cycle_cpu
