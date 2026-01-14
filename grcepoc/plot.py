@@ -263,7 +263,7 @@ def main() -> None:
         print(
             f"  - {label}: {num_samples} samples (steps {first_step}→{last_step}, cycles ~{cycles_start:.1f}→~{cycles_end:.1f}) [{label_desc}]"
         )
-    fig, ax = plt.subplots()
+    fig, ax = plt.subplots(figsize=(12, 7))
     color_map: dict[str, str] = {}
     default_colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
     color_index = 0
