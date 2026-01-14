@@ -1099,6 +1099,7 @@ def train_model(
                     think_settings=think_settings,
                     suppress_think=suppress_think_output,
                     suppress_think_prompt=suppress_think_prompt,
+                    think_hard=args.think_hard,
                 )
             model.train()
             sample_ids = sample_tokens[0].detach().cpu().tolist()
@@ -1222,6 +1223,7 @@ def run_report_mode(
                 think_settings=think_settings,
                 suppress_think=suppress_think,
                 suppress_think_prompt=suppress_think_prompt,
+                think_hard=args.think_hard,
             )
             tokens = generated[0].detach().cpu().tolist()
             prompt_ids = tokens[:prompt_len]
@@ -1310,13 +1312,31 @@ def generate(
     think_settings: ThinkSettings | None = None,
     suppress_think: bool = False,
     suppress_think_prompt: bool = False,
+    think_hard: bool = False,
 ) -> tuple[torch.Tensor, int]:
     model.eval()
     idx = idx.clone()
     prompt_len = idx.size(1)
     if not suppress_think and not suppress_think_prompt:
-        idx = expand_prompt_with_thinking(model, idx, think_settings)
-        prompt_len = idx.size(1)
+        if think_hard and think_settings is not None and think_settings.enabled:
+            with torch.no_grad():
+                logits, _, _ = model.forward_autoreg(idx)
+            prompt_ids = idx[0].tolist()
+            think_token_id = think_settings.token_id
+            new_tokens: list[int] = []
+            for i, tok in enumerate(prompt_ids):
+                new_tokens.append(tok)
+                if i == 0:
+                    continue
+                prev_logits = logits[0, i - 1]
+                pred = int(torch.argmax(prev_logits).item())
+                if pred != tok and think_token_id is not None:
+                    new_tokens.append(think_token_id)
+            idx = torch.tensor([new_tokens], dtype=idx.dtype, device=idx.device)
+            prompt_len = idx.size(1)
+        else:
+            idx = expand_prompt_with_thinking(model, idx, think_settings)
+            prompt_len = idx.size(1)
     for _ in range(steps):
         idx_cond = idx[:, -model.config.block_size :]
         logits, _, _ = model.forward_autoreg(idx_cond)
@@ -1474,6 +1494,11 @@ def parse_args() -> argparse.Namespace:
         "--no-think-prompt",
         action="store_true",
         help="Do not insert thinking tokens inside the prompt during sampling/reporting",
+    )
+    parser.add_argument(
+        "--think-hard",
+        action="store_true",
+        help="While processing the prompt, insert thinking tokens after every mispredicted token",
     )
     parser.add_argument(
         "--grce-dropout",
