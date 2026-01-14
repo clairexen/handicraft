@@ -415,7 +415,7 @@ def augment_training_batch(
     targets: torch.Tensor,
     think: ThinkSettings | None,
     undo: UndoSettings | None,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
     think_enabled = think is not None and think.enabled
     undo_enabled = undo is not None and undo.enabled
     if not think_enabled and not undo_enabled:
@@ -425,11 +425,13 @@ def augment_training_batch(
     new_inputs = inputs.clone()
     new_targets = targets.clone()
     random_mask = None
+    think_labels = None
     if undo_enabled:
         random_mask = torch.zeros_like(inputs, dtype=torch.bool, device=device)
     think_scores = None
     prev_mode = model.training
     if think_enabled:
+        think_labels = torch.full_like(inputs, -1)
         model.eval()
         with torch.no_grad():
             logits, _, _ = model.forward_autoreg(inputs)
@@ -514,8 +516,13 @@ def augment_training_batch(
                     target_idx = idx - 1
                     if 0 <= target_idx < block_size:
                         random_mask[row, target_idx] = True
+        if think_labels is not None:
+            for idx, entry in enumerate(seq_entries[:-1]):
+                if entry.get("tag") == "think":
+                    label = seq_entries[idx + 1]["token"]
+                    think_labels[row, idx] = int(label)
 
-    return new_inputs, new_targets, random_mask
+    return new_inputs, new_targets, random_mask, think_labels
 
 
 def load_or_prepare_tokens(
@@ -913,7 +920,7 @@ def evaluate_split(
             dataset.get_batch(split, block_size, batch_size, device) for _ in range(iters)
         ]
     for xb, yb in batches:
-        aug_xb, aug_yb, random_mask = augment_training_batch(
+        aug_xb, aug_yb, random_mask, think_labels = augment_training_batch(
             model,
             xb,
             yb,
@@ -925,12 +932,29 @@ def evaluate_split(
             disable_context=disable_context,
         )
         loss_targets = build_loss_targets(aug_yb, think_settings, random_mask)
-        loss = F.cross_entropy(
+        main_loss = F.cross_entropy(
             logits.view(-1, logits.size(-1)),
             loss_targets.view(-1),
             ignore_index=LOSS_IGNORE_INDEX,
         )
-        losses.append(loss.item())
+        total_loss = main_loss
+        if think_settings is not None and think_settings.enabled:
+            total_loss = total_loss + compute_think_penalty(
+                logits,
+                aug_yb,
+                think_settings.token_id,
+            )
+            if think_labels is not None and think_settings.token_id is not None:
+                mask = think_labels >= 0
+                if mask.any():
+                    plan_logits = logits.clone()
+                    plan_logits[..., think_settings.token_id] = -1e9
+                    plan_loss = F.cross_entropy(
+                        plan_logits[mask],
+                        think_labels[mask],
+                    )
+                    total_loss = total_loss + plan_loss
+        losses.append(total_loss.item())
     return sum(losses) / len(losses)
 
 
@@ -961,7 +985,7 @@ def train_model(
     show_think_columns = think_settings is not None and think_settings.enabled
     for step in range(1, steps + 1):
         xb, yb = dataset.get_batch("train", block_size, batch_size, device)
-        xb, yb, random_mask = augment_training_batch(
+        xb, yb, random_mask, think_labels = augment_training_batch(
             model,
             xb,
             yb,
@@ -990,7 +1014,17 @@ def train_model(
                 yb,
                 think_settings.token_id,
             )
-        loss = main_loss + think_loss
+        plan_loss = logits.new_tensor(0.0)
+        if think_labels is not None and think_settings is not None and think_settings.token_id is not None:
+            mask = think_labels >= 0
+            if mask.any():
+                plan_logits = logits.clone()
+                plan_logits[..., think_settings.token_id] = -1e9
+                plan_loss = F.cross_entropy(
+                    plan_logits[mask],
+                    think_labels[mask],
+                )
+        loss = main_loss + think_loss + plan_loss
         optim.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
