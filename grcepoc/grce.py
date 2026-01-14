@@ -1328,11 +1328,14 @@ def generate(
             new_tokens: list[int] = []
             for i, tok in enumerate(prompt_ids):
                 new_tokens.append(tok)
+                if think_token_id is None:
+                    continue
                 if i == 0:
+                    new_tokens.append(think_token_id)
                     continue
                 prev_logits = logits[0, i - 1]
                 pred = int(torch.argmax(prev_logits).item())
-                if pred != tok and think_token_id is not None:
+                if pred != tok:
                     new_tokens.append(think_token_id)
             idx = torch.tensor([new_tokens], dtype=idx.dtype, device=idx.device)
             prompt_len = idx.size(1)
