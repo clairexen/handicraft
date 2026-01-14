@@ -988,6 +988,7 @@ def train_model(
     drop_positions: list[set[int]] | None,
     think_settings: ThinkSettings | None,
     suppress_think_output: bool,
+    suppress_think_prompt: bool,
     undo_settings: UndoSettings | None,
 ) -> Tuple[int, List[Dict[str, float]]]:
     optim = torch.optim.AdamW(model.parameters(), lr=3e-4)
@@ -1097,7 +1098,7 @@ def train_model(
                     newline_token_id=newline_token_id,
                     think_settings=think_settings,
                     suppress_think=suppress_think_output,
-                    suppress_think_prompt=args.no_think_prompt,
+                    suppress_think_prompt=suppress_think_prompt,
                 )
             model.train()
             sample_ids = sample_tokens[0].detach().cpu().tolist()
@@ -1206,6 +1207,7 @@ def run_report_mode(
     newline_token_id: int | None,
     think_settings: ThinkSettings | None,
     suppress_think: bool,
+    suppress_think_prompt: bool,
 ) -> None:
     model.eval()
     base_len = prompt_tokens.size(1)
@@ -1219,7 +1221,7 @@ def run_report_mode(
                 newline_token_id=newline_token_id,
                 think_settings=think_settings,
                 suppress_think=suppress_think,
-                suppress_think_prompt=args.no_think_prompt,
+                suppress_think_prompt=suppress_think_prompt,
             )
             tokens = generated[0].detach().cpu().tolist()
             prompt_ids = tokens[:prompt_len]
@@ -1761,6 +1763,7 @@ def main() -> None:
                 newline_token_id=newline_token_id,
                 think_settings=think_settings,
                 suppress_think=args.no_think,
+                suppress_think_prompt=args.no_think_prompt,
             )
             return
 
@@ -1809,6 +1812,7 @@ def main() -> None:
                 drop_positions=drop_positions,
                 think_settings=think_settings,
                 suppress_think_output=args.no_think,
+                suppress_think_prompt=args.no_think_prompt,
                 undo_settings=undo_settings,
             )
             loss_history.extend(updates)
