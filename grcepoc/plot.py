@@ -147,6 +147,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="average checkpoints across spans (span suffix removed from label)",
     )
+    parser.add_argument(
+        "--store-only",
+        action="store_true",
+        help="write JSON with --store and exit without plotting",
+    )
     return parser.parse_args()
 
 def discover_paths(explicit: List[pathlib.Path]) -> List[pathlib.Path]:
@@ -207,6 +212,8 @@ def main() -> None:
 
     if args.store and records:
         store_records(records, args.store)
+        if args.store_only:
+            return
 
     if args.both:
         show_train = show_test = True
