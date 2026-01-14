@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 import argparse
 import json
-import numpy as np
+import sys
 from pathlib import Path
-from typing import List
+from typing import List, Tuple
+
+import numpy as np
+import matplotlib.pyplot as plt
 
 
 def slice_windows(series: List[float], steps_per_cycle: int, start: int, end: int) -> List[List[float]]:
@@ -29,27 +32,15 @@ def summarize_baseline(windows: List[List[float]]) -> float:
     return float(np.mean(arr)) if arr else float("nan")
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Analyze ctx vs. nogrce loss traces.")
-    parser.add_argument("json", type=Path, help="JSON file produced via plot.py --store")
-    parser.add_argument("--cycles", type=int, default=100, help="Steps per cycle (default: 100)")
-    parser.add_argument("--spike-window", type=int, default=5, help="Steps after reset to measure spike amplitude")
-    parser.add_argument("--start-window", type=int, default=0, help="First window index to analyze")
-    parser.add_argument("--end-window", type=int, default=20, help="Window index to stop (exclusive)")
-    parser.add_argument("--steady-start", type=int, default=10, help="Window index to treat as steady state")
-    args = parser.parse_args()
-
-    payload = json.loads(args.json.read_text())
-    if isinstance(payload, list):
-        payload = payload[0] if payload else {}
-
-    steps = payload.get("steps", [])
-    grce_train = payload.get("train")
-    grce_test = payload.get("test")
-    nogrce_train = payload.get("train_nogrce")
-    nogrce_test = payload.get("test_nogrce")
+def analyze_trace(record: dict, args: argparse.Namespace, label: str) -> Tuple[List[float], List[float], float, float]:
+    steps = record.get("steps", [])
+    grce_train = record.get("train")
+    grce_test = record.get("test")
+    nogrce_train = record.get("train_nogrce")
+    nogrce_test = record.get("test_nogrce")
     if not grce_train or not grce_test or nogrce_train is None or nogrce_test is None:
-        raise SystemExit("JSON must contain train/test and train_nogrce/test_nogrce series")
+        print(f"warning: record {label} missing nogrce traces, skipping", file=sys.stderr)
+        return [], [], float("nan"), float("nan")
 
     train_diff = [g - n for g, n in zip(grce_train, nogrce_train)]
     test_diff = [g - n for g, n in zip(grce_test, nogrce_test)]
@@ -60,23 +51,76 @@ def main() -> None:
     train_spikes = summarize_spikes(train_windows, args.spike_window)
     test_spikes = summarize_spikes(test_windows, args.spike_window)
 
-    print("Train spike averages per window:", train_spikes)
-    print("Test spike averages per window :", test_spikes)
+    if train_spikes:
+        print(f"{label} train spike averages per window: {train_spikes}")
+    if test_spikes:
+        print(f"{label} test spike averages per window : {test_spikes}")
 
     if len(train_spikes) >= 2:
         slope, intercept = np.polyfit(np.arange(len(train_spikes)), train_spikes, 1)
-        print(f"Train spike slope per window: {slope:+.4f}")
+        print(f"{label} train spike slope per window: {slope:+.4f}")
     if len(test_spikes) >= 2:
         slope, intercept = np.polyfit(np.arange(len(test_spikes)), test_spikes, 1)
-        print(f"Test spike slope per window : {slope:+.4f}")
+        print(f"{label} test spike slope per window : {slope:+.4f}")
 
     steady_idx = max(args.steady_start - args.start_window, 0)
     train_steady = train_windows[steady_idx:]
     test_steady = test_windows[steady_idx:]
-    if train_steady:
-        print("Steady-state train diff:", summarize_baseline(train_steady))
-    if test_steady:
-        print("Steady-state test diff :", summarize_baseline(test_steady))
+    train_baseline = summarize_baseline(train_steady)
+    test_baseline = summarize_baseline(test_steady)
+    print(f"{label} steady-state train diff: {train_baseline}")
+    print(f"{label} steady-state test diff : {test_baseline}")
+
+    return train_spikes, test_spikes, train_baseline, test_baseline
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Analyze ctx vs. nogrce loss traces.")
+    parser.add_argument("json", type=Path, help="JSON file produced via plot.py --store")
+    parser.add_argument("--cycles", type=int, default=100, help="Steps per cycle (default: 100)")
+    parser.add_argument("--spike-window", type=int, default=5, help="Steps after reset to measure spike amplitude")
+    parser.add_argument("--start-window", type=int, default=0, help="First window index to analyze")
+    parser.add_argument("--end-window", type=int, default=20, help="Window index to stop (exclusive)")
+    parser.add_argument("--steady-start", type=int, default=10, help="Window index to treat as steady state")
+    parser.add_argument("--plot", action="store_true", help="display spike trends and baselines")
+    args = parser.parse_args()
+
+    payload = json.loads(args.json.read_text())
+    if isinstance(payload, dict):
+        records = [payload]
+    else:
+        records = payload
+
+    fig = None
+    ax = None
+    if args.plot:
+        fig, ax = plt.subplots()
+
+    for idx, record in enumerate(records):
+        label = record.get("model") or record.get("label") or f"record{idx}"
+        train_spikes, test_spikes, train_base, test_base = analyze_trace(record, args, label)
+        if args.plot and train_spikes:
+            ax.plot(
+                range(len(train_spikes)),
+                train_spikes,
+                label=f"{label} train",
+                linestyle="-",
+                marker="o",
+            )
+            if test_spikes:
+                ax.plot(
+                    range(len(test_spikes)),
+                    test_spikes,
+                    label=f"{label} test",
+                    linestyle="--",
+                    marker="x",
+                )
+    if args.plot and ax:
+        ax.set_xlabel("Window index")
+        ax.set_ylabel("Avg spike (loss diff)")
+        ax.legend()
+        plt.tight_layout()
+        plt.show()
 
 
 if __name__ == "__main__":
