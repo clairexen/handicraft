@@ -510,6 +510,7 @@ class GRCEContextChannel(nn.Module):
         self.config = config
         self.context_span = max(0, int(config.context_span))
         self.context_dim = config.n_grce
+        self.context_dropout = max(0, int(config.context_dropout))
         if not self.disabled:
             mid = 4 * config.n_grce
             self.pre_norms = nn.ModuleList(
