@@ -419,7 +419,7 @@ def augment_training_batch(
     think_enabled = think is not None and think.enabled
     undo_enabled = undo is not None and undo.enabled
     if not think_enabled and not undo_enabled:
-        return inputs, targets, None
+        return inputs, targets, None, None
     B, block_size = inputs.shape
     device = inputs.device
     new_inputs = inputs.clone()
@@ -913,8 +913,9 @@ def evaluate_split(
     think_settings: ThinkSettings | None = None,
     undo_settings: UndoSettings | None = None,
     batches: list[tuple[torch.Tensor, torch.Tensor]] | None = None,
-) -> float:
-    losses = []
+) -> tuple[float, float]:
+    ce_losses = []
+    learned_losses = []
     if batches is None:
         batches = [
             dataset.get_batch(split, block_size, batch_size, device) for _ in range(iters)
@@ -954,8 +955,11 @@ def evaluate_split(
                         think_labels[mask],
                     )
                     total_loss = total_loss + plan_loss
-        losses.append(total_loss.item())
-    return sum(losses) / len(losses)
+        ce_losses.append(main_loss.item())
+        learned_losses.append(total_loss.item())
+    ce_avg = sum(ce_losses) / len(ce_losses)
+    learned_avg = sum(learned_losses) / len(learned_losses)
+    return ce_avg, learned_avg
 
 
 def train_model(
@@ -1034,7 +1038,7 @@ def train_model(
         if step == 1 or step % eval_interval == 0 or step == steps:
             model.eval()
             with torch.no_grad():
-                split_losses: dict[str, float] = {}
+                split_metrics: dict[str, dict[str, float]] = {}
                 cached_batches: dict[str, list[tuple[torch.Tensor, torch.Tensor]]] = {}
                 for split in ("train", "test"):
                     cached_batches[split] = [
@@ -1042,7 +1046,7 @@ def train_model(
                         for _ in range(eval_iters)
                     ]
                     for suffix, disable in (("", False), ("_nogrce", True)):
-                        split_losses[f"{split}{suffix}"] = evaluate_split(
+                        ce_loss, learned_loss = evaluate_split(
                             model,
                             dataset,
                             device,
@@ -1055,8 +1059,12 @@ def train_model(
                             undo_settings=undo_settings,
                             batches=cached_batches[split],
                         )
+                        split_metrics[f"{split}{suffix}"] = {
+                            "ce": float(ce_loss),
+                            "learned": float(learned_loss),
+                        }
                     if think_settings is not None and think_settings.enabled:
-                        split_losses[f"{split}_nothink"] = evaluate_split(
+                        ce_loss, learned_loss = evaluate_split(
                             model,
                             dataset,
                             device,
@@ -1069,6 +1077,10 @@ def train_model(
                             undo_settings=undo_settings,
                             batches=cached_batches[split],
                         )
+                        split_metrics[f"{split}_nothink"] = {
+                            "ce": float(ce_loss),
+                            "learned": float(learned_loss),
+                        }
                 sample_tokens = generate(
                     model,
                     sample_prompt.clone(),
@@ -1100,11 +1112,11 @@ def train_model(
             )
             colored_sample = prefix_text + completion_text
             if not printed_header:
-                train_header = "train loss   nogrce"
-                test_header = "test loss   nogrce"
+                train_header = "train loss (learned)  nogrce (learned)"
+                test_header = "test loss (learned)  nogrce (learned)"
                 if show_think_columns:
-                    train_header += "   nothink"
-                    test_header += "   nothink"
+                    train_header += "  nothink"
+                    test_header += "  nothink"
                 header_line = (
                     color_text("step", Colors.CYAN)
                     + " | "
@@ -1116,16 +1128,29 @@ def train_model(
                 print(header_line)
                 printed_header = True
 
-            train_values = (
-                f"{split_losses['train']:.3f}   {split_losses['train_nogrce']:.3f}"
-            )
+            def format_metric(key: str) -> str:
+                metric = split_metrics[key]
+                ce_val = metric["ce"]
+                learned_val = metric["learned"]
+                if abs(learned_val - ce_val) < 1e-6:
+                    return f"{ce_val:.2f}"
+                return f"{ce_val:.2f} ({learned_val:.2f})"
+
+            train_parts = [
+                format_metric("train"),
+                format_metric("train_nogrce"),
+            ]
             if show_think_columns:
-                train_values += f"   {split_losses['train_nothink']:.3f}"
-            test_values = (
-                f"{split_losses['test']:.3f}   {split_losses['test_nogrce']:.3f}"
-            )
+                train_parts.append(format_metric("train_nothink"))
+            train_values = "  ".join(train_parts)
+
+            test_parts = [
+                format_metric("test"),
+                format_metric("test_nogrce"),
+            ]
             if show_think_columns:
-                test_values += f"   {split_losses['test_nothink']:.3f}"
+                test_parts.append(format_metric("test_nothink"))
+            test_values = "  ".join(test_parts)
             line = (
                 color_text(f"{step:04d}", Colors.CYAN)
                 + " | "
@@ -1138,14 +1163,24 @@ def train_model(
             print(line)
             record = {
                 "step": total_steps,
-                "train_loss": float(split_losses["train"]),
-                "train_loss_nogrce": float(split_losses["train_nogrce"]),
-                "test_loss": float(split_losses["test"]),
-                "test_loss_nogrce": float(split_losses["test_nogrce"]),
+                "train_loss": float(split_metrics["train"]["ce"]),
+                "train_loss_learned": float(split_metrics["train"]["learned"]),
+                "train_loss_nogrce": float(split_metrics["train_nogrce"]["ce"]),
+                "train_loss_nogrce_learned": float(split_metrics["train_nogrce"]["learned"]),
+                "test_loss": float(split_metrics["test"]["ce"]),
+                "test_loss_learned": float(split_metrics["test"]["learned"]),
+                "test_loss_nogrce": float(split_metrics["test_nogrce"]["ce"]),
+                "test_loss_nogrce_learned": float(split_metrics["test_nogrce"]["learned"]),
             }
-            if "train_nothink" in split_losses:
-                record["train_loss_nothink"] = float(split_losses["train_nothink"])
-                record["test_loss_nothink"] = float(split_losses["test_nothink"])
+            if "train_nothink" in split_metrics:
+                record["train_loss_nothink"] = float(split_metrics["train_nothink"]["ce"])
+                record["train_loss_nothink_learned"] = float(
+                    split_metrics["train_nothink"]["learned"]
+                )
+                record["test_loss_nothink"] = float(split_metrics["test_nothink"]["ce"])
+                record["test_loss_nothink_learned"] = float(
+                    split_metrics["test_nothink"]["learned"]
+                )
             history_updates.append(record)
     
     return total_steps, history_updates

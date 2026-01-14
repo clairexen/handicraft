@@ -36,7 +36,13 @@ Ignoring embeddings and other lower-order pieces, two terms dominate:
 
 ## Think tokens
 
-The optional `--think N` mode lets the model reserve a special `<think>` token for internal reasoning bursts. During training we pick a random `T≤N` per block, run the forward pass without thinking tokens, score where the model most wants to emit `<think>`, and splice those slots back into the batch. Losses ignore `<think>` targets so experiments remain comparable to plain runs, while two auxiliary penalties keep the behavior sane: (1) we reward a thinking step only when the following prediction matches its ground-truth token, and (2) a second decoder head (with `<think>` forcibly masked out) must reproduce the displaced token exactly at every inserted thinking position. Evaluation reports both the usual GRCE-enabled traces plus a `nothink` pass (no thinking tokens inserted) so you can see how much the extra capacity matters. Sampling/reporting highlight `<think>` as a nice `❔` symbol, and `--no-think` suppresses both prompt expansion and completion of those markers when you want clean output or to measure downstream effects.
+The optional `--think N` mode lets the model reserve a special `<think>` token for internal reasoning bursts. Each batch is first processed without thinking tokens so we can score where the model most wants to emit `<think>`, then we splice the top `T≤N` positions back into the sequence. Three loss terms are combined:
+
+1. **Plain CE (the “nothink/ce” numbers):** standard next-token loss with `<think>` and undo fillers ignored; this stays comparable with non-think runs.
+2. **Think correctness penalty:** a binary loss that rewards thinking only when the following token is already predicted correctly, discouraging “think after a mistake” patterns.
+3. **Plan head CE:** an auxiliary decoder (with the `<think>` column masked out) that must emit the displaced token at every think slot, so the model learns to plan the next word before it appears.
+
+Console logs now show `train loss (learned)` and `nogrce (learned)` where the value outside parentheses is the plain CE and the parenthesised number is the aggregate objective (CE + think penalties). When a column is pure CE (for example the `nothink` column), only a single number is shown. Checkpoint histories mirror this convention by storing both `*_loss` (plain CE) and `*_loss_learned` entries for every metric, so downstream analysis scripts can pick whichever view they need. Sampling/reporting highlight `<think>` as a `❔`, and `--no-think` suppresses both prompt expansion and completion of those markers when you want clean output or to measure downstream effects.
 
 ## Undo tokens
 
