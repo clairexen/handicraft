@@ -12,6 +12,8 @@ This mechanism creates an explicit channel for time-domain (i.e. recurrent) sign
 - **Long-term, semi-stable patterns** that act like on/off switches describing style, role, or tone and remain active across many positions.
 - **Short-term, rapidly changing patterns** that behave like token-to-token controllers (grammar states, agreement markers, etc.) and flicker as the model advances.
 
+GRCE acts like attention rotated over depth: each layer emits a fixed linear summary, the summaries are combined through a shared bottleneck MLP, and every layer decodes the shared message with a linear bias. No query/key routing is needed, so the channel stays bottlenecked at `n_grce` scalars while still steering the next time step.
+
 ## Parameter count (dominant terms)
 Ignoring embeddings and other lower-order pieces, two terms dominate:
 
@@ -20,8 +22,10 @@ Ignoring embeddings and other lower-order pieces, two terms dominate:
 
 ## Running it
 Use `python grce.py --help` for CLI options. Main experiment:
+Every evaluation logs both GRCE-enabled and GRCE-disabled losses, and `plot.py` draws both traces for quick comparison.
 
 ```
+time bash -exc '
 for cy in 2 3 5 10 10; do
 	python grce.py --cycles $cy --context-span 0
 	python grce.py --cycles $cy --context-span 1
@@ -33,6 +37,7 @@ for cy in 20 50; do
 	python grce.py --cycles $cy
 	python grce.py --cycles $cy --n-grce 0
 done
+'
 ```
 
 (pretty much all code in this repo is ai-generated. but of course only under my strong supervision.. ~Claire ;)
