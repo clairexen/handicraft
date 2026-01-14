@@ -1791,6 +1791,7 @@ def main() -> None:
                 else:
                     model.load_state_dict(payload)
                 print(color_text(f"Loaded existing model from {model_path}", Colors.YELLOW))
+                print(color_text(f"Total steps so far: {total_steps}", Colors.YELLOW))
             except RuntimeError as err:
                 print(
                     color_text(
