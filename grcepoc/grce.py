@@ -570,6 +570,7 @@ class GRCEGPT(nn.Module):
         targets: torch.Tensor | None = None,
         *,
         disable_context: bool = False,
+        drop_mask: set[int] | None = None,
     ) -> Tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
         B, T = idx.shape
         device = idx.device
@@ -610,7 +611,10 @@ class GRCEGPT(nn.Module):
                     stop_grad = (t % span == 0)
                 drop_ratio = self.context.context_dropout
                 use_grce = True
-                if drop_ratio > 0 and self.training:
+                if drop_ratio == 1 and drop_mask is not None and self.training:
+                    slot = t % self.config.block_size if self.config.block_size > 0 else 0
+                    use_grce = slot not in drop_mask
+                elif drop_ratio > 1 and self.training:
                     use_grce = (random.randrange(drop_ratio) != 0)
                 if use_grce:
                     context = self.context.update(block_inputs, stop_grad=stop_grad)
@@ -680,13 +684,21 @@ def train_model(
     tokenizer: GPT2TokenizerWrapper,
     suppress_newlines: bool,
     newline_token_id: int | None,
+    drop_positions: list[set[int]] | None,
 ) -> Tuple[int, List[Dict[str, float]]]:
     optim = torch.optim.AdamW(model.parameters(), lr=3e-4)
     total_steps = start_step
     history_updates: List[Dict[str, float]] = []
     for step in range(1, steps + 1):
         xb, yb = dataset.get_batch("train", block_size, batch_size, device)
-        logits, _, loss = model.forward_autoreg(xb, yb)
+        drop_mask = None
+        if drop_positions is not None and 0 <= step - 1 < len(drop_positions):
+            drop_mask = drop_positions[step - 1]
+        logits, _, loss = model.forward_autoreg(
+            xb,
+            yb,
+            drop_mask=drop_mask,
+        )
         if loss is None:
             raise RuntimeError("Loss should not be None during training")
         optim.zero_grad()
@@ -1260,10 +1272,23 @@ def main() -> None:
             return
 
         for cycle in range(1, args.cycles + 1):
+            drop_positions = None
+            if args.grce_dropout == 1 and args.n_grce > 0:
+                drop_positions = []
+                for _ in range(args.steps):
+                    span = max(args.block_size - 1, 1)
+                    slots = list(range(span))
+                    picks = random.randrange(span + 1)
+                    drop_positions.append(set(random.sample(slots, picks)))
+
             cycle_wall = time.time()
             cycle_cpu = time.process_time()
-            print(color_text(f"\n[GPT{'+' if args.n_grce else ' wo/'}GRCE] Training Cycle {cycle}/{args.cycles} ...", Colors.BLUE))
-
+            print(
+                color_text(
+                    f"\n[GPT{'+' if args.n_grce else ' wo/'}GRCE] Training Cycle {cycle}/{args.cycles} ...",
+                    Colors.BLUE,
+                )
+            )
             train_chars_cycle = (args.block_size + 1) * args.batch_size * args.steps
             test_chars_cycle = (
                 (args.block_size + 1)
@@ -1288,6 +1313,7 @@ def main() -> None:
                 tokenizer,
                 suppress_newlines=args.no_newlines,
                 newline_token_id=newline_token_id,
+                drop_positions=drop_positions,
             )
             loss_history.extend(updates)
             print(color_text(f"Total steps so far: {total_steps}", Colors.YELLOW))
