@@ -825,6 +825,7 @@ def compute_think_penalty(
     logits: torch.Tensor,
     targets: torch.Tensor,
     think_token_id: int | None,
+    plan_required: torch.Tensor | None = None,
 ) -> torch.Tensor:
     if think_token_id is None:
         return logits.new_tensor(0.0)
@@ -848,6 +849,10 @@ def compute_think_penalty(
             label = 0.0
             if next_idx < T:
                 label = 1.0 if preds[b, next_idx] == targets[b, next_idx] else 0.0
+            if plan_required is not None:
+                plan_needed = bool(plan_required[b, pos_tensor.item()])
+                if not plan_needed:
+                    label = 0.0
             entries.append(probs[b, pos, think_token_id])
             labels.append(label)
     if not entries:
@@ -948,21 +953,28 @@ def evaluate_split(
         )
         total_loss = main_loss
         if think_settings is not None and think_settings.enabled:
-            total_loss = total_loss + compute_think_penalty(
-                logits,
-                aug_yb,
-                think_settings.token_id,
-            )
+            plan_required = None
             if think_labels is not None and think_settings.token_id is not None:
                 mask = think_labels >= 0
                 if mask.any():
                     plan_logits = logits.clone()
                     plan_logits[..., think_settings.token_id] = -1e9
+                    selected_logits = plan_logits[mask]
+                    targets_plan = think_labels[mask]
                     plan_loss = F.cross_entropy(
-                        plan_logits[mask],
-                        think_labels[mask],
+                        selected_logits,
+                        targets_plan,
                     )
                     total_loss = total_loss + plan_loss
+                    plan_required = torch.zeros_like(think_labels, dtype=torch.bool)
+                    plan_pred = torch.argmax(selected_logits, dim=-1)
+                    plan_required[mask] = plan_pred != targets_plan
+            total_loss = total_loss + compute_think_penalty(
+                logits,
+                aug_yb,
+                think_settings.token_id,
+                plan_required=plan_required,
+            )
         ce_losses.append(main_loss.item())
         learned_losses.append(total_loss.item())
     ce_avg = sum(ce_losses) / len(ce_losses)
@@ -1021,12 +1033,14 @@ def train_model(
             loss_targets.view(-1),
             ignore_index=LOSS_IGNORE_INDEX,
         )
+        plan_required = None
         think_loss = logits.new_tensor(0.0)
         if think_settings is not None and think_settings.enabled:
             think_loss = compute_think_penalty(
                 logits,
                 yb,
                 think_settings.token_id,
+                plan_required=plan_required,
             )
         plan_loss = logits.new_tensor(0.0)
         if think_labels is not None and think_settings is not None and think_settings.token_id is not None:
@@ -1034,10 +1048,15 @@ def train_model(
             if mask.any():
                 plan_logits = logits.clone()
                 plan_logits[..., think_settings.token_id] = -1e9
+                selected_logits = plan_logits[mask]
+                targets_plan = think_labels[mask]
                 plan_loss = F.cross_entropy(
-                    plan_logits[mask],
-                    think_labels[mask],
+                    selected_logits,
+                    targets_plan,
                 )
+                plan_pred = torch.argmax(selected_logits, dim=-1)
+                plan_required = torch.zeros_like(think_labels, dtype=torch.bool)
+                plan_required[mask] = plan_pred != targets_plan
         loss = main_loss + think_loss + plan_loss
         optim.zero_grad()
         loss.backward()
