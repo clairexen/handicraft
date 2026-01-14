@@ -9,11 +9,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
-def slice_windows(series: List[float], steps_per_cycle: int, start: int, end: int) -> List[List[float]]:
+def slice_windows(series: List[float], samples_per_cycle: int, start: int, end: int) -> List[List[float]]:
     windows = []
     for w in range(start, end):
-        begin = w * steps_per_cycle
-        end_idx = begin + steps_per_cycle
+        begin = w * samples_per_cycle
+        end_idx = begin + samples_per_cycle
         windows.append(series[begin:end_idx])
     return windows
 
@@ -51,8 +51,12 @@ def analyze_trace(record: dict, args: argparse.Namespace, label: str):
         if grce_test_ng
         else grce_test
     )
-    train_windows = slice_windows(train_diff, args.cycles, args.start_window, args.end_window)
-    test_windows = slice_windows(test_diff, args.cycles, args.start_window, args.end_window)
+    train_windows = slice_windows(
+        train_diff, args.samples_per_cycle, args.start_window, args.end_window
+    )
+    test_windows = slice_windows(
+        test_diff, args.samples_per_cycle, args.start_window, args.end_window
+    )
 
     train_spikes = summarize_spikes(train_windows, args.spike_window)
     test_spikes = summarize_spikes(test_windows, args.spike_window)
@@ -83,7 +87,12 @@ def analyze_trace(record: dict, args: argparse.Namespace, label: str):
 def main() -> None:
     parser = argparse.ArgumentParser(description="Analyze ctx vs. nogrce loss traces.")
     parser.add_argument("json", type=Path, help="JSON file produced via plot.py --store")
-    parser.add_argument("--cycles", type=int, default=100, help="Steps per cycle (default: %(default)s)")
+    parser.add_argument(
+        "--samples-per-cycle",
+        type=int,
+        default=10,
+        help="Number of plotted points per cycle (default: %(default)s)",
+    )
     parser.add_argument(
         "--spike-window",
         type=int,

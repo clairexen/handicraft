@@ -242,16 +242,27 @@ def main() -> None:
             return
 
 
+    steps_per_cycle = 100
     print(f"Loaded {len(records)} trace(s):")
     for rec in records:
-        length = len(rec.steps)
         label = rec.model_path.stem
-        parts = []
+        if not rec.steps:
+            print(f"  - {label}: no sampled points")
+            continue
+        num_samples = len(rec.steps)
+        first_step = rec.steps[0]
+        last_step = rec.steps[-1]
+        cycles_start = first_step / steps_per_cycle
+        cycles_end = last_step / steps_per_cycle
+        parts: list[str] = []
         if rec.train:
             parts.append("train")
         if rec.test:
             parts.append("test")
-        print(f"  - {label}: {length} steps ({', '.join(parts) if parts else 'no data'})")
+        label_desc = ", ".join(parts) if parts else "no data"
+        print(
+            f"  - {label}: {num_samples} samples (steps {first_step}→{last_step}, cycles ~{cycles_start:.1f}→~{cycles_end:.1f}) [{label_desc}]"
+        )
     fig, ax = plt.subplots()
     color_map: dict[str, str] = {}
     default_colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
