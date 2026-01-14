@@ -989,6 +989,7 @@ def train_model(
     think_settings: ThinkSettings | None,
     suppress_think_output: bool,
     suppress_think_prompt: bool,
+    think_hard: bool,
     undo_settings: UndoSettings | None,
 ) -> Tuple[int, List[Dict[str, float]]]:
     optim = torch.optim.AdamW(model.parameters(), lr=3e-4)
@@ -1099,7 +1100,7 @@ def train_model(
                     think_settings=think_settings,
                     suppress_think=suppress_think_output,
                     suppress_think_prompt=suppress_think_prompt,
-                    think_hard=args.think_hard,
+                    think_hard=think_hard,
                 )
             model.train()
             sample_ids = sample_tokens[0].detach().cpu().tolist()
@@ -1209,6 +1210,7 @@ def run_report_mode(
     think_settings: ThinkSettings | None,
     suppress_think: bool,
     suppress_think_prompt: bool,
+    think_hard: bool,
 ) -> None:
     model.eval()
     base_len = prompt_tokens.size(1)
@@ -1223,7 +1225,7 @@ def run_report_mode(
                 think_settings=think_settings,
                 suppress_think=suppress_think,
                 suppress_think_prompt=suppress_think_prompt,
-                think_hard=args.think_hard,
+                think_hard=think_hard,
             )
             tokens = generated[0].detach().cpu().tolist()
             prompt_ids = tokens[:prompt_len]
@@ -1789,6 +1791,7 @@ def main() -> None:
                 think_settings=think_settings,
                 suppress_think=args.no_think,
                 suppress_think_prompt=args.no_think_prompt,
+                think_hard=args.think_hard,
             )
             return
 
@@ -1838,6 +1841,7 @@ def main() -> None:
                 think_settings=think_settings,
                 suppress_think_output=args.no_think,
                 suppress_think_prompt=args.no_think_prompt,
+                think_hard=args.think_hard,
                 undo_settings=undo_settings,
             )
             loss_history.extend(updates)
