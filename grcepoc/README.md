@@ -14,7 +14,7 @@ Plotting defaults:
 - `plot.py` shows both train/test traces when no flags are provided.
 - `--no-nogrce` hides the GRCE-disabled comparisons.
 - `--avg-span` averages runs with the same configuration label (span stripped).
-- `--store span_avg.json --store-only` writes exactly what you see, so you can feed it into the analysis scripts.
+- `--store span_avg.json --store-only` writes exactly what you see, so you can feed it into analysis scripts.
 
 This mechanism creates an explicit channel for time-domain (i.e. recurrent) signals without interfering with self-attention capacity. Because the context vector is the sole cross-time carrier, we expect it to split into two behavioral bands:
 - **Long-term, semi-stable patterns** that act like on/off switches describing style, role, or tone and remain active across many positions.
@@ -42,7 +42,7 @@ You can reproduce the sweeps below; notice how even the `--context-span 1` run (
 
 Every evaluation logs both GRCE-enabled and GRCE-disabled losses, and `plot.py` draws both traces for quick comparison.
 
-For postprocessing, run `plot.py --avg-span --no-nogrce --store span_avg.json --store-only` and feed that JSON into `analyze_spans.py span_avg.json --samples-per-cycle 10 --spike-window 5 ...`. Remember that the JSON contains one sample every 10 training steps; requesting steady-state windows beyond the available samples will yield `nan`.
+For postprocessing, run for example `plot.py --avg-span --no-nogrce --store span_avg.json --store-only` and feed that JSON into your analysis scripts.
 
 ```
 time bash -exc '
