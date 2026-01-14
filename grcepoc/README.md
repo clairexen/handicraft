@@ -51,10 +51,12 @@ for cy in 2 3 5 10 10; do
 	python grce.py --cycles $cy --context-span 1
 	python grce.py --cycles $cy --context-span 2
 	python grce.py --cycles $cy --context-span 3
+	python grce.py --cycles $cy --grce-dropout 20
 	python grce.py --cycles $cy --n-grce 0
 done
 for cy in 20 50; do
 	python grce.py --cycles $cy
+	python grce.py --cycles $cy --grce-dropout 20
 	python grce.py --cycles $cy --n-grce 0
 done
 '
