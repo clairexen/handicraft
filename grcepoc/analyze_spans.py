@@ -32,19 +32,25 @@ def summarize_baseline(windows: List[List[float]]) -> float:
     return float(np.mean(arr)) if arr else float("nan")
 
 
-def analyze_trace(record: dict, args: argparse.Namespace, label: str) -> Tuple[List[float], List[float], float, float]:
+def analyze_trace(record: dict, args: argparse.Namespace, label: str):
     steps = record.get("steps", [])
     grce_train = record.get("train")
     grce_test = record.get("test")
-    nogrce_train = record.get("train_nogrce")
-    nogrce_test = record.get("test_nogrce")
-    if not grce_train or not grce_test or nogrce_train is None or nogrce_test is None:
-        print(f"warning: record {label} missing nogrce traces, skipping", file=sys.stderr)
+    grce_train_ng = record.get("train_nogrce")
+    grce_test_ng = record.get("test_nogrce")
+    if not grce_train or not grce_test:
+        print(f"warning: record {label} missing train/test", file=sys.stderr)
         return [], [], float("nan"), float("nan")
-
-    train_diff = [g - n for g, n in zip(grce_train, nogrce_train)]
-    test_diff = [g - n for g, n in zip(grce_test, nogrce_test)]
-
+    train_diff = (
+        [g - n for g, n in zip(grce_train, grce_train_ng)]
+        if grce_train_ng
+        else grce_train
+    )
+    test_diff = (
+        [g - n for g, n in zip(grce_test, grce_test_ng)]
+        if grce_test_ng
+        else grce_test
+    )
     train_windows = slice_windows(train_diff, args.cycles, args.start_window, args.end_window)
     test_windows = slice_windows(test_diff, args.cycles, args.start_window, args.end_window)
 

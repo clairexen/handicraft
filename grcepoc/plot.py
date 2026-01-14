@@ -203,8 +203,8 @@ def main() -> None:
                     steps=steps[: len(train_avg) if train_avg else len(steps)],
                     train=train_avg or base.train,
                     test=test_avg or base.test,
-                    train_nogrce=avg_series("train_nogrce"),
-                    test_nogrce=avg_series("test_nogrce"),
+                    train_nogrce=None,
+                    test_nogrce=None,
                 )
             )
 
