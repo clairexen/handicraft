@@ -731,6 +731,42 @@ def maybe_prepare_think_batch(
     return new_inputs, new_targets
 
 
+def compute_think_penalty(
+    logits: torch.Tensor,
+    targets: torch.Tensor,
+    think_token_id: int | None,
+) -> torch.Tensor:
+    if think_token_id is None:
+        return logits.new_tensor(0.0)
+    mask = targets == think_token_id
+    if not mask.any():
+        return logits.new_tensor(0.0)
+    probs = F.softmax(logits, dim=-1)
+    preds = torch.argmax(logits, dim=-1)
+    entries: list[torch.Tensor] = []
+    labels: list[float] = []
+    B, T = targets.shape
+    for b in range(B):
+        think_positions = torch.nonzero(mask[b], as_tuple=False).flatten()
+        if think_positions.numel() == 0:
+            continue
+        for pos_tensor in think_positions:
+            pos = int(pos_tensor.item())
+            next_idx = pos + 1
+            while next_idx < T and targets[b, next_idx] == think_token_id:
+                next_idx += 1
+            label = 0.0
+            if next_idx < T:
+                label = 1.0 if preds[b, next_idx] == targets[b, next_idx] else 0.0
+            entries.append(probs[b, pos, think_token_id])
+            labels.append(label)
+    if not entries:
+        return logits.new_tensor(0.0)
+    prob_tensor = torch.stack(entries)
+    label_tensor = prob_tensor.new_tensor(labels)
+    return F.binary_cross_entropy(prob_tensor, label_tensor)
+
+
 def expand_prompt_with_thinking(
     model: GRCEGPT, prompt: torch.Tensor, think: ThinkSettings | None
 ) -> torch.Tensor:
@@ -820,20 +856,37 @@ def train_model(
     loss_ignore_index = None
     if think_settings is not None and think_settings.enabled:
         loss_ignore_index = think_settings.token_id
+    printed_header = False
+    show_think_columns = think_settings is not None and think_settings.enabled
     for step in range(1, steps + 1):
         xb, yb = dataset.get_batch("train", block_size, batch_size, device)
         xb, yb = maybe_prepare_think_batch(model, xb, yb, think_settings)
         drop_mask = None
         if drop_positions is not None and 0 <= step - 1 < len(drop_positions):
             drop_mask = drop_positions[step - 1]
-        logits, _, loss = model.forward_autoreg(
+        logits, _, _ = model.forward_autoreg(
             xb,
             yb,
             drop_mask=drop_mask,
-            ignore_index=loss_ignore_index,
         )
-        if loss is None:
-            raise RuntimeError("Loss should not be None during training")
+        logits_flat = logits.view(-1, logits.size(-1))
+        targets_flat = yb.view(-1)
+        if loss_ignore_index is not None:
+            main_loss = F.cross_entropy(
+                logits_flat,
+                targets_flat,
+                ignore_index=loss_ignore_index,
+            )
+        else:
+            main_loss = F.cross_entropy(logits_flat, targets_flat)
+        think_loss = logits.new_tensor(0.0)
+        if think_settings is not None and think_settings.enabled:
+            think_loss = compute_think_penalty(
+                logits,
+                yb,
+                think_settings.token_id,
+            )
+        loss = main_loss + think_loss
         optim.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -904,27 +957,43 @@ def train_model(
                 think_token_id=tokenizer.think_id,
             )
             colored_sample = prefix_text + completion_text
-            def format_loss(prefix: str, color: str) -> str:
-                extras = [f"nogrce {split_losses[f'{prefix}_nogrce']:.3f}"]
-                nothink_key = f"{prefix}_nothink"
-                if nothink_key in split_losses:
-                    extras.append(f"nothink {split_losses[nothink_key]:.3f}")
-                extra_text = ", ".join(extras)
-                return color_text(
-                    f"{prefix} loss {split_losses[prefix]:.3f} ({extra_text})",
-                    color,
+            if not printed_header:
+                train_header = "train loss   nogrce"
+                test_header = "test loss   nogrce"
+                if show_think_columns:
+                    train_header += "   nothink"
+                    test_header += "   nothink"
+                header_line = (
+                    color_text("step", Colors.CYAN)
+                    + " | "
+                    + color_text(train_header, Colors.GREEN)
+                    + " | "
+                    + color_text(test_header, Colors.MAGENTA)
+                    + " | sample"
                 )
+                print(header_line)
+                printed_header = True
 
-            loss_text = format_loss("train", Colors.GREEN) + " | " + format_loss(
-                "test", Colors.MAGENTA
+            train_values = (
+                f"{split_losses['train']:.3f}   {split_losses['train_nogrce']:.3f}"
             )
-            print(
-                color_text(f"step {step:04d}", Colors.CYAN)
+            if show_think_columns:
+                train_values += f"   {split_losses['train_nothink']:.3f}"
+            test_values = (
+                f"{split_losses['test']:.3f}   {split_losses['test_nogrce']:.3f}"
+            )
+            if show_think_columns:
+                test_values += f"   {split_losses['test_nothink']:.3f}"
+            line = (
+                color_text(f"{step:04d}", Colors.CYAN)
                 + " | "
-                + loss_text
+                + color_text(train_values, Colors.GREEN)
+                + " | "
+                + color_text(test_values, Colors.MAGENTA)
                 + " | sample: "
                 + colored_sample
             )
+            print(line)
             record = {
                 "step": total_steps,
                 "train_loss": float(split_losses["train"]),
