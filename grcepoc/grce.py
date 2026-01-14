@@ -773,6 +773,23 @@ def train_model(
     return total_steps, history_updates
 
 
+def run_report_mode(
+    model: GRCEGPT,
+    tokenizer: GPT2TokenizerWrapper,
+    prompt_tokens: torch.Tensor,
+    sample_len: int,
+    count: int,
+    device: torch.device,
+) -> None:
+    model.eval()
+    base_len = prompt_tokens.size(1)
+    with torch.no_grad():
+        for idx in range(1, count + 1):
+            generated = generate(model, prompt_tokens.clone(), sample_len)
+            completion = tokenizer.decode(generated[0, base_len:])
+            print(f"[report {idx}] {completion}")
+
+
 def count_eval_calls(steps: int, eval_interval: int) -> int:
     evals = 0
     for step in range(1, steps + 1):
@@ -912,6 +929,12 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=10,
         help="Number of new tokens to sample after training",
+    )
+    parser.add_argument(
+        "--report-count",
+        type=int,
+        default=0,
+        help="If >0, skip training and generate this many completions",
     )
     parser.add_argument(
         "--prompt",
@@ -1141,6 +1164,17 @@ def main() -> None:
                     )
                 )
                 print(color_text(str(err), Colors.GRAY))
+
+        if args.report_count > 0:
+            run_report_mode(
+                model=model,
+                tokenizer=tokenizer,
+                prompt_tokens=prompt_tokens,
+                sample_len=args.generate,
+                count=args.report_count,
+                device=device,
+            )
+            return
 
         for cycle in range(1, args.cycles + 1):
             cycle_wall = time.time()
