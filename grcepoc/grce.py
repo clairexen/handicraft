@@ -42,6 +42,7 @@ from transformers import GPT2TokenizerFast
 DISSONANCE_TOKEN = "<|?!|>"
 DISSONANCE_RATE = 0.01
 FANCY_SPACE = "\u2423"  # Open Box symbol for visible spaces
+FANCY_ENTER = "\u23CE"  # Return symbol for visible newlines
 ASCII_LETTERS = set(string.ascii_letters)
 
 
@@ -668,6 +669,8 @@ def train_model(
     sample_prompt: torch.Tensor,
     sample_chars: int,
     tokenizer: GPT2TokenizerWrapper,
+    suppress_newlines: bool,
+    newline_token_id: int | None,
 ) -> Tuple[int, List[Dict[str, float]]]:
     optim = torch.optim.AdamW(model.parameters(), lr=3e-4)
     total_steps = start_step
@@ -709,37 +712,24 @@ def train_model(
                     model,
                     sample_prompt.clone(),
                     sample_chars,
+                    suppress_newlines=suppress_newlines,
+                    newline_token_id=newline_token_id,
                 )
             model.train()
             prompt_ids = sample_prompt[0].detach().cpu().tolist()
             sample_ids = sample_tokens[0].detach().cpu().tolist()
             completion_ids = sample_ids[len(prompt_ids) :]
 
-            def tidy(text: str) -> str:
-                return text.replace("\n", " ").replace(" ", FANCY_SPACE)
-
-            def color_tokens(
-                tokens: list[int], colors: list[str], *, bold: bool = True
-            ) -> str:
-                parts: list[str] = []
-                color_index = 0
-                for tok in tokens:
-                    piece = tokenizer.tokenizer.decode(
-                        [tok], clean_up_tokenization_spaces=False
-                    )
-                    piece = tidy(piece)
-                    if not piece:
-                        continue
-                    color = colors[color_index % len(colors)]
-                    parts.append(color_text(piece, color, bold=bold))
-                    color_index += 1
-                return "".join(parts)
-
             prefix_text = color_tokens(
-                prompt_ids, [Colors.CYAN, Colors.GREEN], bold=False
+                tokenizer,
+                prompt_ids,
+                [Colors.CYAN, Colors.GREEN],
+                bold=False,
             )
             completion_text = color_tokens(
-                completion_ids, [Colors.YELLOW, Colors.MAGENTA]
+                tokenizer,
+                completion_ids,
+                [Colors.YELLOW, Colors.MAGENTA],
             )
             colored_sample = prefix_text + completion_text
             loss_text = (
@@ -780,14 +770,40 @@ def run_report_mode(
     sample_len: int,
     count: int,
     device: torch.device,
+    suppress_newlines: bool,
+    newline_token_id: int | None,
 ) -> None:
     model.eval()
     base_len = prompt_tokens.size(1)
     with torch.no_grad():
         for idx in range(1, count + 1):
-            generated = generate(model, prompt_tokens.clone(), sample_len)
-            completion = tokenizer.decode(generated[0, base_len:])
-            print(f"[report {idx}] {completion}")
+            generated = generate(
+                model,
+                prompt_tokens.clone(),
+                sample_len,
+                suppress_newlines=suppress_newlines,
+                newline_token_id=newline_token_id,
+            )
+            tokens = generated[0].detach().cpu().tolist()
+            prompt_ids = tokens[:base_len]
+            completion_ids = tokens[base_len:]
+            prefix_text = color_tokens(
+                tokenizer,
+                prompt_ids,
+                [Colors.CYAN, Colors.GREEN],
+                bold=False,
+            )
+            completion_text = color_tokens(
+                tokenizer,
+                completion_ids,
+                [Colors.YELLOW, Colors.MAGENTA],
+            )
+            print(
+                color_text(f"[report {idx:02d}]", Colors.CYAN)
+                + " | sample: "
+                + prefix_text
+                + completion_text
+            )
 
 
 def count_eval_calls(steps: int, eval_interval: int) -> int:
@@ -798,11 +814,42 @@ def count_eval_calls(steps: int, eval_interval: int) -> int:
     return max(1, evals)
 
 
+def tidy(text: str, replace_newline: str = FANCY_ENTER) -> str:
+    return text.replace("\n", replace_newline).replace(" ", FANCY_SPACE)
+
+def color_tokens(
+    tokenizer: GPT2TokenizerWrapper,
+    tokens: list[int],
+    colors: list[str],
+    *,
+    bold: bool = True,
+    replace_newline: str = FANCY_ENTER,
+) -> str:
+    parts: list[str] = []
+    color_index = 0
+    for tok in tokens:
+        piece = tokenizer.tokenizer.decode([tok], clean_up_tokenization_spaces=False)
+        piece = tidy(piece, replace_newline=replace_newline)
+        if not piece:
+            continue
+        color = colors[color_index % len(colors)]
+        parts.append(color_text(piece, color, bold=bold))
+        color_index += 1
+    return "".join(parts)
+
+
+def normalize_prompt(text: str) -> str:
+    return text.replace(FANCY_SPACE, " ").replace(FANCY_ENTER, "\n")
+
+
 @torch.no_grad()
 def generate(
     model: GRCEGPT,
     idx: torch.Tensor,
     steps: int,
+    *,
+    suppress_newlines: bool = False,
+    newline_token_id: int | None = None,
 ) -> torch.Tensor:
     model.eval()
     for _ in range(steps):
@@ -810,6 +857,13 @@ def generate(
         logits, _, _ = model.forward_autoreg(idx_cond)
         logits_last = logits[:, -1, :]
         probs = F.softmax(logits_last, dim=-1)
+        if suppress_newlines and newline_token_id is not None:
+            modified = probs.clone()
+            modified[:, newline_token_id] = 0
+            sums = modified.sum(dim=-1, keepdim=True)
+            mask = sums.squeeze(-1) > 0
+            if mask.any():
+                probs[mask] = modified[mask] / sums[mask]
         next_token = torch.multinomial(probs, num_samples=1)
         idx = torch.cat([idx, next_token], dim=1)
     return idx
@@ -937,6 +991,11 @@ def parse_args() -> argparse.Namespace:
         help="If >0, skip training and generate this many completions",
     )
     parser.add_argument(
+        "--no-newlines",
+        action="store_true",
+        help="During sampling/reporting, avoid emitting newline tokens",
+    )
+    parser.add_argument(
         "--prompt",
         type=str,
         default="ai will",
@@ -963,6 +1022,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    args.prompt = normalize_prompt(args.prompt)
     torch.manual_seed(42)
     random.seed(42)
 
@@ -1026,6 +1086,11 @@ def main() -> None:
             args.tokenizer_vocab,
             args.special,
         )
+
+        newline_token_id = None
+        newline_tokens = tokenizer.tokenizer.encode("\n", add_special_tokens=False)
+        if newline_tokens:
+            newline_token_id = newline_tokens[0]
 
         train_tokens, train_text, train_bytes, train_inserts = load_or_prepare_tokens(
             "train",
@@ -1173,6 +1238,8 @@ def main() -> None:
                 sample_len=args.generate,
                 count=args.report_count,
                 device=device,
+                suppress_newlines=args.no_newlines,
+                newline_token_id=newline_token_id,
             )
             return
 
@@ -1190,41 +1257,43 @@ def main() -> None:
             dataset.prepare_cycle("train", train_chars_cycle)
             dataset.prepare_cycle("test", test_chars_cycle)
 
-            total_steps, updates = train_model(
-                model,
-                dataset,
-                device,
-                args.steps,
-                args.block_size,
-                args.batch_size,
-                args.eval_interval,
-                args.eval_iters,
-                total_steps,
-                prompt_tokens,
-                args.generate,
-                tokenizer,
-            )
-            loss_history.extend(updates)
-            print(color_text(f"Total steps so far: {total_steps}", Colors.YELLOW))
+        total_steps, updates = train_model(
+            model,
+            dataset,
+            device,
+            args.steps,
+            args.block_size,
+            args.batch_size,
+            args.eval_interval,
+            args.eval_iters,
+            total_steps,
+            prompt_tokens,
+            args.generate,
+            tokenizer,
+            suppress_newlines=args.no_newlines,
+            newline_token_id=newline_token_id,
+        )
+        loss_history.extend(updates)
+        print(color_text(f"Total steps so far: {total_steps}", Colors.YELLOW))
 
-            torch.save(
-                {
-                    "model": model.state_dict(),
-                    "dataset": dataset.state_dict(),
-                    "total_steps": total_steps,
-                    "loss_history": loss_history,
-                },
-                model_path,
+        torch.save(
+            {
+                "model": model.state_dict(),
+                "dataset": dataset.state_dict(),
+                "total_steps": total_steps,
+                "loss_history": loss_history,
+            },
+            model_path,
+        )
+        print(color_text(f"Saved model to {model_path}", Colors.GREEN))
+        cycle_elapsed_wall = time.time() - cycle_wall
+        cycle_elapsed_cpu = time.process_time() - cycle_cpu
+        print(
+            color_text(
+                f"[cycle {cycle}] wall={cycle_elapsed_wall:.2f}s cpu={cycle_elapsed_cpu:.2f}s",
+                Colors.GRAY,
             )
-            print(color_text(f"Saved model to {model_path}", Colors.GREEN))
-            cycle_elapsed_wall = time.time() - cycle_wall
-            cycle_elapsed_cpu = time.process_time() - cycle_cpu
-            print(
-                color_text(
-                    f"[cycle {cycle}] wall={cycle_elapsed_wall:.2f}s cpu={cycle_elapsed_cpu:.2f}s",
-                    Colors.GRAY,
-                )
-            )
+        )
 
     except KeyboardInterrupt:
         if args.debug_interrupt:

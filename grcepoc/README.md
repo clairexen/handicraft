@@ -37,6 +37,7 @@ Ignoring embeddings and other lower-order pieces, two terms dominate:
 ## Running it
 Use `python grce.py --help` for CLI options. Main experiment:
 - `--report-count N` skips training entirely, loads the latest checkpoint (if any), and prints `N` completions of the configured prompt.
+- `--no-newlines` keeps the sampler from emitting newline tokens so completions stay on one line.
 You can reproduce the sweeps below; notice how even the `--context-span 1` run (which detaches the recurrent gradients entirely) tracks all other spans almost perfectly, confirming that the channel only needs to learn what to sample, not how to backpropagate across positions.
 
 Every evaluation logs both GRCE-enabled and GRCE-disabled losses, and `plot.py` draws both traces for quick comparison.
