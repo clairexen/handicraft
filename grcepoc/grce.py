@@ -1829,12 +1829,23 @@ def main() -> None:
 
             cycle_wall = time.time()
             cycle_cpu = time.process_time()
-            print(
-                color_text(
-                    f"\n[GPT{'+' if args.n_grce else ' wo/'}GRCE] Training Cycle {cycle}/{args.cycles} ...",
-                    Colors.BLUE,
-                )
-            )
+            tags = ["GPT"]
+            plus_tags: list[str] = []
+            minus_tags: list[str] = []
+            if args.n_grce > 0:
+                plus_tags.append("+GRCE")
+            else:
+                minus_tags.append(" wo/GRCE")
+            if args.think > 0:
+                plus_tags.append("+THINK")
+            else:
+                minus_tags.append(" wo/THINK")
+            if args.undo > 0:
+                plus_tags.append("+UNDO")
+            else:
+                minus_tags.append(" wo/UNDO")
+            label = "".join(tags + plus_tags + minus_tags)
+            print(color_text(f"\n[{label}] Training Cycle {cycle}/{args.cycles} ...", Colors.BLUE))
             train_chars_cycle = (args.block_size + 1) * args.batch_size * args.steps
             test_chars_cycle = (
                 (args.block_size + 1)
