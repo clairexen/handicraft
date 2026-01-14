@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Iterable, List, Optional
 
 import json
+import re
 
 import matplotlib.pyplot as plt
 
@@ -174,23 +175,36 @@ def main() -> None:
         show_train = len(records) == 1
 
     fig, ax = plt.subplots()
+    color_map: dict[str, str] = {}
+    default_colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+    color_index = 0
     for rec in records:
         label = rec.model_path.stem
+        match = re.search(r"span(\d+)", label)
+        span_key = match.group(1) if match else "ctx"
+        if span_key not in color_map:
+            color_map[span_key] = (
+                "k" if span_key == "ctx" else default_colors[color_index % len(default_colors)]
+            )
+            color_index += span_key != "ctx"
+        base_color = color_map[span_key]
         if show_train:
             ax.plot(
                 rec.steps,
                 rec.train,
                 label=f"{label} train",
-                linestyle="--",
-                marker=None
+                linestyle="-",
+                color=base_color,
+                marker=None,
             )
             if rec.train_nogrce:
                 ax.plot(
                     rec.steps,
                     rec.train_nogrce,
                     label=f"{label} train (nogrce)",
-                    linestyle=":",
-                    marker=None
+                    linestyle="-.",
+                    color=base_color,
+                    marker=None,
                 )
         if show_test:
             ax.plot(
@@ -198,7 +212,8 @@ def main() -> None:
                 rec.test,
                 label=f"{label} test",
                 linestyle="-",
-                marker=None
+                color=base_color,
+                marker=None,
             )
             if rec.test_nogrce:
                 ax.plot(
@@ -206,7 +221,8 @@ def main() -> None:
                     rec.test_nogrce,
                     label=f"{label} test (nogrce)",
                     linestyle="-.",
-                    marker=None
+                    color=base_color,
+                    marker=None,
                 )
 
     ax.set_xlabel("Steps")
