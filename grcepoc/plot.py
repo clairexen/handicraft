@@ -167,6 +167,11 @@ def parse_args() -> argparse.Namespace:
         help="write JSON with --store and exit without plotting",
     )
     parser.add_argument(
+        "--think-highlight",
+        action="store_true",
+        help="Use solid/dash-dot styles only for think traces; non-think traces become dotted",
+    )
+    parser.add_argument(
         "--think-scale",
         type=float,
         default=1.0,
@@ -286,6 +291,7 @@ def main() -> None:
     color_index = 0
     for rec in records:
         label = rec.model_path.stem
+        is_think = "_think" in label
         match = re.search(r"span(\d+)", label)
         span_key = match.group(1) if match else "ctx"
         if span_key not in color_map:
@@ -294,41 +300,51 @@ def main() -> None:
             )
             color_index += span_key != "ctx"
         base_color = color_map[span_key]
+        if args.think_highlight and not is_think:
+            solid_style = ":"
+        else:
+            solid_style = "-"
+        nogrce_style = "-."
+        line_width = 3.0 if is_think else 1.5
         if show_train and rec.train:
-            ax.plot(
+            train_line, = ax.plot(
                 rec.scaled_steps,
                 rec.train,
                 label=f"{label} train",
-                linestyle="-",
+                linestyle=solid_style,
                 color=base_color,
                 marker=None,
+                linewidth=line_width,
             )
             if rec.train_nogrce and not args.no_nogrce:
-                ax.plot(
+                nogrce_line, = ax.plot(
                     rec.scaled_steps,
                     rec.train_nogrce,
                     label=f"{label} train (nogrce)",
-                    linestyle="-.",
+                    linestyle=nogrce_style,
                     color=base_color,
                     marker=None,
+                    linewidth=line_width,
                 )
         if show_test and rec.test:
-            ax.plot(
+            test_line, = ax.plot(
                 rec.scaled_steps,
                 rec.test,
                 label=f"{label} test",
-                linestyle="-",
+                linestyle=solid_style,
                 color=base_color,
                 marker=None,
+                linewidth=line_width,
             )
             if rec.test_nogrce and not args.no_nogrce:
-                ax.plot(
+                nogrce_line, = ax.plot(
                     rec.scaled_steps,
                     rec.test_nogrce,
                     label=f"{label} test (nogrce)",
-                    linestyle="-.",
+                    linestyle=nogrce_style,
                     color=base_color,
                     marker=None,
+                    linewidth=line_width,
                 )
 
     ax.set_xlabel("Steps")
