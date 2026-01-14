@@ -119,6 +119,7 @@ def store_records(records: List[LossRecord], out_path: pathlib.Path) -> None:
     print(f"stored {len(records)} record(s) to {out_path}")
 
 
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -136,8 +137,17 @@ def parse_args() -> argparse.Namespace:
         type=pathlib.Path,
         help="load JSON file produced by --store (skips .pt loading)",
     )
+    parser.add_argument(
+        "--no-nogrce",
+        action="store_true",
+        help="suppress GRCE-disabled (nogrce) traces",
+    )
+    parser.add_argument(
+        "--avg-span",
+        action="store_true",
+        help="average checkpoints across spans (span suffix removed from label)",
+    )
     return parser.parse_args()
-
 
 def discover_paths(explicit: List[pathlib.Path]) -> List[pathlib.Path]:
     if explicit:
@@ -160,6 +170,40 @@ def main() -> None:
     if not records:
         print("No loss history found.")
         return
+
+    if args.avg_span and records:
+        grouped: dict[str, list[LossRecord]] = {}
+        for rec in records:
+            base_label = re.sub(r"_span\d+", "", rec.model_path.stem)
+            grouped.setdefault(base_label, []).append(rec)
+
+        averaged: List[LossRecord] = []
+        for label, recs in grouped.items():
+            base = recs[0]
+            steps = base.steps
+
+            def avg_series(attr: str) -> Optional[List[float]]:
+                series = [getattr(r, attr) for r in recs]
+                if any(s is None for s in series):
+                    return None
+                min_len = min(len(s) for s in series)
+                return [sum(s[i] for s in series) / len(series) for i in range(min_len)]
+
+            train_avg = avg_series("train")
+            test_avg = avg_series("test")
+
+            averaged.append(
+                LossRecord(
+                    model_path=pathlib.Path(label),
+                    steps=steps[: len(train_avg) if train_avg else len(steps)],
+                    train=train_avg or base.train,
+                    test=test_avg or base.test,
+                    train_nogrce=avg_series("train_nogrce"),
+                    test_nogrce=avg_series("test_nogrce"),
+                )
+            )
+
+        records = averaged
 
     if args.store and records:
         store_records(records, args.store)
@@ -197,7 +241,7 @@ def main() -> None:
                 color=base_color,
                 marker=None,
             )
-            if rec.train_nogrce:
+            if rec.train_nogrce and not args.no_nogrce:
                 ax.plot(
                     rec.steps,
                     rec.train_nogrce,
@@ -215,7 +259,7 @@ def main() -> None:
                 color=base_color,
                 marker=None,
             )
-            if rec.test_nogrce:
+            if rec.test_nogrce and not args.no_nogrce:
                 ax.plot(
                     rec.steps,
                     rec.test_nogrce,
