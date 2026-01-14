@@ -565,11 +565,14 @@ class GRCEGPT(nn.Module):
         self,
         idx: torch.Tensor,
         targets: torch.Tensor | None = None,
+        *,
+        disable_context: bool = False,
     ) -> Tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
         B, T = idx.shape
         device = idx.device
+        use_context = not self.context.disabled and not disable_context
         context = None
-        if not self.context.disabled:
+        if use_context:
             context_dim = self.context.context_dim
             context = torch.zeros(B, context_dim, device=device)
         logits_steps = []
@@ -580,7 +583,7 @@ class GRCEGPT(nn.Module):
             pos_emb = self.core.pos_emb(pos_ids)
             token_input = tok_last + pos_emb
             block_biases = None
-            if not self.context.disabled and context is not None:
+            if use_context and context is not None:
                 bias_vectors = self.context.project(context)
                 block_biases = []
                 for bias_vec in bias_vectors:
@@ -594,7 +597,7 @@ class GRCEGPT(nn.Module):
                     full[:, -1, :] = bias_vec
                     block_biases.append(full)
             logits, block_inputs = self.core(prefix, block_biases=block_biases)
-            if not self.context.disabled and context is not None:
+            if use_context and context is not None:
                 span = self.context.context_span
                 if span <= 0:
                     stop_grad = False
@@ -637,11 +640,13 @@ def evaluate_split(
     batch_size: int,
     split: str,
     iters: int,
+    *,
+    disable_context: bool = False,
 ) -> float:
     losses = []
     for _ in range(iters):
         xb, yb = dataset.get_batch(split, block_size, batch_size, device)
-        _, _, loss = model.forward_autoreg(xb, yb)
+        _, _, loss = model.forward_autoreg(xb, yb, disable_context=disable_context)
         losses.append(loss.item())
     return sum(losses) / len(losses)
 
@@ -677,12 +682,19 @@ def train_model(
         if step == 1 or step % eval_interval == 0 or step == steps:
             model.eval()
             with torch.no_grad():
-                split_losses = {
-                    split: evaluate_split(
-                        model, dataset, device, block_size, batch_size, split, eval_iters
-                    )
-                    for split in ("train", "test")
-                }
+                split_losses: dict[str, float] = {}
+                for split in ("train", "test"):
+                    for suffix, disable in (("", False), ("_nogrce", True)):
+                        split_losses[f"{split}{suffix}"] = evaluate_split(
+                            model,
+                            dataset,
+                            device,
+                            block_size,
+                            batch_size,
+                            split,
+                            eval_iters,
+                            disable_context=disable,
+                        )
                 sample_tokens = generate(
                     model,
                     sample_prompt.clone(),
@@ -721,9 +733,15 @@ def train_model(
             )
             colored_sample = prefix_text + completion_text
             loss_text = (
-                color_text(f"train loss {split_losses['train']:.3f}", Colors.GREEN)
+                color_text(
+                    f"train loss {split_losses['train']:.3f} (nogrce {split_losses['train_nogrce']:.3f})",
+                    Colors.GREEN,
+                )
                 + " | "
-                + color_text(f"test loss {split_losses['test']:.3f}", Colors.MAGENTA)
+                + color_text(
+                    f"test loss {split_losses['test']:.3f} (nogrce {split_losses['test_nogrce']:.3f})",
+                    Colors.MAGENTA,
+                )
             )
             print(
                 color_text(f"step {step:04d}", Colors.CYAN)
@@ -736,7 +754,9 @@ def train_model(
                 {
                     "step": total_steps,
                     "train_loss": float(split_losses["train"]),
+                    "train_loss_nogrce": float(split_losses["train_nogrce"]),
                     "test_loss": float(split_losses["test"]),
+                    "test_loss_nogrce": float(split_losses["test_nogrce"]),
                 }
             )
     

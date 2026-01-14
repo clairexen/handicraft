@@ -17,6 +17,8 @@ class LossRecord:
     steps: List[int]
     train: List[float]
     test: List[float]
+    train_nogrce: Optional[List[float]] = None
+    test_nogrce: Optional[List[float]] = None
 
 
 def load_records(pt_paths: Iterable[pathlib.Path]) -> List[LossRecord]:
@@ -32,7 +34,32 @@ def load_records(pt_paths: Iterable[pathlib.Path]) -> List[LossRecord]:
         steps = [int(item.get("step", i + 1)) for i, item in enumerate(history)]
         train = [float(item.get("train_loss", float("nan"))) for item in history]
         test = [float(item.get("test_loss", float("nan"))) for item in history]
-        records.append(LossRecord(pt_path, steps, train, test))
+        train_ng: List[float] = []
+        test_ng: List[float] = []
+        has_train_ng = True
+        has_test_ng = True
+        for item in history:
+            val = item.get("train_loss_nogrce")
+            if val is None:
+                has_train_ng = False
+                break
+            train_ng.append(float(val))
+        for item in history:
+            val = item.get("test_loss_nogrce")
+            if val is None:
+                has_test_ng = False
+                break
+            test_ng.append(float(val))
+        records.append(
+            LossRecord(
+                pt_path,
+                steps,
+                train,
+                test,
+                train_nogrce=train_ng if has_train_ng else None,
+                test_nogrce=test_ng if has_test_ng else None,
+            )
+        )
     return records
 
 
@@ -47,11 +74,23 @@ def load_store(path: pathlib.Path) -> Optional[LossRecord]:
         print(f"warning: stored file {path} not found")
         return None
     payload = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(payload, list):
+        payload = payload[0] if payload else {}
     return LossRecord(
         model_path=path,
         steps=list(map(int, payload.get("steps", []))),
         train=list(map(float, payload.get("train", []))),
         test=list(map(float, payload.get("test", []))),
+        train_nogrce=(
+            list(map(float, payload.get("train_nogrce", [])))
+            if payload.get("train_nogrce")
+            else None
+        ),
+        test_nogrce=(
+            list(map(float, payload.get("test_nogrce", [])))
+            if payload.get("test_nogrce")
+            else None
+        ),
     )
 
 
@@ -62,6 +101,16 @@ def store_records(records: List[LossRecord], out_path: pathlib.Path) -> None:
             "steps": rec.steps,
             "train": rec.train,
             "test": rec.test,
+            **(
+                {"train_nogrce": rec.train_nogrce}
+                if rec.train_nogrce is not None
+                else {}
+            ),
+            **(
+                {"test_nogrce": rec.test_nogrce}
+                if rec.test_nogrce is not None
+                else {}
+            ),
         }
         for rec in records
     ]
@@ -135,6 +184,14 @@ def main() -> None:
                 linestyle="--",
                 marker=None
             )
+            if rec.train_nogrce:
+                ax.plot(
+                    rec.steps,
+                    rec.train_nogrce,
+                    label=f"{label} train (nogrce)",
+                    linestyle=":",
+                    marker=None
+                )
         if show_test:
             ax.plot(
                 rec.steps,
@@ -143,6 +200,14 @@ def main() -> None:
                 linestyle="-",
                 marker=None
             )
+            if rec.test_nogrce:
+                ax.plot(
+                    rec.steps,
+                    rec.test_nogrce,
+                    label=f"{label} test (nogrce)",
+                    linestyle="-.",
+                    marker=None
+                )
 
     ax.set_xlabel("Steps")
     ylabel = "Loss" if show_train and show_test else ("Train Loss" if show_train else "Test Loss")
