@@ -70,46 +70,61 @@ def torch_load(path: pathlib.Path):
     return torch.load(path, map_location="cpu")
 
 
-def load_store(path: pathlib.Path) -> Optional[LossRecord]:
+def load_store(path: pathlib.Path) -> List[LossRecord]:
     if not path.exists():
         print(f"warning: stored file {path} not found")
-        return None
+        return []
     payload = json.loads(path.read_text(encoding="utf-8"))
-    if isinstance(payload, list):
-        payload = payload[0] if payload else {}
-    return LossRecord(
-        model_path=path,
-        steps=list(map(int, payload.get("steps", []))),
-        train=list(map(float, payload.get("train", []))),
-        test=list(map(float, payload.get("test", []))),
-        train_nogrce=(
-            list(map(float, payload.get("train_nogrce", [])))
-            if payload.get("train_nogrce")
-            else None
-        ),
-        test_nogrce=(
-            list(map(float, payload.get("test_nogrce", [])))
-            if payload.get("test_nogrce")
-            else None
-        ),
-    )
+    entries = payload if isinstance(payload, list) else [payload]
+    records: List[LossRecord] = []
+    for entry in entries:
+        records.append(
+            LossRecord(
+                model_path=pathlib.Path(entry.get("model", path.name)),
+                steps=list(map(int, entry.get("steps", []))),
+                train=list(map(float, entry.get("train", [])))
+                if entry.get("train")
+                else [],
+                test=list(map(float, entry.get("test", [])))
+                if entry.get("test")
+                else [],
+                train_nogrce=(
+                    list(map(float, entry.get("train_nogrce", [])))
+                    if entry.get("train_nogrce")
+                    else None
+                ),
+                test_nogrce=(
+                    list(map(float, entry.get("test_nogrce", [])))
+                    if entry.get("test_nogrce")
+                    else None
+                ),
+            )
+        )
+    return records
 
 
-def store_records(records: List[LossRecord], out_path: pathlib.Path) -> None:
+def store_records(
+    records: List[LossRecord],
+    out_path: pathlib.Path,
+    *,
+    include_train: bool,
+    include_test: bool,
+    include_nogrce: bool,
+) -> None:
     payload = [
         {
             "model": rec.model_path.name,
             "steps": rec.steps,
-            "train": rec.train,
-            "test": rec.test,
+            **({"train": rec.train} if include_train else {}),
+            **({"test": rec.test} if include_test else {}),
             **(
                 {"train_nogrce": rec.train_nogrce}
-                if rec.train_nogrce is not None
+                if include_train and include_nogrce and rec.train_nogrce is not None
                 else {}
             ),
             **(
                 {"test_nogrce": rec.test_nogrce}
-                if rec.test_nogrce is not None
+                if include_test and include_nogrce and rec.test_nogrce is not None
                 else {}
             ),
         }
@@ -130,7 +145,6 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--train", action="store_true", help="plot train losses only")
     parser.add_argument("--test", action="store_true", help="plot test losses only")
-    parser.add_argument("--both", action="store_true", help="plot both train and test losses")
     parser.add_argument("--store", type=pathlib.Path, help="write loss curves to JSON file")
     parser.add_argument(
         "--stored",
@@ -164,14 +178,12 @@ def discover_paths(explicit: List[pathlib.Path]) -> List[pathlib.Path]:
 def main() -> None:
     args = parse_args()
     if args.stored:
-        record = load_store(args.stored)
-        records = [record] if record else []
+        records = load_store(args.stored)
     else:
         pt_paths = discover_paths(args.paths)
         records = load_records(pt_paths)
         if not records and args.store and args.store.exists():
-            record = load_store(args.store)
-            records = [record] if record else []
+            records = load_store(args.store)
     if not records:
         print("No loss history found.")
         return
@@ -196,11 +208,12 @@ def main() -> None:
 
             train_avg = avg_series("train")
             test_avg = avg_series("test")
+            length = len(train_avg) if train_avg else len(test_avg) if test_avg else len(steps)
 
             averaged.append(
                 LossRecord(
                     model_path=pathlib.Path(label),
-                    steps=steps[: len(train_avg) if train_avg else len(steps)],
+                    steps=steps[:length],
                     train=train_avg or base.train,
                     test=test_avg or base.test,
                     train_nogrce=None,
@@ -210,21 +223,35 @@ def main() -> None:
 
         records = averaged
 
+    if args.train or args.test:
+        show_train = bool(args.train)
+        show_test = bool(args.test)
+    else:
+        show_train = True
+        show_test = True
+
     if args.store and records:
-        store_records(records, args.store)
+        store_records(
+            records,
+            args.store,
+            include_train=show_train,
+            include_test=show_test,
+            include_nogrce=not args.no_nogrce,
+        )
         if args.store_only:
             return
 
-    if args.both:
-        show_train = show_test = True
-    elif args.train:
-        show_train, show_test = True, False
-    elif args.test:
-        show_train, show_test = False, True
-    else:
-        show_test = True
-        show_train = len(records) == 1
 
+    print(f"Loaded {len(records)} trace(s):")
+    for rec in records:
+        length = len(rec.steps)
+        label = rec.model_path.stem
+        parts = []
+        if rec.train:
+            parts.append("train")
+        if rec.test:
+            parts.append("test")
+        print(f"  - {label}: {length} steps ({', '.join(parts) if parts else 'no data'})")
     fig, ax = plt.subplots()
     color_map: dict[str, str] = {}
     default_colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
@@ -239,7 +266,7 @@ def main() -> None:
             )
             color_index += span_key != "ctx"
         base_color = color_map[span_key]
-        if show_train:
+        if show_train and rec.train:
             ax.plot(
                 rec.steps,
                 rec.train,
@@ -257,7 +284,7 @@ def main() -> None:
                     color=base_color,
                     marker=None,
                 )
-        if show_test:
+        if show_test and rec.test:
             ax.plot(
                 rec.steps,
                 rec.test,

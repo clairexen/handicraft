@@ -83,12 +83,32 @@ def analyze_trace(record: dict, args: argparse.Namespace, label: str):
 def main() -> None:
     parser = argparse.ArgumentParser(description="Analyze ctx vs. nogrce loss traces.")
     parser.add_argument("json", type=Path, help="JSON file produced via plot.py --store")
-    parser.add_argument("--cycles", type=int, default=100, help="Steps per cycle (default: 100)")
-    parser.add_argument("--spike-window", type=int, default=5, help="Steps after reset to measure spike amplitude")
-    parser.add_argument("--start-window", type=int, default=0, help="First window index to analyze")
-    parser.add_argument("--end-window", type=int, default=20, help="Window index to stop (exclusive)")
-    parser.add_argument("--steady-start", type=int, default=10, help="Window index to treat as steady state")
-    parser.add_argument("--plot", action="store_true", help="display spike trends and baselines")
+    parser.add_argument("--cycles", type=int, default=100, help="Steps per cycle (default: %(default)s)")
+    parser.add_argument(
+        "--spike-window",
+        type=int,
+        default=5,
+        help="Steps after reset to average for the spike metric (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--start-window",
+        type=int,
+        default=0,
+        help="First window index to analyze (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--end-window",
+        type=int,
+        default=20,
+        help="Exclusive upper window index (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--steady-start",
+        type=int,
+        default=10,
+        help="Window index to treat as steady state (default: %(default)s)",
+    )
+    parser.add_argument("--plot", action="store_true", help="Display spike trends and baselines")
     args = parser.parse_args()
 
     payload = json.loads(args.json.read_text())
