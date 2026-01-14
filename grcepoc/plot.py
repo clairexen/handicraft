@@ -166,6 +166,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="write JSON with --store and exit without plotting",
     )
+    parser.add_argument(
+        "--think-scale",
+        type=float,
+        default=1.0,
+        help="Scale the X-axis of traces whose model name includes _thinkN by this factor",
+    )
     return parser.parse_args()
 
 def discover_paths(explicit: List[pathlib.Path]) -> List[pathlib.Path]:
@@ -241,17 +247,28 @@ def main() -> None:
         if args.store_only:
             return
 
+    steps_per_cycle = 100
+    think_pattern = re.compile(r"_think\d+")
+
+    def compute_scaled_steps(rec: LossRecord) -> List[float]:
+        if args.think_scale != 1.0 and think_pattern.search(rec.model_path.stem):
+            return [step * args.think_scale for step in rec.steps]
+        return list(rec.steps)
+
+    for rec in records:
+        rec.scaled_steps = compute_scaled_steps(rec)
 
     steps_per_cycle = 100
     print(f"Loaded {len(records)} trace(s):")
     for rec in records:
         label = rec.model_path.stem
-        if not rec.steps:
+        scaled_steps = rec.scaled_steps
+        if not scaled_steps:
             print(f"  - {label}: no sampled points")
             continue
-        num_samples = len(rec.steps)
-        first_step = rec.steps[0]
-        last_step = rec.steps[-1]
+        num_samples = len(scaled_steps)
+        first_step = scaled_steps[0]
+        last_step = scaled_steps[-1]
         cycles_start = first_step / steps_per_cycle
         cycles_end = last_step / steps_per_cycle
         parts: list[str] = []
@@ -279,7 +296,7 @@ def main() -> None:
         base_color = color_map[span_key]
         if show_train and rec.train:
             ax.plot(
-                rec.steps,
+                rec.scaled_steps,
                 rec.train,
                 label=f"{label} train",
                 linestyle="-",
@@ -288,7 +305,7 @@ def main() -> None:
             )
             if rec.train_nogrce and not args.no_nogrce:
                 ax.plot(
-                    rec.steps,
+                    rec.scaled_steps,
                     rec.train_nogrce,
                     label=f"{label} train (nogrce)",
                     linestyle="-.",
@@ -297,7 +314,7 @@ def main() -> None:
                 )
         if show_test and rec.test:
             ax.plot(
-                rec.steps,
+                rec.scaled_steps,
                 rec.test,
                 label=f"{label} test",
                 linestyle="-",
@@ -306,7 +323,7 @@ def main() -> None:
             )
             if rec.test_nogrce and not args.no_nogrce:
                 ax.plot(
-                    rec.steps,
+                    rec.scaled_steps,
                     rec.test_nogrce,
                     label=f"{label} test (nogrce)",
                     linestyle="-.",
