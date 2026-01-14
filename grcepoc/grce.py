@@ -509,34 +509,32 @@ class GRCEContextChannel(nn.Module):
         self.context_span = max(0, int(config.context_span))
         self.context_dim = config.n_grce
         if not self.disabled:
-            hidden = max(
-                config.n_grce,
-                2 * (config.n_embd + config.n_grce) // max(1, config.n_layer),
-            )
-            concat_dim = config.n_layer * config.n_embd
-
+            mid = 4 * config.n_grce
             self.pre_norms = nn.ModuleList(
                 nn.LayerNorm(config.n_embd) for _ in range(config.n_layer)
             )
-            self.concat_linear = nn.Linear(concat_dim, hidden)
-            self.concat_dropout = nn.Dropout(config.dropout)
-            self.context_linear = nn.Linear(hidden, config.n_grce)
+            self.context_sampler = nn.ModuleList(
+                nn.Linear(config.n_embd, config.n_grce)
+                for _ in range(config.n_layer)
+            )
+            self.context_mlp = nn.Sequential(
+                nn.Linear(config.n_grce, mid),
+                nn.ReLU(),
+                nn.LayerNorm(mid),
+                nn.Linear(mid, config.n_grce),
+            )
             self.context_norm = nn.LayerNorm(config.n_grce)
-
-            self.bias_linear = nn.Linear(config.n_grce, hidden)
-            self.bias_dropout = nn.Dropout(config.dropout)
-            self.bias_out = nn.Linear(hidden, concat_dim)
+            self.context_bias_gen = nn.ModuleList(
+                nn.Linear(config.n_grce, config.n_embd)
+                for _ in range(config.n_layer)
+            )
 
     def project(self, context: torch.Tensor) -> List[torch.Tensor]:
         if self.disabled:
             raise RuntimeError("Context channel disabled; project should not be called.")
         if self.disabled:
             raise RuntimeError("Context channel disabled; project should not be called.")
-        hidden = F.relu(self.bias_linear(context))
-        hidden = self.bias_dropout(hidden)
-        fused = self.bias_out(hidden)
-        fused = fused.view(fused.size(0), self.config.n_layer, self.config.n_embd)
-        return [fused[:, idx, :] for idx in range(self.config.n_layer)]
+        return [gen(context) for gen in self.context_bias_gen]
 
     def update(
         self,
@@ -547,12 +545,11 @@ class GRCEContextChannel(nn.Module):
         if self.disabled:
             raise RuntimeError("Context channel disabled; update should not be called.")
         pieces = [inp.detach() if stop_grad else inp for inp in block_inputs]
-        normed = [ln(part) for ln, part in zip(self.pre_norms, pieces)]
-        concat = torch.cat(normed, dim=-1)
-        hidden = F.relu(self.concat_linear(concat))
-        hidden = self.concat_dropout(hidden)
-        context = self.context_linear(hidden)
-        context = torch.tanh(context)
+        messages = []
+        for ln, sampler, part in zip(self.pre_norms, self.context_sampler, pieces):
+            messages.append(sampler(ln(part)))
+        fused = torch.stack(messages, dim=0).sum(dim=0)
+        context = self.context_mlp(fused)
         context = self.context_norm(context)
         return context
 
