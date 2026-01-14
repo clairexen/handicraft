@@ -408,6 +408,7 @@ class ModelConfig:
     n_grce: int = 64        # GRCE context dims.
     dropout: float = 0.05
     context_span: int = 2   # Detach gradients every N positions (0 disables detaching).
+    context_dropout: int = 0  # Every N positions drop GRCE connection (0 disables).
 
 
 MODEL_CONFIG_TEMPLATE = ModelConfig()
@@ -606,7 +607,12 @@ class GRCEGPT(nn.Module):
                     stop_grad = True
                 else:
                     stop_grad = (t % span == 0)
-                context = self.context.update(block_inputs, stop_grad=stop_grad)
+                drop_ratio = self.context.context_dropout
+                use_grce = True
+                if drop_ratio > 0 and self.training:
+                    use_grce = (random.randrange(drop_ratio) != 0)
+                if use_grce:
+                    context = self.context.update(block_inputs, stop_grad=stop_grad)
             logits_steps.append(logits[:, -1:, :])
         logits = torch.cat(logits_steps, dim=1)
         loss = None
@@ -625,6 +631,8 @@ def build_model_tag(config: ModelConfig) -> str:
     )
     if config.n_grce > 0:
         tag += f"_span{config.context_span}"
+        if config.context_dropout > 0:
+            tag += f"_drop{config.context_dropout}"
     return tag
 
 
@@ -996,6 +1004,12 @@ def parse_args() -> argparse.Namespace:
         help="During sampling/reporting, avoid emitting newline tokens",
     )
     parser.add_argument(
+        "--grce-dropout",
+        type=int,
+        default=0,
+        help="Drop GRCE connections every N positions (0 disables)",
+    )
+    parser.add_argument(
         "--prompt",
         type=str,
         default="ai will",
@@ -1161,6 +1175,7 @@ def main() -> None:
             n_grce=args.n_grce,
             dropout=args.dropout,
             context_span=max(0, args.context_span),
+            context_dropout=max(0, args.grce_dropout),
         )
         model_tag = build_model_tag(config)
         prefix = f"{args.data}_model_"
