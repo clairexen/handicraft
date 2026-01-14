@@ -43,6 +43,8 @@ DISSONANCE_TOKEN = "<|?!|>"
 DISSONANCE_RATE = 0.01
 FANCY_SPACE = "\u2423"  # Open Box symbol for visible spaces
 FANCY_ENTER = "\u23CE"  # Return symbol for visible newlines
+THINK_TOKEN = "<think>"
+THINK_SYMBOL = "\u2754"  # white question mark
 ASCII_LETTERS = set(string.ascii_letters)
 
 
@@ -133,11 +135,23 @@ class GPT2TokenizerWrapper:
         cache_path: pathlib.Path,
         vocab_size: int,
         use_special: bool,
+        use_think: bool,
     ) -> None:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         self.cache_path = cache_path
         self.use_special = use_special
-        self.tokenizer = self._load_or_train(train_text, cache_path, vocab_size)
+        self.use_think = use_think
+        self.extra_special_tokens: list[str] = []
+        if self.use_special:
+            self.extra_special_tokens.append(DISSONANCE_TOKEN)
+        if self.use_think:
+            self.extra_special_tokens.append(THINK_TOKEN)
+        self.tokenizer = self._load_or_train(
+            train_text,
+            cache_path,
+            vocab_size,
+            self.extra_special_tokens,
+        )
         self.vocab_size = len(self.tokenizer)
         self.special_ids = set(self.tokenizer.all_special_ids)
         self.dissonance_id = None
@@ -145,6 +159,11 @@ class GPT2TokenizerWrapper:
             self.dissonance_id = self.tokenizer.convert_tokens_to_ids(DISSONANCE_TOKEN)
             if self.dissonance_id is None:
                 raise ValueError("Failed to add dissonance token to tokenizer vocabulary")
+        self.think_id = None
+        if self.use_think:
+            self.think_id = self.tokenizer.convert_tokens_to_ids(THINK_TOKEN)
+            if self.think_id is None:
+                raise ValueError("Failed to add think token to tokenizer vocabulary")
         self.non_special_ids = [
             tok_id for tok_id in range(self.vocab_size) if tok_id not in self.special_ids
         ]
@@ -152,11 +171,16 @@ class GPT2TokenizerWrapper:
             raise ValueError("Tokenizer has no non-special tokens for dissonance markers")
 
     def _load_or_train(
-        self, train_text: str, cache_path: pathlib.Path, vocab_size: int
+        self,
+        train_text: str,
+        cache_path: pathlib.Path,
+        vocab_size: int,
+        extra_special_tokens: list[str],
     ) -> GPT2TokenizerFast:
         if cache_path.exists():
             return self._configure_special_tokens(
-                GPT2TokenizerFast(tokenizer_file=str(cache_path))
+                GPT2TokenizerFast(tokenizer_file=str(cache_path)),
+                extra_special_tokens,
             )
         tokenizer = Tokenizer(BPE(unk_token=None))
         tokenizer.pre_tokenizer = ByteLevel(add_prefix_space=False)
@@ -172,16 +196,18 @@ class GPT2TokenizerWrapper:
         sanitized = _restrict_bpe_training_text(train_text)
         tokenizer.train_from_iterator([sanitized], trainer=trainer)
         tokenizer.post_processor = ByteLevelProcessor(trim_offsets=False)
-        if self.use_special:
-            tokenizer.add_special_tokens([DISSONANCE_TOKEN])
+        if extra_special_tokens:
+            tokenizer.add_special_tokens(extra_special_tokens)
         tokenizer.save(str(cache_path))
         tk = GPT2TokenizerFast(tokenizer_file=str(cache_path))
-        return self._configure_special_tokens(tk)
+        return self._configure_special_tokens(tk, extra_special_tokens)
 
-    def _configure_special_tokens(self, tk: GPT2TokenizerFast) -> GPT2TokenizerFast:
+    def _configure_special_tokens(
+        self, tk: GPT2TokenizerFast, extra_special_tokens: list[str]
+    ) -> GPT2TokenizerFast:
         # Suggested GPT-2 style special tokens (BOS/EOS/UNK/PAD) are omitted for now.
-        if self.use_special:
-            tk.add_special_tokens({"additional_special_tokens": [DISSONANCE_TOKEN]})
+        if extra_special_tokens:
+            tk.add_special_tokens({"additional_special_tokens": extra_special_tokens})
         return tk
 
     def encode(self, text: str) -> torch.Tensor:
@@ -323,6 +349,16 @@ class TextDataset:
             segments.append((start, end))
         self.byte_positions[split] = byte_pos % total_bytes
         return segments
+
+
+@dataclass
+class ThinkSettings:
+    max_steps: int = 0
+    token_id: int | None = None
+
+    @property
+    def enabled(self) -> bool:
+        return self.max_steps > 0 and self.token_id is not None
 
 
 def insert_dissonance_markers(
@@ -571,6 +607,7 @@ class GRCEGPT(nn.Module):
         *,
         disable_context: bool = False,
         drop_mask: set[int] | None = None,
+        ignore_index: int | None = None,
     ) -> Tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
         B, T = idx.shape
         device = idx.device
@@ -622,9 +659,13 @@ class GRCEGPT(nn.Module):
         logits = torch.cat(logits_steps, dim=1)
         loss = None
         if targets is not None:
+            kwargs: dict[str, int] = {}
+            if ignore_index is not None:
+                kwargs["ignore_index"] = ignore_index
             loss = F.cross_entropy(
                 logits.view(B * T, -1),
                 targets.view(B * T),
+                **kwargs,
             )
         return logits, context, loss
 
@@ -639,6 +680,81 @@ def build_model_tag(config: ModelConfig) -> str:
         if config.context_dropout > 0:
             tag += f"_drop{config.context_dropout}"
     return tag
+
+
+def maybe_prepare_think_batch(
+    model: GRCEGPT,
+    inputs: torch.Tensor,
+    targets: torch.Tensor,
+    think: ThinkSettings | None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    if think is None or not think.enabled:
+        return inputs, targets
+    block_size = inputs.size(1)
+    if block_size == 0 or think.token_id is None:
+        return inputs, targets
+    max_inserts = min(think.max_steps, block_size // 2)
+    if max_inserts <= 0:
+        return inputs, targets
+    batch = inputs.size(0)
+    counts = torch.randint(0, max_inserts + 1, (batch,), device=inputs.device)
+    if int(counts.sum().item()) == 0:
+        return inputs, targets
+    prev_mode = model.training
+    model.eval()
+    with torch.no_grad():
+        logits, _, _ = model.forward_autoreg(inputs)
+        think_scores = logits[..., think.token_id]
+    model.train(prev_mode)
+    new_inputs = inputs.clone()
+    new_targets = targets.clone()
+    for row in range(batch):
+        inserts = int(counts[row].item())
+        if inserts <= 0:
+            continue
+        keep_len = block_size - inserts
+        if keep_len <= 0:
+            continue
+        tail_token = targets[row, keep_len - 1].unsqueeze(0)
+        seq_tokens = torch.cat((inputs[row, :keep_len], tail_token))
+        seq_list = seq_tokens.tolist()
+        scores = think_scores[row, :keep_len]
+        topk = torch.topk(scores, inserts).indices.tolist()
+        topk.sort()
+        offset = 0
+        for pos in topk:
+            seq_list.insert(pos + offset, int(think.token_id))
+            offset += 1
+        seq_tensor = torch.tensor(seq_list, dtype=inputs.dtype, device=inputs.device)
+        new_inputs[row] = seq_tensor[:-1]
+        new_targets[row] = seq_tensor[1:]
+    return new_inputs, new_targets
+
+
+def expand_prompt_with_thinking(
+    model: GRCEGPT, prompt: torch.Tensor, think: ThinkSettings | None
+) -> torch.Tensor:
+    if think is None or not think.enabled or think.token_id is None:
+        return prompt
+    if prompt.size(0) != 1:
+        return prompt
+    idx = prompt.clone()
+    inserted = 0
+    pos = 0
+    max_insertions = max(0, think.max_steps)
+    while pos < idx.size(1) and inserted < max_insertions:
+        prefix = idx[:, : pos + 1]
+        logits, _, _ = model.forward_autoreg(prefix)
+        next_logits = logits[:, -1, :]
+        top_ids = torch.argmax(next_logits, dim=-1)
+        if int(top_ids.item()) == int(think.token_id):
+            think_tok = torch.tensor([[think.token_id]], dtype=idx.dtype, device=idx.device)
+            idx = torch.cat((idx[:, : pos + 1], think_tok, idx[:, pos + 1 :]), dim=1)
+            inserted += 1
+            pos += 1
+            continue
+        pos += 1
+    return idx
 
 
 # -----------------------------------------------------------------------------
@@ -656,15 +772,25 @@ def evaluate_split(
     iters: int,
     *,
     disable_context: bool = False,
+    think_settings: ThinkSettings | None = None,
     batches: list[tuple[torch.Tensor, torch.Tensor]] | None = None,
 ) -> float:
     losses = []
+    ignore_index = None
+    if think_settings is not None and think_settings.enabled:
+        ignore_index = think_settings.token_id
     if batches is None:
         batches = [
             dataset.get_batch(split, block_size, batch_size, device) for _ in range(iters)
         ]
     for xb, yb in batches:
-        _, _, loss = model.forward_autoreg(xb, yb, disable_context=disable_context)
+        think_xb, think_yb = maybe_prepare_think_batch(model, xb, yb, think_settings)
+        _, _, loss = model.forward_autoreg(
+            think_xb,
+            think_yb,
+            disable_context=disable_context,
+            ignore_index=ignore_index,
+        )
         losses.append(loss.item())
     return sum(losses) / len(losses)
 
@@ -685,12 +811,18 @@ def train_model(
     suppress_newlines: bool,
     newline_token_id: int | None,
     drop_positions: list[set[int]] | None,
+    think_settings: ThinkSettings | None,
+    suppress_think_output: bool,
 ) -> Tuple[int, List[Dict[str, float]]]:
     optim = torch.optim.AdamW(model.parameters(), lr=3e-4)
     total_steps = start_step
     history_updates: List[Dict[str, float]] = []
+    loss_ignore_index = None
+    if think_settings is not None and think_settings.enabled:
+        loss_ignore_index = think_settings.token_id
     for step in range(1, steps + 1):
         xb, yb = dataset.get_batch("train", block_size, batch_size, device)
+        xb, yb = maybe_prepare_think_batch(model, xb, yb, think_settings)
         drop_mask = None
         if drop_positions is not None and 0 <= step - 1 < len(drop_positions):
             drop_mask = drop_positions[step - 1]
@@ -698,6 +830,7 @@ def train_model(
             xb,
             yb,
             drop_mask=drop_mask,
+            ignore_index=loss_ignore_index,
         )
         if loss is None:
             raise RuntimeError("Loss should not be None during training")
@@ -727,6 +860,20 @@ def train_model(
                             split,
                             eval_iters,
                             disable_context=disable,
+                            think_settings=think_settings,
+                            batches=cached_batches[split],
+                        )
+                    if think_settings is not None and think_settings.enabled:
+                        split_losses[f"{split}_nothink"] = evaluate_split(
+                            model,
+                            dataset,
+                            device,
+                            block_size,
+                            batch_size,
+                            split,
+                            eval_iters,
+                            disable_context=False,
+                            think_settings=None,
                             batches=cached_batches[split],
                         )
                 sample_tokens = generate(
@@ -735,6 +882,8 @@ def train_model(
                     sample_chars,
                     suppress_newlines=suppress_newlines,
                     newline_token_id=newline_token_id,
+                    think_settings=think_settings,
+                    suppress_think=suppress_think_output,
                 )
             model.train()
             prompt_ids = sample_prompt[0].detach().cpu().tolist()
@@ -746,23 +895,28 @@ def train_model(
                 prompt_ids,
                 [Colors.CYAN, Colors.GREEN],
                 bold=False,
+                think_token_id=tokenizer.think_id,
             )
             completion_text = color_tokens(
                 tokenizer,
                 completion_ids,
                 [Colors.YELLOW, Colors.MAGENTA],
+                think_token_id=tokenizer.think_id,
             )
             colored_sample = prefix_text + completion_text
-            loss_text = (
-                color_text(
-                    f"train loss {split_losses['train']:.3f} (nogrce {split_losses['train_nogrce']:.3f})",
-                    Colors.GREEN,
+            def format_loss(prefix: str, color: str) -> str:
+                extras = [f"nogrce {split_losses[f'{prefix}_nogrce']:.3f}"]
+                nothink_key = f"{prefix}_nothink"
+                if nothink_key in split_losses:
+                    extras.append(f"nothink {split_losses[nothink_key]:.3f}")
+                extra_text = ", ".join(extras)
+                return color_text(
+                    f"{prefix} loss {split_losses[prefix]:.3f} ({extra_text})",
+                    color,
                 )
-                + " | "
-                + color_text(
-                    f"test loss {split_losses['test']:.3f} (nogrce {split_losses['test_nogrce']:.3f})",
-                    Colors.MAGENTA,
-                )
+
+            loss_text = format_loss("train", Colors.GREEN) + " | " + format_loss(
+                "test", Colors.MAGENTA
             )
             print(
                 color_text(f"step {step:04d}", Colors.CYAN)
@@ -771,15 +925,17 @@ def train_model(
                 + " | sample: "
                 + colored_sample
             )
-            history_updates.append(
-                {
-                    "step": total_steps,
-                    "train_loss": float(split_losses["train"]),
-                    "train_loss_nogrce": float(split_losses["train_nogrce"]),
-                    "test_loss": float(split_losses["test"]),
-                    "test_loss_nogrce": float(split_losses["test_nogrce"]),
-                }
-            )
+            record = {
+                "step": total_steps,
+                "train_loss": float(split_losses["train"]),
+                "train_loss_nogrce": float(split_losses["train_nogrce"]),
+                "test_loss": float(split_losses["test"]),
+                "test_loss_nogrce": float(split_losses["test_nogrce"]),
+            }
+            if "train_nothink" in split_losses:
+                record["train_loss_nothink"] = float(split_losses["train_nothink"])
+                record["test_loss_nothink"] = float(split_losses["test_nothink"])
+            history_updates.append(record)
     
     return total_steps, history_updates
 
@@ -793,6 +949,8 @@ def run_report_mode(
     device: torch.device,
     suppress_newlines: bool,
     newline_token_id: int | None,
+    think_settings: ThinkSettings | None,
+    suppress_think: bool,
 ) -> None:
     model.eval()
     base_len = prompt_tokens.size(1)
@@ -804,6 +962,8 @@ def run_report_mode(
                 sample_len,
                 suppress_newlines=suppress_newlines,
                 newline_token_id=newline_token_id,
+                think_settings=think_settings,
+                suppress_think=suppress_think,
             )
             tokens = generated[0].detach().cpu().tolist()
             prompt_ids = tokens[:base_len]
@@ -813,11 +973,13 @@ def run_report_mode(
                 prompt_ids,
                 [Colors.CYAN, Colors.GREEN],
                 bold=False,
+                think_token_id=tokenizer.think_id,
             )
             completion_text = color_tokens(
                 tokenizer,
                 completion_ids,
                 [Colors.YELLOW, Colors.MAGENTA],
+                think_token_id=tokenizer.think_id,
             )
             print(
                 color_text(f"[report {idx:02d}]", Colors.CYAN)
@@ -845,10 +1007,17 @@ def color_tokens(
     *,
     bold: bool = True,
     replace_newline: str = FANCY_ENTER,
+    think_token_id: int | None = None,
 ) -> str:
     parts: list[str] = []
     color_index = 0
     for tok in tokens:
+        if think_token_id is not None and tok == think_token_id:
+            piece = THINK_SYMBOL
+            color = Colors.WHITE
+            parts.append(color_text(piece, color, bold=True))
+            color_index += 1
+            continue
         piece = tokenizer.tokenizer.decode([tok], clean_up_tokenization_spaces=False)
         piece = tidy(piece, replace_newline=replace_newline)
         if not piece:
@@ -871,16 +1040,26 @@ def generate(
     *,
     suppress_newlines: bool = False,
     newline_token_id: int | None = None,
+    think_settings: ThinkSettings | None = None,
+    suppress_think: bool = False,
 ) -> torch.Tensor:
     model.eval()
+    idx = idx.clone()
+    if not suppress_think:
+        idx = expand_prompt_with_thinking(model, idx, think_settings)
     for _ in range(steps):
         idx_cond = idx[:, -model.config.block_size :]
         logits, _, _ = model.forward_autoreg(idx_cond)
         logits_last = logits[:, -1, :]
         probs = F.softmax(logits_last, dim=-1)
+        suppressed_ids: list[int] = []
         if suppress_newlines and newline_token_id is not None:
+            suppressed_ids.append(int(newline_token_id))
+        if suppress_think and think_settings is not None and think_settings.token_id is not None:
+            suppressed_ids.append(int(think_settings.token_id))
+        if suppressed_ids:
             modified = probs.clone()
-            modified[:, newline_token_id] = 0
+            modified[:, suppressed_ids] = 0
             sums = modified.sum(dim=-1, keepdim=True)
             mask = sums.squeeze(-1) > 0
             if mask.any():
@@ -1017,10 +1196,24 @@ def parse_args() -> argparse.Namespace:
         help="During sampling/reporting, avoid emitting newline tokens",
     )
     parser.add_argument(
+        "--no-think",
+        action="store_true",
+        help="During sampling/reporting, suppress thinking tokens entirely",
+    )
+    parser.add_argument(
         "--grce-dropout",
         type=int,
         default=0,
         help="Drop GRCE connections every N positions (0 disables)",
+    )
+    parser.add_argument(
+        "--think",
+        type=int,
+        default=0,
+        help=(
+            "Enable think mode with up to N inserted thinking tokens per block; "
+            "adds the <think> special token"
+        ),
     )
     parser.add_argument(
         "--prompt",
@@ -1050,6 +1243,8 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     args.prompt = normalize_prompt(args.prompt)
+    if args.think > 0:
+        args.prompt = args.prompt.replace(THINK_SYMBOL, THINK_TOKEN)
     torch.manual_seed(42)
     random.seed(42)
 
@@ -1070,13 +1265,14 @@ def main() -> None:
             return str(value if value > 0 else "all")
 
         special_tag = "special" if args.special else "plain"
+        think_tag = f"think{args.think}" if args.think > 0 else "nothink"
         train_cache_path = (
             model_dir
-            / f"{args.data}_tokens_train_{limit_label(train_limit)}_{args.tokenizer_vocab}_{special_tag}.pt"
+            / f"{args.data}_tokens_train_{limit_label(train_limit)}_{args.tokenizer_vocab}_{special_tag}_{think_tag}.pt"
         )
         test_cache_path = (
             model_dir
-            / f"{args.data}_tokens_test_{limit_label(test_limit)}_{args.tokenizer_vocab}_{special_tag}.pt"
+            / f"{args.data}_tokens_test_{limit_label(test_limit)}_{args.tokenizer_vocab}_{special_tag}_{think_tag}.pt"
         )
 
         try:
@@ -1094,7 +1290,7 @@ def main() -> None:
             full_test_text = None
 
         tokenizer_key = (
-            f"{args.data}_vocab_{limit_label(tokenizer_limit)}_{args.tokenizer_vocab}_{special_tag}"
+            f"{args.data}_vocab_{limit_label(tokenizer_limit)}_{args.tokenizer_vocab}_{special_tag}_{think_tag}"
         )
         tokenizer_path = model_dir / f"{tokenizer_key}.json"
         if not tokenizer_path.exists() and full_train_text is None:
@@ -1112,12 +1308,15 @@ def main() -> None:
             tokenizer_path,
             args.tokenizer_vocab,
             args.special,
+            args.think > 0,
         )
 
         newline_token_id = None
         newline_tokens = tokenizer.tokenizer.encode("\n", add_special_tokens=False)
         if newline_tokens:
             newline_token_id = newline_tokens[0]
+
+        think_settings = ThinkSettings(max_steps=args.think, token_id=tokenizer.think_id)
 
         train_tokens, train_text, train_bytes, train_inserts = load_or_prepare_tokens(
             "train",
@@ -1191,6 +1390,8 @@ def main() -> None:
             context_dropout=max(0, args.grce_dropout),
         )
         model_tag = build_model_tag(config)
+        if args.think > 0:
+            model_tag += f"_think{args.think}"
         prefix = f"{args.data}_model_"
         model_path = model_dir / f"{prefix}{model_tag}.pt"
         log_path = model_dir / f"{prefix}{model_tag}.log"
@@ -1268,6 +1469,8 @@ def main() -> None:
                 device=device,
                 suppress_newlines=args.no_newlines,
                 newline_token_id=newline_token_id,
+                think_settings=think_settings,
+                suppress_think=args.no_think,
             )
             return
 
@@ -1314,6 +1517,8 @@ def main() -> None:
                 suppress_newlines=args.no_newlines,
                 newline_token_id=newline_token_id,
                 drop_positions=drop_positions,
+                think_settings=think_settings,
+                suppress_think_output=args.no_think,
             )
             loss_history.extend(updates)
             print(color_text(f"Total steps so far: {total_steps}", Colors.YELLOW))
