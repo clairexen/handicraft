@@ -1273,43 +1273,43 @@ def main() -> None:
             dataset.prepare_cycle("train", train_chars_cycle)
             dataset.prepare_cycle("test", test_chars_cycle)
 
-        total_steps, updates = train_model(
-            model,
-            dataset,
-            device,
-            args.steps,
-            args.block_size,
-            args.batch_size,
-            args.eval_interval,
-            args.eval_iters,
-            total_steps,
-            prompt_tokens,
-            args.generate,
-            tokenizer,
-            suppress_newlines=args.no_newlines,
-            newline_token_id=newline_token_id,
-        )
-        loss_history.extend(updates)
-        print(color_text(f"Total steps so far: {total_steps}", Colors.YELLOW))
-
-        torch.save(
-            {
-                "model": model.state_dict(),
-                "dataset": dataset.state_dict(),
-                "total_steps": total_steps,
-                "loss_history": loss_history,
-            },
-            model_path,
-        )
-        print(color_text(f"Saved model to {model_path}", Colors.GREEN))
-        cycle_elapsed_wall = time.time() - cycle_wall
-        cycle_elapsed_cpu = time.process_time() - cycle_cpu
-        print(
-            color_text(
-                f"[cycle {cycle}] wall={cycle_elapsed_wall:.2f}s cpu={cycle_elapsed_cpu:.2f}s",
-                Colors.GRAY,
+            total_steps, updates = train_model(
+                model,
+                dataset,
+                device,
+                args.steps,
+                args.block_size,
+                args.batch_size,
+                args.eval_interval,
+                args.eval_iters,
+                total_steps,
+                prompt_tokens,
+                args.generate,
+                tokenizer,
+                suppress_newlines=args.no_newlines,
+                newline_token_id=newline_token_id,
             )
-        )
+            loss_history.extend(updates)
+            print(color_text(f"Total steps so far: {total_steps}", Colors.YELLOW))
+
+            torch.save(
+                {
+                    "model": model.state_dict(),
+                    "dataset": dataset.state_dict(),
+                    "total_steps": total_steps,
+                    "loss_history": loss_history,
+                },
+                model_path,
+            )
+            print(color_text(f"Saved model to {model_path}", Colors.GREEN))
+            cycle_elapsed_wall = time.time() - cycle_wall
+            cycle_elapsed_cpu = time.process_time() - cycle_cpu
+            print(
+                color_text(
+                    f"[cycle {cycle}] wall={cycle_elapsed_wall:.2f}s cpu={cycle_elapsed_cpu:.2f}s",
+                    Colors.GRAY,
+                )
+            )
 
     except KeyboardInterrupt:
         if args.debug_interrupt:
