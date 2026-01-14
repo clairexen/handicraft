@@ -14,7 +14,13 @@ This mechanism creates an explicit channel for time-domain (i.e. recurrent) sign
 
 GRCE acts like attention rotated over depth: each layer emits a fixed linear summary, the summaries are combined through a shared bottleneck MLP, and every layer decodes the shared message with a linear bias. No query/key routing is needed, so the channel stays bottlenecked at `n_grce` scalars while still steering the next time step.
 
+GRCE behaves like multi-head attention rotated by 90°. Instead of heads scanning previous positions at a fixed depth, we get one implicit head per layer that samples its own state and forwards it to the next time step. Each layer has a built-in unit selector (there is no query/key competition), so we never divide the width by n_heads; we simply emit n_grce scalars per layer. Those messages are summed into the time-domain context, passed through one shared hidden layer (n_grce → 4*n_grce → ReLU → LayerNorm → n_grce) to boost contrast and mix signals, and then decoded linearly for every layer of the next position. That single hidden layer is enough to mix layer-specific signals without needing extra time-domain networks—the regular Transformer blocks downstream can handle all further computation.
+
+This means any layer at position N can send a context-related message to any layer at position N+1, and the training signal never has to cross the position boundary: by the time we emit the message, the previous stack has already computed everything it needs to predict the next token. In practice (see the sweeps in this repo), even `--context-span 1`—which suppresses cross-position gradients entirely—matches the default span: the channel just learns how to sample the information that already exists inside the previous position’s layers.
+
 ## Parameter count (dominant terms)
+Remember: when the model computes logits for position N+1, it already synthesized every feature it needs about the prefix—that’s what autoregressive prediction is. GRCE simply taps into that already-available context and moves it forward; it does not have to learn new facts across the boundary. That’s why gradients from position N+1 flowing back into position N via the GRCE channel are largely unnecessary: the previous stack has already computed the relevant summary while predicting the token. Training just has to learn which latent features to sample and forward through the n_grce bottleneck.
+
 Ignoring embeddings and other lower-order pieces, two terms dominate:
 
 - Position-domain Transformer stack: `~ 12 * n_layer * n_embd^2`
