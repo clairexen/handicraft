@@ -486,7 +486,15 @@ def augment_training_batch(
         if think_enabled and think_count > 0 and think_scores is not None:
             scores = think_scores[row, :keep_len]
             if scores.numel() > 0:
-                topk = torch.topk(scores, think_count).indices.tolist()
+                mask = torch.rand(keep_len, device=scores.device) > 0.5
+                eligible = int(mask.sum().item())
+                if eligible < think_count:
+                    deficit = think_count - eligible
+                    add_idx = torch.randperm(keep_len, device=scores.device)[:deficit]
+                    mask[add_idx] = True
+                masked_scores = scores.clone()
+                masked_scores[~mask] = float("-inf")
+                topk = torch.topk(masked_scores, think_count).indices.tolist()
                 topk.sort()
                 for pos in topk:
                     insert_idx = None
@@ -1081,7 +1089,7 @@ def train_model(
                             "ce": float(ce_loss),
                             "learned": float(learned_loss),
                         }
-                sample_tokens = generate(
+                sample_tokens, prompt_len = generate(
                     model,
                     sample_prompt.clone(),
                     sample_chars,
@@ -1089,11 +1097,12 @@ def train_model(
                     newline_token_id=newline_token_id,
                     think_settings=think_settings,
                     suppress_think=suppress_think_output,
+                    suppress_think_prompt=args.no_think_prompt,
                 )
             model.train()
-            prompt_ids = sample_prompt[0].detach().cpu().tolist()
             sample_ids = sample_tokens[0].detach().cpu().tolist()
-            completion_ids = sample_ids[len(prompt_ids) :]
+            prompt_ids = sample_ids[:prompt_len]
+            completion_ids = sample_ids[prompt_len:]
 
             prefix_text = color_tokens(
                 tokenizer,
@@ -1202,7 +1211,7 @@ def run_report_mode(
     base_len = prompt_tokens.size(1)
     with torch.no_grad():
         for idx in range(1, count + 1):
-            generated = generate(
+            generated, prompt_len = generate(
                 model,
                 prompt_tokens.clone(),
                 sample_len,
@@ -1210,10 +1219,11 @@ def run_report_mode(
                 newline_token_id=newline_token_id,
                 think_settings=think_settings,
                 suppress_think=suppress_think,
+                suppress_think_prompt=args.no_think_prompt,
             )
             tokens = generated[0].detach().cpu().tolist()
-            prompt_ids = tokens[:base_len]
-            completion_ids = tokens[base_len:]
+            prompt_ids = tokens[:prompt_len]
+            completion_ids = tokens[prompt_len:]
             prefix_text = color_tokens(
                 tokenizer,
                 prompt_ids,
@@ -1297,11 +1307,14 @@ def generate(
     newline_token_id: int | None = None,
     think_settings: ThinkSettings | None = None,
     suppress_think: bool = False,
-) -> torch.Tensor:
+    suppress_think_prompt: bool = False,
+) -> tuple[torch.Tensor, int]:
     model.eval()
     idx = idx.clone()
-    if not suppress_think:
+    prompt_len = idx.size(1)
+    if not suppress_think and not suppress_think_prompt:
         idx = expand_prompt_with_thinking(model, idx, think_settings)
+        prompt_len = idx.size(1)
     for _ in range(steps):
         idx_cond = idx[:, -model.config.block_size :]
         logits, _, _ = model.forward_autoreg(idx_cond)
@@ -1321,7 +1334,7 @@ def generate(
                 probs[mask] = modified[mask] / sums[mask]
         next_token = torch.multinomial(probs, num_samples=1)
         idx = torch.cat([idx, next_token], dim=1)
-    return idx
+    return idx, prompt_len
 
 
 # -----------------------------------------------------------------------------
@@ -1454,6 +1467,11 @@ def parse_args() -> argparse.Namespace:
         "--no-think",
         action="store_true",
         help="During sampling/reporting, suppress thinking tokens entirely",
+    )
+    parser.add_argument(
+        "--no-think-prompt",
+        action="store_true",
+        help="Do not insert thinking tokens inside the prompt during sampling/reporting",
     )
     parser.add_argument(
         "--grce-dropout",
