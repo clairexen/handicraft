@@ -1003,7 +1003,10 @@ def train_model(
     total_steps = start_step
     history_updates: List[Dict[str, float]] = []
     printed_header = False
-    show_think_columns = think_settings is not None and think_settings.enabled
+    think_enabled = think_settings is not None and think_settings.enabled
+    undo_enabled = undo_settings is not None and undo_settings.enabled
+    show_think_columns = think_enabled
+    show_learned_headers = think_enabled or undo_enabled
     for step in range(1, steps + 1):
         xb, yb = dataset.get_batch("train", block_size, batch_size, device)
         xb, yb, random_mask, think_labels = augment_training_batch(
@@ -1138,8 +1141,12 @@ def train_model(
             )
             colored_sample = prefix_text + completion_text
             if not printed_header:
-                train_header = "train loss (learned)  nogrce (learned)"
-                test_header = "test loss (learned)  nogrce (learned)"
+                if show_learned_headers:
+                    train_header = "train loss (learned)  nogrce (learned)"
+                    test_header = "test loss (learned)  nogrce (learned)"
+                else:
+                    train_header = "train loss  nogrce"
+                    test_header = "test loss  nogrce"
                 if show_think_columns:
                     train_header += "  nothink"
                     test_header += "  nothink"
