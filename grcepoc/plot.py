@@ -172,10 +172,16 @@ def parse_args() -> argparse.Namespace:
         help="Use solid/dash-dot styles only for think traces; non-think traces become dotted",
     )
     parser.add_argument(
-        "--think-scale",
+        "--think-xscale",
         type=float,
         default=1.0,
         help="Scale the X-axis of traces whose model name includes _thinkN by this factor",
+    )
+    parser.add_argument(
+        "--think-yscale",
+        type=float,
+        default=1.0,
+        help="Scale the Y-axis of traces whose model name includes _thinkN by this factor",
     )
     return parser.parse_args()
 
@@ -255,13 +261,28 @@ def main() -> None:
     steps_per_cycle = 100
     think_pattern = re.compile(r"_think\d+")
 
-    def compute_scaled_steps(rec: LossRecord) -> List[float]:
-        if args.think_scale != 1.0 and think_pattern.search(rec.model_path.stem):
-            return [step * args.think_scale for step in rec.steps]
+    def compute_scaled_steps(rec: LossRecord, *, is_think: bool) -> List[float]:
+        if args.think_xscale != 1.0 and is_think:
+            return [step * args.think_xscale for step in rec.steps]
         return list(rec.steps)
 
+    def compute_scaled_series(
+        series: Optional[List[float]], *, is_think: bool
+    ) -> Optional[List[float]]:
+        if series is None:
+            return None
+        if args.think_yscale != 1.0 and is_think:
+            return [value * args.think_yscale for value in series]
+        return list(series)
+
     for rec in records:
-        rec.scaled_steps = compute_scaled_steps(rec)
+        is_think = bool(think_pattern.search(rec.model_path.stem))
+        rec.is_think = is_think
+        rec.scaled_steps = compute_scaled_steps(rec, is_think=is_think)
+        rec.scaled_train = compute_scaled_series(rec.train, is_think=is_think)
+        rec.scaled_test = compute_scaled_series(rec.test, is_think=is_think)
+        rec.scaled_train_nogrce = compute_scaled_series(rec.train_nogrce, is_think=is_think)
+        rec.scaled_test_nogrce = compute_scaled_series(rec.test_nogrce, is_think=is_think)
 
     steps_per_cycle = 100
     print(f"Loaded {len(records)} trace(s):")
@@ -291,7 +312,7 @@ def main() -> None:
     color_index = 0
     for rec in records:
         label = rec.model_path.stem
-        is_think = "_think" in label
+        is_think = rec.is_think
         match = re.search(r"span(\d+)", label)
         span_key = match.group(1) if match else "ctx"
         if span_key not in color_map:
@@ -307,9 +328,10 @@ def main() -> None:
         nogrce_style = "-."
         line_width = 3.0 if is_think else 1.5
         if show_train and rec.train:
+            train_values = rec.scaled_train
             train_line, = ax.plot(
                 rec.scaled_steps,
-                rec.train,
+                train_values,
                 label=f"{label} train",
                 linestyle=solid_style,
                 color=base_color,
@@ -317,9 +339,10 @@ def main() -> None:
                 linewidth=line_width,
             )
             if rec.train_nogrce and not args.no_nogrce:
+                nogrce_values = rec.scaled_train_nogrce or rec.train_nogrce
                 nogrce_line, = ax.plot(
                     rec.scaled_steps,
-                    rec.train_nogrce,
+                    nogrce_values,
                     label=f"{label} train (nogrce)",
                     linestyle=nogrce_style,
                     color=base_color,
@@ -327,9 +350,10 @@ def main() -> None:
                     linewidth=line_width,
                 )
         if show_test and rec.test:
+            test_values = rec.scaled_test
             test_line, = ax.plot(
                 rec.scaled_steps,
-                rec.test,
+                test_values,
                 label=f"{label} test",
                 linestyle=solid_style,
                 color=base_color,
@@ -337,9 +361,10 @@ def main() -> None:
                 linewidth=line_width,
             )
             if rec.test_nogrce and not args.no_nogrce:
+                nogrce_test_values = rec.scaled_test_nogrce or rec.test_nogrce
                 nogrce_line, = ax.plot(
                     rec.scaled_steps,
-                    rec.test_nogrce,
+                    nogrce_test_values,
                     label=f"{label} test (nogrce)",
                     linestyle=nogrce_style,
                     color=base_color,
