@@ -486,16 +486,11 @@ def augment_training_batch(
         if think_enabled and think_count > 0 and think_scores is not None:
             scores = think_scores[row, :keep_len]
             if scores.numel() > 0:
-                mask = torch.rand(keep_len, device=scores.device) > 0.5
-                eligible = int(mask.sum().item())
-                if eligible < think_count:
-                    deficit = think_count - eligible
-                    add_idx = torch.randperm(keep_len, device=scores.device)[:deficit]
-                    mask[add_idx] = True
-                masked_scores = scores.clone()
-                masked_scores[~mask] = float("-inf")
-                topk = torch.topk(masked_scores, think_count).indices.tolist()
-                topk.sort()
+                picks = min(think_count + 1, scores.numel())
+                topk = torch.topk(scores, picks).indices.tolist()
+                if len(topk) > think_count:
+                    drop_idx = random.randrange(len(topk))
+                    topk.pop(drop_idx)
                 for pos in topk:
                     insert_idx = None
                     for idx, entry in enumerate(seq_entries):
