@@ -1750,6 +1750,11 @@ def parse_args() -> argparse.Namespace:
         help="If set, re-raise KeyboardInterrupt with a full stack trace.",
     )
     parser.add_argument(
+        "--ansi",
+        action="store_true",
+        help="Write a parallel .ansi log that preserves ANSI color codes",
+    )
+    parser.add_argument(
         "--import-model",
         type=pathlib.Path,
         help="Initialize from another checkpoint when creating a new model",
@@ -1805,6 +1810,7 @@ def main() -> None:
     torch.manual_seed(42)
     random.seed(42)
 
+    ansi_file = None
     try:
         orig_stdout, orig_stderr, log_file = sys.stdout, sys.stderr, None
 
@@ -1980,9 +1986,19 @@ def main() -> None:
         log_file = log_path.open("a", encoding="utf-8")
         log_file.write(f"\n[{timestamp}] {cmdline}\n")
         log_file.flush()
+        if args.ansi:
+            ansi_path = log_path.with_suffix(".ansi")
+            ansi_file = ansi_path.open("a", encoding="utf-8")
+            ansi_file.write(f"\n[{timestamp}] {cmdline}\n")
+            ansi_file.flush()
 
-        sys.stdout = Tee((orig_stdout, False), (log_file, True))
-        sys.stderr = Tee((orig_stderr, False), (log_file, True))
+        stdout_streams = [(orig_stdout, False), (log_file, True)]
+        stderr_streams = [(orig_stderr, False), (log_file, True)]
+        if ansi_file is not None:
+            stdout_streams.append((ansi_file, False))
+            stderr_streams.append((ansi_file, False))
+        sys.stdout = Tee(*stdout_streams)
+        sys.stderr = Tee(*stderr_streams)
 
         device = torch.device(args.device)
         try:
@@ -2196,6 +2212,8 @@ def main() -> None:
         sys.stderr = orig_stderr
         if log_file is not None:
             log_file.close()
+        if ansi_file is not None:
+            ansi_file.close()
 
 
 if __name__ == "__main__":
