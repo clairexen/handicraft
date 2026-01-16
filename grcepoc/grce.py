@@ -1590,7 +1590,7 @@ def parse_args() -> argparse.Namespace:
         description=__doc__, formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
     parser.add_argument(
-        "--data",
+        "--corpus",
         type=str,
         default="simplewiki",
         help="Dataset base name; expects data/<name>-train.txt.gz and ...-test.txt.gz.",
@@ -1831,8 +1831,8 @@ def main() -> None:
     try:
         orig_stdout, orig_stderr, log_file = sys.stdout, sys.stderr, None
 
-        train_path = pathlib.Path("data") / f"{args.data}-train.txt.gz"
-        test_path = pathlib.Path("data") / f"{args.data}-test.txt.gz"
+        train_path = pathlib.Path("data") / f"{args.corpus}-train.txt.gz"
+        test_path = pathlib.Path("data") / f"{args.corpus}-test.txt.gz"
         train_limit = parse_char_arg(args.train_chars)
         test_limit = parse_char_arg(args.test_chars)
         vocab_limit = parse_char_arg(args.vocab_chars)
@@ -1846,11 +1846,11 @@ def main() -> None:
 
         train_cache_path = (
             model_dir
-            / f"{args.data}_tokens_train_{limit_label(train_limit)}_{args.tokenizer_vocab}.pt"
+            / f"{args.corpus}_tokens_train_{limit_label(train_limit)}_{args.tokenizer_vocab}.pt"
         )
         test_cache_path = (
             model_dir
-            / f"{args.data}_tokens_test_{limit_label(test_limit)}_{args.tokenizer_vocab}.pt"
+            / f"{args.corpus}_tokens_test_{limit_label(test_limit)}_{args.tokenizer_vocab}.pt"
         )
 
         try:
@@ -1868,7 +1868,7 @@ def main() -> None:
             full_test_text = None
 
         tokenizer_key = (
-            f"{args.data}_vocab_{limit_label(tokenizer_limit)}_{args.tokenizer_vocab}"
+            f"{args.corpus}_vocab_{limit_label(tokenizer_limit)}_{args.tokenizer_vocab}"
         )
         tokenizer_path = model_dir / f"{tokenizer_key}.json"
         if not tokenizer_path.exists() and full_train_text is None:
@@ -1977,7 +1977,7 @@ def main() -> None:
             cleaned = re.sub(r"[^0-9A-Za-z]+", "", extra_tag)
             if cleaned:
                 model_tag += f"_{cleaned}"
-        prefix = f"{args.data}_model_"
+        prefix = f"{args.corpus}_model_"
         model_path = model_dir / f"{prefix}{model_tag}.pt"
         log_path = model_dir / f"{prefix}{model_tag}.log"
         print(color_text(f"Model: {model_path}", Colors.BLUE))

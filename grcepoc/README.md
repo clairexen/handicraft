@@ -78,10 +78,10 @@ Below are two quick sweeps you can adapt. Both snippets assume a shell where `${
     ```bash
     time bash -exc '
     for cy in 2 3 5 10 10 20; do
-	${PYTHON:-.venv/bin/python3} grce.py --cycles $cy --context-span 0
-	${PYTHON:-.venv/bin/python3} grce.py --cycles $cy --context-span 1
-	${PYTHON:-.venv/bin/python3} grce.py --cycles $cy --context-span 2
-	${PYTHON:-.venv/bin/python3} grce.py --cycles $cy --context-span 3
+	${PYTHON:-.venv/bin/python3} grce.py --cycles $cy --tag span0 --context-span 0
+	${PYTHON:-.venv/bin/python3} grce.py --cycles $cy --tag span1 --context-span 1
+	${PYTHON:-.venv/bin/python3} grce.py --cycles $cy --tag span2 --context-span 2
+	${PYTHON:-.venv/bin/python3} grce.py --cycles $cy --tag span3 --context-span 3
 	${PYTHON:-.venv/bin/python3} grce.py --cycles $cy --n-grce 0
     done
     '
