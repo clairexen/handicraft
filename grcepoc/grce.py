@@ -1126,7 +1126,7 @@ def train_model(
                             eval_iters,
                             disable_context=False,
                             think_settings=None,
-                            undo_settings=undo_settings,
+                            undo_settings=None,
                             batches=cached_batches[split],
                         )
                         split_metrics[f"{split}_nothink"] = {
@@ -1173,8 +1173,8 @@ def train_model(
                     train_header = "train loss  nogrce"
                     test_header = "test loss  nogrce"
                 if show_think_columns:
-                    train_header += "  nothink"
-                    test_header += "  nothink"
+                    train_header += "  plain"
+                    test_header += "  plain"
                 header_line = (
                     color_text("step", Colors.CYAN)
                     + " | "
@@ -1188,13 +1188,18 @@ def train_model(
 
             hidden_learned_warning_emitted = False
 
-            def format_metric(key: str) -> str:
+            def format_metric(key: str, *, include_learned: bool = True) -> str:
                 nonlocal hidden_learned_warning_emitted
                 metric = split_metrics[key]
                 ce_val = metric["ce"]
                 learned_val = metric["learned"]
                 differs = abs(learned_val - ce_val) >= 1e-6
-                if not show_learned_headers and differs and not hidden_learned_warning_emitted:
+                if (
+                    not show_learned_headers
+                    and differs
+                    and not hidden_learned_warning_emitted
+                    and include_learned
+                ):
                     print(
                         color_text(
                             "warning: learned values differ but learned columns are hidden",
@@ -1202,7 +1207,7 @@ def train_model(
                         )
                     )
                     hidden_learned_warning_emitted = True
-                if show_learned_headers:
+                if show_learned_headers and include_learned:
                     return f"{ce_val:.2f} ({learned_val:.2f})"
                 return f"{ce_val:.2f}"
 
@@ -1211,7 +1216,7 @@ def train_model(
                 format_metric("train_nogrce"),
             ]
             if show_think_columns:
-                train_parts.append(format_metric("train_nothink"))
+                train_parts.append(format_metric("train_nothink", include_learned=False))
             train_values = "  ".join(train_parts)
 
             test_parts = [
@@ -1219,7 +1224,7 @@ def train_model(
                 format_metric("test_nogrce"),
             ]
             if show_think_columns:
-                test_parts.append(format_metric("test_nothink"))
+                test_parts.append(format_metric("test_nothink", include_learned=False))
             test_values = "  ".join(test_parts)
             line = (
                 color_text(f"{total_steps}", Colors.CYAN)
