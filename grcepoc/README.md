@@ -52,7 +52,7 @@ Console logs now show `train loss (learned)` and `nogrce (learned)` where the va
 
 ## Running grce.py
 
-Call `grce.py --help` for the full CLI. In all examples below we assume a virtual environment at `.venv/`; overriding the interpreter is as simple as exporting `$PYTHON`, since every snippet uses `${PYTHON:-.venv/bin/python}`.
+Call `grce.py --help` for the full CLI. In all examples below we assume a virtual environment at `.venv/`; overriding the interpreter is as simple as exporting `$PYTHON`, since every snippet uses `${PYTHON:-.venv/bin/python3}`.
 
 Key switches:
 - `--think N` enables the above thinking-token workflow (set `--no-think` to keep sampling clean while still training with thinking tokens). Combine with `--think-fraction F` to control what fraction of sequences per batch participate (default `0.5`; `1.0` enables thinking for all sequences, `0.0` disables it entirely). Think tokens (and undo tokens) always live in the tokenizer/embedding space, so you can import/export checkpoints between think/non-think runs without remapping vocabularies.
@@ -69,18 +69,18 @@ For postprocessing, run for example `plot.py --avg-span --no-nogrce --store span
 
 ## Example training sweeps
 
-Below are two quick sweeps you can adapt. Both snippets assume a shell where `${PYTHON:-.venv/bin/python}` resolves to your preferred interpreter.
+Below are two quick sweeps you can adapt. Both snippets assume a shell where `${PYTHON:-.venv/bin/python3}` resolves to your preferred interpreter.
 
 1. **GRCE vs span variants.** Demonstrates the benefit of the GRCE path and the weak dependence on `--context-span`.
 
     ```bash
     time bash -exc '
     for cy in 2 3 5 10 10 20; do
-	${PYTHON:-.venv/bin/python} grce.py --cycles $cy --context-span 0
-	${PYTHON:-.venv/bin/python} grce.py --cycles $cy --context-span 1
-	${PYTHON:-.venv/bin/python} grce.py --cycles $cy --context-span 2
-	${PYTHON:-.venv/bin/python} grce.py --cycles $cy --context-span 3
-	${PYTHON:-.venv/bin/python} grce.py --cycles $cy --n-grce 0
+	${PYTHON:-.venv/bin/python3} grce.py --cycles $cy --context-span 0
+	${PYTHON:-.venv/bin/python3} grce.py --cycles $cy --context-span 1
+	${PYTHON:-.venv/bin/python3} grce.py --cycles $cy --context-span 2
+	${PYTHON:-.venv/bin/python3} grce.py --cycles $cy --context-span 3
+	${PYTHON:-.venv/bin/python3} grce.py --cycles $cy --n-grce 0
     done
     '
     ```
@@ -90,8 +90,8 @@ Below are two quick sweeps you can adapt. Both snippets assume a shell where `${
     ```bash
     time bash -exc '
     for cy in 2 3 5 10 10 20 20 30; do
-	${PYTHON:-.venv/bin/python} grce.py --cycles $cy
-	${PYTHON:-.venv/bin/python} grce.py --cycles $cy --think 10
+	${PYTHON:-.venv/bin/python3} grce.py --cycles $cy
+	${PYTHON:-.venv/bin/python3} grce.py --cycles $cy --think 10
     done
     '
     ```
@@ -110,7 +110,7 @@ Below are two quick sweeps you can adapt. Both snippets assume a shell where `${
 - **Testing:** Eval prints test/train losses plus a colorized sample; prompts are cyan/green, completions yellow/magenta, and the GRCE-disabled loss is shown for comparison.
 - **Local CPU sanity checks:** run a tiny model to keep turnaround fast:
   ```bash
-  .venv/bin/python grce.py --device cpu --cycles 2 --steps 20 --block-size 16 --batch-size 4 --n-layer 2 --n-head 2 --n-embd 64 --n-grce 16 --context-span 4 --grce-dropout 20 --eval-interval 10 --eval-iters 1 --generate 5
+  .venv/bin/python3 grce.py --device cpu --cycles 2 --steps 20 --block-size 16 --batch-size 4 --n-layer 2 --n-head 2 --n-embd 64 --n-grce 16 --context-span 4 --grce-dropout 20 --eval-interval 10 --eval-iters 1 --generate 5
   ```
   This fits in RAM and exercises the GRCE dropout path without a GPU.
-**Environment note:** always run tooling via `.venv/bin/python` (and related entrypoints) so the local dependencies are available; the system python lacks the required packages.
+**Environment note:** always run tooling via `.venv/bin/python3` (and related entrypoints) so the local dependencies are available; the system python may lack the required packages, or there even may be no system python.

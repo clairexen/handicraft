@@ -374,6 +374,8 @@ def augment_training_batch(
     targets: torch.Tensor,
     think: ThinkSettings | None,
     undo: UndoSettings | None,
+    *,
+    disable_context_rows: set[int] | None = None,
 ) -> tuple[
     torch.Tensor,
     torch.Tensor,
@@ -382,6 +384,7 @@ def augment_training_batch(
     torch.Tensor | None,
 ]:
     think_enabled = think is not None and think.enabled
+    forced_context_off = disable_context_rows or set()
     undo_enabled = undo is not None and undo.enabled
     if not think_enabled and not undo_enabled:
         return inputs, targets, None, None, None
@@ -1026,12 +1029,20 @@ def train_model(
     show_learned_headers = think_enabled or undo_enabled
     for step in range(1, steps + 1):
         xb, yb = dataset.get_batch("train", block_size, batch_size, device)
+        disable_rows = set()
+        drop_target = model.config.context_dropout
+        if drop_target > 0:
+            drop_prob = min(1.0, drop_target / batch_size)
+            for row_idx in range(batch_size):
+                if random.random() < drop_prob:
+                    disable_rows.add(row_idx)
         xb, yb, random_mask, think_labels, think_slot_mask = augment_training_batch(
             model,
             xb,
             yb,
             think_settings,
             undo_settings,
+            disable_context_rows=disable_rows,
         )
         logits, _, _ = model.forward_autoreg(
             xb,
