@@ -1359,39 +1359,58 @@ def count_layers_from_state(state: dict[str, torch.Tensor]) -> int:
 
 
 def build_layer_mapping(
-    src_layers: int, dst_layers: int, new_layers: list[int], allow_trim: bool
+    src_layers: int,
+    dst_layers: int,
+    drop_layers: list[int],
+    add_layers: list[int],
+    allow_trim: bool,
 ) -> dict[int, int | None]:
-    mapping: dict[int, int | None] = {}
-    if dst_layers > src_layers:
-        if not new_layers:
+    drop_zero = {idx - 1 for idx in drop_layers}
+    if any(idx < 0 or idx >= src_layers for idx in drop_zero):
+        raise ValueError("--drop-layers indices must fall within the source layer range")
+    if len(drop_zero) != len(drop_layers):
+        raise ValueError("--drop-layers indices must be unique")
+    survivors = [i for i in range(src_layers) if i not in drop_zero]
+
+    add_zero = {idx - 1 for idx in add_layers}
+    if any(idx < 0 or idx >= dst_layers for idx in add_zero):
+        raise ValueError("--add-layers indices must fall within the destination layer range")
+    if len(add_zero) != len(add_layers):
+        raise ValueError("--add-layers indices must be unique")
+
+    dest_non_new = dst_layers - len(add_zero)
+    if dest_non_new < 0:
+        raise ValueError("Too many --add-layers entries for the destination depth")
+
+    if drop_layers or add_layers:
+        if len(survivors) != dest_non_new:
             raise ValueError(
-                "--new-layers is required when increasing the layer count during import"
+                "--drop-layers/--add-layers must leave exactly the destination layer count"
             )
-        if len(new_layers) != dst_layers - src_layers:
-            raise ValueError("--new-layers must list exactly the new layer indices")
-        new_set = set(new_layers)
-        if any(idx < 0 or idx >= dst_layers for idx in new_set):
-            raise ValueError("--new-layers indices must fall within the layer range")
-        if len(new_set) != len(new_layers):
-            raise ValueError("--new-layers indices must be unique")
-        src_idx = 0
-        for dst_idx in range(dst_layers):
-            if dst_idx in new_set:
-                mapping[dst_idx] = None
-            else:
-                if src_idx >= src_layers:
-                    raise ValueError("Insufficient source layers for mapping")
-                mapping[dst_idx] = src_idx
-                src_idx += 1
     else:
-        if dst_layers < src_layers and not allow_trim:
+        if len(survivors) < dest_non_new:
             raise ValueError(
-                "Destination has fewer layers; rerun with --trim-model to allow trimming"
+                "Destination has more layers than source; use --add-layers to specify insertions"
             )
-        if new_layers:
-            raise ValueError("--new-layers only applies when adding layers")
-        for dst_idx in range(dst_layers):
-            mapping[dst_idx] = dst_idx
+        if len(survivors) > dest_non_new:
+            if not allow_trim:
+                raise ValueError(
+                    "Destination has fewer layers; rerun with --trim-model to allow trimming"
+                )
+            survivors = survivors[:dest_non_new]
+
+    mapping: dict[int, int | None] = {}
+    survivor_iter = iter(survivors)
+    for dst_idx in range(dst_layers):
+        if dst_idx in add_zero:
+            mapping[dst_idx] = None
+        else:
+            try:
+                mapping[dst_idx] = next(survivor_iter)
+            except StopIteration:
+                raise ValueError(
+                    "Drop/add configuration did not provide enough surviving layers"
+                )
     return mapping
 
 
@@ -1727,25 +1746,35 @@ def parse_args() -> argparse.Namespace:
         help="Allow importing into a smaller model by dropping overflow",
     )
     parser.add_argument(
-        "--new-layers",
+        "--drop-layers",
         type=str,
         default="",
-        help="Comma-separated layer indices for newly added layers when importing",
+        help="Comma-separated layer numbers (1-indexed) to remove during import",
+    )
+    parser.add_argument(
+        "--add-layers",
+        type=str,
+        default="",
+        help="Comma-separated layer numbers (1-indexed) to insert during import",
     )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    if args.new_layers:
+    def parse_layer_list(value: str, flag: str) -> list[int]:
+        if not value:
+            return []
         try:
-            args.new_layers = [int(part) for part in args.new_layers.split(",") if part]
+            entries = [int(part) for part in value.split(",") if part]
         except ValueError as exc:
-            raise ValueError("--new-layers must be a comma-separated list of integers") from exc
-    else:
-        args.new_layers = []
-    if args.new_layers and not args.import_model:
-        raise ValueError("--new-layers is only valid with --import-model")
+            raise ValueError(f"{flag} must be a comma-separated list of integers") from exc
+        return entries
+
+    args.drop_layers = parse_layer_list(args.drop_layers, "--drop-layers")
+    args.add_layers = parse_layer_list(args.add_layers, "--add-layers")
+    if (args.drop_layers or args.add_layers) and not args.import_model:
+        raise ValueError("--drop-layers/--add-layers are only valid with --import-model")
     if args.trim_model and not args.import_model:
         raise ValueError("--trim-model is only valid with --import-model")
     args.prompt = normalize_prompt(args.prompt)
@@ -2003,7 +2032,8 @@ def main() -> None:
             mapping = build_layer_mapping(
                 src_layers,
                 config.n_layer,
-                args.new_layers,
+                args.drop_layers,
+                args.add_layers,
                 allow_trim=args.trim_model,
             )
             apply_imported_state(
