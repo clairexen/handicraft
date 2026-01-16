@@ -1005,6 +1005,9 @@ def train_model(
     suppress_think_prompt: bool,
     think_hard: bool,
     undo_settings: UndoSettings | None,
+    *,
+    cycle_wall_start: float,
+    base_wall_seconds: float,
 ) -> Tuple[int, List[Dict[str, float]]]:
     optim = torch.optim.AdamW(model.parameters(), lr=3e-4)
     total_steps = start_step
@@ -1226,6 +1229,10 @@ def train_model(
                 + colored_sample
             )
             print(line)
+            eval_now = time.time()
+            cycle_wall_elapsed = max(0.0, eval_now - cycle_wall_start)
+            total_wall_seconds = base_wall_seconds + cycle_wall_elapsed
+
             record = {
                 "step": total_steps,
                 "train_loss": float(split_metrics["train"]["ce"]),
@@ -1240,6 +1247,8 @@ def train_model(
                 "test_loss_nogrce": float(split_metrics["test_nogrce"]["ce"]),
                 "test_target_nogrce": float(split_metrics["test_nogrce"]["learned"]),
                 "test_loss_nogrce_learned": float(split_metrics["test_nogrce"]["learned"]),
+                "train_wall_seconds": float(total_wall_seconds),
+                "unix_time": float(eval_now),
             }
             if "train_nothink" in split_metrics:
                 record["train_loss_nothink"] = float(split_metrics["train_nothink"]["ce"])
@@ -2019,6 +2028,7 @@ def main() -> None:
         model = GRCEGPT(config).to(device)
         total_steps = 0
         loss_history: List[Dict[str, float]] = []
+        total_train_wall = 0.0
         if model_path.exists():
             if args.import_model:
                 raise ValueError(
@@ -2036,6 +2046,7 @@ def main() -> None:
                         dataset.load_state(payload["dataset"])
                     total_steps = int(payload.get("total_steps", 0))
                     loss_history = list(payload.get("loss_history", []))
+                    total_train_wall = float(payload.get("train_wall_seconds", 0.0))
                 else:
                     model.load_state_dict(payload)
                 print(color_text(f"Loaded existing model from {model_path}", Colors.YELLOW))
@@ -2079,6 +2090,7 @@ def main() -> None:
                 mapping=mapping,
             )
             total_steps = int(meta.get("total_steps", 0))
+            total_train_wall = float(meta.get("train_wall_seconds", 0.0))
             loss_history = []
             write_wall_start = time.time()
             write_cpu_start = time.process_time()
@@ -2089,6 +2101,7 @@ def main() -> None:
                     "total_steps": total_steps,
                     "loss_history": loss_history,
                     "config": asdict(config),
+                    "train_wall_seconds": total_train_wall,
                 },
                 model_path,
             )
@@ -2175,11 +2188,14 @@ def main() -> None:
                 suppress_think_prompt=args.no_think_prompt,
                 think_hard=args.think_hard,
                 undo_settings=undo_settings,
+                cycle_wall_start=cycle_wall,
+                base_wall_seconds=total_train_wall,
             )
             loss_history.extend(updates)
 
             train_wall = time.time() - cycle_wall
             train_cpu = time.process_time() - cycle_cpu
+            total_train_wall += train_wall
 
             save_wall_start = time.time()
             save_cpu_start = time.process_time()
@@ -2190,6 +2206,7 @@ def main() -> None:
                     "total_steps": total_steps,
                     "loss_history": loss_history,
                     "config": asdict(config),
+                    "train_wall_seconds": total_train_wall,
                 },
                 model_path,
             )
