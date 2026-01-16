@@ -54,7 +54,7 @@ Use `python grce.py --help` for CLI options. Main experiment:
 - `--undo N` inserts up to `N` random+undo pairs per block (filler loss ignored, undo enforced).
 - `--report-count N` skips training entirely, loads the latest checkpoint (if any), and prints `N` completions of the configured prompt.
 - `--no-newlines` keeps the sampler from emitting newline tokens so completions stay on one line.
-- `--grce-dropout M` randomly disables the context channel per position (for `M=1`, each block selects a fixed set of drop points; for `M>1`, every position drops independently with probability `1/M`).
+- `--grce-dropout N` targets roughly `N` dropped GRCE updates per block by sampling each position with probability `min(1, N / block_size)`; `0` disables dropping entirely.
 You can reproduce the sweeps below; notice how even the `--context-span 1` run (which detaches the recurrent gradients entirely) tracks all other spans almost perfectly, confirming that the channel only needs to learn what to sample, not how to backpropagate across positions.
 
 Every evaluation logs both GRCE-enabled and GRCE-disabled losses, and `plot.py` draws both traces for quick comparison.

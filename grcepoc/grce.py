@@ -652,7 +652,7 @@ class ModelConfig:
     n_grce: int = 64        # GRCE context dims.
     dropout: float = 0.05
     context_span: int = 2   # Detach gradients every N positions (0 disables detaching).
-    context_dropout: int = 0  # Every N positions drop GRCE connection (0 disables).
+    context_dropout: int = 0  # Target number of GRCE dropouts per block (0 disables).
 
 
 MODEL_CONFIG_TEMPLATE = ModelConfig()
@@ -814,7 +814,6 @@ class GRCEGPT(nn.Module):
         targets: torch.Tensor | None = None,
         *,
         disable_context: bool = False,
-        drop_mask: set[int] | None = None,
     ) -> Tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
         B, T = idx.shape
         device = idx.device
@@ -853,13 +852,13 @@ class GRCEGPT(nn.Module):
                     stop_grad = True
                 else:
                     stop_grad = (t % span == 0)
-                drop_ratio = self.context.context_dropout
+                drop_target = self.context.context_dropout
                 use_grce = True
-                if drop_ratio == 1 and drop_mask is not None and self.training:
-                    slot = t % self.config.block_size if self.config.block_size > 0 else 0
-                    use_grce = slot not in drop_mask
-                elif drop_ratio > 1 and self.training:
-                    use_grce = (random.randrange(drop_ratio) != 0)
+                if drop_target > 0 and self.training:
+                    seq_len = max(1, self.config.block_size)
+                    drop_prob = min(1.0, drop_target / seq_len)
+                    if random.random() < drop_prob:
+                        use_grce = False
                 if use_grce:
                     context = self.context.update(block_inputs, stop_grad=stop_grad)
             logits_steps.append(logits[:, -1:, :])
@@ -1056,7 +1055,6 @@ def train_model(
     tokenizer: GPT2TokenizerWrapper,
     suppress_newlines: bool,
     newline_token_id: int | None,
-    drop_positions: list[set[int]] | None,
     think_settings: ThinkSettings | None,
     suppress_think_output: bool,
     suppress_think_prompt: bool,
@@ -1080,13 +1078,9 @@ def train_model(
             think_settings,
             undo_settings,
         )
-        drop_mask = None
-        if drop_positions is not None and 0 <= step - 1 < len(drop_positions):
-            drop_mask = drop_positions[step - 1]
         logits, _, _ = model.forward_autoreg(
             xb,
             yb,
-            drop_mask=drop_mask,
         )
         logits = apply_think_slot_mask(logits, think_slot_mask, think_settings)
         logits_flat = logits.view(-1, logits.size(-1))
@@ -1595,7 +1589,7 @@ def parse_args() -> argparse.Namespace:
         "--grce-dropout",
         type=int,
         default=0,
-        help="Drop GRCE connections every N positions (0 disables)",
+        help="Target roughly N GRCE dropouts per block (0 disables)",
     )
     parser.add_argument(
         "--think",
@@ -1899,15 +1893,6 @@ def main() -> None:
             return
 
         for cycle in range(1, args.cycles + 1):
-            drop_positions = None
-            if args.grce_dropout == 1 and args.n_grce > 0:
-                drop_positions = []
-                for _ in range(args.steps):
-                    span = max(args.block_size - 1, 1)
-                    slots = list(range(span))
-                    picks = random.randrange(span + 1)
-                    drop_positions.append(set(random.sample(slots, picks)))
-
             cycle_wall = time.time()
             cycle_cpu = time.process_time()
             tags = ["GPT"]
@@ -1951,7 +1936,6 @@ def main() -> None:
                 tokenizer,
                 suppress_newlines=args.no_newlines,
                 newline_token_id=newline_token_id,
-                drop_positions=drop_positions,
                 think_settings=think_settings,
                 suppress_think_output=args.no_think,
                 suppress_think_prompt=args.no_think_prompt,
