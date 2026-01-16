@@ -344,11 +344,6 @@ class TextDataset:
 class ThinkSettings:
     max_steps: int = 0
     token_id: int | None = None
-    fraction: float = 1.0
-
-    def __post_init__(self) -> None:
-        frac = 0.0 if self.fraction is None else float(self.fraction)
-        self.fraction = max(0.0, min(1.0, frac))
 
     @property
     def enabled(self) -> bool:
@@ -376,6 +371,7 @@ def augment_training_batch(
     undo: UndoSettings | None,
     *,
     disable_context_rows: set[int] | None = None,
+    disable_think_rows: set[int] | None = None,
 ) -> tuple[
     torch.Tensor,
     torch.Tensor,
@@ -385,6 +381,7 @@ def augment_training_batch(
 ]:
     think_enabled = think is not None and think.enabled
     forced_context_off = disable_context_rows or set()
+    think_disabled_rows = disable_think_rows or set()
     undo_enabled = undo is not None and undo.enabled
     if not think_enabled and not undo_enabled:
         return inputs, targets, None, None, None
@@ -397,7 +394,6 @@ def augment_training_batch(
     think_slot_mask = None
     if undo_enabled:
         random_mask = torch.zeros_like(inputs, dtype=torch.bool, device=device)
-    active_rows: set[int] = set()
     full_logits = None
     prev_mode = model.training
     need_logits = think_enabled or undo_enabled
@@ -411,18 +407,10 @@ def augment_training_batch(
     if think_enabled:
         think_labels = torch.full_like(inputs, -1)
         think_slot_mask = torch.zeros_like(inputs, dtype=torch.bool, device=device)
-        allowed = int(round(think.fraction * B))
-        allowed = max(0, min(B, allowed))
-        if allowed == 0 and think.fraction > 0.0:
-            allowed = 1
-        if allowed > 0:
-            row_indices = list(range(B))
-            random.shuffle(row_indices)
-            active_rows = set(row_indices[:allowed])
         if full_logits is not None and think is not None and think.token_id is not None:
             think_scores = full_logits[..., think.token_id]
     for row in range(B):
-        row_think_active = think_enabled and row in active_rows
+        row_think_active = think_enabled and row not in think_disabled_rows and row not in forced_context_off
         max_insert_budget = block_size - 1
         think_cap = think.max_steps if row_think_active else 0
         think_cap = min(max_insert_budget, think_cap)
@@ -814,11 +802,10 @@ class GRCEGPT(nn.Module):
                     stop_grad = True
                 else:
                     stop_grad = (t % span == 0)
-                drop_target = self.context.context_dropout
                 use_grce = True
-                if drop_target > 0 and self.training:
+                if self.training:
                     seq_len = max(1, self.config.block_size)
-                    drop_prob = min(1.0, drop_target / seq_len)
+                    drop_prob = min(1.0, 1 / seq_len)
                     if random.random() < drop_prob:
                         use_grce = False
                 if use_grce:
@@ -1030,12 +1017,14 @@ def train_model(
     for step in range(1, steps + 1):
         xb, yb = dataset.get_batch("train", block_size, batch_size, device)
         disable_rows = set()
-        drop_target = model.config.context_dropout
-        if drop_target > 0:
-            drop_prob = min(1.0, drop_target / batch_size)
-            for row_idx in range(batch_size):
-                if random.random() < drop_prob:
-                    disable_rows.add(row_idx)
+        drop_target = 1
+        drop_prob = min(1.0, drop_target / max(1, batch_size))
+        for row_idx in range(batch_size):
+            if random.random() < drop_prob:
+                disable_rows.add(row_idx)
+        think_disabled_rows = set()
+        if think_enabled and batch_size > 0:
+            think_disabled_rows.add(random.randrange(batch_size))
         xb, yb, random_mask, think_labels, think_slot_mask = augment_training_batch(
             model,
             xb,
@@ -1043,6 +1032,7 @@ def train_model(
             think_settings,
             undo_settings,
             disable_context_rows=disable_rows,
+            disable_think_rows=think_disabled_rows,
         )
         logits, _, _ = model.forward_autoreg(
             xb,
@@ -1652,12 +1642,6 @@ def parse_args() -> argparse.Namespace:
         help="Detach GRCE context gradients every N positions (0 disables detaching).",
     )
     parser.add_argument(
-        "--grce-dropout",
-        type=int,
-        default=1,
-        help="Target roughly N GRCE dropouts per block (0 disables)",
-    )
-    parser.add_argument(
         "--dropout",
         type=float,
         default=defaults.dropout,
@@ -1732,15 +1716,6 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Enable think mode with up to N inserted thinking tokens per block; "
             "adds the <think> special token"
-        ),
-    )
-    parser.add_argument(
-        "--think-fraction",
-        type=float,
-        default=0.5,
-        help=(
-            "Fraction of sequences per batch (0-1) that participate in "
-            "thinking; 1.0 restores the previous behavior"
         ),
     )
     parser.add_argument(
@@ -1908,7 +1883,6 @@ def main() -> None:
         think_settings = ThinkSettings(
             max_steps=args.think,
             token_id=tokenizer.think_id,
-            fraction=args.think_fraction,
         )
         undo_settings = UndoSettings(
             max_pairs=args.undo,
