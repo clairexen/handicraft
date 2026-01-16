@@ -18,7 +18,7 @@ import re
 import shlex
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from typing import Dict, List, Tuple
 
@@ -39,8 +39,6 @@ os.environ.setdefault("HF_HOME", str(HF_CACHE_DIR.resolve()))
 
 from transformers import GPT2TokenizerFast
 
-DISSONANCE_TOKEN = "<|?!|>"
-DISSONANCE_RATE = 0.01
 FANCY_SPACE = "\u2423"  # Open Box symbol for visible spaces
 FANCY_ENTER = "\u23CE"  # Return symbol for visible newlines
 THINK_TOKEN = "<think>"
@@ -136,22 +134,12 @@ class GPT2TokenizerWrapper:
         train_text: str,
         cache_path: pathlib.Path,
         vocab_size: int,
-        use_special: bool,
-        use_think: bool,
-        use_undo: bool,
     ) -> None:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         self.cache_path = cache_path
-        self.use_special = use_special
-        self.use_think = use_think
-        self.use_undo = use_undo
         self.extra_special_tokens: list[str] = []
-        if self.use_special:
-            self.extra_special_tokens.append(DISSONANCE_TOKEN)
-        if self.use_think:
-            self.extra_special_tokens.append(THINK_TOKEN)
-        if self.use_undo:
-            self.extra_special_tokens.append(UNDO_TOKEN)
+        self.extra_special_tokens.append(THINK_TOKEN)
+        self.extra_special_tokens.append(UNDO_TOKEN)
         self.tokenizer = self._load_or_train(
             train_text,
             cache_path,
@@ -160,26 +148,15 @@ class GPT2TokenizerWrapper:
         )
         self.vocab_size = len(self.tokenizer)
         self.special_ids = set(self.tokenizer.all_special_ids)
-        self.dissonance_id = None
-        if self.use_special:
-            self.dissonance_id = self.tokenizer.convert_tokens_to_ids(DISSONANCE_TOKEN)
-            if self.dissonance_id is None:
-                raise ValueError("Failed to add dissonance token to tokenizer vocabulary")
-        self.think_id = None
-        if self.use_think:
-            self.think_id = self.tokenizer.convert_tokens_to_ids(THINK_TOKEN)
-            if self.think_id is None:
-                raise ValueError("Failed to add think token to tokenizer vocabulary")
-        self.undo_id = None
-        if self.use_undo:
-            self.undo_id = self.tokenizer.convert_tokens_to_ids(UNDO_TOKEN)
-            if self.undo_id is None:
-                raise ValueError("Failed to add undo token to tokenizer vocabulary")
+        self.think_id = self.tokenizer.convert_tokens_to_ids(THINK_TOKEN)
+        if self.think_id is None:
+            raise ValueError("Failed to add think token to tokenizer vocabulary")
+        self.undo_id = self.tokenizer.convert_tokens_to_ids(UNDO_TOKEN)
+        if self.undo_id is None:
+            raise ValueError("Failed to add undo token to tokenizer vocabulary")
         self.non_special_ids = [
             tok_id for tok_id in range(self.vocab_size) if tok_id not in self.special_ids
         ]
-        if self.use_special and not self.non_special_ids:
-            raise ValueError("Tokenizer has no non-special tokens for dissonance markers")
 
     def _load_or_train(
         self,
@@ -375,8 +352,6 @@ class ThinkSettings:
     @property
     def enabled(self) -> bool:
         return self.max_steps > 0 and self.token_id is not None
-
-
 @dataclass
 class UndoSettings:
     max_pairs: int = 0
@@ -390,28 +365,6 @@ class UndoSettings:
             and self.token_id is not None
             and bool(self.fill_choices)
         )
-
-
-def insert_dissonance_markers(
-    tokens: torch.Tensor,
-    non_special_ids: List[int],
-    marker_id: int,
-    rate: float,
-    rng: random.Random,
-) -> Tuple[torch.Tensor, int]:
-    if not (0.0 < rate < 1.0):
-        return tokens.clone(), 0
-    base = tokens.tolist()
-    augmented: List[int] = []
-    inserts = 0
-    for tok in base:
-        augmented.append(int(tok))
-        if rng.random() < rate:
-            filler = rng.choice(non_special_ids)
-            augmented.append(filler)
-            augmented.append(marker_id)
-            inserts += 1
-    return torch.tensor(augmented, dtype=torch.long), inserts
 
 
 def augment_training_batch(
@@ -599,7 +552,6 @@ def load_or_prepare_tokens(
     cache_path: pathlib.Path,
     tokenizer: GPT2TokenizerWrapper,
     seed: int,
-    use_special: bool,
 ) -> Tuple[torch.Tensor, str | None, int, int]:
     if cache_path.exists():
         payload = torch.load(cache_path)
@@ -622,16 +574,8 @@ def load_or_prepare_tokens(
     if not trimmed_text:
         raise ValueError(f"Text for {split} split is empty after applying character limit")
     tokens = tokenizer.encode_corpus(trimmed_text)
-    inserts = 0
-    if use_special:
-        tokens, inserts = insert_dissonance_markers(
-            tokens,
-            tokenizer.non_special_ids,
-            tokenizer.dissonance_id,
-            DISSONANCE_RATE,
-            random.Random(seed),
-        )
     bytes_count = len(trimmed_text.encode("utf-8"))
+    inserts = 0
     torch.save({"tokens": tokens, "bytes": bytes_count, "inserts": inserts}, cache_path)
     print(color_text(f"Saved {split} token cache to {cache_path}", Colors.YELLOW))
     return tokens, trimmed_text, bytes_count, inserts
@@ -1391,6 +1335,132 @@ def normalize_prompt(text: str) -> str:
     return text.replace(FANCY_SPACE, " ").replace(FANCY_ENTER, "\n")
 
 
+def load_checkpoint_payload(path: pathlib.Path, device: torch.device) -> tuple[dict, dict]:
+    payload = torch.load(path, map_location=device, weights_only=False)
+    if isinstance(payload, dict) and "model" in payload:
+        state = payload["model"]
+        meta = payload
+    else:
+        state = payload
+        meta = {}
+    return state, meta
+
+
+def count_layers_from_state(state: dict[str, torch.Tensor]) -> int:
+    pattern = re.compile(r"core\.blocks\.(\d+)\.")
+    max_idx = -1
+    for key in state.keys():
+        match = pattern.search(key)
+        if match:
+            idx = int(match.group(1))
+            if idx > max_idx:
+                max_idx = idx
+    return max_idx + 1
+
+
+def build_layer_mapping(
+    src_layers: int, dst_layers: int, new_layers: list[int], allow_trim: bool
+) -> dict[int, int | None]:
+    mapping: dict[int, int | None] = {}
+    if dst_layers > src_layers:
+        if not new_layers:
+            raise ValueError(
+                "--new-layers is required when increasing the layer count during import"
+            )
+        if len(new_layers) != dst_layers - src_layers:
+            raise ValueError("--new-layers must list exactly the new layer indices")
+        new_set = set(new_layers)
+        if any(idx < 0 or idx >= dst_layers for idx in new_set):
+            raise ValueError("--new-layers indices must fall within the layer range")
+        if len(new_set) != len(new_layers):
+            raise ValueError("--new-layers indices must be unique")
+        src_idx = 0
+        for dst_idx in range(dst_layers):
+            if dst_idx in new_set:
+                mapping[dst_idx] = None
+            else:
+                if src_idx >= src_layers:
+                    raise ValueError("Insufficient source layers for mapping")
+                mapping[dst_idx] = src_idx
+                src_idx += 1
+    else:
+        if dst_layers < src_layers and not allow_trim:
+            raise ValueError(
+                "Destination has fewer layers; rerun with --trim-model to allow trimming"
+            )
+        if new_layers:
+            raise ValueError("--new-layers only applies when adding layers")
+        for dst_idx in range(dst_layers):
+            mapping[dst_idx] = dst_idx
+    return mapping
+
+
+LAYER_PREFIXES = [
+    "core.blocks.",
+    "context.pre_norms.",
+    "context.context_sampler.",
+    "context.context_bias_gen.",
+]
+
+
+def _remap_key_for_layers(name: str, mapping: dict[int, int | None]) -> str | None:
+    for prefix in LAYER_PREFIXES:
+        pos = name.find(prefix)
+        if pos == -1:
+            continue
+        start = pos + len(prefix)
+        end = name.find(".", start)
+        if end == -1:
+            continue
+        idx = int(name[start:end])
+        mapped = mapping.get(idx)
+        if mapped is None:
+            return None
+        name = f"{name[:start]}{mapped}{name[end:]}"
+    return name
+
+
+def _copy_tensor_data(
+    dst: torch.Tensor, src: torch.Tensor, *, allow_trim: bool
+) -> torch.Tensor:
+    if dst.shape == src.shape:
+        return src.clone()
+    if dst.ndim != src.ndim:
+        raise ValueError("Cannot import parameters with different tensor ranks")
+    slices = []
+    for d, s in zip(dst.shape, src.shape):
+        if d < s and not allow_trim:
+            raise ValueError(
+                "Destination parameter is smaller; rerun with --trim-model to allow trimming"
+            )
+        slices.append(slice(0, min(d, s)))
+    result = dst.clone()
+    result[tuple(slices)] = src[tuple(slices)]
+    return result
+
+
+def apply_imported_state(
+    model: GRCEGPT,
+    source_state: dict[str, torch.Tensor],
+    *,
+    allow_trim: bool,
+    mapping: dict[int, int | None],
+) -> None:
+    dst_state = model.state_dict()
+    new_state: dict[str, torch.Tensor] = {}
+    for name, dst_tensor in dst_state.items():
+        remapped = _remap_key_for_layers(name, mapping)
+        if remapped is None:
+            new_state[name] = dst_tensor
+            continue
+        src_tensor = source_state.get(remapped)
+        if src_tensor is None:
+            new_state[name] = dst_tensor
+            continue
+        new_state[name] = _copy_tensor_data(dst_tensor, src_tensor, allow_trim=allow_trim)
+    model.load_state_dict(new_state)
+
+
 @torch.no_grad()
 def generate(
     model: GRCEGPT,
@@ -1642,25 +1712,53 @@ def parse_args() -> argparse.Namespace:
         help="Vocabulary size for the GPT-2 style byte-level BPE tokenizer.",
     )
     parser.add_argument(
-        "--special",
-        action="store_true",
-        help="Enable dissonance special tokens and insert markers into the dataset.",
-    )
-    parser.add_argument(
         "--debug-interrupt",
         action="store_true",
         help="If set, re-raise KeyboardInterrupt with a full stack trace.",
+    )
+    parser.add_argument(
+        "--import-model",
+        type=pathlib.Path,
+        help="Initialize from another checkpoint when creating a new model",
+    )
+    parser.add_argument(
+        "--trim-model",
+        action="store_true",
+        help="Allow importing into a smaller model by dropping overflow",
+    )
+    parser.add_argument(
+        "--new-layers",
+        type=str,
+        default="",
+        help="Comma-separated layer indices for newly added layers when importing",
     )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    if args.new_layers:
+        try:
+            args.new_layers = [int(part) for part in args.new_layers.split(",") if part]
+        except ValueError as exc:
+            raise ValueError("--new-layers must be a comma-separated list of integers") from exc
+    else:
+        args.new_layers = []
+    if args.new_layers and not args.import_model:
+        raise ValueError("--new-layers is only valid with --import-model")
+    if args.trim_model and not args.import_model:
+        raise ValueError("--trim-model is only valid with --import-model")
     args.prompt = normalize_prompt(args.prompt)
-    if args.think > 0:
-        args.prompt = args.prompt.replace(THINK_SYMBOL, THINK_TOKEN)
-    if args.undo > 0:
-        args.prompt = args.prompt.replace(UNDO_SYMBOL, UNDO_TOKEN)
+    args.prompt = args.prompt.replace(THINK_SYMBOL, THINK_TOKEN)
+    args.prompt = args.prompt.replace(UNDO_SYMBOL, UNDO_TOKEN)
+    if args.think == 0 and THINK_TOKEN in args.prompt:
+        raise ValueError(
+            "Prompt contains thinking tokens but --think is 0. Remove them or enable --think."
+        )
+    if args.undo == 0 and UNDO_TOKEN in args.prompt:
+        raise ValueError(
+            "Prompt contains undo tokens but --undo is 0. Remove them or enable --undo."
+        )
     torch.manual_seed(42)
     random.seed(42)
 
@@ -1680,16 +1778,13 @@ def main() -> None:
         def limit_label(value: int) -> str:
             return str(value if value > 0 else "all")
 
-        special_tag = "special" if args.special else "plain"
-        think_tag = "think" if args.think > 0 else "nothink"
-        undo_tag = "undo" if args.undo > 0 else "noundo"
         train_cache_path = (
             model_dir
-            / f"{args.data}_tokens_train_{limit_label(train_limit)}_{args.tokenizer_vocab}_{special_tag}_{think_tag}_{undo_tag}.pt"
+            / f"{args.data}_tokens_train_{limit_label(train_limit)}_{args.tokenizer_vocab}.pt"
         )
         test_cache_path = (
             model_dir
-            / f"{args.data}_tokens_test_{limit_label(test_limit)}_{args.tokenizer_vocab}_{special_tag}_{think_tag}_{undo_tag}.pt"
+            / f"{args.data}_tokens_test_{limit_label(test_limit)}_{args.tokenizer_vocab}.pt"
         )
 
         try:
@@ -1707,7 +1802,7 @@ def main() -> None:
             full_test_text = None
 
         tokenizer_key = (
-            f"{args.data}_vocab_{limit_label(tokenizer_limit)}_{args.tokenizer_vocab}_{special_tag}_{think_tag}_{undo_tag}"
+            f"{args.data}_vocab_{limit_label(tokenizer_limit)}_{args.tokenizer_vocab}"
         )
         tokenizer_path = model_dir / f"{tokenizer_key}.json"
         if not tokenizer_path.exists() and full_train_text is None:
@@ -1724,9 +1819,6 @@ def main() -> None:
             vocab_source,
             tokenizer_path,
             args.tokenizer_vocab,
-            args.special,
-            args.think > 0,
-            args.undo > 0,
         )
 
         newline_token_id = None
@@ -1753,7 +1845,6 @@ def main() -> None:
             train_cache_path,
             tokenizer,
             seed=1234,
-            use_special=args.special,
         )
 
         test_tokens, test_text, test_bytes, test_inserts = load_or_prepare_tokens(
@@ -1764,25 +1855,20 @@ def main() -> None:
             test_cache_path,
             tokenizer,
             seed=5678,
-            use_special=args.special,
         )
-        if args.special:
-            print(
-                color_text(
-                    (
-                        f"Dissonance injections (train/test): "
-                        f"{train_inserts}/{test_inserts} sequences"
-                    ),
-                    Colors.CYAN,
+
+        def ensure_token_absent(tensor: torch.Tensor, token_id: int, label: str, enabled: bool) -> None:
+            if enabled or token_id is None:
+                return
+            if (tensor == token_id).any().item():
+                raise ValueError(
+                    f"Training data includes {label} token but {label} mode is disabled."
                 )
-            )
-        else:
-            print(
-                color_text(
-                    "Special token insertions disabled (--special not set)",
-                    Colors.GRAY,
-                )
-            )
+
+        ensure_token_absent(train_tokens, tokenizer.think_id, "think", args.think > 0)
+        ensure_token_absent(test_tokens, tokenizer.think_id, "think", args.think > 0)
+        ensure_token_absent(train_tokens, tokenizer.undo_id, "undo", args.undo > 0)
+        ensure_token_absent(test_tokens, tokenizer.undo_id, "undo", args.undo > 0)
 
         if train_text is None and train_bytes == 0:
             train_bytes = len(train_tokens)  # fallback when text absent
@@ -1869,6 +1955,10 @@ def main() -> None:
         total_steps = 0
         loss_history: List[Dict[str, float]] = []
         if model_path.exists():
+            if args.import_model:
+                raise ValueError(
+                    "--import-model can only be used when no existing checkpoint is present"
+                )
             payload = torch.load(
                 model_path,
                 map_location=device,
@@ -1884,7 +1974,7 @@ def main() -> None:
                 else:
                     model.load_state_dict(payload)
                 print(color_text(f"Loaded existing model from {model_path}", Colors.YELLOW))
-                print(color_text(f"Total steps so far: {total_steps}", Colors.YELLOW))
+                print(color_text(f"Total training steps so far: {total_steps}", Colors.YELLOW))
             except RuntimeError as err:
                 print(
                     color_text(
@@ -1893,6 +1983,60 @@ def main() -> None:
                     )
                 )
                 print(color_text(str(err), Colors.GRAY))
+        elif args.import_model:
+            import_wall = time.time()
+            import_cpu = time.process_time()
+            if not args.import_model.exists():
+                raise FileNotFoundError(f"Import checkpoint {args.import_model} not found")
+            source_state, meta = load_checkpoint_payload(args.import_model, device)
+            src_config = meta.get("config")
+            if src_config is None:
+                raise ValueError(
+                    "Imported checkpoint lacks config metadata; re-save it with the new format"
+                )
+            if src_config.get("n_head") != config.n_head:
+                raise ValueError("Cannot import from a checkpoint with a different --n-head value")
+            src_layers = src_config.get("n_layer")
+            if src_layers is None:
+                src_layers = count_layers_from_state(source_state)
+            print(color_text(f"Importing weights from {args.import_model}", Colors.GREEN))
+            mapping = build_layer_mapping(
+                src_layers,
+                config.n_layer,
+                args.new_layers,
+                allow_trim=args.trim_model,
+            )
+            apply_imported_state(
+                model,
+                source_state,
+                allow_trim=args.trim_model,
+                mapping=mapping,
+            )
+            total_steps = int(meta.get("total_steps", 0))
+            loss_history = []
+            write_wall_start = time.time()
+            write_cpu_start = time.process_time()
+            torch.save(
+                {
+                    "model": model.state_dict(),
+                    "dataset": dataset.state_dict(),
+                    "total_steps": total_steps,
+                    "loss_history": loss_history,
+                    "config": asdict(config),
+                },
+                model_path,
+            )
+            write_wall = time.time() - write_wall_start
+            write_cpu = time.process_time() - write_cpu_start
+            import_wall = time.time() - import_wall
+            import_cpu = time.process_time() - import_cpu
+            print(
+                color_text(
+                    f"[import] total steps: {total_steps}; time spent: wall={import_wall:.2f}s cpu={import_cpu:.2f}s; writing model: wall={write_wall:.2f}s cpu={write_cpu:.2f}s",
+                    Colors.CYAN,
+                )
+            )
+            return
 
         if args.report_count > 0:
             run_report_mode(
@@ -1932,7 +2076,7 @@ def main() -> None:
             label = "".join(tags + plus_tags + minus_tags)
             print(
                 color_text(
-                    f"\n[{label}] Training Cycle {cycle}/{args.cycles}. Total steps so far: {total_steps}",
+                    f"\n[{label}] Training Cycle {cycle}/{args.cycles}. Total training steps so far: {total_steps}",
                     Colors.BLUE,
                 )
             )
@@ -1979,6 +2123,7 @@ def main() -> None:
                     "dataset": dataset.state_dict(),
                     "total_steps": total_steps,
                     "loss_history": loss_history,
+                    "config": asdict(config),
                 },
                 model_path,
             )
@@ -1990,7 +2135,7 @@ def main() -> None:
                 color_text(
                     f"[cycle {cycle}] total steps: {total_steps}; "
                     f"time spent: wall={train_wall:.2f}s cpu={train_cpu:.2f}s; "
-                    f"updated model: wall={save_wall:.2f}s cpu={save_cpu:.2f}s",
+                    f"writing model: wall={save_wall:.2f}s cpu={save_cpu:.2f}s",
                     Colors.CYAN,
                 )
             )
