@@ -1953,7 +1953,7 @@ def main() -> None:
             n_grce=args.n_grce,
             dropout=args.dropout,
             context_span=max(0, args.context_span),
-            context_dropout=max(0, args.grce_dropout),
+            context_dropout=1,
         )
         model_tag = build_model_tag(config)
         if args.think > 0:
