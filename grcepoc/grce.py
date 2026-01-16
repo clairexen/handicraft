@@ -1750,9 +1750,9 @@ def parse_args() -> argparse.Namespace:
         help="If set, re-raise KeyboardInterrupt with a full stack trace.",
     )
     parser.add_argument(
-        "--ansi",
+        "--no-ansi",
         action="store_true",
-        help="Write a parallel .ansi log that preserves ANSI color codes",
+        help="Suppress the parallel .ansi log (which preserves ANSI colors)",
     )
     parser.add_argument(
         "--import-model",
@@ -1986,7 +1986,7 @@ def main() -> None:
         log_file = log_path.open("a", encoding="utf-8")
         log_file.write(f"\n[{timestamp}] {cmdline}\n")
         log_file.flush()
-        if args.ansi:
+        if not args.no_ansi:
             ansi_path = log_path.with_suffix(".ansi")
             ansi_file = ansi_path.open("a", encoding="utf-8")
             ansi_file.write(f"\n[{timestamp}] {cmdline}\n")
