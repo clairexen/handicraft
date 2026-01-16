@@ -42,7 +42,8 @@ from transformers import GPT2TokenizerFast
 FANCY_SPACE = "\u2423"  # Open Box symbol for visible spaces
 FANCY_ENTER = "\u23CE"  # Return symbol for visible newlines
 THINK_TOKEN = "<think>"
-THINK_SYMBOL = "\u21BA"  # anticlockwise circle arrow
+THINK_SYMBOL = "\u2754"  # white question mark
+# THINK_SYMBOL = "\u21BA"  # anticlockwise circle arrow (alternative option)
 UNDO_TOKEN = "<undo>"
 UNDO_SYMBOL = "\u21A9"  # leftwards arrow with hook
 ASCII_LETTERS = set(string.ascii_letters)
