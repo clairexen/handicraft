@@ -1237,26 +1237,20 @@ def train_model(
                 "step": total_steps,
                 "train_loss": float(split_metrics["train"]["ce"]),
                 "train_target": float(split_metrics["train"]["learned"]),
-                "train_loss_learned": float(split_metrics["train"]["learned"]),
                 "train_loss_nogrce": float(split_metrics["train_nogrce"]["ce"]),
                 "train_target_nogrce": float(split_metrics["train_nogrce"]["learned"]),
-                "train_loss_nogrce_learned": float(split_metrics["train_nogrce"]["learned"]),
                 "test_loss": float(split_metrics["test"]["ce"]),
                 "test_target": float(split_metrics["test"]["learned"]),
-                "test_loss_learned": float(split_metrics["test"]["learned"]),
                 "test_loss_nogrce": float(split_metrics["test_nogrce"]["ce"]),
                 "test_target_nogrce": float(split_metrics["test_nogrce"]["learned"]),
-                "test_loss_nogrce_learned": float(split_metrics["test_nogrce"]["learned"]),
                 "train_wall_seconds": float(total_wall_seconds),
                 "unix_time": float(eval_now),
             }
             if "train_nothink" in split_metrics:
                 record["train_loss_nothink"] = float(split_metrics["train_nothink"]["ce"])
                 record["train_target_nothink"] = float(split_metrics["train_nothink"]["learned"])
-                record["train_loss_nothink_learned"] = float(split_metrics["train_nothink"]["learned"])
                 record["test_loss_nothink"] = float(split_metrics["test_nothink"]["ce"])
                 record["test_target_nothink"] = float(split_metrics["test_nothink"]["learned"])
-                record["test_loss_nothink_learned"] = float(split_metrics["test_nothink"]["learned"])
             history_updates.append(record)
     
     return total_steps, history_updates

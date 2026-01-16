@@ -4,12 +4,32 @@ from __future__ import annotations
 import argparse
 import pathlib
 from dataclasses import dataclass
-from typing import Iterable, List, Optional
+from typing import Dict, Iterable, List, Optional
 
 import json
 import re
 
 import matplotlib.pyplot as plt
+
+
+LEGACY_TARGET_FIELDS = {
+    "train_loss_learned": "train_target",
+    "train_loss_nogrce_learned": "train_target_nogrce",
+    "test_loss_learned": "test_target",
+    "test_loss_nogrce_learned": "test_target_nogrce",
+    "train_loss_nothink_learned": "train_target_nothink",
+    "test_loss_nothink_learned": "test_target_nothink",
+}
+
+
+def normalize_history_entry(entry: Dict[str, float]) -> Dict[str, float]:
+    normalized = dict(entry)
+    for legacy_key, new_key in LEGACY_TARGET_FIELDS.items():
+        if legacy_key in normalized:
+            if new_key not in normalized:
+                normalized[new_key] = normalized[legacy_key]
+            del normalized[legacy_key]
+    return normalized
 
 
 @dataclass
@@ -30,6 +50,7 @@ def load_records(pt_paths: Iterable[pathlib.Path]) -> List[LossRecord]:
             continue
         data = torch_load(pt_path)
         history = data.get("loss_history", []) if isinstance(data, dict) else []
+        history = [normalize_history_entry(item) if isinstance(item, dict) else item for item in history]
         if not history:
             continue
         steps = [int(item.get("step", i + 1)) for i, item in enumerate(history)]
