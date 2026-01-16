@@ -36,7 +36,7 @@ Ignoring embeddings and other lower-order pieces, two terms dominate:
 
 ## Think tokens
 
-The optional `--think N` mode lets the model reserve a special `<think>` token for internal reasoning bursts. Each batch is first processed without thinking tokens so we can score where the model most wants to emit `<think>`, then we grab the top `T+1` candidates, randomly remove *two* of them, and finally add a random position that wasn’t already in the set so we end up with `T≤N` insertions. This mix means the model still practices missing an “expected” think event, but now also experiences an “unexpected extra” think slot somewhere off the high-score path. Three loss terms are combined:
+The optional `--think N` mode lets the model reserve a special `<think>` token for internal reasoning bursts. Each batch is first processed without thinking tokens so we can score where the model most wants to emit `<think>`, then we grab the top `T+1` candidates, randomly remove *two* of them, and finally add a random position that wasn’t already in the set so we end up with `T≤N` insertions. This mix means the model still practices missing an “expected” think event, but now also experiences an “unexpected extra” think slot somewhere off the high-score path. A companion flag `--think-fraction F` (default `0.5`) limits which fraction of sequences in each batch even participate in thinking: we randomly select `F * batch_size` rows for the full think workflow and hard-mask the `<think>` logit everywhere else. Setting `--think-fraction 1.0` enables thinking in every training sequence, while `0.0` disables thinking entirely without removing the special token from the vocabulary, so runs can smoothly sweep how much of the batch carries the dual decoder objective. Three loss terms are combined:
 
 1. **Plain CE (the “nothink/ce” numbers):** standard next-token loss with `<think>` and undo fillers ignored; this stays comparable with non-think runs.
 2. **Think correctness penalty:** a binary loss that rewards thinking only when the following token is already predicted correctly, discouraging “think after a mistake” patterns.
@@ -50,7 +50,7 @@ Console logs now show `train loss (learned)` and `nogrce (learned)` where the va
 
 ## Running it
 Use `python grce.py --help` for CLI options. Main experiment:
-- `--think N` enables the above thinking-token workflow (set `--no-think` to keep sampling clean while still training with thinking tokens).
+- `--think N` enables the above thinking-token workflow (set `--no-think` to keep sampling clean while still training with thinking tokens). Combine with `--think-fraction F` to control what fraction of sequences per batch participate (default `0.5`; `1.0` enables thinking for all sequences, `0.0` disables it entirely).
 - `--undo N` inserts up to `N` random+undo pairs per block (filler loss ignored, undo enforced).
 - `--report-count N` skips training entirely, loads the latest checkpoint (if any), and prints `N` completions of the configured prompt.
 - `--no-newlines` keeps the sampler from emitting newline tokens so completions stay on one line.
@@ -99,3 +99,4 @@ done
   .venv/bin/python grce.py --device cpu --cycles 2 --steps 20 --block-size 16 --batch-size 4 --n-layer 2 --n-head 2 --n-embd 64 --n-grce 16 --context-span 4 --grce-dropout 20 --eval-interval 10 --eval-iters 1 --generate 5
   ```
   This fits in RAM and exercises the GRCE dropout path without a GPU.
+**Environment note:** always run tooling via `.venv/bin/python` (and related entrypoints) so the local dependencies are available; the system python lacks the required packages.

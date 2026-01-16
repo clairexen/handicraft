@@ -366,6 +366,11 @@ class TextDataset:
 class ThinkSettings:
     max_steps: int = 0
     token_id: int | None = None
+    fraction: float = 1.0
+
+    def __post_init__(self) -> None:
+        frac = 0.0 if self.fraction is None else float(self.fraction)
+        self.fraction = max(0.0, min(1.0, frac))
 
     @property
     def enabled(self) -> bool:
@@ -415,23 +420,40 @@ def augment_training_batch(
     targets: torch.Tensor,
     think: ThinkSettings | None,
     undo: UndoSettings | None,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
+) -> tuple[
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor | None,
+    torch.Tensor | None,
+    torch.Tensor | None,
+]:
     think_enabled = think is not None and think.enabled
     undo_enabled = undo is not None and undo.enabled
     if not think_enabled and not undo_enabled:
-        return inputs, targets, None, None
+        return inputs, targets, None, None, None
     B, block_size = inputs.shape
     device = inputs.device
     new_inputs = inputs.clone()
     new_targets = targets.clone()
     random_mask = None
     think_labels = None
+    think_slot_mask = None
     if undo_enabled:
         random_mask = torch.zeros_like(inputs, dtype=torch.bool, device=device)
     think_scores = None
     prev_mode = model.training
+    active_rows: set[int] = set()
     if think_enabled:
         think_labels = torch.full_like(inputs, -1)
+        think_slot_mask = torch.zeros_like(inputs, dtype=torch.bool, device=device)
+        allowed = int(round(think.fraction * B))
+        allowed = max(0, min(B, allowed))
+        if allowed == 0 and think.fraction > 0.0:
+            allowed = 1
+        if allowed > 0:
+            row_indices = list(range(B))
+            random.shuffle(row_indices)
+            active_rows = set(row_indices[:allowed])
         model.eval()
         with torch.no_grad():
             logits, _, _ = model.forward_autoreg(inputs)
@@ -439,8 +461,9 @@ def augment_training_batch(
         if prev_mode:
             model.train()
     for row in range(B):
+        row_think_active = think_enabled and row in active_rows
         max_insert_budget = block_size - 1
-        think_cap = think.max_steps if think_enabled else 0
+        think_cap = think.max_steps if row_think_active else 0
         think_cap = min(max_insert_budget, think_cap)
         think_count = random.randint(0, think_cap) if think_cap > 0 else 0
         remaining_budget = max_insert_budget - think_count
@@ -483,7 +506,7 @@ def augment_training_batch(
                     },
                 )
 
-        if think_enabled and think_count > 0 and think_scores is not None:
+        if row_think_active and think_count > 0 and think_scores is not None:
             scores = think_scores[row, :keep_len]
             if scores.numel() > 0:
                 picks = min(think_count + 1, scores.numel())
@@ -539,8 +562,33 @@ def augment_training_batch(
                 if entry.get("tag") == "think":
                     label = seq_entries[idx + 1]["token"]
                     think_labels[row, idx] = int(label)
+        if think_slot_mask is not None:
+            think_slot_mask[row].fill_(row_think_active)
 
-    return new_inputs, new_targets, random_mask, think_labels
+    return new_inputs, new_targets, random_mask, think_labels, think_slot_mask
+
+
+
+def apply_think_slot_mask(
+    logits: torch.Tensor,
+    think_slot_mask: torch.Tensor | None,
+    think: ThinkSettings | None,
+) -> torch.Tensor:
+    if (
+        think_slot_mask is None
+        or think is None
+        or not think.enabled
+        or think.token_id is None
+    ):
+        return logits
+    disable_mask = (~think_slot_mask).to(device=logits.device)
+    if not disable_mask.any():
+        return logits
+    logits[..., think.token_id] = logits[..., think.token_id].masked_fill(
+        disable_mask, -1e9
+    )
+    return logits
+
 
 
 def load_or_prepare_tokens(
@@ -944,7 +992,7 @@ def evaluate_split(
             dataset.get_batch(split, block_size, batch_size, device) for _ in range(iters)
         ]
     for xb, yb in batches:
-        aug_xb, aug_yb, random_mask, think_labels = augment_training_batch(
+        aug_xb, aug_yb, random_mask, think_labels, think_slot_mask = augment_training_batch(
             model,
             xb,
             yb,
@@ -955,6 +1003,7 @@ def evaluate_split(
             aug_xb,
             disable_context=disable_context,
         )
+        logits = apply_think_slot_mask(logits, think_slot_mask, think_settings)
         loss_targets = build_loss_targets(aug_yb, think_settings, random_mask)
         main_loss = F.cross_entropy(
             logits.view(-1, logits.size(-1)),
@@ -1024,7 +1073,7 @@ def train_model(
     show_learned_headers = think_enabled or undo_enabled
     for step in range(1, steps + 1):
         xb, yb = dataset.get_batch("train", block_size, batch_size, device)
-        xb, yb, random_mask, think_labels = augment_training_batch(
+        xb, yb, random_mask, think_labels, think_slot_mask = augment_training_batch(
             model,
             xb,
             yb,
@@ -1039,6 +1088,7 @@ def train_model(
             yb,
             drop_mask=drop_mask,
         )
+        logits = apply_think_slot_mask(logits, think_slot_mask, think_settings)
         logits_flat = logits.view(-1, logits.size(-1))
         loss_targets = build_loss_targets(yb, think_settings, random_mask)
         main_loss = F.cross_entropy(
@@ -1557,6 +1607,15 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--think-fraction",
+        type=float,
+        default=0.5,
+        help=(
+            "Fraction of sequences per batch (0-1) that participate in "
+            "thinking; 1.0 restores the previous behavior"
+        ),
+    )
+    parser.add_argument(
         "--undo",
         type=int,
         default=0,
@@ -1614,8 +1673,8 @@ def main() -> None:
             return str(value if value > 0 else "all")
 
         special_tag = "special" if args.special else "plain"
-        think_tag = f"think{args.think}" if args.think > 0 else "nothink"
-        undo_tag = f"undo{args.undo}" if args.undo > 0 else "noundo"
+        think_tag = "think" if args.think > 0 else "nothink"
+        undo_tag = "undo" if args.undo > 0 else "noundo"
         train_cache_path = (
             model_dir
             / f"{args.data}_tokens_train_{limit_label(train_limit)}_{args.tokenizer_vocab}_{special_tag}_{think_tag}_{undo_tag}.pt"
@@ -1667,7 +1726,11 @@ def main() -> None:
         if newline_tokens:
             newline_token_id = newline_tokens[0]
 
-        think_settings = ThinkSettings(max_steps=args.think, token_id=tokenizer.think_id)
+        think_settings = ThinkSettings(
+            max_steps=args.think,
+            token_id=tokenizer.think_id,
+            fraction=args.think_fraction,
+        )
         undo_settings = UndoSettings(
             max_pairs=args.undo,
             token_id=tokenizer.undo_id,
