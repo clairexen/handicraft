@@ -1211,7 +1211,7 @@ def train_model(
                 test_parts.append(format_metric("test_nothink"))
             test_values = "  ".join(test_parts)
             line = (
-                color_text(f"{total_steps:06d}", Colors.CYAN)
+                color_text(f"{total_steps}", Colors.CYAN)
                 + " | "
                 + color_text(train_values, Colors.GREEN)
                 + " | "
