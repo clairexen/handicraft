@@ -393,9 +393,17 @@ def augment_training_batch(
     think_slot_mask = None
     if undo_enabled:
         random_mask = torch.zeros_like(inputs, dtype=torch.bool, device=device)
-    think_scores = None
-    prev_mode = model.training
     active_rows: set[int] = set()
+    full_logits = None
+    prev_mode = model.training
+    need_logits = think_enabled or undo_enabled
+    if need_logits:
+        model.eval()
+        with torch.no_grad():
+            full_logits, _, _ = model.forward_autoreg(inputs)
+    if prev_mode and need_logits:
+        model.train()
+    think_scores = None
     if think_enabled:
         think_labels = torch.full_like(inputs, -1)
         think_slot_mask = torch.zeros_like(inputs, dtype=torch.bool, device=device)
@@ -407,12 +415,8 @@ def augment_training_batch(
             row_indices = list(range(B))
             random.shuffle(row_indices)
             active_rows = set(row_indices[:allowed])
-        model.eval()
-        with torch.no_grad():
-            logits, _, _ = model.forward_autoreg(inputs)
-            think_scores = logits[..., think.token_id]
-        if prev_mode:
-            model.train()
+        if full_logits is not None and think is not None and think.token_id is not None:
+            think_scores = full_logits[..., think.token_id]
     for row in range(B):
         row_think_active = think_enabled and row in active_rows
         max_insert_budget = block_size - 1
@@ -440,10 +444,20 @@ def augment_training_batch(
         seq_entries.append({"token": tail_token, "tag": "base", "base_index": None})
 
         if undo_enabled and undo_pairs > 0:
-            if not undo.fill_choices:
-                raise ValueError("Undo mode requires non-empty filler token choices")
+            row_logits = full_logits[row] if full_logits is not None else None
             for _ in range(undo_pairs):
-                filler = int(random.choice(undo.fill_choices))
+                insert_limit = max(0, len(seq_entries) - 1)
+                insert_pos = random.randint(0, insert_limit)
+                base_idx = seq_entries[insert_pos]["base_index"]
+                if row_logits is None:
+                    raise ValueError("Undo logits unavailable during augmentation")
+                prob_vec = row_logits[-1] if base_idx is None else row_logits[base_idx]
+                probs = F.softmax(prob_vec, dim=-1)
+                true_token = int(seq_entries[insert_pos]["token"])
+                probs = probs.clone()
+                probs[true_token] = 0.0
+                probs = probs / probs.sum()
+                filler = int(torch.multinomial(probs, num_samples=1).item())
                 insert_limit = max(0, len(seq_entries) - 1)
                 insert_pos = random.randint(0, insert_limit)
                 seq_entries.insert(
@@ -1863,7 +1877,7 @@ def main() -> None:
         undo_settings = UndoSettings(
             max_pairs=args.undo,
             token_id=tokenizer.undo_id,
-            fill_choices=tokenizer.non_special_ids,
+            fill_choices=[],
         )
 
         train_tokens, train_text, train_bytes, train_inserts = load_or_prepare_tokens(
