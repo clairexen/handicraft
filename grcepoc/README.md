@@ -36,7 +36,7 @@ Ignoring embeddings and other lower-order pieces, two terms dominate:
 
 ## Think tokens
 
-The optional `--think N` mode lets the model reserve a special `<think>` token for internal reasoning bursts. Each batch is first processed without thinking tokens so we can score where the model most wants to emit `<think>`, then we grab the top `T+1` candidates and drop one at random before inserting the remaining `T≤N` positions. This “T+1 then drop” trick keeps the network from always choosing the exact same slots while still biasing toward high-value positions. Three loss terms are combined:
+The optional `--think N` mode lets the model reserve a special `<think>` token for internal reasoning bursts. Each batch is first processed without thinking tokens so we can score where the model most wants to emit `<think>`, then we grab the top `T+1` candidates, randomly remove *two* of them, and finally add a random position that wasn’t already in the set so we end up with `T≤N` insertions. This mix means the model still practices missing an “expected” think event, but now also experiences an “unexpected extra” think slot somewhere off the high-score path. Three loss terms are combined:
 
 1. **Plain CE (the “nothink/ce” numbers):** standard next-token loss with `<think>` and undo fillers ignored; this stays comparable with non-think runs.
 2. **Think correctness penalty:** a binary loss that rewards thinking only when the following token is already predicted correctly, discouraging “think after a mistake” patterns.

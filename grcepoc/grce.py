@@ -488,10 +488,25 @@ def augment_training_batch(
             if scores.numel() > 0:
                 picks = min(think_count + 1, scores.numel())
                 topk = torch.topk(scores, picks).indices.tolist()
-                if len(topk) > think_count:
-                    drop_idx = random.randrange(len(topk))
-                    topk.pop(drop_idx)
-                for pos in topk:
+                selected_positions = topk[:]
+                drop_total = min(2, len(selected_positions))
+                if drop_total > 0:
+                    drop_choices = sorted(
+                        random.sample(range(len(selected_positions)), k=drop_total), reverse=True
+                    )
+                    for idx in drop_choices:
+                        selected_positions.pop(idx)
+                selected_positions = selected_positions[:think_count]
+                needed = max(0, think_count - len(selected_positions))
+                if needed > 0:
+                    selected_set = set(selected_positions)
+                    remaining_positions = [
+                        pos for pos in range(keep_len) if pos not in selected_set
+                    ]
+                    random.shuffle(remaining_positions)
+                    selected_positions.extend(remaining_positions[:needed])
+                random.shuffle(selected_positions)
+                for pos in selected_positions:
                     insert_idx = None
                     for idx, entry in enumerate(seq_entries):
                         if entry.get("base_index") == pos:
