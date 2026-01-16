@@ -17,18 +17,29 @@ LEGACY_TARGET_FIELDS = {
     "train_loss_nogrce_learned": "train_target_nogrce",
     "test_loss_learned": "test_target",
     "test_loss_nogrce_learned": "test_target_nogrce",
-    "train_loss_nothink_learned": "train_target_nothink",
-    "test_loss_nothink_learned": "test_target_nothink",
+}
+
+LEGACY_PLAIN_FIELDS = {
+    "train_loss_nothink": "train_loss_plain",
+    "test_loss_nothink": "test_loss_plain",
+    "train_loss_nothink_learned": "train_target",
+    "test_loss_nothink_learned": "test_target",
 }
 
 
 def normalize_history_entry(entry: Dict[str, float]) -> Dict[str, float]:
     normalized = dict(entry)
-    for legacy_key, new_key in LEGACY_TARGET_FIELDS.items():
-        if legacy_key in normalized:
+
+    def apply_aliases(mapping: Dict[str, str]) -> None:
+        for legacy_key, new_key in mapping.items():
+            if legacy_key not in normalized:
+                continue
+            value = normalized.pop(legacy_key)
             if new_key not in normalized:
-                normalized[new_key] = normalized[legacy_key]
-            del normalized[legacy_key]
+                normalized[new_key] = value
+
+    apply_aliases(LEGACY_TARGET_FIELDS)
+    apply_aliases(LEGACY_PLAIN_FIELDS)
     return normalized
 
 

@@ -1247,10 +1247,8 @@ def train_model(
                 "unix_time": float(eval_now),
             }
             if "train_nothink" in split_metrics:
-                record["train_loss_nothink"] = float(split_metrics["train_nothink"]["ce"])
-                record["train_target_nothink"] = float(split_metrics["train_nothink"]["learned"])
-                record["test_loss_nothink"] = float(split_metrics["test_nothink"]["ce"])
-                record["test_target_nothink"] = float(split_metrics["test_nothink"]["learned"])
+                record["train_loss_plain"] = float(split_metrics["train_nothink"]["ce"])
+                record["test_loss_plain"] = float(split_metrics["test_nothink"]["ce"])
             history_updates.append(record)
     
     return total_steps, history_updates
