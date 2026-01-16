@@ -2201,6 +2201,8 @@ def main() -> None:
             )
             if log_file is not None:
                 log_file.flush()
+            if ansi_file is not None:
+                ansi_file.flush()
             save_wall = time.time() - save_wall_start
             save_cpu = time.process_time() - save_cpu_start
             print(
