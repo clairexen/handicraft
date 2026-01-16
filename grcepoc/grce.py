@@ -1216,13 +1216,25 @@ def train_model(
                 print(header_line)
                 printed_header = True
 
+            hidden_learned_warning_emitted = False
+
             def format_metric(key: str) -> str:
+                nonlocal hidden_learned_warning_emitted
                 metric = split_metrics[key]
                 ce_val = metric["ce"]
                 learned_val = metric["learned"]
-                if abs(learned_val - ce_val) < 1e-6:
-                    return f"{ce_val:.2f}"
-                return f"{ce_val:.2f} ({learned_val:.2f})"
+                differs = abs(learned_val - ce_val) >= 1e-6
+                if not show_learned_headers and differs and not hidden_learned_warning_emitted:
+                    print(
+                        color_text(
+                            "warning: learned values differ but learned columns are hidden",
+                            Colors.YELLOW,
+                        )
+                    )
+                    hidden_learned_warning_emitted = True
+                if show_learned_headers:
+                    return f"{ce_val:.2f} ({learned_val:.2f})"
+                return f"{ce_val:.2f}"
 
             train_parts = [
                 format_metric("train"),
