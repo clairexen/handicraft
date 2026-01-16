@@ -1595,6 +1595,12 @@ def parse_args() -> argparse.Namespace:
         default="simplewiki",
         help="Dataset base name; expects data/<name>-train.txt.gz and ...-test.txt.gz.",
     )
+    parser.add_argument(
+        "--data",
+        type=str,
+        default="data",
+        help="Directory containing <corpus>-train.txt.gz and <corpus>-test.txt.gz",
+    )
     parser.add_argument("--device", type=str, default="cuda", help="cpu or cuda")
     parser.add_argument("--steps", type=int, default=100, help="Training steps per cycle")
     parser.add_argument(
@@ -1762,6 +1768,12 @@ def parse_args() -> argparse.Namespace:
         help="Vocabulary size for the GPT-2 style byte-level BPE tokenizer.",
     )
     parser.add_argument(
+        "--model",
+        type=str,
+        default="model",
+        help="Directory where checkpoints/logs/tokenizers are stored",
+    )
+    parser.add_argument(
         "--debug-interrupt",
         action="store_true",
         help="If set, re-raise KeyboardInterrupt with a full stack trace.",
@@ -1831,14 +1843,15 @@ def main() -> None:
     try:
         orig_stdout, orig_stderr, log_file = sys.stdout, sys.stderr, None
 
-        train_path = pathlib.Path("data") / f"{args.corpus}-train.txt.gz"
-        test_path = pathlib.Path("data") / f"{args.corpus}-test.txt.gz"
+        data_dir = pathlib.Path(args.data)
+        train_path = data_dir / f"{args.corpus}-train.txt.gz"
+        test_path = data_dir / f"{args.corpus}-test.txt.gz"
         train_limit = parse_char_arg(args.train_chars)
         test_limit = parse_char_arg(args.test_chars)
         vocab_limit = parse_char_arg(args.vocab_chars)
         tokenizer_limit = parse_char_arg(args.vocab_chars or args.train_chars)
 
-        model_dir = pathlib.Path("model")
+        model_dir = pathlib.Path(args.model)
         model_dir.mkdir(parents=True, exist_ok=True)
 
         def limit_label(value: int) -> str:

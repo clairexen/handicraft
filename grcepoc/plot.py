@@ -183,12 +183,17 @@ def parse_args() -> argparse.Namespace:
         default=1.0,
         help="Scale the Y-axis of traces whose model name includes _thinkN by this factor",
     )
+    parser.add_argument(
+        "--model",
+        type=pathlib.Path,
+        default=pathlib.Path("model"),
+        help="Directory containing model checkpoints",
+    )
     return parser.parse_args()
 
-def discover_paths(explicit: List[pathlib.Path]) -> List[pathlib.Path]:
+def discover_paths(explicit: List[pathlib.Path], model_dir: pathlib.Path) -> List[pathlib.Path]:
     if explicit:
         return explicit
-    model_dir = pathlib.Path("model")
     return sorted(model_dir.glob("*.pt"))
 
 
@@ -197,7 +202,7 @@ def main() -> None:
     if args.stored:
         records = load_store(args.stored)
     else:
-        pt_paths = discover_paths(args.paths)
+        pt_paths = discover_paths(args.paths, args.model)
         records = load_records(pt_paths)
         if not records and args.store and args.store.exists():
             records = load_store(args.store)

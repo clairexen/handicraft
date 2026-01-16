@@ -58,6 +58,8 @@ Call `grce.py --help` for the full CLI. In all examples below we assume a virtua
 
 Key switches:
 - `--think N` enables the above thinking-token workflow (set `--no-think` to keep sampling clean while still training with thinking tokens). Combine with `--think-fraction F` to control what fraction of sequences per batch participate (default `0.5`; `1.0` enables thinking for all sequences, `0.0` disables it entirely). Think tokens (and undo tokens) always live in the tokenizer/embedding space, so you can import/export checkpoints between think/non-think runs without remapping vocabularies.
+- `--corpus NAME` chooses which `<NAME>-train.txt.gz` / `<NAME>-test.txt.gz` split to load from the `--data DIR` directory (default `data/`).
+- `--model DIR` selects where checkpoints, logs, and tokenizer caches live (default `model/`).
 - `--import-model some.pt` seeds a new run from an existing checkpoint. Use `--drop-layers i,j,...` to delete specific source layers (1-indexed) and `--add-layers i,j,...` to specify where new randomly initialized layers should be inserted so the total matches the new `--n-layer`. `--trim-model` lets you shrink other tensor dimensions (embedding width, vocab, etc.) while copying whatever fits. The importer enforces that the number of attention heads (`--n-head`) stays the same and that every overlapping tensor slice lines up, carries over the total step counter, and writes a fresh `.pt` with an empty loss history.
 - `--undo N` inserts up to `N` random+undo pairs per block (filler loss ignored, undo enforced).
 - `--report-count N` skips training entirely, loads the latest checkpoint (if any), and prints `N` completions of the configured prompt.
