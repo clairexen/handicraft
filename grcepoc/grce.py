@@ -3,7 +3,7 @@ it to base it loosely the picoGPT.
 
 This script keeps the picoGPT spirit of being small and hackable while
 adding the Gradient-limited Recurrent Context Encoding (GRCE) channel described in
-``grce.md``. It trains a tiny character-level Transformer on the bundled
+the README. It trains a tiny GPT-style tokenizer-backed Transformer on the bundled
 Simple English Wikipedia split and shows how the recurrent context vector can
 be integrated with a configurable gradient-limiting constraint across time.
 """
@@ -1518,6 +1518,12 @@ def parse_args() -> argparse.Namespace:
         help="Detach GRCE context gradients every N positions (0 disables detaching).",
     )
     parser.add_argument(
+        "--grce-dropout",
+        type=int,
+        default=1,
+        help="Target roughly N GRCE dropouts per block (0 disables)",
+    )
+    parser.add_argument(
         "--dropout",
         type=float,
         default=defaults.dropout,
@@ -1584,12 +1590,6 @@ def parse_args() -> argparse.Namespace:
         "--think-hard",
         action="store_true",
         help="While processing the prompt, insert thinking tokens after every mispredicted token",
-    )
-    parser.add_argument(
-        "--grce-dropout",
-        type=int,
-        default=0,
-        help="Target roughly N GRCE dropouts per block (0 disables)",
     )
     parser.add_argument(
         "--think",
