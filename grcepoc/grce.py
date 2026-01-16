@@ -871,10 +871,6 @@ def build_model_tag(config: ModelConfig) -> str:
         f"v{config.vocab_size}_bs{config.block_size}_emb{config.n_embd}_"
         f"layers{config.n_layer}_heads{config.n_head}_ctx{config.n_grce}"
     )
-    if config.n_grce > 0:
-        tag += f"_span{config.context_span}"
-        if config.context_dropout > 0:
-            tag += f"_drop{config.context_dropout}"
     return tag
 
 
@@ -1244,7 +1240,7 @@ def train_model(
                 test_parts.append(format_metric("test_nothink"))
             test_values = "  ".join(test_parts)
             line = (
-                color_text(f"{step:04d}", Colors.CYAN)
+                color_text(f"{total_steps:06d}", Colors.CYAN)
                 + " | "
                 + color_text(train_values, Colors.GREEN)
                 + " | "
@@ -1616,6 +1612,12 @@ def parse_args() -> argparse.Namespace:
         help="Enable undo pairs with up to N random+undo sequences per block",
     )
     parser.add_argument(
+        "--tag",
+        action="append",
+        default=[],
+        help="Append an extra _TAG suffix to the model name (can be repeated)",
+    )
+    parser.add_argument(
         "--prompt",
         type=str,
         default="ai will",
@@ -1807,10 +1809,15 @@ def main() -> None:
             model_tag += f"_think{args.think}"
         if args.undo > 0:
             model_tag += f"_undo{args.undo}"
+        for extra_tag in args.tag:
+            cleaned = re.sub(r"[^0-9A-Za-z]+", "", extra_tag)
+            if cleaned:
+                model_tag += f"_{cleaned}"
         prefix = f"{args.data}_model_"
         model_path = model_dir / f"{prefix}{model_tag}.pt"
         log_path = model_dir / f"{prefix}{model_tag}.log"
         print(color_text(f"Model: {model_path}", Colors.BLUE))
+        print(color_text(f"Logfile: {log_path}", Colors.BLUE))
         temp_model = GRCEGPT(config)
         non_emb_params = sum(
             p.numel()
@@ -1911,7 +1918,12 @@ def main() -> None:
             else:
                 minus_tags.append(" wo/UNDO")
             label = "".join(tags + plus_tags + minus_tags)
-            print(color_text(f"\n[{label}] Training Cycle {cycle}/{args.cycles} ...", Colors.BLUE))
+            print(
+                color_text(
+                    f"\n[{label}] Training Cycle {cycle}/{args.cycles}. Total steps so far: {total_steps}",
+                    Colors.BLUE,
+                )
+            )
             train_chars_cycle = (args.block_size + 1) * args.batch_size * args.steps
             test_chars_cycle = (
                 (args.block_size + 1)
@@ -1943,8 +1955,12 @@ def main() -> None:
                 undo_settings=undo_settings,
             )
             loss_history.extend(updates)
-            print(color_text(f"Total steps so far: {total_steps}", Colors.YELLOW))
 
+            train_wall = time.time() - cycle_wall
+            train_cpu = time.process_time() - cycle_cpu
+
+            save_wall_start = time.time()
+            save_cpu_start = time.process_time()
             torch.save(
                 {
                     "model": model.state_dict(),
@@ -1956,13 +1972,14 @@ def main() -> None:
             )
             if log_file is not None:
                 log_file.flush()
-            print(color_text(f"Saved model to {model_path}", Colors.GREEN))
-            cycle_elapsed_wall = time.time() - cycle_wall
-            cycle_elapsed_cpu = time.process_time() - cycle_cpu
+            save_wall = time.time() - save_wall_start
+            save_cpu = time.process_time() - save_cpu_start
             print(
                 color_text(
-                    f"[cycle {cycle}] wall={cycle_elapsed_wall:.2f}s cpu={cycle_elapsed_cpu:.2f}s",
-                    Colors.GRAY,
+                    f"[cycle {cycle}] total steps: {total_steps}; "
+                    f"time spent: wall={train_wall:.2f}s cpu={train_cpu:.2f}s; "
+                    f"updated model: wall={save_wall:.2f}s cpu={save_cpu:.2f}s",
+                    Colors.CYAN,
                 )
             )
 
