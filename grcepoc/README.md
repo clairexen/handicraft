@@ -49,7 +49,10 @@ Console logs now show `train loss (learned)` and `nogrce (learned)` where the va
 `--undo N` injects up to `U≤N` *undo pairs* into every training block. Each pair contributes a random filler token immediately followed by a dedicated `<undo>` marker (rendered as `↩` in the logs). We shorten the base chunk to `block_size - T - 2U` tokens so the augmented sample still fits the configured block size, splice the undo pairs in sequence (allowing nesting when a later pair lands inside an earlier one), and only then insert the `T` think tokens. During loss computation the filler tokens are ignored entirely, while the `<undo>` tokens are enforced like any other label so the model learns to clean up after each random detour. Undo pairs stay in-place for all evaluations, keeping the reported losses comparable to standard runs while giving the sampler a reversible scratch pad it can lean on during training.
 
 ## Running grce.py
-Use `--help` for CLI options. Main experiment:
+
+Call `grce.py --help` for the full CLI. In all examples below we assume a virtual environment at `.venv/`; overriding the interpreter is as simple as exporting `$PYTHON`, since every snippet uses `${PYTHON:-.venv/bin/python}`.
+
+Key switches:
 - `--think N` enables the above thinking-token workflow (set `--no-think` to keep sampling clean while still training with thinking tokens). Combine with `--think-fraction F` to control what fraction of sequences per batch participate (default `0.5`; `1.0` enables thinking for all sequences, `0.0` disables it entirely). Think tokens (and undo tokens) always live in the tokenizer/embedding space, so you can import/export checkpoints between think/non-think runs without remapping vocabularies.
 - `--import-model some.pt` seeds a new run from an existing checkpoint. Use `--drop-layers i,j,...` to delete specific source layers (1-indexed) and `--add-layers i,j,...` to specify where new randomly initialized layers should be inserted so the total matches the new `--n-layer`. `--trim-model` lets you shrink other tensor dimensions (embedding width, vocab, etc.) while copying whatever fits. The importer enforces that the number of attention heads (`--n-head`) stays the same and that every overlapping tensor slice lines up, carries over the total step counter, and writes a fresh `.pt` with an empty loss history.
 - `--undo N` inserts up to `N` random+undo pairs per block (filler loss ignored, undo enforced).
@@ -62,40 +65,38 @@ Every evaluation logs both GRCE-enabled and GRCE-disabled losses, and `plot.py` 
 
 For postprocessing, run for example `plot.py --avg-span --no-nogrce --store span_avg.json --store-only` and feed that JSON into your analysis scripts.
 
-### Experiment #1
+## Example training sweeps
 
-This experiment demonstrates two claims:
-- First, we show that the added GRCE path has a positive impact on the model. Adding even a narrow GRCE path does improves performance.
-- Second, we show that --context-span has almost no impact on training losses, demonstrating the inherent "gradient-limited" properties of the GRCE path.
+Below are two quick sweeps you can adapt. Both snippets assume a shell where `${PYTHON:-.venv/bin/python}` resolves to your preferred interpreter.
 
-```
-time bash -exc '
-for cy in 2 3 5 10 10 20; do
+1. **GRCE vs span variants.** Demonstrates the benefit of the GRCE path and the weak dependence on `--context-span`.
+
+    ```bash
+    time bash -exc '
+    for cy in 2 3 5 10 10 20; do
 	${PYTHON:-.venv/bin/python} grce.py --cycles $cy --context-span 0
 	${PYTHON:-.venv/bin/python} grce.py --cycles $cy --context-span 1
 	${PYTHON:-.venv/bin/python} grce.py --cycles $cy --context-span 2
 	${PYTHON:-.venv/bin/python} grce.py --cycles $cy --context-span 3
 	${PYTHON:-.venv/bin/python} grce.py --cycles $cy --n-grce 0
-done
-'
-```
+    done
+    '
+    ```
 
-### Experiment #2
+2. **Think vs non-think.** Compares the base model to a run with thinking tokens enabled.
 
-This experiment compares the regular GRCE model with one that has support for emitting thinking tokens.
-
-```
-time bash -exc '
-for cy in 2 3 5 10 10 20 20 30; do
+    ```bash
+    time bash -exc '
+    for cy in 2 3 5 10 10 20 20 30; do
 	${PYTHON:-.venv/bin/python} grce.py --cycles $cy
 	${PYTHON:-.venv/bin/python} grce.py --cycles $cy --think 10
-done
-'
-```
+    done
+    '
+    ```
 
 ## Dev notes & agent cheat sheet
 
-(pretty much all code in this repo is ai-generated. but of course only under my strong supervision.. ~Claire ;)
+(Pretty much all code in this repo is AI-generated—but under strong human supervision. ~Claire)
 
 - **Project focus:** Gradient-limited Recurrent Context Encoding (GRCE) atop a picoGPT-style SimpleWiki language model.
 - **Model defaults:** `n_layer=8`, `n_head=8`, `n_embd=192`, `n_grce=96`, `block_size=64`, `dropout=0.05`, `vocab_size=2000`.
