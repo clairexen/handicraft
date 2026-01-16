@@ -1013,7 +1013,7 @@ def train_model(
     think_enabled = think_settings is not None and think_settings.enabled
     undo_enabled = undo_settings is not None and undo_settings.enabled
     show_think_columns = think_enabled
-    show_learned_headers = think_enabled or undo_enabled
+    show_target_headers = think_enabled or undo_enabled
     for step in range(1, steps + 1):
         xb, yb = dataset.get_batch("train", block_size, batch_size, device)
         disable_rows = set()
@@ -1156,9 +1156,9 @@ def train_model(
             )
             colored_sample = prefix_text + completion_text
             if not printed_header:
-                if show_learned_headers:
-                    train_header = "train loss (learned)  nogrce (learned)"
-                    test_header = "test loss (learned)  nogrce (learned)"
+                if show_target_headers:
+                    train_header = "train loss (target)  nogrce (target)"
+                    test_header = "test loss (target)  nogrce (target)"
                 else:
                     train_header = "train loss  nogrce"
                     test_header = "test loss  nogrce"
@@ -1176,29 +1176,29 @@ def train_model(
                 print(header_line)
                 printed_header = True
 
-            hidden_learned_warning_emitted = False
+            hidden_target_warning_emitted = False
 
-            def format_metric(key: str, *, include_learned: bool = True) -> str:
-                nonlocal hidden_learned_warning_emitted
+            def format_metric(key: str, *, include_target: bool = True) -> str:
+                nonlocal hidden_target_warning_emitted
                 metric = split_metrics[key]
                 ce_val = metric["ce"]
-                learned_val = metric["learned"]
-                differs = abs(learned_val - ce_val) >= 1e-6
+                target_val = metric["learned"]
+                differs = abs(target_val - ce_val) >= 1e-6
                 if (
-                    not show_learned_headers
+                    not show_target_headers
                     and differs
-                    and not hidden_learned_warning_emitted
-                    and include_learned
+                    and not hidden_target_warning_emitted
+                    and include_target
                 ):
                     print(
                         color_text(
-                            "warning: learned values differ but learned columns are hidden",
+                            "warning: target values differ but target columns are hidden",
                             Colors.YELLOW,
                         )
                     )
-                    hidden_learned_warning_emitted = True
-                if show_learned_headers and include_learned:
-                    return f"{ce_val:.2f} ({learned_val:.2f})"
+                    hidden_target_warning_emitted = True
+                if show_target_headers and include_target:
+                    return f"{ce_val:.2f} ({target_val:.2f})"
                 return f"{ce_val:.2f}"
 
             train_parts = [
@@ -1206,7 +1206,7 @@ def train_model(
                 format_metric("train_nogrce"),
             ]
             if show_think_columns:
-                train_parts.append(format_metric("train_nothink", include_learned=False))
+                train_parts.append(format_metric("train_nothink", include_target=False))
             train_values = "  ".join(train_parts)
 
             test_parts = [
@@ -1214,7 +1214,7 @@ def train_model(
                 format_metric("test_nogrce"),
             ]
             if show_think_columns:
-                test_parts.append(format_metric("test_nothink", include_learned=False))
+                test_parts.append(format_metric("test_nothink", include_target=False))
             test_values = "  ".join(test_parts)
             line = (
                 color_text(f"{total_steps}", Colors.CYAN)
@@ -1229,23 +1229,25 @@ def train_model(
             record = {
                 "step": total_steps,
                 "train_loss": float(split_metrics["train"]["ce"]),
+                "train_target": float(split_metrics["train"]["learned"]),
                 "train_loss_learned": float(split_metrics["train"]["learned"]),
                 "train_loss_nogrce": float(split_metrics["train_nogrce"]["ce"]),
+                "train_target_nogrce": float(split_metrics["train_nogrce"]["learned"]),
                 "train_loss_nogrce_learned": float(split_metrics["train_nogrce"]["learned"]),
                 "test_loss": float(split_metrics["test"]["ce"]),
+                "test_target": float(split_metrics["test"]["learned"]),
                 "test_loss_learned": float(split_metrics["test"]["learned"]),
                 "test_loss_nogrce": float(split_metrics["test_nogrce"]["ce"]),
+                "test_target_nogrce": float(split_metrics["test_nogrce"]["learned"]),
                 "test_loss_nogrce_learned": float(split_metrics["test_nogrce"]["learned"]),
             }
             if "train_nothink" in split_metrics:
                 record["train_loss_nothink"] = float(split_metrics["train_nothink"]["ce"])
-                record["train_loss_nothink_learned"] = float(
-                    split_metrics["train_nothink"]["learned"]
-                )
+                record["train_target_nothink"] = float(split_metrics["train_nothink"]["learned"])
+                record["train_loss_nothink_learned"] = float(split_metrics["train_nothink"]["learned"])
                 record["test_loss_nothink"] = float(split_metrics["test_nothink"]["ce"])
-                record["test_loss_nothink_learned"] = float(
-                    split_metrics["test_nothink"]["learned"]
-                )
+                record["test_target_nothink"] = float(split_metrics["test_nothink"]["learned"])
+                record["test_loss_nothink_learned"] = float(split_metrics["test_nothink"]["learned"])
             history_updates.append(record)
     
     return total_steps, history_updates
