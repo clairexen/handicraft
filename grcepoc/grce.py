@@ -2511,14 +2511,16 @@ def main() -> None:
             )
             try:
                 if isinstance(payload, dict) and "model" in payload:
-                    model.load_state_dict(payload["model"])
+                    upgraded = upgrade_state_dict(payload["model"])
+                    payload["model"] = upgraded
+                    model.load_state_dict(upgraded)
                     if "dataset" in payload:
                         dataset.load_state(payload["dataset"])
                     total_steps = int(payload.get("total_steps", 0))
                     loss_history = list(payload.get("loss_history", []))
                     total_train_wall = float(payload.get("train_wall_seconds", 0.0))
                 else:
-                    model.load_state_dict(payload)
+                    model.load_state_dict(upgrade_state_dict(payload))
                 print(color_text(f"Loaded existing model from {model_path}", Colors.YELLOW))
                 hours = total_train_wall / 3600.0
                 days = hours / 24.0

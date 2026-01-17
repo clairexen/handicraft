@@ -67,7 +67,7 @@ When you picture the network this way, debugging becomes simpler: norm spikes me
 
 ## Running grce.py
 
-Call `grce.py --help` for the full CLI. In all examples below we assume a virtual environment at `.venv/`; overriding the interpreter is as simple as exporting `$PYTHON`, since every snippet uses `${PYTHON:-.venv/bin/python3}`.
+Call `grce.py --help` for the full CLI.
 
 Key switches:
 - `--think N` enables the above thinking-token workflow (set `--no-think` to keep sampling clean while still training with thinking tokens). Think tokens (and undo tokens) always live in the tokenizer/embedding space, so you can import/export checkpoints between think/non-think runs without remapping vocabularies. One row per batch is automatically left in “plain” mode so the model keeps a steady diet of non-thinking updates.
@@ -85,32 +85,42 @@ You can reproduce the sweeps below; notice how even the `--context-span 1` run (
 
 ## Example training sweeps
 
-Below are two quick sweeps you can adapt. Both snippets assume a shell where `${PYTHON:-.venv/bin/python3}` resolves to your preferred interpreter.
+Below are two quick sweeps you can adapt.
 
 1. **GRCE vs span variants.** Demonstrates the benefit of the GRCE path and the weak dependence on `--context-span`.
 
     ```bash
     time bash -exc '
     for cy in 2 3 5 10 10; do
-	${PYTHON:-.venv/bin/python3} grce.py --cycles $cy --n-grce 0
-	${PYTHON:-.venv/bin/python3} grce.py --cycles $cy --tag span0 --context-span 0
-	${PYTHON:-.venv/bin/python3} grce.py --cycles $cy --tag span1 --context-span 1
-	${PYTHON:-.venv/bin/python3} grce.py --cycles $cy --tag span2 --context-span 2
-	${PYTHON:-.venv/bin/python3} grce.py --cycles $cy --tag span3 --context-span 3
+	python3 grce.py --cycles $cy --n-grce 0
+	python3 grce.py --cycles $cy --tag span0 --context-span 0
+	python3 grce.py --cycles $cy --tag span1 --context-span 1
+	python3 grce.py --cycles $cy --tag span2 --context-span 2
+	python3 grce.py --cycles $cy --tag span3 --context-span 3
     done
     for cy in 20 20 30; do
-	${PYTHON:-.venv/bin/python3} grce.py --cycles $cy --n-grce 0
-	${PYTHON:-.venv/bin/python3} grce.py --cycles $cy --tag span2 --context-span 2
+	python3 grce.py --cycles $cy --n-grce 0
+	python3 grce.py --cycles $cy --tag span2 --context-span 2
     done'
     ```
 
-2. **Think vs non-think.** Compares the base model to a run with thinking tokens enabled.
+2. **GRCE small vs wide.**
+
+    ```bash
+    time bash -exc '
+    for cy in 2 3 5 10 10; do
+	python3 grce.py --cycles $cy --n-grce 32
+	python3 grce.py --cycles $cy --n-grce 256
+    done'
+    ```
+
+3. **Think vs non-think.** Compares the base model to a run with thinking tokens enabled.
 
     ```bash
     time bash -exc '
     for cy in 2 3 5 10 10 20 20 30; do
-	${PYTHON:-.venv/bin/python3} grce.py --cycles $cy
-	${PYTHON:-.venv/bin/python3} grce.py --cycles $cy --think 10
+	python3 grce.py --cycles $cy
+	python3 grce.py --cycles $cy --think 10
     done'
     ```
 
