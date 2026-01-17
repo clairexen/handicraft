@@ -738,7 +738,7 @@ class GRCEContextChannel(nn.Module):
         *,
         prev_context: torch.Tensor | None,
         stop_grad: bool,
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         if self.disabled:
             raise RuntimeError("Context channel disabled; update should not be called.")
         pieces = [inp.detach() if stop_grad else inp for inp in block_inputs]
@@ -752,8 +752,9 @@ class GRCEContextChannel(nn.Module):
         context = self.context_mlp(fused)
         if prev_context is not None:
             context = context + residual
+        raw_context = context
         context = self.context_norm(context)
-        return context
+        return context, raw_context
 
 
 class GRCEGPT(nn.Module):
@@ -769,7 +770,8 @@ class GRCEGPT(nn.Module):
         targets: torch.Tensor | None = None,
         *,
         disable_context: bool = False,
-    ) -> Tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
+        capture_activations: bool = False,
+    ) -> Tuple[torch.Tensor, torch.Tensor | None, dict | None]:
         B, T = idx.shape
         device = idx.device
         use_context = not self.context.disabled and not disable_context
@@ -778,6 +780,12 @@ class GRCEGPT(nn.Module):
             context_dim = self.context.context_dim
             context = torch.zeros(B, context_dim, device=device)
         logits_steps = []
+        activation_store: dict | None = None
+        if capture_activations:
+            activation_store = {
+                "block_norms": [[] for _ in range(self.config.n_layer)],
+                "context_norms": [],
+            }
         for t in range(T):
             prefix = idx[:, : t + 1]
             tok_last = self.core.tok_emb(prefix[:, -1])
@@ -799,6 +807,12 @@ class GRCEGPT(nn.Module):
                     full[:, -1, :] = bias_vec
                     block_biases.append(full)
             logits, block_inputs = self.core(prefix, block_biases=block_biases)
+            if activation_store is not None:
+                for layer_idx, block_inp in enumerate(block_inputs):
+                    norms = torch.linalg.vector_norm(block_inp.detach(), dim=-1)
+                    activation_store["block_norms"][layer_idx].extend(
+                        norms.cpu().tolist()
+                    )
             if use_context and context is not None:
                 span = self.context.context_span
                 if span <= 0:
@@ -814,14 +828,17 @@ class GRCEGPT(nn.Module):
                     if random.random() < drop_prob:
                         use_grce = False
                 if use_grce:
-                    context = self.context.update(
+                    context, raw_context = self.context.update(
                         block_inputs,
                         prev_context=context,
                         stop_grad=stop_grad,
                     )
+                    if activation_store is not None:
+                        ctx_norms = torch.linalg.vector_norm(raw_context.detach(), dim=-1)
+                        activation_store["context_norms"].extend(ctx_norms.cpu().tolist())
             logits_steps.append(logits[:, -1:, :])
         logits = torch.cat(logits_steps, dim=1)
-        return logits, context, None
+        return logits, context, activation_store
 
 
 def build_model_tag(config: ModelConfig) -> str:
@@ -1341,7 +1358,7 @@ def run_test_slice(
     seq = torch.tensor(indices, dtype=torch.long, device=model_device).unsqueeze(0)
     model.eval()
     with torch.no_grad():
-        logits, _, _ = model.forward_autoreg(seq)
+        logits, _, activations = model.forward_autoreg(seq, capture_activations=True)
     preds = logits.argmax(dim=-1).squeeze(0).tolist()
     correct_mask = [False] * len(indices)
     for i in range(1, len(indices)):
@@ -1414,6 +1431,38 @@ def run_test_slice(
         print(f"{token_label:>{label_width}} | {' '.join(parts)}")
     if think_enabled:
         print("thinking:", decoded)
+
+    def summarize(values: list[float]) -> tuple[float, float, float, float] | None:
+        if not values:
+            return None
+        tensor = torch.tensor(values, dtype=torch.float32)
+        mean = float(tensor.mean().item())
+        std = float(tensor.std(unbiased=False).item())
+        min_val = float(tensor.min().item())
+        max_val = float(tensor.max().item())
+        return mean, std, min_val, max_val
+
+    if activations is not None:
+        block_norms: list[list[float]] = activations.get("block_norms", [])
+        context_norms: list[float] = activations.get("context_norms", [])
+        print(color_text("\nBlock activation L2 norms (unnormalized inputs):", Colors.YELLOW))
+        for layer_idx, values in enumerate(block_norms):
+            stats = summarize(values)
+            if stats is None:
+                continue
+            mean, std, min_val, max_val = stats
+            print(
+                f"  layer {layer_idx:02d}: mean={mean:.4f} std={std:.4f} "
+                f"min={min_val:.4f} max={max_val:.4f} (n={len(values)})"
+            )
+        stats = summarize(context_norms)
+        if stats is not None:
+            mean, std, min_val, max_val = stats
+            print(color_text("Context channel L2 norm (pre-LN):", Colors.YELLOW))
+            print(
+                f"  mean={mean:.4f} std={std:.4f} "
+                f"min={min_val:.4f} max={max_val:.4f} (n={len(context_norms)})"
+            )
 
 
 def count_eval_calls(steps: int, eval_interval: int) -> int:

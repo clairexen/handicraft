@@ -4,3 +4,5 @@
 /.cache_transformers/
 /__pycache__/
 /.podssh
+*.swp
+.*.swp
