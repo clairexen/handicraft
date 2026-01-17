@@ -1530,7 +1530,7 @@ def train_model(
             prefix_text = color_tokens(
                 tokenizer,
                 prompt_ids,
-                [Colors.CYAN, Colors.GREEN],
+                [Colors.MAGENTA, Colors.GREEN],
                 bold=False,
                 think_token_id=tokenizer.think_id,
                 undo_token_id=tokenizer.undo_id,
@@ -1538,7 +1538,7 @@ def train_model(
             completion_text = color_tokens(
                 tokenizer,
                 completion_ids,
-                [Colors.YELLOW, Colors.MAGENTA],
+                [Colors.YELLOW, Colors.CYAN],
                 think_token_id=tokenizer.think_id,
                 undo_token_id=tokenizer.undo_id,
             )
@@ -1683,7 +1683,7 @@ def run_report_mode(
             prefix_text = color_tokens(
                 tokenizer,
                 prompt_ids,
-                [Colors.CYAN, Colors.GREEN],
+                [Colors.MAGENTA, Colors.GREEN],
                 bold=False,
                 think_token_id=tokenizer.think_id,
                 undo_token_id=tokenizer.undo_id,
@@ -1691,7 +1691,7 @@ def run_report_mode(
             completion_text = color_tokens(
                 tokenizer,
                 completion_ids,
-                [Colors.YELLOW, Colors.MAGENTA],
+                [Colors.YELLOW, Colors.CYAN],
                 think_token_id=tokenizer.think_id,
                 undo_token_id=tokenizer.undo_id,
             )
@@ -1747,7 +1747,7 @@ def run_test_slice(
     decoded = color_tokens(
         tokenizer,
         tensor.tolist(),
-        [Colors.CYAN, Colors.GREEN],
+        [Colors.MAGENTA, Colors.GREEN],
         bold=False,
         think_token_id=tokenizer.think_id,
         undo_token_id=tokenizer.undo_id,
@@ -1762,12 +1762,12 @@ def run_test_slice(
     baseline = color_tokens(
         tokenizer,
         indices,
-        [Colors.CYAN, Colors.GREEN],
+        [Colors.MAGENTA, Colors.GREEN],
         bold=False,
         think_token_id=tokenizer.think_id,
         undo_token_id=tokenizer.undo_id,
         correct_mask=correct_mask,
-        completion_colors=[Colors.YELLOW, Colors.MAGENTA],
+        completion_colors=[Colors.YELLOW, Colors.CYAN],
         bold_correct=True,
     )
     print("decoded:", baseline)
