@@ -47,16 +47,16 @@ def build_vocab(paragraphs: List[str]) -> set[str]:
     return vocab
 
 
-def unique_word_counts(paragraphs: List[str]) -> List[int]:
+def unique_word_counts(paragraphs: List[str], indices: List[int]) -> dict[int, int]:
     word_occurrences: dict[str, int] = {}
-    for text in paragraphs:
-        tokens = {token for token in text.split() if token}
+    for idx in indices:
+        tokens = {token for token in paragraphs[idx].split() if token}
         for token in tokens:
             word_occurrences[token] = word_occurrences.get(token, 0) + 1
-    counts: List[int] = []
-    for text in paragraphs:
-        tokens = {token for token in text.split() if token}
-        counts.append(sum(1 for token in tokens if word_occurrences.get(token, 0) == 1))
+    counts: dict[int, int] = {}
+    for idx in indices:
+        tokens = {token for token in paragraphs[idx].split() if token}
+        counts[idx] = sum(1 for token in tokens if word_occurrences.get(token, 0) == 1)
     return counts
 
 
@@ -96,6 +96,53 @@ def plot_unique_histogram(counts: List[int], *, bins: int, output: pathlib.Path 
         plt.show()
 
 
+def load_active_indices(path: pathlib.Path | None, total: int) -> List[int]:
+    if path is None or not path.exists():
+        return list(range(total))
+    indices = []
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        value = int(line)
+        if 0 <= value < total:
+            indices.append(value)
+    if not indices:
+        return list(range(total))
+    return sorted(set(indices))
+
+
+def save_active_indices(path: pathlib.Path, indices: List[int]) -> None:
+    path.write_text("\n".join(str(idx) for idx in sorted(indices)) + "\n", encoding="utf-8")
+    print(f"Saved {len(indices)} active indices to {path}")
+
+
+def drop_worst_paragraphs(
+    paragraphs: List[str],
+    indices: List[int],
+    *,
+    drop_count: int,
+    iterations: int,
+) -> List[int]:
+    active = sorted(set(indices))
+    drop_count = max(0, drop_count)
+    iterations = max(0, iterations)
+    if drop_count == 0 or iterations == 0:
+        return active
+    for step in range(iterations):
+        if len(active) <= drop_count:
+            break
+        counts = unique_word_counts(paragraphs, active)
+        ranked = sorted(active, key=lambda idx: (counts[idx], idx), reverse=True)
+        to_remove = set(ranked[:drop_count])
+        max_val = counts[ranked[0]] if ranked else 0
+        active = [idx for idx in active if idx not in to_remove]
+        print(
+            f"drop iteration {step + 1}: removed {len(to_remove)} paragraphs (max unique={max_val})"
+        )
+    return active
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data", type=pathlib.Path, default=pathlib.Path("data"))
@@ -122,6 +169,30 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional output PNG for unique word plot",
     )
+    parser.add_argument(
+        "--drop-count",
+        type=int,
+        default=1000,
+        help="Number of paragraphs to drop per iteration (by unique-word count)",
+    )
+    parser.add_argument(
+        "--drop-iterations",
+        type=int,
+        default=10,
+        help="How many drop iterations to perform (set 0 to disable)",
+    )
+    parser.add_argument(
+        "--save-active",
+        type=pathlib.Path,
+        default=None,
+        help="Write the remaining train paragraph indices after processing",
+    )
+    parser.add_argument(
+        "--load-active",
+        type=pathlib.Path,
+        default=None,
+        help="Read initial train paragraph indices (one per line)",
+    )
     return parser.parse_args()
 
 
@@ -130,7 +201,17 @@ def main() -> None:
     train_path = args.data / "simplewiki-train.txt.gz"
     test_path = args.data / "simplewiki-test.txt.gz"
 
-    train_stats = CorpusStats("train", load_corpus(train_path))
+    train_paragraphs = load_corpus(train_path)
+    train_active = load_active_indices(args.load_active, len(train_paragraphs))
+    if args.drop_count > 0 and args.drop_iterations > 0:
+        train_active = drop_worst_paragraphs(
+            train_paragraphs,
+            train_active,
+            drop_count=args.drop_count,
+            iterations=args.drop_iterations,
+        )
+    train_subset = [train_paragraphs[idx] for idx in train_active]
+    train_stats = CorpusStats("train", train_subset)
     test_stats = CorpusStats("test", load_corpus(test_path))
 
     print(train_stats.describe())
@@ -138,17 +219,25 @@ def main() -> None:
 
     vocab = build_vocab(train_stats.paragraphs)
     print(f"train vocabulary size: {len(vocab)}")
-    unique_counts = unique_word_counts(train_stats.paragraphs)
-    unique_paragraphs = sum(1 for count in unique_counts if count > 0)
+    unique_counts_map = unique_word_counts(train_paragraphs, train_active)
+    unique_counts_list = [unique_counts_map[idx] for idx in train_active]
+    unique_paragraphs = sum(1 for count in unique_counts_list if count > 0)
     print(
         "paragraphs containing a word unique to that paragraph: "
-        f"{unique_paragraphs}/{len(train_stats.paragraphs)}"
+        f"{unique_paragraphs}/{len(train_active)}"
     )
+
+    if args.save_active:
+        save_active_indices(args.save_active, train_active)
 
     if args.plot_length_histogram:
         plot_histogram([train_stats, test_stats], bins=args.bins, output=args.output)
     if args.plot_unique_word_histogram:
-        plot_unique_histogram(unique_counts, bins=args.bins, output=args.unique_output)
+        plot_unique_histogram(
+            unique_counts_list,
+            bins=args.bins,
+            output=args.unique_output,
+        )
 
 
 if __name__ == "__main__":
