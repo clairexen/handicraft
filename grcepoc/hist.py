@@ -49,6 +49,13 @@ def parse_args() -> argparse.Namespace:
         help="Checkpoint .pt file to inspect (repeatable)",
     )
     parser.add_argument(
+        "--json",
+        action="append",
+        type=pathlib.Path,
+        default=[],
+        help="Pre-exported history JSON file (see --write-json)",
+    )
+    parser.add_argument(
         "--list",
         action="store_true",
         help="List summary statistics for each source (default action)",
@@ -68,6 +75,22 @@ def load_history(pt_path: pathlib.Path) -> Tuple[str, List[Dict[str, float]]]:
     history = payload.get("loss_history", []) if isinstance(payload, dict) else []
     normalized = [normalize_entry(item) for item in history if isinstance(item, dict)]
     return pt_path.name, normalized
+
+
+def load_json_history(json_path: pathlib.Path) -> Tuple[str, List[Dict[str, float]]]:
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    columns = payload.get("columns", [])
+    rows = payload.get("data", [])
+    records: List[Dict[str, float]] = []
+    for row in rows:
+        record = {}
+        for idx, field in enumerate(columns):
+            if idx < len(row):
+                value = row[idx]
+                if value is not None:
+                    record[field] = value
+        records.append(normalize_entry(record))
+    return json_path.name, records
 
 
 def normalize_entry(entry: Dict[str, float]) -> Dict[str, float]:
@@ -162,12 +185,23 @@ def main() -> None:
             continue
         label, history = load_history(pt_path)
         sources.append((label, history))
+    for json_path in args.json:
+        if not json_path.exists():
+            print(f"warning: missing json source {json_path}")
+            continue
+        label, history = load_json_history(json_path)
+        sources.append((label, history))
+    if not sources:
+        print("no data sources provided")
+        return
     performed = False
     if args.list or not args.write_json:
         for label, history in sources:
             summarize_source(label, history)
         performed = True
     if args.write_json:
+        if len(sources) != 1:
+            raise SystemExit("--write-json expects exactly one source (--pt or --json)")
         columns, matrix = combine_records(sources)
         json_text = format_table_json(columns, matrix)
         args.write_json.write_text(json_text + "\n")

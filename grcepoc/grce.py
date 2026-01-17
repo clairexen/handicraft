@@ -2042,7 +2042,14 @@ def main() -> None:
                 else:
                     model.load_state_dict(payload)
                 print(color_text(f"Loaded existing model from {model_path}", Colors.YELLOW))
-                print(color_text(f"Total training steps so far: {total_steps}", Colors.YELLOW))
+                hours = total_train_wall / 3600.0
+                days = hours / 24.0
+                print(
+                    color_text(
+                        f"Total training so far: {total_steps} steps, {hours:.2f} hours ({days:.2f} days)",
+                        Colors.YELLOW,
+                    )
+                )
             except RuntimeError as err:
                 print(
                     color_text(
@@ -2145,9 +2152,12 @@ def main() -> None:
             else:
                 minus_tags.append(" wo/UNDO")
             label = "".join(tags + plus_tags + minus_tags)
+            hours = total_train_wall / 3600.0
+            days = hours / 24.0
             print(
                 color_text(
-                    f"\n[{label}] Training Cycle {cycle}/{args.cycles}. Total training steps so far: {total_steps}",
+                    f"\n[{label}] Training Cycle {cycle}/{args.cycles}. "
+                    f"Total training so far: {total_steps} steps, {hours:.2f} hours ({days:.2f} days)",
                     Colors.BLUE,
                 )
             )
