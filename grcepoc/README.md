@@ -11,7 +11,7 @@ This repo extends a tiny picoGPT-style language model with a recurrent context c
 In other words, this channel is literally the recurrent shortcut that classic RNNs tried to build, but it is implemented as a clean add-on to the Transformer stack: Each block, while computing logits for token N+1, already contains every piece of context needed to describe the prefix. The GRCE path just samples that information, compresses it into `n_grce` scalars, mixes them with a single hidden layer in the time domain, and feeds the signal into the very next step. Nothing else has to travel across time. Training stays stable because gradients do not need to propagate across multiple positions; the heavy lifting is still performed inside the per-token Transformer layers.
 
 Plotting defaults:
-- `sweep1.py` shows both train/test traces when no flags are provided.
+- `sweep1.py` plots the per-model JSON histories produced by `hist.py --write-json-dir ...`, showing both train/test traces when no flags are provided.
 - `--no-nogrce` hides the GRCE-disabled comparisons.
 - `--avg-span` averages runs with the same configuration label (span stripped).
 - `--store span_avg.json --store-only` writes exactly what you see, so you can feed it into analysis scripts.

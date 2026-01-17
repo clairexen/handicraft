@@ -53,53 +53,52 @@ class LossRecord:
     test_nogrce: Optional[List[float]] = None
 
 
-def load_records(pt_paths: Iterable[pathlib.Path]) -> List[LossRecord]:
+def load_records(json_paths: Iterable[pathlib.Path]) -> List[LossRecord]:
     records: List[LossRecord] = []
-    for pt_path in pt_paths:
-        if not pt_path.exists():
-            print(f"warning: {pt_path} not found, skipping")
+    for json_path in json_paths:
+        if not json_path.exists():
+            print(f"warning: {json_path} not found, skipping")
             continue
-        data = torch_load(pt_path)
-        history = data.get("loss_history", []) if isinstance(data, dict) else []
-        history = [normalize_history_entry(item) if isinstance(item, dict) else item for item in history]
-        if not history:
+        payload = json.loads(json_path.read_text(encoding="utf-8"))
+        columns = payload.get("columns", [])
+        data = payload.get("data", [])
+        column_index = {name: idx for idx, name in enumerate(columns)}
+
+        def extract_series(field: str, *, as_int: bool = False) -> Optional[List[float | int]]:
+            idx = column_index.get(field)
+            if idx is None:
+                return None
+            series: List[float | int] = []
+            for row in data:
+                value = row[idx] if idx < len(row) else None
+                if value is None:
+                    series.append(float("nan"))
+                else:
+                    series.append(int(value) if as_int else float(value))
+            return series
+
+        steps_series = extract_series("step", as_int=True)
+        if steps_series is None:
+            steps = list(range(1, len(data) + 1))
+        else:
+            steps = [int(val) for val in steps_series]
+        train = extract_series("train_loss") or []
+        test = extract_series("test_loss") or []
+        train_ng = extract_series("train_loss_nogrce")
+        test_ng = extract_series("test_loss_nogrce")
+        if not train and not test:
             continue
-        steps = [int(item.get("step", i + 1)) for i, item in enumerate(history)]
-        train = [float(item.get("train_loss", float("nan"))) for item in history]
-        test = [float(item.get("test_loss", float("nan"))) for item in history]
-        train_ng: List[float] = []
-        test_ng: List[float] = []
-        has_train_ng = True
-        has_test_ng = True
-        for item in history:
-            val = item.get("train_loss_nogrce")
-            if val is None:
-                has_train_ng = False
-                break
-            train_ng.append(float(val))
-        for item in history:
-            val = item.get("test_loss_nogrce")
-            if val is None:
-                has_test_ng = False
-                break
-            test_ng.append(float(val))
         records.append(
             LossRecord(
-                pt_path,
-                steps,
-                train,
-                test,
-                train_nogrce=train_ng if has_train_ng else None,
-                test_nogrce=test_ng if has_test_ng else None,
+                model_path=json_path,
+                steps=steps,
+                train=[float(v) for v in train],
+                test=[float(v) for v in test],
+                train_nogrce=[float(v) for v in train_ng] if train_ng else None,
+                test_nogrce=[float(v) for v in test_ng] if test_ng else None,
             )
         )
     return records
-
-
-def torch_load(path: pathlib.Path):
-    import torch
-
-    return torch.load(path, map_location="cpu")
 
 
 def load_store(path: pathlib.Path) -> List[LossRecord]:
@@ -221,17 +220,23 @@ def parse_args() -> argparse.Namespace:
         help="Scale the Y-axis of traces whose model name includes _thinkN by this factor",
     )
     parser.add_argument(
-        "--model",
+        "--json-dir",
         type=pathlib.Path,
-        default=pathlib.Path("model"),
-        help="Directory containing model checkpoints",
+        default=pathlib.Path("sweep1"),
+        help="Directory containing per-model JSON files from hist.py --write-json-dir",
     )
     return parser.parse_args()
 
-def discover_paths(explicit: List[pathlib.Path], model_dir: pathlib.Path) -> List[pathlib.Path]:
+def discover_paths(explicit: List[pathlib.Path], json_dir: pathlib.Path) -> List[pathlib.Path]:
     if explicit:
-        return explicit
-    return sorted(model_dir.glob("*.pt"))
+        collected: List[pathlib.Path] = []
+        for item in explicit:
+            if item.is_dir():
+                collected.extend(sorted(item.glob("*.json")))
+            else:
+                collected.append(item)
+        return collected
+    return sorted(json_dir.glob("*.json"))
 
 
 def main() -> None:
@@ -243,8 +248,8 @@ def main() -> None:
     if args.stored:
         records = load_store(args.stored)
     else:
-        pt_paths = discover_paths(args.paths, args.model)
-        records = load_records(pt_paths)
+        json_paths = discover_paths(args.paths, args.json_dir)
+        records = load_records(json_paths)
         if not records and args.store and args.store.exists():
             records = load_store(args.store)
     if not records:
