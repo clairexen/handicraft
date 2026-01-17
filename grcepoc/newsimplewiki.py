@@ -61,6 +61,14 @@ def count_paragraphs_with_unique_words(paragraphs: List[str]) -> int:
     return total
 
 
+def unique_word_counts(paragraphs: List[str]) -> List[int]:
+    counts: List[int] = []
+    for text in paragraphs:
+        tokens = {token for token in text.split() if token}
+        counts.append(len(tokens))
+    return counts
+
+
 def plot_histogram(stats: List[CorpusStats], *, bins: int, output: pathlib.Path | None) -> None:
     fig, ax = plt.subplots(figsize=(8, 5))
     for corpus in stats:
@@ -83,6 +91,20 @@ def plot_histogram(stats: List[CorpusStats], *, bins: int, output: pathlib.Path 
         plt.show()
 
 
+def plot_unique_histogram(counts: List[int], *, bins: int, output: pathlib.Path | None) -> None:
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.hist(counts, bins=bins, alpha=0.7, color="tab:orange")
+    ax.set_xlabel("Unique words per paragraph")
+    ax.set_ylabel("Count")
+    ax.set_title("Paragraph-level unique word distribution (train)")
+    fig.tight_layout()
+    if output:
+        fig.savefig(output, dpi=120)
+        print(f"Saved unique-word histogram to {output}")
+    else:
+        plt.show()
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data", type=pathlib.Path, default=pathlib.Path("data"))
@@ -97,6 +119,17 @@ def parse_args() -> argparse.Namespace:
         type=pathlib.Path,
         default=None,
         help="Optional output PNG path (requires --plot)",
+    )
+    parser.add_argument(
+        "--plot-unique-word-histogram",
+        action="store_true",
+        help="Generate histogram of unique word counts per paragraph",
+    )
+    parser.add_argument(
+        "--unique-output",
+        type=pathlib.Path,
+        default=None,
+        help="Optional output PNG for unique word plot",
     )
     return parser.parse_args()
 
@@ -119,9 +152,17 @@ def main() -> None:
         "paragraphs containing a word unique to that paragraph: "
         f"{unique_paragraphs}/{len(train_stats.paragraphs)}"
     )
+    unique_counts = unique_word_counts(train_stats.paragraphs)
+    print(
+        "unique words per paragraph (train): "
+        f"min={min(unique_counts)} max={max(unique_counts)} "
+        f"avg={sum(unique_counts)/len(unique_counts):.1f}"
+    )
 
     if args.plot_length_histogram:
         plot_histogram([train_stats, test_stats], bins=args.bins, output=args.output)
+    if args.plot_unique_word_histogram:
+        plot_unique_histogram(unique_counts, bins=args.bins, output=args.unique_output)
 
 
 if __name__ == "__main__":
