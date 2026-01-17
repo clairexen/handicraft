@@ -819,8 +819,15 @@ def describe_model_size(config: ModelConfig) -> None:
     categories = {
         "token_embeddings": 0,
         "position_embeddings": 0,
-        "context": 0,
         "core": 0,
+        "context": 0,
+    }
+    layer_counts = [0] * config.n_layer
+    context_parts = {
+        "samplers": 0,
+        "mlp": 0,
+        "bias": 0,
+        "norm": 0,
     }
     for name, param in model.named_parameters():
         if not param.requires_grad:
@@ -832,10 +839,35 @@ def describe_model_size(config: ModelConfig) -> None:
             categories["position_embeddings"] += size
         elif name.startswith("context"):
             categories["context"] += size
+            if ".context_sampler" in name:
+                context_parts["samplers"] += size
+            elif ".context_mlp" in name:
+                context_parts["mlp"] += size
+            elif ".context_bias_gen" in name:
+                context_parts["bias"] += size
+            elif ".context_norm" in name:
+                context_parts["norm"] += size
         else:
             categories["core"] += size
+            if ".blocks." in name:
+                try:
+                    idx = int(name.split("blocks.")[1].split(".")[0])
+                    if 0 <= idx < len(layer_counts):
+                        layer_counts[idx] += size
+                except ValueError:
+                    pass
     total = sum(categories.values())
-    print("Model parameter breakdown:")
+    print(
+        f"\nTransformer stack breakdown ({config.n_layer} layers):"
+    )
+    for idx, size in enumerate(layer_counts):
+        mb = size * 4 / 1_000_000
+        print(f"  layer {idx:02d}: {size:>12,d} params ({mb:.2f} MB)")
+    print("\nGRCE resource breakdown:")
+    for label, size in context_parts.items():
+        mb = size * 4 / 1_000_000
+        print(f"  {label:10s}: {size:>12,d} params ({mb:.2f} MB)")
+    print("\nModel parameter breakdown:")
     for label, size in categories.items():
         mb = size * 4 / 1_000_000
         pct = (size / total * 100) if total else 0
