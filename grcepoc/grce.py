@@ -276,6 +276,12 @@ class PromptTracker:
     def is_completed(self, idx: int | None) -> bool:
         return idx is None or self.completed[idx]
 
+    def pending_indices(self, limit: int | None = None) -> List[int]:
+        indices = [i for i, done in enumerate(self.completed) if not done]
+        if limit is not None:
+            return indices[: max(0, int(limit))]
+        return indices
+
 
 @dataclass
 class TextDataset:
@@ -1295,13 +1301,12 @@ def train_model(
     think_hard: bool,
     undo_settings: UndoSettings | None,
     prompt_tracker: PromptTracker | None = None,
-    cycle_prompt_tensor: torch.Tensor | None = None,
-    cycle_prompt_idx: int | None = None,
     *,
     reward_relu: bool = False,
     nogrce_interval: int = 1,
     cycle_wall_start: float,
     base_wall_seconds: float,
+    cycle_prompt_indices: List[int] | None = None,
 ) -> Tuple[int, List[Dict[str, float]]]:
     optim = torch.optim.AdamW(model.parameters(), lr=3e-4)
     total_steps = start_step
@@ -1315,12 +1320,7 @@ def train_model(
         if reward_relu > 0
         else None
     )
-    active_prompt_tensor = cycle_prompt_tensor
-    active_prompt_idx = cycle_prompt_idx
-    if prompt_tracker is not None and active_prompt_idx is not None:
-        if prompt_tracker.is_completed(active_prompt_idx):
-            active_prompt_idx = None
-            active_prompt_tensor = None
+    prompt_queue = list(cycle_prompt_indices or [])
     show_think_columns = think_enabled
     show_target_headers = think_enabled or undo_enabled
     nogrce_interval = max(0, int(nogrce_interval))
@@ -1461,13 +1461,19 @@ def train_model(
                             "learned": float(learned_loss),
                         }
                 prompt_input = sample_prompt
-                if (
-                    prompt_tracker is not None
-                    and active_prompt_idx is not None
-                    and active_prompt_tensor is not None
-                    and not prompt_tracker.is_completed(active_prompt_idx)
-                ):
-                    prompt_input = active_prompt_tensor
+                current_prompt_idx = None
+                if prompt_tracker is not None and prompt_queue:
+                    while prompt_queue and prompt_tracker.is_completed(prompt_queue[0]):
+                        prompt_queue.pop(0)
+                    if prompt_queue:
+                        current_prompt_idx = prompt_queue.pop(0)
+                        prompt_input = prompt_tracker.prompt_tensor(current_prompt_idx, device)
+                        print(
+                            color_text(
+                                f"Sampling prompt #{current_prompt_idx + 1}",
+                                Colors.CYAN,
+                            )
+                        )
                 sample_tokens, prompt_len = generate(
                     model,
                     prompt_input.clone(),
@@ -1484,26 +1490,20 @@ def train_model(
             prompt_ids = sample_ids[:prompt_len]
             completion_ids = sample_ids[prompt_len:]
 
-            if (
-                prompt_tracker is not None
-                and active_prompt_idx is not None
-                and not prompt_tracker.is_completed(active_prompt_idx)
-            ):
+            if prompt_tracker is not None and current_prompt_idx is not None:
                 if completion_ids:
                     completion_tensor = torch.tensor(completion_ids, dtype=torch.long)
                     completion_text = tokenizer.decode(completion_tensor)
                 else:
                     completion_text = ""
-                if prompt_tracker.mark_if_satisfied(active_prompt_idx, completion_text):
-                    expected = prompt_tracker.expected_text(active_prompt_idx)
+                if prompt_tracker.mark_if_satisfied(current_prompt_idx, completion_text):
+                    expected = prompt_tracker.expected_text(current_prompt_idx)
                     print(
                         color_text(
-                            f"Prompt #{active_prompt_idx + 1} satisfied (expected '{expected}')",
+                            f"Prompt #{current_prompt_idx + 1} satisfied (expected '{expected}')",
                             Colors.GREEN,
                         )
                     )
-                    active_prompt_idx = None
-                    active_prompt_tensor = None
 
             prefix_text = color_tokens(
                 tokenizer,
@@ -2307,6 +2307,12 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--prompt-cycle-prompts",
+        type=int,
+        default=10,
+        help="How many unsatisfied prompts to test each cycle",
+    )
+    parser.add_argument(
         "--undo",
         type=int,
         default=0,
@@ -2791,16 +2797,17 @@ def main() -> None:
                     Colors.BLUE,
                 )
             )
-            cycle_prompt_idx: int | None = None
-            cycle_prompt_tensor: torch.Tensor | None = None
-            if prompt_tracker is not None and prompt_tracker.remaining() > 0:
-                idx, goal = prompt_tracker.next_goal()
-                if idx is not None and goal is not None:
-                    cycle_prompt_idx = idx
-                    cycle_prompt_tensor = prompt_tracker.prompt_tensor(idx, device)
+            cycle_prompt_indices: List[int] | None = None
+            if prompt_tracker is not None and args.prompt_cycle_prompts > 0:
+                cycle_prompt_indices = prompt_tracker.pending_indices(args.prompt_cycle_prompts)
+                if cycle_prompt_indices:
+                    preview_lines = []
+                    for idx in cycle_prompt_indices:
+                        text, expected = PROMPT_GOALS[idx]
+                        preview_lines.append(f"#{idx + 1}: '{text}' -> '{expected}'")
                     print(
                         color_text(
-                            f"Using prompt #{idx + 1}: '{goal[0]}' | expecting '{goal[1]}'",
+                            "Prompts this cycle:\n" + "\n".join(preview_lines),
                             Colors.CYAN,
                         )
                     )
@@ -2834,12 +2841,11 @@ def main() -> None:
                 think_hard=args.think_hard,
                 undo_settings=undo_settings,
                 prompt_tracker=prompt_tracker,
-                cycle_prompt_tensor=cycle_prompt_tensor,
-                cycle_prompt_idx=cycle_prompt_idx,
                 reward_relu=reward_scale,
                 nogrce_interval=args.nogrce_interval,
                 cycle_wall_start=cycle_wall,
                 base_wall_seconds=total_train_wall,
+                cycle_prompt_indices=cycle_prompt_indices,
             )
             loss_history.extend(updates)
 
