@@ -154,7 +154,7 @@ def normalize_entry(entry: Dict[str, float]) -> Dict[str, float]:
 
 
 def summarize_source(label: str, records: List[Dict[str, float]], filters: List[str] | None = None) -> None:
-    print(f"Source: {label} ({len(records)} records)")
+    print(f"\nSource: {label} ({len(records)} records)")
     if not records:
         return
     fields = sorted({key for rec in records for key in rec if key in ALLOWED_FIELDS})
