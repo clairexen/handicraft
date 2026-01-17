@@ -433,8 +433,8 @@ class ReLURewardTracker:
             return
         self.pending_steps = 0
         for layer_idx, block in enumerate(self.model.core.blocks):
-            self._apply_gain(block.ff.fc1.weight, self.good_counts[layer_idx])
-            self._apply_bias(block.ff.fc1.bias, self.bad_counts[layer_idx])
+            combined = self.good_counts[layer_idx] + self.bad_counts[layer_idx]
+            self._apply_bias(block.ff.fc1.bias, combined)
             self.good_counts[layer_idx].zero_()
             self.bad_counts[layer_idx].zero_()
         print(
@@ -443,28 +443,6 @@ class ReLURewardTracker:
                 Colors.MAGENTA,
             )
         )
-
-    def _apply_gain(self, weight: torch.Tensor, scores: torch.Tensor) -> None:
-        if weight is None or scores.numel() == 0:
-            return
-        positive = scores > 0
-        if not positive.any():
-            return
-        hidden = weight.size(0)
-        k = max(1, int(hidden * self.ratio))
-        available = positive.sum().item()
-        k = min(k, available)
-        if k <= 0:
-            return
-        values, indices = torch.topk(scores, k)
-        for neuron in indices.tolist():
-            row = weight.data[neuron]
-            norm = row.norm().item()
-            if norm == 0:
-                continue
-            row_std = row.std().item()
-            scale = 1 + self.scale * (row_std / (norm + 1e-8))
-            row.mul_(scale)
 
     def _apply_bias(self, bias: torch.Tensor, scores: torch.Tensor) -> None:
         if bias is None or scores.numel() == 0:
