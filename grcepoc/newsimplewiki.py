@@ -47,25 +47,16 @@ def build_vocab(paragraphs: List[str]) -> set[str]:
     return vocab
 
 
-def count_paragraphs_with_unique_words(paragraphs: List[str]) -> int:
+def unique_word_counts(paragraphs: List[str]) -> List[int]:
     word_occurrences: dict[str, int] = {}
     for text in paragraphs:
         tokens = {token for token in text.split() if token}
         for token in tokens:
             word_occurrences[token] = word_occurrences.get(token, 0) + 1
-    total = 0
-    for text in paragraphs:
-        tokens = {token for token in text.split() if token}
-        if any(word_occurrences.get(token, 0) == 1 for token in tokens):
-            total += 1
-    return total
-
-
-def unique_word_counts(paragraphs: List[str]) -> List[int]:
     counts: List[int] = []
     for text in paragraphs:
         tokens = {token for token in text.split() if token}
-        counts.append(len(tokens))
+        counts.append(sum(1 for token in tokens if word_occurrences.get(token, 0) == 1))
     return counts
 
 
@@ -147,16 +138,11 @@ def main() -> None:
 
     vocab = build_vocab(train_stats.paragraphs)
     print(f"train vocabulary size: {len(vocab)}")
-    unique_paragraphs = count_paragraphs_with_unique_words(train_stats.paragraphs)
+    unique_counts = unique_word_counts(train_stats.paragraphs)
+    unique_paragraphs = sum(1 for count in unique_counts if count > 0)
     print(
         "paragraphs containing a word unique to that paragraph: "
         f"{unique_paragraphs}/{len(train_stats.paragraphs)}"
-    )
-    unique_counts = unique_word_counts(train_stats.paragraphs)
-    print(
-        "unique words per paragraph (train): "
-        f"min={min(unique_counts)} max={max(unique_counts)} "
-        f"avg={sum(unique_counts)/len(unique_counts):.1f}"
     )
 
     if args.plot_length_histogram:
