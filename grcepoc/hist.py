@@ -68,8 +68,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--list",
-        action="store_true",
-        help="List summary statistics for each source (default action)",
+        nargs="*",
+        help="List summary stats (optionally specify metric names)",
     )
     parser.add_argument(
         "--write-json",
@@ -153,11 +153,14 @@ def normalize_entry(entry: Dict[str, float]) -> Dict[str, float]:
     return filtered
 
 
-def summarize_source(label: str, records: List[Dict[str, float]]) -> None:
+def summarize_source(label: str, records: List[Dict[str, float]], filters: List[str] | None = None) -> None:
     print(f"Source: {label} ({len(records)} records)")
     if not records:
         return
     fields = sorted({key for rec in records for key in rec if key in ALLOWED_FIELDS})
+    if filters:
+        wanted = set(filters)
+        fields = [field for field in fields if field in wanted]
     for field in fields:
         values = [float(rec[field]) for rec in records if field in rec]
         if not values:
@@ -292,9 +295,12 @@ def main() -> None:
         print("no data sources provided")
         return
     performed = False
-    if args.list or not args.write_json:
+    list_filters = None
+    if args.list is not None:
+        list_filters = args.list if args.list else None
+    if args.list is not None or not args.write_json:
         for label, history in sources:
-            summarize_source(label, history)
+            summarize_source(label, history, filters=list_filters)
         performed = True
     if args.write_json:
         if len(sources) != 1:
