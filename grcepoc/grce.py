@@ -1525,13 +1525,15 @@ def train_model(
                 if show_think_columns:
                     train_header += "  plain"
                     test_header += "  plain"
+                remaining = prompt_tracker.remaining() if prompt_tracker else 0
+                total_prompts = len(PROMPT_GOALS)
                 header_line = (
                     color_text("step", Colors.CYAN)
                     + " | "
                     + color_text(train_header, Colors.GREEN)
                     + " | "
                     + color_text(test_header, Colors.MAGENTA)
-                    + " | sample"
+                    + color_text(f" | sample ({total_prompts - remaining}/{total_prompts})", Colors.YELLOW)
                 )
                 print(header_line)
                 printed_header = True
@@ -1576,13 +1578,16 @@ def train_model(
             if show_think_columns:
                 test_parts.append(format_metric("test_nothink", include_target=False))
             test_values = "  ".join(test_parts)
+            total_prompts = len(PROMPT_GOALS)
+            remaining_prompts = prompt_tracker.remaining() if prompt_tracker else total_prompts
+            solved_prompts = total_prompts - remaining_prompts
             line = (
                 color_text(f"{total_steps}", Colors.CYAN)
                 + " | "
                 + color_text(train_values, Colors.GREEN)
                 + " | "
                 + color_text(test_values, Colors.MAGENTA)
-                + " | sample: "
+                + f" | sample ({solved_prompts}/{total_prompts}): "
                 + colored_sample
             )
             print(line)
