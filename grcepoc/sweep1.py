@@ -189,6 +189,11 @@ def parse_args() -> argparse.Namespace:
         help="suppress GRCE-disabled (nogrce) traces",
     )
     parser.add_argument(
+        "--default-test",
+        action="store_true",
+        help="When set, default view is test-only with nogrce traces hidden",
+    )
+    parser.add_argument(
         "--avg-span",
         action="store_true",
         help="average checkpoints across spans (span suffix removed from label)",
@@ -231,6 +236,10 @@ def discover_paths(explicit: List[pathlib.Path], model_dir: pathlib.Path) -> Lis
 
 def main() -> None:
     args = parse_args()
+    if args.default_test:
+        if not args.train and not args.test:
+            args.test = True
+        args.no_nogrce = True
     if args.stored:
         records = load_store(args.stored)
     else:

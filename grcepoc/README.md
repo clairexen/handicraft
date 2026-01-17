@@ -11,7 +11,7 @@ This repo extends a tiny picoGPT-style language model with a recurrent context c
 In other words, this channel is literally the recurrent shortcut that classic RNNs tried to build, but it is implemented as a clean add-on to the Transformer stack: Each block, while computing logits for token N+1, already contains every piece of context needed to describe the prefix. The GRCE path just samples that information, compresses it into `n_grce` scalars, mixes them with a single hidden layer in the time domain, and feeds the signal into the very next step. Nothing else has to travel across time. Training stays stable because gradients do not need to propagate across multiple positions; the heavy lifting is still performed inside the per-token Transformer layers.
 
 Plotting defaults:
-- `plot.py` shows both train/test traces when no flags are provided.
+- `sweep1.py` shows both train/test traces when no flags are provided.
 - `--no-nogrce` hides the GRCE-disabled comparisons.
 - `--avg-span` averages runs with the same configuration label (span stripped).
 - `--store span_avg.json --store-only` writes exactly what you see, so you can feed it into analysis scripts.
@@ -89,9 +89,9 @@ Key switches:
 - `--no-newlines` keeps the sampler from emitting newline tokens so completions stay on one line.
 You can reproduce the sweeps below; notice how even the `--context-span 1` run (which detaches the recurrent gradients entirely) tracks all other spans almost perfectly, confirming that the channel only needs to learn what to sample, not how to backpropagate across positions.
 
-Every evaluation logs both GRCE-enabled and GRCE-disabled losses, and `plot.py` draws both traces for quick comparison.
+Every evaluation logs both GRCE-enabled and GRCE-disabled losses, and `sweep1.py` draws both traces for quick comparison.
 
-For postprocessing, run for example `plot.py --avg-span --no-nogrce --store span_avg.json --store-only` and feed that JSON into your analysis scripts.
+For postprocessing, run for example `sweep1.py --avg-span --no-nogrce --store span_avg.json --store-only` and feed that JSON into your analysis scripts.
 
 ## Example training sweeps
 
