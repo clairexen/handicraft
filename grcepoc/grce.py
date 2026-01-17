@@ -2656,6 +2656,7 @@ def main() -> None:
             label = "".join(tags + plus_tags + minus_tags)
             hours = total_train_wall / 3600.0
             days = hours / 24.0
+            print(color_text(f"Model: {model_path}", Colors.CYAN))
             print(
                 color_text(
                     f"\n[{label}] Training Cycle {cycle}/{args.cycles}. "
