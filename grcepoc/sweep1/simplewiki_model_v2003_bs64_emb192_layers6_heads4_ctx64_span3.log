@@ -1,0 +1,468 @@
+
+[2026-01-17T03:41:20.668125+00:00] grce.py --cycles 2 --tag span3 --context-span 3
+
+[GPT+GRCE wo/THINK wo/UNDO] Training Cycle 1/2. Total training so far: 0 steps, 0.00 hours (0.00 days)
+step | train loss  nogrce | test loss  nogrce | sample
+1 | 7.55  7.69 | 7.55  7.70 | sample: ai␣will␣governor␣kore␣chicire␣dire␣wenttyiredtal␣wrote
+10 | 6.92  7.06 | 6.93  7.07 | sample: ai␣willor␣university␣gride␣louisline.␣re␣civ␣century
+20 | 6.58  6.60 | 6.59  6.62 | sample: ai␣willurs␣av␣after␣withoutw␣bet␣show␣sports␣bet␣this
+30 | 6.40  6.39 | 6.36  6.36 | sample: ai␣will␣canadian␣givenredre␣many␣that␣or␣pro␣homeost
+40 | 6.25  6.28 | 6.27  6.30 | sample: ai␣will␣c␣w␣lived␣en␣is7␣isingved␣a
+50 | 6.17  6.21 | 6.18  6.22 | sample: ai␣will␣years␣pro␣ag␣all␣base␣byes␣ahe␣a
+60 | 6.11  6.26 | 6.14  6.29 | sample: ai␣willes␣of␣it␣will␣const␣disard␣regentshe
+70 | 6.04  6.22 | 6.08  6.26 | sample: ai␣will-rogap␣at␣of␣ade␣think␣f␣n
+80 | 6.02  6.22 | 6.02  6.22 | sample: ai␣wille.␣the␣presidentials3ci␣a␣region␣between
+90 | 5.97  6.17 | 5.95  6.16 | sample: ai␣wills␣one2b␣theiamer␣bed␣europe
+100 | 5.88  6.07 | 5.91  6.10 | sample: ai␣will␣democraticint␣ex␣of␣theollowosed.␣it␣is
+[cycle 1] total steps: 100; time spent: wall=162.56s cpu=162.63s; writing model: wall=0.22s cpu=0.03s
+
+[GPT+GRCE wo/THINK wo/UNDO] Training Cycle 2/2. Total training so far: 100 steps, 0.05 hours (0.00 days)
+step | train loss  nogrce | test loss  nogrce | sample
+101 | 5.85  6.03 | 5.91  6.08 | sample: ai␣will␣from␣battle␣bois,␣won0")
+110 | 5.92  6.11 | 5.87  6.06 | sample: ai␣willce␣long␣and␣a␣singer␣that␣describan␣announceded
+120 | 5.76  5.96 | 5.85  6.04 | sample: ai␣willig".⏎cltheith␣worldagesres
+130 | 5.77  5.97 | 5.74  5.95 | sample: ai␣willgity␣is␣a␣water␣bestom␣in␣their␣ex
+140 | 5.73  5.91 | 5.70  5.87 | sample: ai␣will␣str␣territ␣ownchate␣addh␣chief␣fl␣but
+150 | 5.63  5.80 | 5.70  5.86 | sample: ai␣willowcid␣in␣2017␣import)
+160 | 5.60  5.76 | 5.63  5.77 | sample: ai␣willrew.⏎␣transok"illations␣in
+170 | 5.62  5.78 | 5.60  5.75 | sample: ai␣will␣forsters␣ent,␣heit.␣des␣president
+180 | 5.55  5.71 | 5.57  5.74 | sample: ai␣will␣playeri,␣lowit,␣bar3␣taut
+190 | 5.50  5.68 | 5.55  5.72 | sample: ai␣will␣(␣timesfluunteordgn␣epish
+200 | 5.52  5.70 | 5.53  5.71 | sample: ai␣will␣as␣about␣eported␣in␣pol␣voligb
+[cycle 2] total steps: 200; time spent: wall=150.49s cpu=150.54s; writing model: wall=0.08s cpu=0.03s
+
+[2026-01-17T04:15:43.182591+00:00] grce.py --cycles 3 --tag span3 --context-span 3
+Loaded existing model from model/simplewiki_model_v2003_bs64_emb192_layers6_heads4_ctx64_span3.pt
+Total training so far: 200 steps, 0.09 hours (0.00 days)
+
+[GPT+GRCE wo/THINK wo/UNDO] Training Cycle 1/3. Total training so far: 200 steps, 0.09 hours (0.00 days)
+step | train loss  nogrce | test loss  nogrce | sample
+201 | 5.66  5.75 | 5.69  5.79 | sample: ai␣will␣governor␣kore␣disire␣dire␣went␣his␣re␣in␣2
+210 | 5.57  5.74 | 5.49  5.68 | sample: ai␣willorve␣gr-jy.␣re␣civ.
+220 | 5.51  5.66 | 5.48  5.64 | sample: ai␣willursics␣after␣193␣showbimeies
+230 | 5.47  5.65 | 5.51  5.68 | sample: ai␣will␣canadian␣given␣reder␣that␣or␣herer␣in
+240 | 5.41  5.60 | 5.38  5.57 | sample: ai␣will␣ciny␣en␣is␣dimingved␣to
+250 | 5.38  5.62 | 5.40  5.63 | sample: ai␣will␣years␣pro␣agist␣base␣hises␣nearhe␣as
+260 | 5.37  5.59 | 5.38  5.61 | sample: ai␣willes␣in␣the␣sp␣const␣disard␣reg␣to␣the
+270 | 5.31  5.57 | 5.31  5.57 | sample: ai␣will␣multogapmasamip␣think␣f␣n
+280 | 5.34  5.61 | 5.31  5.57 | sample: ai␣wille.␣the␣separ3ci␣a␣region␣between
+290 | 5.22  5.52 | 5.35  5.65 | sample: ai␣wills␣oneicalions␣the␣nominer␣bia.
+300 | 5.26  5.57 | 5.29  5.60 | sample: ai␣will␣democraticint␣ex␣of␣meanherosed.␣it␣is
+[cycle 1] total steps: 300; time spent: wall=155.96s cpu=155.94s; writing model: wall=0.07s cpu=0.03s
+
+[GPT+GRCE wo/THINK wo/UNDO] Training Cycle 2/3. Total training so far: 300 steps, 0.13 hours (0.01 days)
+step | train loss  nogrce | test loss  nogrce | sample
+301 | 5.32  5.60 | 5.37  5.64 | sample: ai␣will␣have␣battle␣boi␣def,␣won␣september")
+310 | 5.20  5.50 | 5.29  5.57 | sample: ai␣willce␣long␣and␣2910.␣theency
+320 | 5.21  5.54 | 5.24  5.58 | sample: ai␣willig".⏎clthe␣province␣worldagesres
+330 | 5.21  5.53 | 5.24  5.55 | sample: ai␣will␣annity␣is␣a␣water␣bestomut.⏎
+340 | 5.21  5.52 | 5.18  5.49 | sample: ai␣will␣str␣territ␣ownchate␣addh␣chief,␣but
+350 | 5.16  5.49 | 5.13  5.48 | sample: ai␣will␣clcid␣in␣2017␣import␣to
+360 | 5.18  5.50 | 5.14  5.48 | sample: ai␣willrew.⏎␣transokunillations␣in
+370 | 5.14  5.46 | 5.15  5.47 | sample: ai␣will␣for␣the␣german␣stoldper..␣des␣is
+380 | 5.11  5.47 | 5.11  5.47 | sample: ai␣will␣player␣professional␣includ.␣the␣largest␣has␣swedour.
+390 | 5.06  5.43 | 5.05  5.42 | sample: ai␣willes␣timesfluunteordgille␣was␣after
+400 | 5.05  5.38 | 5.05  5.38 | sample: ai␣will␣be␣about␣eported␣in␣polutigb
+[cycle 2] total steps: 400; time spent: wall=153.27s cpu=153.26s; writing model: wall=0.08s cpu=0.03s
+
+[GPT+GRCE wo/THINK wo/UNDO] Training Cycle 3/3. Total training so far: 400 steps, 0.17 hours (0.01 days)
+step | train loss  nogrce | test loss  nogrce | sample
+401 | 5.17  5.44 | 5.12  5.40 | sample: ai␣will␣other␣ser.␣when⏎banger␣sometimes␣by
+410 | 5.06  5.38 | 5.05  5.36 | sample: ai␣will␣former␣world␣trisvedic␣sk.␣
+420 | 5.03  5.37 | 5.08  5.42 | sample: ai␣will␣a␣largest␣knage␣italian␣team␣sign␣age␣of␣the
+430 | 5.05  5.37 | 5.10  5.41 | sample: ai␣will␣green.⏎the␣muse␣hases␣cant␣on
+440 | 4.98  5.32 | 5.03  5.38 | sample: ai␣will␣the␣southman␣of␣hol.⏎bertabown
+450 | 5.04  5.39 | 5.02  5.38 | sample: ai␣will␣dutch␣power␣to␣vara␣fundiesed⏎
+460 | 5.00  5.35 | 5.04  5.39 | sample: ai␣willic␣award.␣he␣was␣is␣latmerv␣things
+470 | 4.96  5.28 | 5.02  5.34 | sample: ai␣will␣the␣brazillets␣of␣census␣cles␣from␣econom
+480 | 4.97  5.32 | 4.96  5.32 | sample: ai␣will␣if␣sooff␣under␣the␣mean␣99.
+490 | 4.92  5.25 | 4.98  5.30 | sample: ai␣will␣been␣canded␣by␣the␣alsoldally␣n
+500 | 4.87  5.26 | 4.94  5.32 | sample: ai␣willes␣outase␣of␣independed␣with␣the␣september␣the
+[cycle 3] total steps: 500; time spent: wall=155.65s cpu=156.03s; writing model: wall=0.18s cpu=0.03s
+
+[2026-01-17T05:11:42.273992+00:00] grce.py --cycles 5 --tag span3 --context-span 3
+Loaded existing model from model/simplewiki_model_v2003_bs64_emb192_layers6_heads4_ctx64_span3.pt
+Total training so far: 500 steps, 0.22 hours (0.01 days)
+
+[GPT+GRCE wo/THINK wo/UNDO] Training Cycle 1/5. Total training so far: 500 steps, 0.22 hours (0.01 days)
+step | train loss  nogrce | test loss  nogrce | sample
+501 | 5.06  5.26 | 5.14  5.32 | sample: ai␣will.⏎chire␣iis␣of␣the␣basbr
+510 | 4.91  5.29 | 4.92  5.30 | sample: ai␣willor␣university␣gride.␣it␣is␣re␣civest
+520 | 4.89  5.26 | 4.94  5.30 | sample: ai␣willursics␣after␣without␣the␣2007␣this
+530 | 4.92  5.29 | 4.94  5.30 | sample: ai␣will␣canadian␣given␣vern␣as␣that␣or␣her␣home␣in
+540 | 4.82  5.17 | 4.84  5.18 | sample: ai␣will␣cacey␣ena␣dima␣formted
+550 | 4.83  5.19 | 4.93  5.27 | sample: ai␣will␣be␣pro␣agiboreses␣nearheip
+560 | 4.82  5.20 | 4.87  5.24 | sample: ai␣willes␣of␣it␣will␣const␣disphutents,
+570 | 4.81  5.18 | 4.85  5.21 | sample: ai␣will␣berogap.␣these␣left␣fr␣think␣f␣n
+580 | 4.79  5.18 | 4.83  5.20 | sample: ai␣will␣have␣home␣to␣separetscia␣as␣an
+590 | 4.77  5.18 | 4.82  5.20 | sample: ai␣wills␣to␣have␣water␣the␣nominer␣bia␣europe
+600 | 4.76  5.15 | 4.81  5.19 | sample: ai␣will␣beint␣exawing␣a␣casserges
+[cycle 1] total steps: 600; time spent: wall=149.39s cpu=149.18s; writing model: wall=0.07s cpu=0.03s
+
+[GPT+GRCE wo/THINK wo/UNDO] Training Cycle 2/5. Total training so far: 600 steps, 0.26 hours (0.01 days)
+step | train loss  nogrce | test loss  nogrce | sample
+601 | 4.97  5.25 | 5.02  5.28 | sample: ai␣will␣have␣battle␣boi␣for␣the␣sign␣ent")
+610 | 4.78  5.19 | 4.78  5.17 | sample: ai␣will␣have␣more␣americas␣singer␣that␣describan.⏎
+620 | 4.77  5.11 | 4.87  5.22 | sample: ai␣willigenness␣form.⏎capagesres
+630 | 4.78  5.15 | 4.77  5.16 | sample: ai␣will␣annity␣is␣a␣water␣bestom␣of␣their␣ex
+640 | 4.73  5.12 | 4.77  5.16 | sample: ai␣will␣str␣territor␣(canh␣chief␣has␣inv
+650 | 4.71  5.09 | 4.77  5.13 | sample: ai␣will␣clcid␣in␣2019,␣to
+660 | 4.71  5.07 | 4.72  5.08 | sample: ai␣will␣terir.⏎on␣13thations␣in
+670 | 4.67  5.06 | 4.71  5.08 | sample: ai␣will␣her␣only␣german␣ent␣ancient␣during␣the␣188
+680 | 4.72  5.07 | 4.73  5.09 | sample: ai␣will␣refer␣professional␣includay␣or␣doon␣tad
+690 | 4.67  5.07 | 4.71  5.10 | sample: ai␣willes␣times␣goal␣tailorde␣charles␣after
+700 | 4.66  5.05 | 4.74  5.12 | sample: ai␣will␣be␣about␣eported␣in␣police,␣and
+[cycle 2] total steps: 700; time spent: wall=149.36s cpu=149.37s; writing model: wall=0.21s cpu=0.03s
+
+[GPT+GRCE wo/THINK wo/UNDO] Training Cycle 3/5. Total training so far: 700 steps, 0.30 hours (0.01 days)
+step | train loss  nogrce | test loss  nogrce | sample
+701 | 4.82  5.06 | 4.87  5.11 | sample: ai␣will␣other␣kcon⏎banger␣and␣go
+710 | 4.71  5.06 | 4.69  5.06 | sample: ai␣will␣former␣world␣tulisved␣as␣it.⏎
+720 | 4.68  5.04 | 4.69  5.06 | sample: ai␣will␣a␣largest␣knage␣italian␣teamhip␣for␣20
+730 | 4.66  5.03 | 4.60  4.98 | sample: ai␣will␣green.⏎the␣museumes␣cantain
+740 | 4.63  5.01 | 4.66  5.03 | sample: ai␣will␣"clmandressed.␣wabown
+750 | 4.65  5.03 | 4.62  5.00 | sample: ai␣will␣dutch␣power␣to␣various␣fundies␣to␣the
+760 | 4.64  5.00 | 4.67  5.02 | sample: ai␣will␣geor␣award.␣he␣was␣also␣latmervated
+770 | 4.65  5.01 | 4.68  5.05 | sample: ai␣will␣the␣next␣animals.⏎year's␣econom
+780 | 4.58  4.96 | 4.64  4.99 | sample: ai␣will␣if␣sooff␣under␣the␣mean␣process␣to␣ke
+790 | 4.53  4.92 | 4.61  4.98 | sample: ai␣will␣been␣canded␣by␣the␣alsoldally␣n
+800 | 4.56  4.95 | 4.58  4.96 | sample: ai␣willes␣outase␣indorporent␣successful␣the
+[cycle 3] total steps: 800; time spent: wall=149.02s cpu=149.01s; writing model: wall=0.07s cpu=0.03s
+
+[GPT+GRCE wo/THINK wo/UNDO] Training Cycle 4/5. Total training so far: 800 steps, 0.34 hours (0.01 days)
+step | train loss  nogrce | test loss  nogrce | sample
+801 | 4.70  5.01 | 4.65  4.96 | sample: ai␣willies␣to␣clia␣where␣a␣womulia␣to
+810 | 4.62  4.99 | 4.63  5.01 | sample: ai␣will␣justness.␣it␣starcent-the␣river
+820 | 4.57  4.97 | 4.71  5.09 | sample: ai␣willxal␣and␣displeal.␣other␣people␣were
+830 | 4.61  5.01 | 4.61  5.00 | sample: ai␣will␣real␣able␣district.⏎trennjam
+840 | 4.59  4.97 | 4.63  4.99 | sample: ai␣will␣animals␣around␣been␣vice␣that␣gr␣brotheror␣of
+850 | 4.56  4.94 | 4.64  5.02 | sample: ai␣will␣beney␣public.␣scientists␣plays␣sex.⏎after
+860 | 4.53  4.92 | 4.57  4.96 | sample: ai␣will␣did␣not␣contorced␣include␣algot"
+870 | 4.55  4.95 | 4.62  5.02 | sample: ai␣will␣be␣member),␣it␣ply␣justaren
+880 | 4.52  4.93 | 4.61  5.01 | sample: ai␣will␣4␣white␣to␣voawition's␣songge
+890 | 4.48  4.86 | 4.55  4.93 | sample: ai␣will␣be␣allowed␣according␣bos␣.⏎a
+900 | 4.53  4.92 | 4.57  4.96 | sample: ai␣will␣hunchan␣armeding␣hall.␣he
+[cycle 4] total steps: 900; time spent: wall=149.94s cpu=150.30s; writing model: wall=0.22s cpu=0.03s
+
+[GPT+GRCE wo/THINK wo/UNDO] Training Cycle 5/5. Total training so far: 900 steps, 0.38 hours (0.02 days)
+step | train loss  nogrce | test loss  nogrce | sample
+901 | 4.66  4.93 | 4.64  4.92 | sample: ai␣will␣get␣an␣no␣right.⏎as␣mc,␣the
+910 | 4.51  4.90 | 4.59  4.96 | sample: ai␣will␣debution.⏎on␣202)␣success
+920 | 4.53  4.92 | 4.59  4.96 | sample: ai␣will␣parish␣in␣july␣june␣1933,␣1
+930 | 4.51  4.89 | 4.50  4.89 | sample: ai␣willen.␣the␣girifholds␣can␣also
+940 | 4.49  4.87 | 4.56  4.93 | sample: ai␣will␣knald␣a␣roles␣value,␣school,
+950 | 4.49  4.89 | 4.52  4.91 | sample: ai␣will␣be␣betat␣at␣his␣book.␣she␣began␣mainly
+960 | 4.49  4.86 | 4.50  4.87 | sample: ai␣will␣use␣by␣her␣hongs␣(born␣2
+970 | 4.44  4.83 | 4.54  4.93 | sample: ai␣will␣will␣made␣to␣be␣from␣the␣pass␣career.⏎
+980 | 4.43  4.81 | 4.52  4.88 | sample: ai␣will␣treney,␣histor␣that␣these␣are␣not␣the␣d
+990 | 4.35  4.75 | 4.56  4.93 | sample: ai␣will␣stick␣to␣padices␣useress␣play␣before
+1000 | 4.41  4.81 | 4.49  4.88 | sample: ai␣will␣to␣the␣west␣south␣university␣about␣the␣rms␣of
+[cycle 5] total steps: 1000; time spent: wall=148.41s cpu=148.38s; writing model: wall=0.06s cpu=0.02s
+
+[2026-01-17T06:54:49.065182+00:00] grce.py --cycles 10 --tag span3 --context-span 3
+Loaded existing model from model/simplewiki_model_v2003_bs64_emb192_layers6_heads4_ctx64_span3.pt
+Total training so far: 1000 steps, 0.42 hours (0.02 days)
+
+[GPT+GRCE wo/THINK wo/UNDO] Training Cycle 1/10. Total training so far: 1000 steps, 0.42 hours (0.02 days)
+step | train loss  nogrce | test loss  nogrce | sample
+1001 | 4.50  4.89 | 4.48  4.87 | sample: ai␣will␣also␣changed␣the␣most␣direction␣of␣the␣basry
+1010 | 4.45  4.83 | 4.47  4.85 | sample: ai␣will␣not␣help␣to␣austr␣louisline.␣reacm
+1020 | 4.46  4.84 | 4.45  4.84 | sample: ai␣will␣build␣avossigwer␣show␣fat␣this
+1030 | 4.47  4.85 | 4.42  4.81 | sample: ai␣will␣canadian␣given␣␣from␣many␣places␣or␣her␣home␣in
+1040 | 4.46  4.85 | 4.44  4.83 | sample: ai␣will␣cints␣ensouri␣is␣a␣form␣of
+1050 | 4.39  4.78 | 4.41  4.80 | sample: ai␣will␣be␣proposed␣with␣his␣flashheip
+1060 | 4.44  4.83 | 4.48  4.88 | sample: ai␣will␣comiste␣will␣const␣disge␣regions.
+1070 | 4.45  4.83 | 4.49  4.88 | sample: ai␣will␣beroging␣at␣bestches␣she␣think␣fant
+1080 | 4.38  4.78 | 4.41  4.81 | sample: ai␣will␣have␣developed␣to␣a3th␣a␣twin
+1090 | 4.35  4.77 | 4.44  4.83 | sample: ai␣wills␣to␣have␣water.␣this␣was␣elected␣on␣europe
+1100 | 4.44  4.83 | 4.41  4.82 | sample: ai␣will␣come␣experts␣and␣monassardges
+[cycle 1] total steps: 1100; time spent: wall=141.85s cpu=141.96s; writing model: wall=0.09s cpu=0.04s
+
+[GPT+GRCE wo/THINK wo/UNDO] Training Cycle 2/10. Total training so far: 1100 steps, 0.46 hours (0.02 days)
+step | train loss  nogrce | test loss  nogrce | sample
+1101 | 4.53  4.83 | 4.54  4.84 | sample: ai␣will␣have␣battle␣boiinors.⏎"ip
+1110 | 4.39  4.80 | 4.45  4.86 | sample: ai␣will␣conventions␣of␣film␣describing␣the␣p
+1120 | 4.42  4.80 | 4.45  4.82 | sample: ai␣will␣how␣to␣play␣up.⏎capagesk
+1130 | 4.41  4.82 | 4.33  4.74 | sample: ai␣will␣annity␣is␣the␣water␣best␣week.⏎
+1140 | 4.37  4.78 | 4.39  4.79 | sample: ai␣will␣structure␣(canhodb)
+1150 | 4.35  4.75 | 4.43  4.83 | sample: ai␣will␣claraform␣in␣2017,␣to
+1160 | 4.35  4.75 | 4.37  4.77 | sample: ai␣will␣terms.⏎on␣13,␣19
+1170 | 4.29  4.69 | 4.37  4.77 | sample: ai␣will␣her␣rerver␣of␣stit.␣desl
+1180 | 4.33  4.75 | 4.41  4.80 | sample: ai␣will␣referology,␣with␣the␣doon␣trop
+1190 | 4.35  4.76 | 4.39  4.80 | sample: ai␣will␣do␣not␣have␣them␣farordings␣through␣holly
+1200 | 4.32  4.75 | 4.38  4.79 | sample: ai␣will␣be␣about␣eported␣in␣police,␣and
+[cycle 2] total steps: 1200; time spent: wall=136.88s cpu=136.90s; writing model: wall=0.09s cpu=0.04s
+
+[GPT+GRCE wo/THINK wo/UNDO] Training Cycle 3/10. Total training so far: 1200 steps, 0.50 hours (0.02 days)
+step | train loss  nogrce | test loss  nogrce | sample
+1201 | 4.45  4.78 | 4.44  4.76 | sample: ai␣will␣finging␣scandetanges␣and␣go
+1210 | 4.37  4.77 | 4.41  4.80 | sample: ai␣will␣former␣world.␣the␣gheicle.␣
+1220 | 4.36  4.74 | 4.34  4.73 | sample: ai␣will␣a␣large␣know␣government␣in␣significal␣e
+1230 | 4.29  4.72 | 4.39  4.80 | sample: ai␣will␣green.⏎the␣museumes␣can␣create
+1240 | 4.37  4.78 | 4.31  4.74 | sample: ai␣will␣enements␣on␣holly.␣the␣king␣is
+1250 | 4.31  4.72 | 4.40  4.81 | sample: ai␣will␣dutch␣power␣to␣various␣fundies␣of␣the
+1260 | 4.35  4.75 | 4.40  4.79 | sample: ai␣will␣not␣awarded.␣some␣is␣latm␣have␣things
+1270 | 4.27  4.70 | 4.31  4.74 | sample: ai␣will␣the␣next␣animals.⏎year's␣econom
+1280 | 4.29  4.72 | 4.38  4.78 | sample: ai␣will␣if␣they␣are␣not␣under␣some␣meanings.␣it
+1290 | 4.27  4.69 | 4.29  4.71 | sample: ai␣will␣been␣created␣by␣the␣city.⏎ldally␣n
+1300 | 4.28  4.71 | 4.33  4.74 | sample: ai␣will␣materase␣indorporent␣the␣og
+[cycle 3] total steps: 1300; time spent: wall=137.22s cpu=137.91s; writing model: wall=0.08s cpu=0.03s
+
+[GPT+GRCE wo/THINK wo/UNDO] Training Cycle 4/10. Total training so far: 1300 steps, 0.54 hours (0.02 days)
+step | train loss  nogrce | test loss  nogrce | sample
+1301 | 4.37  4.76 | 4.44  4.83 | sample: ai␣will␣bey␣claped␣a␣womul␣based␣to
+1310 | 4.34  4.74 | 4.32  4.74 | sample: ai␣will␣justness␣(direcall-the␣last
+1320 | 4.28  4.70 | 4.31  4.72 | sample: ai␣will␣"kovic␣now".␣other␣frank
+1330 | 4.41  4.80 | 4.36  4.75 | sample: ai␣will␣real␣name,␣the␣words␣of␣dennam
+1340 | 4.23  4.67 | 4.35  4.76 | sample: ai␣will␣animals␣around␣june␣number␣of␣cold,␣amo
+1350 | 4.21  4.66 | 4.32  4.74 | sample: ai␣will␣beok␣public.␣scientists␣plays␣sex.⏎alth
+1360 | 4.23  4.67 | 4.34  4.75 | sample: ai␣will␣did␣not␣contorced␣include␣al␣docat
+1370 | 4.26  4.68 | 4.31  4.73 | sample: ai␣will␣sent.␣he␣wrote␣it␣plying␣his␣is
+1380 | 4.24  4.69 | 4.31  4.75 | sample: ai␣willler␣white␣to␣over␣50␣diaccel
+1390 | 4.26  4.70 | 4.32  4.75 | sample: ai␣will␣be␣allowed␣by␣world␣bos␣.⏎a
+1400 | 4.25  4.68 | 4.27  4.70 | sample: ai␣will␣hunior␣in␣armed.⏎sp
+[cycle 4] total steps: 1400; time spent: wall=135.84s cpu=135.94s; writing model: wall=0.09s cpu=0.04s
+
+[GPT+GRCE wo/THINK wo/UNDO] Training Cycle 5/10. Total training so far: 1400 steps, 0.58 hours (0.02 days)
+step | train loss  nogrce | test loss  nogrce | sample
+1401 | 4.31  4.69 | 4.34  4.72 | sample: ai␣will␣get␣an␣steen.⏎in␣mcgrains
+1410 | 4.27  4.68 | 4.29  4.71 | sample: ai␣will␣debution.⏎she␣is␣one␣of␣one␣success
+1420 | 4.26  4.67 | 4.29  4.72 | sample: ai␣will␣be␣named␣to␣know␣the␣arkle␣be
+1430 | 4.23  4.68 | 4.30  4.73 | sample: ai␣willen.⏎elquia␣vacior␣general
+1440 | 4.22  4.69 | 4.23  4.69 | sample: ai␣will␣knald␣a␣roles␣valley,␣including␣a
+1450 | 4.23  4.67 | 4.29  4.73 | sample: ai␣will␣be␣better␣at␣specific␣people.␣it␣is
+1460 | 4.15  4.60 | 4.25  4.70 | sample: ai␣will␣use␣by␣her␣a␣group␣of␣social␣contains␣med
+1470 | 4.16  4.63 | 4.26  4.70 | sample: ai␣will␣will␣be␣commune.␣there␣were␣pass␣longer␣at
+1480 | 4.26  4.70 | 4.30  4.74 | sample: ai␣will␣beney,␣histor␣that␣these␣areders␣did
+1490 | 4.19  4.64 | 4.27  4.70 | sample: ai␣will␣not␣lives␣to␣make␣doices␣use␣many␣play␣before
+1500 | 4.21  4.67 | 4.27  4.72 | sample: ai␣will␣need␣the␣creased␣university␣about␣the␣rural␣commit
+[cycle 5] total steps: 1500; time spent: wall=134.32s cpu=134.42s; writing model: wall=0.09s cpu=0.03s
+
+[GPT+GRCE wo/THINK wo/UNDO] Training Cycle 6/10. Total training so far: 1500 steps, 0.61 hours (0.03 days)
+step | train loss  nogrce | test loss  nogrce | sample
+1501 | 4.30  4.71 | 4.26  4.67 | sample: ai␣will␣have␣seen␣this␣countries␣is␣courb.␣the
+1510 | 4.26  4.68 | 4.27  4.69 | sample: ai␣will␣spreads␣natw␣upers.⏎d
+1520 | 4.21  4.65 | 4.25  4.68 | sample: ai␣will␣attit.⏎after␣sarlwa
+1530 | 4.21  4.67 | 4.25  4.70 | sample: ai␣will␣sonurally␣movement␣tubizes␣bo
+1540 | 4.24  4.67 | 4.27  4.71 | sample: ai␣will␣critics␣want␣the␣traditional␣general␣rating
+1550 | 4.19  4.64 | 4.22  4.68 | sample: ai␣will␣ser␣8␣,␣in␣new␣york␣city,␣gu␣change
+1560 | 4.13  4.60 | 4.17  4.64 | sample: ai␣will␣made␣him.⏎saint-larear
+1570 | 4.18  4.65 | 4.26  4.72 | sample: ai␣will␣be␣made␣the␣area␣of␣many␣republic␣of␣the␣cr
+1580 | 4.22  4.67 | 4.24  4.69 | sample: ai␣will␣not␣have␣several␣position␣or␣universist␣lin
+1590 | 4.19  4.65 | 4.25  4.69 | sample: ai␣will␣get␣accraights␣the␣health.␣in␣august
+1600 | 4.22  4.71 | 4.24  4.72 | sample: ai␣will␣see␣how␣there␣such␣shooting.⏎the
+[cycle 6] total steps: 1600; time spent: wall=137.93s cpu=138.04s; writing model: wall=0.07s cpu=0.03s
+
+[GPT+GRCE wo/THINK wo/UNDO] Training Cycle 7/10. Total training so far: 1600 steps, 0.65 hours (0.03 days)
+step | train loss  nogrce | test loss  nogrce | sample
+1601 | 4.30  4.68 | 4.31  4.69 | sample: ai␣will␣more␣frequen.⏎a␣song␣bour
+1610 | 4.23  4.66 | 4.27  4.69 | sample: ai␣will.␣someented␣by␣the␣subject,␣local
+1620 | 4.19  4.65 | 4.23  4.69 | sample: ai␣will␣traveling␣bitage.␣this␣frogs
+1630 | 4.22  4.68 | 4.28  4.74 | sample: ai␣will␣synose␣red␣catw␣in␣197
+1640 | 4.14  4.61 | 4.25  4.69 | sample: ai␣will␣host␣is␣one␣television␣been␣"genge"
+1650 | 4.22  4.67 | 4.17  4.63 | sample: ai␣willured␣str.⏎in␣an␣election␣list␣is␣l
+1660 | 4.10  4.57 | 4.18  4.64 | sample: ai␣will␣get␣case,␣'now␣about␣20
+1670 | 4.12  4.61 | 4.22  4.69 | sample: ai␣will's␣oldest␣albums␣from␣the␣small␣used
+1680 | 4.14  4.62 | 4.20  4.68 | sample: ai␣will␣be␣used␣by␣one␣of␣the␣authoric␣antrop
+1690 | 4.08  4.57 | 4.22  4.67 | sample: ai␣will␣be␣considraorner,␣that␣is␣produced␣by
+1700 | 4.10  4.57 | 4.16  4.63 | sample: ai␣will␣have␣lead␣to␣contep␣piy␣a␣h
+[cycle 7] total steps: 1700; time spent: wall=147.45s cpu=148.12s; writing model: wall=0.08s cpu=0.03s
+
+[GPT+GRCE wo/THINK wo/UNDO] Training Cycle 8/10. Total training so far: 1700 steps, 0.69 hours (0.03 days)
+step | train loss  nogrce | test loss  nogrce | sample
+1701 | 4.20  4.67 | 4.22  4.70 | sample: ai␣will␣be␣increwise.␣visitled␣n
+1710 | 4.19  4.65 | 4.26  4.71 | sample: ai␣will␣when␣sis␣america␣hyarronia,␣being
+1720 | 4.14  4.60 | 4.26  4.70 | sample: ai␣will,␣in␣muta,␣religiously␣important
+1730 | 4.19  4.66 | 4.21  4.68 | sample: ai␣will␣the␣nbc␣nhumitient␣or
+1740 | 4.12  4.59 | 4.18  4.65 | sample: ai␣will␣block␣ke␣cancer.⏎fa␣pro␣is
+1750 | 4.14  4.62 | 4.26  4.71 | sample: ai␣will␣growals.␣vequaga␣diedn
+1760 | 4.11  4.63 | 4.19  4.67 | sample: ai␣will␣to␣a␣new␣government␣wrestling␣a␣new␣supre
+1770 | 4.13  4.60 | 4.14  4.62 | sample: ai␣will␣melation␣pl␣whether␣this␣need␣to␣be␣con
+1780 | 4.12  4.59 | 4.13  4.62 | sample: ai␣will␣call␣several␣children␣teantic␣down.⏎the␣song
+1790 | 4.08  4.56 | 4.18  4.63 | sample: ai␣will␣live␣in␣2012⏎in␣20
+1800 | 4.07  4.57 | 4.10  4.59 | sample: ai␣willches␣large␣beings␣editionally␣different␣the␣name
+[cycle 8] total steps: 1800; time spent: wall=136.42s cpu=136.55s; writing model: wall=0.07s cpu=0.03s
+
+[GPT+GRCE wo/THINK wo/UNDO] Training Cycle 9/10. Total training so far: 1800 steps, 0.73 hours (0.03 days)
+step | train loss  nogrce | test loss  nogrce | sample
+1801 | 4.19  4.67 | 4.15  4.65 | sample: ai␣will␣you␣agency␣takering␣from␣plot'
+1810 | 4.20  4.67 | 4.18  4.65 | sample: ai␣will␣belgia␣feelage␣of␣a␣pen
+1820 | 4.15  4.63 | 4.12  4.61 | sample: ai␣will␣can␣most␣sea␣levels␣in␣for␣example,␣usually
+1830 | 4.12  4.61 | 4.17  4.65 | sample: ai␣will␣features␣to␣neutual␣experi
+1840 | 4.13  4.63 | 4.19  4.68 | sample: ai␣will␣eitch␣surround␣which␣have␣exex
+1850 | 4.08  4.60 | 4.16  4.65 | sample: ai␣will␣work␣randings,␣heart␣renamed␣t
+1860 | 4.11  4.62 | 4.14  4.65 | sample: ai␣will␣coilly␣the␣name␣orns␣meaning
+1870 | 4.06  4.58 | 4.08  4.59 | sample: ai␣will␣last␣food,␣and␣saves␣in␣every␣day␣of
+1880 | 4.08  4.59 | 4.19  4.68 | sample: ai␣will␣have␣active␣worldity␣(in␣the␣official␣to
+1890 | 4.08  4.58 | 4.03  4.54 | sample: ai␣will␣be␣from␣shana␣become␣stanleychan
+1900 | 4.03  4.54 | 4.15  4.64 | sample: ai␣will␣acco␣part␣of␣the␣others␣of␣the␣government␣of
+[cycle 9] total steps: 1900; time spent: wall=133.87s cpu=133.99s; writing model: wall=0.06s cpu=0.03s
+
+[GPT+GRCE wo/THINK wo/UNDO] Training Cycle 10/10. Total training so far: 1900 steps, 0.77 hours (0.03 days)
+step | train loss  nogrce | test loss  nogrce | sample
+1901 | 4.17  4.62 | 4.22  4.67 | sample: ai␣will␣family␣of␣how␣salzia.⏎in␣september
+1910 | 4.10  4.59 | 4.23  4.68 | sample: ai␣will␣get␣on␣christlife␣of␣their␣signed␣muse
+1920 | 4.07  4.58 | 4.13  4.62 | sample: ai␣will␣have␣been␣a␣professional␣wrestling␣between␣which␣ended
+1930 | 4.07  4.58 | 4.12  4.61 | sample: ai␣will␣trinity␣only␣over␣the␣jecer␣release
+1940 | 4.11  4.61 | 4.13  4.61 | sample: ai␣will␣called␣nicholene␣and␣guice.
+1950 | 4.10  4.60 | 4.17  4.67 | sample: ai␣will␣get␣light.␣they␣then␣other␣if␣white.␣open
+1960 | 4.03  4.56 | 4.18  4.67 | sample: ai␣will␣had␣first␣published␣to.⏎samakle
+1970 | 3.99  4.51 | 4.10  4.60 | sample: ai␣will␣be␣put␣however.⏎it␣was␣born␣in␣pr
+1980 | 4.05  4.55 | 4.09  4.58 | sample: ai␣will␣resident␣down␣it␣amazia␣is␣notized
+1990 | 4.08  4.60 | 4.15  4.62 | sample: ai␣will␣want␣through␣its␣enginesvel.⏎the␣l
+2000 | 4.03  4.55 | 4.15  4.65 | sample: ai␣will␣what␣grant␣1776es␣from␣the
+[cycle 10] total steps: 2000; time spent: wall=134.66s cpu=134.79s; writing model: wall=0.08s cpu=0.03s
+
+[2026-01-17T08:49:45.767893+00:00] grce.py --cycles 10 --tag span3 --context-span 3
+Loaded existing model from model/simplewiki_model_v2003_bs64_emb192_layers6_heads4_ctx64_span3.pt
+Total training so far: 2000 steps, 0.81 hours (0.03 days)
+
+[GPT+GRCE wo/THINK wo/UNDO] Training Cycle 1/10. Total training so far: 2000 steps, 0.81 hours (0.03 days)
+step | train loss  nogrce | test loss  nogrce | sample
+2001 | 4.14  4.65 | 4.18  4.68 | sample: ai␣will␣also␣change␣the␣late␣1950s.
+2010 | 4.11  4.59 | 4.19  4.66 | sample: ai␣will␣not␣help␣gravening.␣reached
+2020 | 4.03  4.57 | 4.15  4.64 | sample: ai␣willurs␣avossigation.␣seeland␣had␣this
+2030 | 4.04  4.59 | 4.10  4.63 | sample: ai␣will␣also␣given␣around␣a␣number␣that␣that␣he␣would␣be
+2040 | 4.05  4.59 | 4.15  4.66 | sample: ai␣will␣ciny␣ensouth␣them.␣they␣have
+2050 | 4.05  4.57 | 4.08  4.59 | sample: ai␣will␣be␣proposed␣with␣his␣works.⏎be
+2060 | 4.01  4.55 | 4.11  4.65 | sample: ai␣will␣comiste␣will␣const␣disorphents␣have
+2070 | 3.96  4.52 | 4.05  4.58 | sample: ai␣will␣be␣likely␣thought␣in␣scott␣n
+2080 | 3.99  4.52 | 4.10  4.61 | sample: ai␣will␣have␣rena␣to␣their␣going␣a␣twin
+2090 | 4.03  4.57 | 4.11  4.62 | sample: ai␣wills␣to␣have␣water.␣this␣competition␣was␣made
+2100 | 4.02  4.56 | 4.03  4.57 | sample: ai␣will␣come␣existing␣a␣monassyur
+[cycle 1] total steps: 2100; time spent: wall=156.02s cpu=156.46s; writing model: wall=0.07s cpu=0.03s
+
+[GPT+GRCE wo/THINK wo/UNDO] Training Cycle 2/10. Total training so far: 2100 steps, 0.85 hours (0.04 days)
+step | train loss  nogrce | test loss  nogrce | sample
+2101 | 4.10  4.64 | 4.12  4.64 | sample: ai␣will␣have␣battle␣bought␣for␣drugs")
+2110 | 4.05  4.57 | 4.16  4.66 | sample: ai␣will␣have␣more␣effects␣that␣describes␣theency
+2120 | 4.04  4.54 | 4.18  4.66 | sample: ai␣willigan.⏎cljith␣worldages␣may
+2130 | 4.06  4.58 | 4.16  4.65 | sample: ai␣will␣have␣signal␣books␣such␣as␣a␣car.⏎
+2140 | 4.03  4.54 | 4.08  4.57 | sample: ai␣will␣structure␣(cropical␣chiefs)
+2150 | 4.03  4.56 | 4.09  4.61 | sample: ai␣will␣claraform␣in␣diooy␣importite
+2160 | 4.03  4.56 | 4.11  4.62 | sample: ai␣will␣terms.⏎on␣13␣march␣19
+2170 | 4.00  4.55 | 4.08  4.60 | sample: ai␣will␣not␣only␣red␣enter␣during␣the␣18th
+2180 | 3.94  4.51 | 4.12  4.64 | sample: ai␣will␣reference,␣lowitive␣ground,␣trop
+2190 | 4.00  4.54 | 4.11  4.63 | sample: ai␣will␣do␣not␣have␣themeordgille␣in␣its
+2200 | 4.00  4.55 | 4.12  4.63 | sample: ai␣will␣be␣about␣e.␣yetlet␣volumb
+[cycle 2] total steps: 2200; time spent: wall=155.31s cpu=155.36s; writing model: wall=0.06s cpu=0.03s
+
+[GPT+GRCE wo/THINK wo/UNDO] Training Cycle 3/10. Total training so far: 2200 steps, 0.89 hours (0.04 days)
+step | train loss  nogrce | test loss  nogrce | sample
+2201 | 4.11  4.66 | 4.11  4.65 | sample: ai␣will␣fc.␣scand␣kangerya␣go
+2210 | 4.02  4.55 | 4.12  4.62 | sample: ai␣will␣not␣so␣heris␣from␣her␣skate.
+2220 | 4.04  4.58 | 4.06  4.59 | sample: ai␣will␣a␣large␣knockions␣in␣turkey.⏎
+2230 | 4.02  4.55 | 4.02  4.54 | sample: ai␣will␣green.⏎the␣museumes␣can␣create
+2240 | 3.97  4.52 | 4.08  4.61 | sample: ai␣will␣also␣an␣a␣nefxt.␣the␣king␣is
+2250 | 3.99  4.54 | 4.01  4.56 | sample: ai␣will␣dutch␣powerful␣various␣fundies␣of␣the
+2260 | 3.99  4.54 | 4.05  4.60 | sample: ai␣will␣get␣awarded.␣some␣is␣latin␣way␣to
+2270 | 3.98  4.53 | 4.06  4.61 | sample: ai␣will␣arrest␣animals␣but␣are␣maches␣from␣econom
+2280 | 3.97  4.53 | 4.04  4.57 | sample: ai␣will␣be␣so␣overcer␣under␣the␣meanings.␣it
+2290 | 3.98  4.51 | 4.02  4.58 | sample: ai␣will␣been␣cause␣not␣reaganldally.
+2300 | 3.96  4.52 | 4.02  4.57 | sample: ai␣will␣also␣out␣its␣indonesian␣or␣the␣big␣n
+[cycle 3] total steps: 2300; time spent: wall=156.30s cpu=156.30s; writing model: wall=0.21s cpu=0.03s
+
+[GPT+GRCE wo/THINK wo/UNDO] Training Cycle 4/10. Total training so far: 2300 steps, 0.94 hours (0.04 days)
+step | train loss  nogrce | test loss  nogrce | sample
+2301 | 4.10  4.65 | 4.04  4.62 | sample: ai␣will␣be␣released␣closed␣where␣a␣woman␣based␣in
+2310 | 4.00  4.58 | 4.02  4.57 | sample: ai␣will␣sness.␣it␣starcrop-the␣last
+2320 | 4.07  4.63 | 4.00  4.57 | sample: ai␣willx.␣this␣is␣now␣used␣to␣other␣frank
+2330 | 3.99  4.57 | 4.05  4.59 | sample: ai␣will␣margans␣in␣the␣plague␣by␣zinc
+2340 | 3.98  4.53 | 4.10  4.63 | sample: ai␣will␣make␣around␣been␣vice␣for␣san,␣among
+2350 | 3.96  4.53 | 4.03  4.57 | sample: ai␣will␣be␣used␣to␣say␣.␣the␣sexual␣archite
+2360 | 3.96  4.53 | 4.01  4.55 | sample: ai␣will␣did␣not␣control␣to␣kill␣this␣persist"
+2370 | 3.94  4.51 | 4.02  4.57 | sample: ai␣will␣be␣vampaone␣plyage␣track
+2380 | 3.94  4.54 | 4.00  4.57 | sample: ai␣will␣4␣white␣to␣over␣50␣communiculture
+2390 | 3.98  4.57 | 4.06  4.62 | sample: ai␣will␣be␣allowed␣by␣worldwinning␣and␣app
+2400 | 3.95  4.53 | 4.00  4.57 | sample: ai␣will␣hunch␣in␣armed␣practice␣as
+[cycle 4] total steps: 2400; time spent: wall=156.26s cpu=156.29s; writing model: wall=0.08s cpu=0.03s
+
+[GPT+GRCE wo/THINK wo/UNDO] Training Cycle 5/10. Total training so far: 2400 steps, 0.98 hours (0.04 days)
+step | train loss  nogrce | test loss  nogrce | sample
+2401 | 4.03  4.57 | 4.06  4.57 | sample: ai␣will␣get␣an␣nobel␣50␣mcphil
+2410 | 3.97  4.55 | 4.01  4.58 | sample: ai␣will␣bombly␣looked␣amongen).
+2420 | 3.98  4.54 | 4.04  4.59 | sample: ai␣will␣play␣in␣july␣2013.⏎at
+2430 | 3.98  4.55 | 4.02  4.58 | sample: ai␣willen.⏎paude␣is␣born␣in
+2440 | 4.00  4.57 | 4.04  4.61 | sample: ai␣will␣need.␣a␣roles␣valley,␣also,
+2450 | 4.00  4.58 | 4.00  4.57 | sample: ai␣will␣be␣better␣at␣specific␣books.␣it␣is
+2460 | 3.90  4.50 | 4.04  4.60 | sample: ai␣will␣useful␣of␣a␣body␣thirbour␣med
+2470 | 3.85  4.45 | 4.06  4.60 | sample: ai␣will␣will␣fall␣to␣surround,␣it␣may␣change.
+2480 | 3.92  4.51 | 4.00  4.59 | sample: ai␣will␣often␣be␣use␣histor␣that␣these␣radable␣the␣d
+2490 | 3.85  4.47 | 4.08  4.65 | sample: ai␣will␣stick␣to␣pianices.␣he␣was␣taken
+2500 | 3.94  4.52 | 4.03  4.59 | sample: ai␣will␣to␣the␣west␣day␣with␣about␣the␣rmsar
+[cycle 5] total steps: 2500; time spent: wall=153.99s cpu=154.67s; writing model: wall=0.09s cpu=0.04s
+
+[GPT+GRCE wo/THINK wo/UNDO] Training Cycle 6/10. Total training so far: 2500 steps, 1.02 hours (0.04 days)
+step | train loss  nogrce | test loss  nogrce | sample
+2501 | 4.04  4.53 | 4.10  4.61 | sample: ai␣will.⏎he␣is␣a␣courb␣of␣co
+2510 | 3.97  4.58 | 4.08  4.66 | sample: ai␣will␣spently␣became␣an␣body␣television.⏎d
+2520 | 3.99  4.56 | 4.00  4.56 | sample: ai␣will␣talk.⏎after␣sabrick␣movies
+2530 | 3.94  4.54 | 4.03  4.59 | sample: ai␣will␣sonurally␣movement␣tubizes␣bo
+2540 | 3.96  4.55 | 4.03  4.59 | sample: ai␣will␣critics␣want␣the␣traditional␣general␣rating
+2550 | 3.94  4.52 | 4.05  4.61 | sample: ai␣will␣serve␣for␣35␣times,␣when␣she␣change
+2560 | 3.96  4.53 | 3.98  4.56 | sample: ai␣will␣made␣him.⏎santian␣star␣30
+2570 | 3.81  4.44 | 4.06  4.63 | sample: ai␣will␣be␣made␣in␣area,␣killing␣many␣gram
+2580 | 3.94  4.53 | 4.08  4.65 | sample: ai␣will␣not␣have␣toile␣orle␣or␣more␣lors
+2590 | 3.86  4.47 | 4.03  4.61 | sample: ai␣will␣love␣with␣the␣name␣by␣the␣flag␣of
+2600 | 3.86  4.47 | 4.01  4.59 | sample: ai␣will␣see␣how␣there␣such␣few␣short␣or␣while␣a␣fe
+[cycle 6] total steps: 2600; time spent: wall=152.79s cpu=153.46s; writing model: wall=0.06s cpu=0.03s
+
+[GPT+GRCE wo/THINK wo/UNDO] Training Cycle 7/10. Total training so far: 2600 steps, 1.06 hours (0.04 days)
+step | train loss  nogrce | test loss  nogrce | sample
+2601 | 4.01  4.60 | 3.99  4.59 | sample: ai␣will␣more␣frequent␣used␣to␣transdictations
+2610 | 3.95  4.53 | 3.96  4.53 | sample: ai␣will␣grow.⏎this␣lot␣use␣subject,␣local
+2620 | 3.93  4.54 | 4.01  4.61 | sample: ai␣will␣traveling␣bitfe␣lums
+2630 | 3.97  4.58 | 3.99  4.59 | sample: ai␣will␣syrian␣mythroley.␣gett
+2640 | 3.90  4.51 | 4.03  4.62 | sample: ai␣will␣be␣is␣also␣all␣been␣cancer.⏎roy
+2650 | 3.89  4.49 | 3.92  4.50 | sample: ai␣willured␣str.⏎in␣june␣203,
+2660 | 3.92  4.54 | 3.94  4.55 | sample: ai␣will␣get␣cause␣viund␣also␣allow␣about␣20
+2670 | 3.86  4.48 | 3.95  4.56 | sample: ai␣will␣be␣his␣own␣kind␣of␣the␣national␣life.⏎
+2680 | 3.83  4.45 | 4.00  4.58 | sample: ai␣will␣be␣composers␣of␣other.⏎trop
+2690 | 3.88  4.51 | 3.91  4.52 | sample: ai␣will␣be␣considracted␣its␣arforks.⏎
+2700 | 3.86  4.49 | 3.97  4.56 | sample: ai␣will␣be␣lead␣to␣controsiy.⏎
+[cycle 7] total steps: 2700; time spent: wall=153.74s cpu=153.81s; writing model: wall=0.06s cpu=0.03s
+
+[GPT+GRCE wo/THINK wo/UNDO] Training Cycle 8/10. Total training so far: 2700 steps, 1.11 hours (0.05 days)
+step | train loss  nogrce | test loss  nogrce | sample
+2701 | 4.03  4.59 | 3.98  4.54 | sample: ai␣will␣be␣increwise.␣visitors␣were
+2710 | 3.96  4.56 | 3.94  4.52 | sample: ai␣will␣build␣them.⏎karrona␣terr
+2720 | 3.89  4.49 | 3.97  4.57 | sample: ai␣will,␣in␣muta,␣religious␣forests
+2730 | 3.82  4.43 | 3.94  4.55 | sample: ai␣will␣not␣have␣a␣nhlit␣can␣be␣used
+2740 | 3.92  4.52 | 4.01  4.59 | sample: ai␣will␣bloved␣cancer.⏎faap␣is
+2750 | 3.90  4.51 | 3.91  4.52 | sample: ai␣will␣growals.␣she␣must␣definition␣occort
+2760 | 3.83  4.46 | 3.89  4.51 | sample: ai␣will␣to␣a␣new␣government␣wrestling:⏎play
+2770 | 3.85  4.45 | 3.92  4.52 | sample: ai␣will␣melbby␣whejawangurland␣and
+2780 | 3.90  4.51 | 3.95  4.54 | sample: ai␣will␣call␣several␣children.⏎gbd␣track
+2790 | 3.90  4.53 | 3.95  4.57 | sample: ai␣will␣live␣in␣2012⏎in␣20
+2800 | 3.88  4.51 | 3.96  4.59 | sample: ai␣will␣kill␣large␣beings␣editions:␣the␣name
+[cycle 8] total steps: 2800; time spent: wall=154.37s cpu=154.43s; writing model: wall=0.18s cpu=0.03s
+
+[GPT+GRCE wo/THINK wo/UNDO] Training Cycle 9/10. Total training so far: 2800 steps, 1.15 hours (0.05 days)
+step | train loss  nogrce | test loss  nogrce | sample
+2801 | 4.02  4.65 | 3.91  4.56 | sample: ai␣will␣you␣agency␣taking␣skin.␣they␣are
+2810 | 3.91  4.50 | 3.97  4.56 | sample: ai␣will␣below␣along␣feelage␣of␣a␣pica
+2820 | 3.97  4.56 | 4.00  4.59 | sample: ai␣will␣saps␣the␣music␣in␣fortaining
+2830 | 3.94  4.55 | 4.01  4.61 | sample: ai␣will␣feature␣score␣after␣being␣renamed␣for
+2840 | 3.92  4.53 | 3.91  4.53 | sample: ai␣will␣either␣surrounding␣with␣experie
+2850 | 3.84  4.47 | 3.95  4.56 | sample: ai␣will␣work␣in␣india.⏎sidminas␣county
+2860 | 3.88  4.52 | 3.89  4.53 | sample: ai␣will␣cold␣effects␣or␣called␣country␣or␣a
+2870 | 3.87  4.51 | 3.93  4.54 | sample: ai␣will␣last␣and␣also␣do.⏎mry␣married␣l
+2880 | 3.83  4.48 | 3.88  4.51 | sample: ai␣will␣have␣active␣world␣war␣ii␣locires␣and
+2890 | 3.79  4.47 | 3.95  4.59 | sample: ai␣will␣be␣regately␣become␣stanleych␣an
+2900 | 3.79  4.45 | 4.00  4.61 | sample: ai␣will␣access␣many␣things␣around␣others␣were␣in␣the␣six
+[cycle 9] total steps: 2900; time spent: wall=151.38s cpu=152.12s; writing model: wall=0.21s cpu=0.03s
+
+[GPT+GRCE wo/THINK wo/UNDO] Training Cycle 10/10. Total training so far: 2900 steps, 1.19 hours (0.05 days)
+step | train loss  nogrce | test loss  nogrce | sample
+2901 | 3.91  4.51 | 4.00  4.60 | sample: ai␣will␣be␣caused␣by␣over␣30␣december␣13␣september
+2910 | 3.94  4.55 | 3.98  4.59 | sample: ai␣will␣be␣on␣christo␣at␣the␣highway␣and␣muse
+2920 | 3.84  4.46 | 3.92  4.53 | sample: ai␣will␣smell␣a␣professional␣wrestler␣from␣which␣ended
+2930 | 3.87  4.50 | 3.96  4.57 | sample: ai␣will␣trinity␣only␣over␣the␣jeff␣()
+2940 | 3.87  4.49 | 4.01  4.61 | sample: ai␣will␣called␣nicholene␣and␣guffu
+2950 | 3.87  4.50 | 3.95  4.57 | sample: ai␣will␣get␣the␣wiblo␣and␣manuas.
+2960 | 3.88  4.53 | 3.98  4.60 | sample: ai␣will␣had␣first␣published␣to.⏎samakle
+2970 | 3.85  4.51 | 3.94  4.56 | sample: ai␣will␣be␣put␣however.⏎it␣was␣born␣in␣pr
+2980 | 3.83  4.46 | 3.95  4.57 | sample: ai␣will␣be␣found␣in␣the␣amazia.⏎the
+2990 | 3.83  4.48 | 3.92  4.55 | sample: ai␣will␣be␣a␣used␣as␣ofvel.⏎the␣l
+3000 | 3.85  4.52 | 3.98  4.61 | sample: ai␣will␣what␣grant␣1776es.⏎
+[cycle 10] total steps: 3000; time spent: wall=154.52s cpu=154.57s; writing model: wall=0.08s cpu=0.03s

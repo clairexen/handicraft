@@ -6,6 +6,7 @@ import argparse
 import json
 import math
 import pathlib
+import shutil
 from typing import Dict, Iterable, List, Tuple
 
 LEGACY_TARGET_FIELDS = {
@@ -199,6 +200,7 @@ def format_table_json(columns: List[str], rows: List[List[float]]) -> str:
 def main() -> None:
     args = parse_args()
     auto_pt_sources: set[pathlib.Path] = set()
+    source_path_lookup: Dict[str, pathlib.Path] = {}
     if not args.pt and not args.json:
         model_dir = args.model
         if model_dir.exists():
@@ -217,6 +219,7 @@ def main() -> None:
             print(f"warning: missing checkpoint {pt_path}")
             continue
         label, history, has_history = load_history(pt_path)
+        source_path_lookup[label] = pt_path
         if pt_path in auto_pt_sources and not has_history:
             print(f"Ignored: {pt_path.name}")
             continue
@@ -226,6 +229,7 @@ def main() -> None:
             print(f"warning: missing json source {json_path}")
             continue
         label, history = load_json_history(json_path)
+        source_path_lookup[label] = json_path
         sources.append((label, history))
     if not sources:
         print("no data sources provided")
@@ -253,6 +257,13 @@ def main() -> None:
             output_path = args.write_json_dir / output_name
             output_path.write_text(json_text + "\n")
             print(f"wrote {len(matrix)} rows to {output_path}")
+            src = source_path_lookup.get(label)
+            if src is not None:
+                log_candidate = src.with_suffix(".log")
+                if log_candidate.exists():
+                    dest_log = args.write_json_dir / log_candidate.name
+                    shutil.copy(log_candidate, dest_log)
+                    print(f"copied log to {dest_log}")
         performed = True
     if not performed:
         print("no action taken (no list or write-json requested)")
