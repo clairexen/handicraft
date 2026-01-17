@@ -53,6 +53,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="List summary statistics for each source (default action)",
     )
+    parser.add_argument(
+        "--write-json",
+        type=pathlib.Path,
+        help="Write normalized records to JSON file",
+    )
     return parser.parse_args()
 
 
@@ -67,6 +72,11 @@ def load_history(pt_path: pathlib.Path) -> Tuple[str, List[Dict[str, float]]]:
 
 def normalize_entry(entry: Dict[str, float]) -> Dict[str, float]:
     out = dict(entry)
+    if "step" in out:
+        try:
+            out["step"] = int(out["step"])
+        except (TypeError, ValueError):
+            out.pop("step", None)
 
     def apply_alias(mapping: Dict[str, str]) -> None:
         for legacy_key, new_key in mapping.items():
@@ -103,6 +113,46 @@ def summarize_source(label: str, records: List[Dict[str, float]]) -> None:
         )
 
 
+def combine_records(sources: List[Tuple[str, List[Dict[str, float]]]]) -> Tuple[List[str], List[List[float]]]:
+    field_set = set()
+    for _, history in sources:
+        for record in history:
+            field_set.update(record.keys())
+    fields = sorted(field_set)
+    data: List[List[object]] = []
+    for _, history in sources:
+        for record in history:
+            row = [record.get(field) if field in record else None for field in fields]
+            data.append(row)
+    return fields, data
+
+
+def format_table_json(columns: List[str], rows: List[List[float]]) -> str:
+    def encode_scalar(value: float | None) -> str:
+        if value is None:
+            return "null"
+        if isinstance(value, float):
+            return f"{value:.5f}"
+        return json.dumps(value)
+
+    column_line = "[" + ",".join(json.dumps(col) for col in columns) + "]"
+    if rows:
+        row_lines = [
+            "    [" + ",".join(encode_scalar(val) for val in row) + "]"
+            for row in rows
+        ]
+        data_block = "[\n" + ",\n".join(row_lines) + "\n  ]"
+    else:
+        data_block = "[]"
+    lines = [
+        "{",
+        f"  \"columns\": {column_line},",
+        f"  \"data\": {data_block}",
+        "}",
+    ]
+    return "\n".join(lines)
+
+
 def main() -> None:
     args = parse_args()
     sources: List[Tuple[str, List[Dict[str, float]]]] = []
@@ -112,12 +162,19 @@ def main() -> None:
             continue
         label, history = load_history(pt_path)
         sources.append((label, history))
-    actions = [args.list] if args.list else []
-    if not actions:
-        actions.append(True)  # default to list
-    if actions[0]:
+    performed = False
+    if args.list or not args.write_json:
         for label, history in sources:
             summarize_source(label, history)
+        performed = True
+    if args.write_json:
+        columns, matrix = combine_records(sources)
+        json_text = format_table_json(columns, matrix)
+        args.write_json.write_text(json_text + "\n")
+        print(f"wrote {len(matrix)} rows to {args.write_json}")
+        performed = True
+    if not performed:
+        print("no action taken (no list or write-json requested)")
 
 
 if __name__ == "__main__":
