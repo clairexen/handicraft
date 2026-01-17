@@ -48,6 +48,17 @@ UNDO_TOKEN = "<undo>"
 UNDO_SYMBOL = "\u21A9"  # leftwards arrow with hook
 ASCII_LETTERS = set(string.ascii_letters)
 
+PROMPT_GOALS = [
+    ("the color of a red apple is", "red"),
+    ("the opposite of hot is", "cold"),
+    ("2 + 2 =", "4"),
+    ("water freezes at", "0"),
+    ("the first letter of the alphabet is", "a"),
+    ("sun rises in the", "east"),
+    ("earth's satellite is the", "moon"),
+    ("a baby cat is called a", "kitten"),
+]
+
 
 def _restrict_bpe_training_text(text: str) -> str:
     pieces: list[str] = []
@@ -215,6 +226,55 @@ class GPT2TokenizerWrapper:
 
     def decode(self, tokens: torch.Tensor) -> str:
         return self.tokenizer.decode(tokens.tolist())
+
+
+class PromptTracker:
+    def __init__(self, tokenizer: GPT2TokenizerWrapper, state: dict | None = None) -> None:
+        self.tokenizer = tokenizer
+        self.completed: list[bool] = []
+        self._cache: dict[int, torch.Tensor] = {}
+        self.load_state(state)
+
+    def load_state(self, state: dict | None) -> None:
+        if state and isinstance(state.get("completed"), list):
+            raw = state.get("completed", [])
+            self.completed = [bool(val) for val in raw][: len(PROMPT_GOALS)]
+        if len(self.completed) != len(PROMPT_GOALS):
+            self.completed = [False] * len(PROMPT_GOALS)
+
+    def serialize(self) -> dict:
+        return {"completed": list(self.completed)}
+
+    def next_goal(self) -> tuple[int | None, tuple[str, str] | None]:
+        for idx, done in enumerate(self.completed):
+            if not done:
+                return idx, PROMPT_GOALS[idx]
+        return None, None
+
+    def prompt_tensor(self, idx: int, device: torch.device) -> torch.Tensor:
+        if idx not in self._cache:
+            tensor = self.tokenizer.encode(PROMPT_GOALS[idx][0]).unsqueeze(0)
+            self._cache[idx] = tensor
+        return self._cache[idx].to(device)
+
+    def expected_text(self, idx: int) -> str:
+        return PROMPT_GOALS[idx][1]
+
+    def mark_if_satisfied(self, idx: int, completion: str) -> bool:
+        if idx is None or idx < 0 or idx >= len(self.completed):
+            return False
+        expected = self.expected_text(idx).strip().lower()
+        normalized = completion.strip().lower()
+        if normalized.startswith(expected) and not self.completed[idx]:
+            self.completed[idx] = True
+            return True
+        return False
+
+    def remaining(self) -> int:
+        return sum(1 for done in self.completed if not done)
+
+    def is_completed(self, idx: int | None) -> bool:
+        return idx is None or self.completed[idx]
 
 
 @dataclass
@@ -1234,6 +1294,9 @@ def train_model(
     suppress_think_prompt: bool,
     think_hard: bool,
     undo_settings: UndoSettings | None,
+    prompt_tracker: PromptTracker | None = None,
+    cycle_prompt_tensor: torch.Tensor | None = None,
+    cycle_prompt_idx: int | None = None,
     *,
     reward_relu: bool = False,
     nogrce_interval: int = 1,
@@ -1252,6 +1315,12 @@ def train_model(
         if reward_relu > 0
         else None
     )
+    active_prompt_tensor = cycle_prompt_tensor
+    active_prompt_idx = cycle_prompt_idx
+    if prompt_tracker is not None and active_prompt_idx is not None:
+        if prompt_tracker.is_completed(active_prompt_idx):
+            active_prompt_idx = None
+            active_prompt_tensor = None
     show_think_columns = think_enabled
     show_target_headers = think_enabled or undo_enabled
     nogrce_interval = max(0, int(nogrce_interval))
@@ -1391,9 +1460,17 @@ def train_model(
                             "ce": float(ce_loss),
                             "learned": float(learned_loss),
                         }
+                prompt_input = sample_prompt
+                if (
+                    prompt_tracker is not None
+                    and active_prompt_idx is not None
+                    and active_prompt_tensor is not None
+                    and not prompt_tracker.is_completed(active_prompt_idx)
+                ):
+                    prompt_input = active_prompt_tensor
                 sample_tokens, prompt_len = generate(
                     model,
-                    sample_prompt.clone(),
+                    prompt_input.clone(),
                     sample_chars,
                     suppress_newlines=suppress_newlines,
                     newline_token_id=newline_token_id,
@@ -1406,6 +1483,27 @@ def train_model(
             sample_ids = sample_tokens[0].detach().cpu().tolist()
             prompt_ids = sample_ids[:prompt_len]
             completion_ids = sample_ids[prompt_len:]
+
+            if (
+                prompt_tracker is not None
+                and active_prompt_idx is not None
+                and not prompt_tracker.is_completed(active_prompt_idx)
+            ):
+                if completion_ids:
+                    completion_tensor = torch.tensor(completion_ids, dtype=torch.long)
+                    completion_text = tokenizer.decode(completion_tensor)
+                else:
+                    completion_text = ""
+                if prompt_tracker.mark_if_satisfied(active_prompt_idx, completion_text):
+                    expected = prompt_tracker.expected_text(active_prompt_idx)
+                    print(
+                        color_text(
+                            f"Prompt #{active_prompt_idx + 1} satisfied (expected '{expected}')",
+                            Colors.GREEN,
+                        )
+                    )
+                    active_prompt_idx = None
+                    active_prompt_tensor = None
 
             prefix_text = color_tokens(
                 tokenizer,
@@ -2533,6 +2631,7 @@ def main() -> None:
                 "Choose a simpler prompt or extend the dataset."
             ) from exc
         prompt_tokens = prompt_tokens.unsqueeze(0).to(device)
+        prompt_tracker = PromptTracker(tokenizer)
 
         model = GRCEGPT(config).to(device)
         total_steps = 0
@@ -2558,6 +2657,7 @@ def main() -> None:
                     total_steps = int(payload.get("total_steps", 0))
                     loss_history = list(payload.get("loss_history", []))
                     total_train_wall = float(payload.get("train_wall_seconds", 0.0))
+                    prompt_tracker.load_state(payload.get("prompt_state"))
                 else:
                     model.load_state_dict(upgrade_state_dict(payload))
                 print(color_text(f"Loaded existing model from {model_path}", Colors.YELLOW))
@@ -2615,6 +2715,7 @@ def main() -> None:
                     "loss_history": loss_history,
                     "config": asdict(config),
                     "train_wall_seconds": total_train_wall,
+                    "prompt_state": prompt_tracker.serialize() if prompt_tracker else None,
                 },
                 model_path,
             )
@@ -2690,6 +2791,19 @@ def main() -> None:
                     Colors.BLUE,
                 )
             )
+            cycle_prompt_idx: int | None = None
+            cycle_prompt_tensor: torch.Tensor | None = None
+            if prompt_tracker is not None and prompt_tracker.remaining() > 0:
+                idx, goal = prompt_tracker.next_goal()
+                if idx is not None and goal is not None:
+                    cycle_prompt_idx = idx
+                    cycle_prompt_tensor = prompt_tracker.prompt_tensor(idx, device)
+                    print(
+                        color_text(
+                            f"Using prompt #{idx + 1}: '{goal[0]}' | expecting '{goal[1]}'",
+                            Colors.CYAN,
+                        )
+                    )
             train_chars_cycle = (args.block_size + 1) * args.batch_size * args.steps
             test_chars_cycle = (
                 (args.block_size + 1)
@@ -2719,6 +2833,9 @@ def main() -> None:
                 suppress_think_prompt=args.no_think_prompt,
                 think_hard=args.think_hard,
                 undo_settings=undo_settings,
+                prompt_tracker=prompt_tracker,
+                cycle_prompt_tensor=cycle_prompt_tensor,
+                cycle_prompt_idx=cycle_prompt_idx,
                 reward_relu=reward_scale,
                 nogrce_interval=args.nogrce_interval,
                 cycle_wall_start=cycle_wall,
@@ -2740,6 +2857,7 @@ def main() -> None:
                     "loss_history": loss_history,
                     "config": asdict(config),
                     "train_wall_seconds": total_train_wall,
+                    "prompt_state": prompt_tracker.serialize() if prompt_tracker else None,
                 },
                 model_path,
             )
