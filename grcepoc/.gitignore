@@ -1,6 +1,7 @@
 /.venv/
 /.backup/
 /model/
+/model_pod*/
 /.cache_transformers/
 /__pycache__/
 /.podssh
