@@ -1468,12 +1468,6 @@ def train_model(
                     if prompt_queue:
                         current_prompt_idx = prompt_queue.pop(0)
                         prompt_input = prompt_tracker.prompt_tensor(current_prompt_idx, device)
-                        print(
-                            color_text(
-                                f"Sampling prompt #{current_prompt_idx + 1}",
-                                Colors.CYAN,
-                            )
-                        )
                 sample_tokens, prompt_len = generate(
                     model,
                     prompt_input.clone(),
@@ -2805,12 +2799,6 @@ def main() -> None:
                     for idx in cycle_prompt_indices:
                         text, expected = PROMPT_GOALS[idx]
                         preview_lines.append(f"#{idx + 1}: '{text}' -> '{expected}'")
-                    print(
-                        color_text(
-                            "Prompts this cycle:\n" + "\n".join(preview_lines),
-                            Colors.CYAN,
-                        )
-                    )
             train_chars_cycle = (args.block_size + 1) * args.batch_size * args.steps
             test_chars_cycle = (
                 (args.block_size + 1)
