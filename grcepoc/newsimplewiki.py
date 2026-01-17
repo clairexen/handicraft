@@ -38,6 +38,15 @@ def load_corpus(path: pathlib.Path) -> List[str]:
     return paragraphs
 
 
+def build_vocab(paragraphs: List[str]) -> set[str]:
+    vocab: set[str] = set()
+    for text in paragraphs:
+        for token in text.split():
+            if token:
+                vocab.add(token)
+    return vocab
+
+
 def plot_histogram(stats: List[CorpusStats], *, bins: int, output: pathlib.Path | None) -> None:
     fig, ax = plt.subplots(figsize=(8, 5))
     for corpus in stats:
@@ -88,6 +97,9 @@ def main() -> None:
 
     print(train_stats.describe())
     print(test_stats.describe())
+
+    vocab = build_vocab(train_stats.paragraphs)
+    print(f"train vocabulary size: {len(vocab)}")
 
     if args.plot_length_histogram:
         plot_histogram([train_stats, test_stats], bins=args.bins, output=args.output)
