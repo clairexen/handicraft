@@ -814,6 +814,36 @@ class ModelConfig:
 MODEL_CONFIG_TEMPLATE = ModelConfig()
 
 
+def describe_model_size(config: ModelConfig) -> None:
+    model = GRCEGPT(config)
+    categories = {
+        "token_embeddings": 0,
+        "position_embeddings": 0,
+        "context": 0,
+        "core": 0,
+    }
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+        size = param.numel()
+        if name.startswith("core.tok_emb"):
+            categories["token_embeddings"] += size
+        elif name.startswith("core.pos_emb"):
+            categories["position_embeddings"] += size
+        elif name.startswith("context"):
+            categories["context"] += size
+        else:
+            categories["core"] += size
+    total = sum(categories.values())
+    print("Model parameter breakdown:")
+    for label, size in categories.items():
+        mb = size * 4 / 1_000_000
+        pct = (size / total * 100) if total else 0
+        print(f"  {label:22s}: {size:>12,d} params ({mb:.2f} MB, {pct:.1f}%)")
+    if total:
+        print(f"  {'total':22s}: {total:>12,d} params ({total*4/1_000_000:.2f} MB)")
+
+
 class CausalSelfAttention(nn.Module):
     def __init__(self, config: ModelConfig) -> None:
         super().__init__()
@@ -2339,6 +2369,11 @@ def parse_args() -> argparse.Namespace:
         help="Use per-layer GRCE sampling MLPs (requires n_grce %% n_layer == 0)",
     )
     parser.add_argument(
+        "--print-size",
+        action="store_true",
+        help="Print parameter breakdown for the configured model and exit",
+    )
+    parser.add_argument(
         "--prompt-cycle-prompts",
         type=int,
         default=10,
@@ -2612,6 +2647,9 @@ def main() -> None:
             context_dropout=1,
             grce_layers=args.grce_layers,
         )
+        if args.print_size:
+            describe_model_size(config)
+            return
         model_tag = build_model_tag(config)
         if args.grce_layers:
             model_tag += "_glayers"
@@ -2671,10 +2709,29 @@ def main() -> None:
                 "Prompt contains characters outside the tokenizer vocabulary. "
                 "Choose a simpler prompt or extend the dataset."
             ) from exc
-        prompt_tokens = prompt_tokens.unsqueeze(0).to(device)
+        try:
+            prompt_tokens = prompt_tokens.unsqueeze(0).to(device)
+        except (AssertionError, RuntimeError) as exc:
+            message = str(exc)
+            if "Torch not compiled with CUDA" in message:
+                print(color_text("Torch not compiled with CUDA enabled; switching to CPU", Colors.RED, bold=True))
+                device = torch.device("cpu")
+                args.device = "cpu"
+                prompt_tokens = prompt_tokens.unsqueeze(0).to(device)
+            else:
+                raise
         prompt_tracker = PromptTracker(tokenizer)
 
-        model = GRCEGPT(config).to(device)
+        try:
+            model = GRCEGPT(config).to(device)
+        except (AssertionError, RuntimeError) as exc:
+            message = str(exc)
+            if "Torch not compiled with CUDA" in message and args.device != "cpu":
+                print(color_text("Torch not compiled with CUDA enabled; switching to CPU", Colors.RED, bold=True))
+                device = torch.device("cpu")
+                model = GRCEGPT(config).to(device)
+            else:
+                raise
         total_steps = 0
         loss_history: List[Dict[str, float]] = []
         total_train_wall = 0.0
