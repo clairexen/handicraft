@@ -1245,6 +1245,8 @@ def train_model(
                 "test_target_nogrce": float(split_metrics["test_nogrce"]["learned"]),
                 "train_wall_seconds": float(total_wall_seconds),
                 "unix_time": float(eval_now),
+                "train_cursor": int(dataset.positions.get("train", 0)),
+                "test_cursor": int(dataset.positions.get("test", 0)),
             }
             if "train_nothink" in split_metrics:
                 record["train_loss_plain"] = float(split_metrics["train_nothink"]["ce"])
@@ -1309,6 +1311,102 @@ def run_report_mode(
             )
 
 
+def run_test_slice(
+    *,
+    dataset: TextDataset,
+    tokenizer: GPT2TokenizerWrapper,
+    model: GRCEGPT,
+    block_size: int,
+    start_pos: int | None,
+    think_settings: ThinkSettings | None,
+) -> None:
+    tokens = dataset.test_tokens
+    if tokens.numel() == 0:
+        print(color_text("test corpus is empty", Colors.MAGENTA))
+        return
+    total = int(tokens.numel())
+    start = int(start_pos or 0) % total
+    span = block_size if block_size > 0 else 1
+    indices = [int(tokens[(start + i) % total]) for i in range(span)]
+    model_device = next(model.parameters()).device
+    seq = torch.tensor(indices, dtype=torch.long, device=model_device).unsqueeze(0)
+    model.eval()
+    with torch.no_grad():
+        logits, _, _ = model.forward_autoreg(seq)
+    preds = logits.argmax(dim=-1).squeeze(0).tolist()
+    correct_mask = [False] * len(indices)
+    for i in range(1, len(indices)):
+        correct_mask[i] = preds[i - 1] == indices[i]
+
+    augmented = list(indices)
+    think_enabled = think_settings is not None and think_settings.enabled
+    if think_enabled:
+        augmented = []
+        for tok, pred in zip(indices, preds):
+            augmented.append(tok)
+            if pred == tokenizer.think_id:
+                augmented.append(tokenizer.think_id)
+    tensor = torch.tensor(augmented, dtype=torch.long)
+    decoded = color_tokens(
+        tokenizer,
+        tensor.tolist(),
+        [Colors.CYAN, Colors.GREEN],
+        bold=False,
+        think_token_id=tokenizer.think_id,
+        undo_token_id=tokenizer.undo_id,
+    )
+    print(
+        color_text(
+            f"\nTest mode: cursor={start} span={span} (wrap @ {total})",
+            Colors.BLUE,
+        )
+    )
+    print("token_ids:", " ".join(str(idx) for idx in indices))
+    baseline = color_tokens(
+        tokenizer,
+        indices,
+        [Colors.CYAN, Colors.GREEN],
+        bold=False,
+        think_token_id=tokenizer.think_id,
+        undo_token_id=tokenizer.undo_id,
+        correct_mask=correct_mask,
+        completion_colors=[Colors.YELLOW, Colors.MAGENTA],
+        bold_correct=True,
+    )
+    print("decoded:", baseline)
+    prob_matrix = torch.softmax(logits, dim=-1).squeeze(0)
+    top_k = min(10, prob_matrix.size(-1))
+    rows = []
+    label_width = 0
+    pred_widths = [0] * top_k
+    usable = max(0, len(indices) - 1)
+    for pos in range(usable):
+        context_id = indices[pos]
+        target_id = indices[pos + 1]
+        token_label = format_token_label(tokenizer, context_id)
+        label_width = max(label_width, len(token_label))
+        top_probs, top_idx = prob_matrix[pos].topk(top_k)
+        entry = []
+        for col, (pred_id, prob) in enumerate(zip(top_idx.tolist(), top_probs.tolist())):
+            pred_label = format_token_label(tokenizer, pred_id)
+            marker = "*" if pred_id == target_id else " "
+            prob_str = f"{prob:.3f}".split(".")[-1]
+            entry.append((pred_label, prob_str, marker))
+            pred_widths[col] = max(pred_widths[col], len(pred_label))
+        rows.append((token_label, entry))
+
+    for token_label, entries in rows:
+        parts = []
+        for (pred_label, prob_str, marker), width in zip(entries, pred_widths):
+            cell = f"{pred_label:>{width}} {prob_str}{marker}"
+            if marker == "*":
+                cell = color_text(cell, Colors.WHITE, bold=True)
+            parts.append(cell)
+        print(f"{token_label:>{label_width}} | {' '.join(parts)}")
+    if think_enabled:
+        print("thinking:", decoded)
+
+
 def count_eval_calls(steps: int, eval_interval: int) -> int:
     evals = 0
     for step in range(1, steps + 1):
@@ -1329,10 +1427,14 @@ def color_tokens(
     replace_newline: str = FANCY_ENTER,
     think_token_id: int | None = None,
     undo_token_id: int | None = None,
+    correct_mask: list[bool] | None = None,
+    completion_colors: list[str] | None = None,
+    bold_correct: bool = False,
 ) -> str:
     parts: list[str] = []
     color_index = 0
-    for tok in tokens:
+    completion_index = 0
+    for idx, tok in enumerate(tokens):
         if think_token_id is not None and tok == think_token_id:
             piece = THINK_SYMBOL
             color = Colors.WHITE
@@ -1349,10 +1451,30 @@ def color_tokens(
         piece = tidy(piece, replace_newline=replace_newline)
         if not piece:
             continue
-        color = colors[color_index % len(colors)]
-        parts.append(color_text(piece, color, bold=bold))
-        color_index += 1
+        palette = colors
+        if correct_mask is not None and correct_mask[idx]:
+            palette = completion_colors or [Colors.YELLOW, Colors.MAGENTA]
+            color = palette[completion_index % len(palette)]
+            completion_index += 1
+            use_bold = True if bold_correct else bold
+        else:
+            color = palette[color_index % len(palette)]
+            color_index += 1
+            use_bold = bold
+        parts.append(color_text(piece, color, bold=use_bold))
     return "".join(parts)
+
+
+def format_token_label(tokenizer: GPT2TokenizerWrapper, token_id: int, *, width: int = 10) -> str:
+    piece = tokenizer.tokenizer.decode([token_id], clean_up_tokenization_spaces=False)
+    piece = piece.replace("\n", "\\n")
+    piece = piece.replace("\t", "\\t")
+    piece = piece.replace("\r", "\\r")
+    if not piece.strip():
+        piece = f"#{token_id}"
+    if len(piece) > width:
+        piece = piece[: width - 1] + "…"
+    return piece
 
 
 def normalize_prompt(text: str) -> str:
@@ -1687,10 +1809,20 @@ def parse_args() -> argparse.Namespace:
         help="Number of new tokens to sample after training",
     )
     parser.add_argument(
-        "--report-count",
+        "--train",
+        action="store_true",
+        help="Run the standard training loop (default action if none specified)",
+    )
+    parser.add_argument(
+        "--report",
         type=int,
         default=0,
         help="If >0, skip training and generate this many completions",
+    )
+    parser.add_argument(
+        "--test",
+        type=int,
+        help="Print block_size tokens from the test corpus starting at cursor N",
     )
     parser.add_argument(
         "--no-newlines",
@@ -1816,6 +1948,19 @@ def main() -> None:
         )
     torch.manual_seed(42)
     random.seed(42)
+
+    actions: list[str] = []
+    if args.train:
+        actions.append("train")
+    if args.report > 0:
+        actions.append("report")
+    if args.test is not None:
+        actions.append("test")
+    if not actions:
+        actions.append("train")
+    if len(actions) > 1:
+        raise ValueError("Specify only one of --train, --report, or --test")
+    selected_action = actions[0]
 
     ansi_file = None
     try:
@@ -2116,13 +2261,13 @@ def main() -> None:
             )
             return
 
-        if args.report_count > 0:
+        if selected_action == "report":
             run_report_mode(
                 model=model,
                 tokenizer=tokenizer,
                 prompt_tokens=prompt_tokens,
                 sample_len=args.generate,
-                count=args.report_count,
+                count=args.report,
                 device=device,
                 suppress_newlines=args.no_newlines,
                 newline_token_id=newline_token_id,
@@ -2130,6 +2275,17 @@ def main() -> None:
                 suppress_think=args.no_think,
                 suppress_think_prompt=args.no_think_prompt,
                 think_hard=args.think_hard,
+            )
+            return
+
+        if selected_action == "test":
+            run_test_slice(
+                dataset=dataset,
+                tokenizer=tokenizer,
+                model=model,
+                block_size=args.block_size,
+                start_pos=args.test,
+                think_settings=think_settings,
             )
             return
 

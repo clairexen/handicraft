@@ -36,6 +36,8 @@ ALLOWED_FIELDS = {
     "test_loss_plain",
     "train_wall_seconds",
     "unix_time",
+    "train_cursor",
+    "test_cursor",
 }
 
 
@@ -95,11 +97,12 @@ def load_json_history(json_path: pathlib.Path) -> Tuple[str, List[Dict[str, floa
 
 def normalize_entry(entry: Dict[str, float]) -> Dict[str, float]:
     out = dict(entry)
-    if "step" in out:
-        try:
-            out["step"] = int(out["step"])
-        except (TypeError, ValueError):
-            out.pop("step", None)
+    for key in ("step", "train_cursor", "test_cursor"):
+        if key in out:
+            try:
+                out[key] = int(out[key])
+            except (TypeError, ValueError):
+                out.pop(key, None)
 
     def apply_alias(mapping: Dict[str, str]) -> None:
         for legacy_key, new_key in mapping.items():
