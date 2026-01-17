@@ -49,11 +49,12 @@ UNDO_SYMBOL = "\u21A9"  # leftwards arrow with hook
 ASCII_LETTERS = set(string.ascii_letters)
 
 PROMPT_GOALS = [
+    ("ice", " cold"),
+    ("one plus one is", " two"),
+    ("the first letter of the alphabet is", " a"),
     ("the color of a red apple is", " red"),
     ("the opposite of hot is", " cold"),
-    ("2 + 2 =", " 4"),
     ("water freezes at", " 0"),
-    ("the first letter of the alphabet is", " a"),
     ("sun rises in the", " east"),
     ("earth's satellite is the", " moon"),
     ("a baby cat is called a", " kitten"),
