@@ -73,6 +73,11 @@ def parse_args() -> argparse.Namespace:
         type=pathlib.Path,
         help="Write normalized records to JSON file",
     )
+    parser.add_argument(
+        "--write-json-dir",
+        type=pathlib.Path,
+        help="Write per-source JSON files into the specified directory",
+    )
     return parser.parse_args()
 
 
@@ -237,6 +242,17 @@ def main() -> None:
         json_text = format_table_json(columns, matrix)
         args.write_json.write_text(json_text + "\n")
         print(f"wrote {len(matrix)} rows to {args.write_json}")
+        performed = True
+    if args.write_json_dir:
+        args.write_json_dir.mkdir(parents=True, exist_ok=True)
+        for label, history in sources:
+            columns, matrix = combine_records([(label, history)])
+            json_text = format_table_json(columns, matrix)
+            safe_name = pathlib.Path(label).name
+            output_name = pathlib.Path(safe_name).stem + ".json"
+            output_path = args.write_json_dir / output_name
+            output_path.write_text(json_text + "\n")
+            print(f"wrote {len(matrix)} rows to {output_path}")
         performed = True
     if not performed:
         print("no action taken (no list or write-json requested)")
