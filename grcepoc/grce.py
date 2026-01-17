@@ -2615,6 +2615,8 @@ def main() -> None:
             grce_layers=args.grce_layers,
         )
         model_tag = build_model_tag(config)
+        if args.grce_layers:
+            model_tag += "_glayers"
         if args.think > 0:
             model_tag += f"_think{args.think}"
         if args.undo > 0:
