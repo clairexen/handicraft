@@ -10,12 +10,6 @@ This repo extends a tiny picoGPT-style language model with a recurrent context c
 
 In other words, this channel is literally the recurrent shortcut that classic RNNs tried to build, but it is implemented as a clean add-on to the Transformer stack: Each block, while computing logits for token N+1, already contains every piece of context needed to describe the prefix. The GRCE path just samples that information, compresses it into `n_grce` scalars, mixes them with a single hidden layer in the time domain, and feeds the signal into the very next step. Nothing else has to travel across time. Training stays stable because gradients do not need to propagate across multiple positions; the heavy lifting is still performed inside the per-token Transformer layers.
 
-Plotting defaults:
-- `sweep1.py` plots the per-model JSON histories produced by `hist.py --write-json-dir ...`, showing both train/test traces when no flags are provided.
-- `--nogrce` shows the GRCE-disabled comparisons (hidden by default).
-- `--avg-span` averages runs with the same configuration label (span stripped).
-- `--store span_avg.json --store-only` writes exactly what you see, so you can feed it into analysis scripts.
-
 This mechanism creates an explicit channel for time-domain (i.e. recurrent) signals without interfering with self-attention capacity. Because the context vector is the sole cross-time carrier, we expect it to split into two behavioral bands:
 - **Long-term, semi-stable patterns** that act like on/off switches describing style, role, or tone and remain active across many positions.
 - **Short-term, rapidly changing patterns** that behave like token-to-token controllers (grammar states, agreement markers, etc.) and flicker as the model advances.
@@ -88,10 +82,6 @@ Key switches:
 - `--test N` dumps `block_size` tokens from the test split starting at cursor `N`; if the model supports thinking tokens it also runs the model over that window and inserts predicted `<think>` tokens in-line so you can inspect where the network wants to branch into reasoning mode.
 - `--no-newlines` keeps the sampler from emitting newline tokens so completions stay on one line.
 You can reproduce the sweeps below; notice how even the `--context-span 1` run (which detaches the recurrent gradients entirely) tracks all other spans almost perfectly, confirming that the channel only needs to learn what to sample, not how to backpropagate across positions.
-
-Every evaluation logs both GRCE-enabled and GRCE-disabled losses, and `sweep1.py` draws both traces for quick comparison.
-
-For postprocessing, run for example `sweep1.py --avg-span --nogrce --store span_avg.json --store-only` and feed that JSON into your analysis scripts.
 
 ## Example training sweeps
 
