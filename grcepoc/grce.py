@@ -2033,6 +2033,7 @@ def parse_char_arg(value: str) -> int:
 
 def parse_args() -> argparse.Namespace:
     defaults = MODEL_CONFIG_TEMPLATE
+    raw_cli_args = sys.argv[1:]
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
@@ -2200,6 +2201,14 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--tiny",
+        action="store_true",
+        help=(
+            "Shortcut for --block-size 16 --batch-size 4 --n-layer 2 --n-head 2 "
+            "--n-embd 64 --n-grce 16"
+        ),
+    )
+    parser.add_argument(
         "--undo",
         type=int,
         default=0,
@@ -2261,7 +2270,24 @@ def parse_args() -> argparse.Namespace:
         default="",
         help="Comma-separated layer numbers (1-indexed) to insert during import",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.tiny:
+        def flag_present(flag: str) -> bool:
+            return any(arg == flag or arg.startswith(f"{flag}=") for arg in raw_cli_args)
+
+        if not flag_present("--block-size"):
+            args.block_size = 16
+        if not flag_present("--batch-size"):
+            args.batch_size = 4
+        if not flag_present("--n-layer"):
+            args.n_layer = 2
+        if not flag_present("--n-head"):
+            args.n_head = 2
+        if not flag_present("--n-embd"):
+            args.n_embd = 64
+        if not flag_present("--n-grce"):
+            args.n_grce = 16
+    return args
 
 
 def main() -> None:
