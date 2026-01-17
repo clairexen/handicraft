@@ -86,6 +86,16 @@ def parse_args() -> argparse.Namespace:
         nargs="*",
         help="Plot step vs metric (default: test_loss)",
     )
+    parser.add_argument(
+        "--plot-time",
+        nargs="*",
+        help="Plot train_wall_seconds vs metric (default: test_loss)",
+    )
+    parser.add_argument(
+        "--plot-timestamp",
+        nargs="*",
+        help="Plot unix_time vs metric (default: test_loss)",
+    )
     return parser.parse_args()
 
 
@@ -204,17 +214,39 @@ def format_table_json(columns: List[str], rows: List[List[float]]) -> str:
     return "\n".join(lines)
 
 
-def plot_step_traces(sources: List[Tuple[str, List[Dict[str, float]]]], metrics: List[str]) -> None:
+def _series_from_field(history: List[Dict[str, float]], field: str, default_sequence=False) -> List[float]:
+    values: List[float] = []
+    for idx, rec in enumerate(history):
+        if default_sequence and field == "step" and "step" not in rec:
+            values.append(float(idx + 1))
+            continue
+        value = rec.get(field)
+        if value is None:
+            values.append(float("nan"))
+        else:
+            values.append(float(value))
+    return values
+
+
+def plot_metric_traces(
+    sources: List[Tuple[str, List[Dict[str, float]]]],
+    metrics: List[str],
+    x_field: str,
+    x_label: str,
+) -> None:
     fig, ax = plt.subplots(figsize=(10, 5))
     for label, history in sources:
-        steps = [rec.get("step", idx + 1) for idx, rec in enumerate(history)]
+        if not history:
+            continue
+        x_values = _series_from_field(history, x_field, default_sequence=True)
+        if not any(not math.isnan(val) for val in x_values):
+            continue
         for metric in metrics:
-            values = [rec.get(metric) for rec in history]
-            if not any(v is not None for v in values):
+            y_values = _series_from_field(history, metric)
+            if not any(not math.isnan(val) for val in y_values):
                 continue
-            series = [float(v) if v is not None else float("nan") for v in values]
-            ax.plot(steps, series, label=f"{label} – {metric}")
-    ax.set_xlabel("Step")
+            ax.plot(x_values, y_values, label=f"{label} – {metric}")
+    ax.set_xlabel(x_label)
     ax.set_ylabel("Metric")
     ax.set_title("Loss history")
     ax.legend()
@@ -292,7 +324,15 @@ def main() -> None:
         performed = True
     if args.plot_steps is not None:
         metrics = args.plot_steps if args.plot_steps else ["test_loss"]
-        plot_step_traces(sources, metrics)
+        plot_metric_traces(sources, metrics, "step", "Step")
+        performed = True
+    if args.plot_time is not None:
+        metrics = args.plot_time if args.plot_time else ["test_loss"]
+        plot_metric_traces(sources, metrics, "train_wall_seconds", "Train wall seconds")
+        performed = True
+    if args.plot_timestamp is not None:
+        metrics = args.plot_timestamp if args.plot_timestamp else ["test_loss"]
+        plot_metric_traces(sources, metrics, "unix_time", "Unix time")
         performed = True
     if not performed:
         print("no action taken (no list, plot or write-json requested)")
