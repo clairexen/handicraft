@@ -369,6 +369,147 @@ class UndoSettings:
         )
 
 
+class ReLURewardTracker:
+    def __init__(
+        self,
+        model: GRCEGPT,
+        steps: int,
+        *,
+        ratio: float = 0.2,
+        scale: float = 1e-4,
+    ) -> None:
+        device = next(model.parameters()).device
+        hidden = 4 * model.config.n_embd
+        self.good_counts = [torch.zeros(hidden, device=device) for _ in range(model.config.n_layer)]
+        self.bad_counts = [torch.zeros(hidden, device=device) for _ in range(model.config.n_layer)]
+        self.interval = max(1, steps // 2)
+        self.ratio = ratio
+        self.token_ratio = 0.25
+        self.scale = max(0.0, float(scale))
+        self.model = model
+        self.pending_steps = 0
+
+    def record_batch(
+        self,
+        relu_activity: list[list[torch.Tensor | None]] | None,
+        token_losses: torch.Tensor,
+        valid_mask: torch.Tensor,
+    ) -> None:
+        if relu_activity is None:
+            return
+        good_scores, bad_scores = self._compute_token_scores(token_losses, valid_mask)
+        for t, per_layer in enumerate(relu_activity):
+            if per_layer is None:
+                continue
+            good_weight = good_scores[:, t].unsqueeze(1)
+            bad_weight = bad_scores[:, t].unsqueeze(1)
+            good_active = good_weight.any()
+            bad_active = bad_weight.any()
+            if not good_active and not bad_active:
+                continue
+            for layer_idx, mask in enumerate(per_layer):
+                if mask is None:
+                    continue
+                if good_active:
+                    contrib = (mask.float() * good_weight).sum(dim=0)
+                    self.good_counts[layer_idx] += contrib
+                if bad_active:
+                    inactive = (~mask).float()
+                    contrib = (inactive * bad_weight).sum(dim=0)
+                    self.bad_counts[layer_idx] += contrib
+        self.pending_steps += 1
+
+    def maybe_apply(self) -> None:
+        if self.pending_steps >= self.interval:
+            self.apply_updates()
+
+    def finalize(self) -> None:
+        if any(count.sum().item() != 0 for count in self.good_counts + self.bad_counts):
+            self.apply_updates()
+
+    def apply_updates(self) -> None:
+        if self.scale <= 0:
+            self.pending_steps = 0
+            return
+        self.pending_steps = 0
+        for layer_idx, block in enumerate(self.model.core.blocks):
+            self._apply_gain(block.ff.fc1.weight, self.good_counts[layer_idx])
+            self._apply_bias(block.ff.fc1.bias, self.bad_counts[layer_idx])
+            self.good_counts[layer_idx].zero_()
+            self.bad_counts[layer_idx].zero_()
+        print(
+            color_text(
+                f"[reward-relu] applied auxiliary updates (scale={self.scale:.2e})",
+                Colors.MAGENTA,
+            )
+        )
+
+    def _apply_gain(self, weight: torch.Tensor, scores: torch.Tensor) -> None:
+        if weight is None or scores.numel() == 0:
+            return
+        positive = scores > 0
+        if not positive.any():
+            return
+        hidden = weight.size(0)
+        k = max(1, int(hidden * self.ratio))
+        available = positive.sum().item()
+        k = min(k, available)
+        if k <= 0:
+            return
+        values, indices = torch.topk(scores, k)
+        for neuron in indices.tolist():
+            row = weight.data[neuron]
+            norm = row.norm().item()
+            if norm == 0:
+                continue
+            row_std = row.std().item()
+            scale = 1 + self.scale * (row_std / (norm + 1e-8))
+            row.mul_(scale)
+
+    def _apply_bias(self, bias: torch.Tensor, scores: torch.Tensor) -> None:
+        if bias is None or scores.numel() == 0:
+            return
+        positive = scores > 0
+        if not positive.any():
+            return
+        hidden = bias.size(0)
+        k = max(1, int(hidden * self.ratio))
+        available = positive.sum().item()
+        k = min(k, available)
+        if k <= 0:
+            return
+        values, indices = torch.topk(scores, k)
+        bias_std = bias.data.std().item()
+        delta = self.scale * bias_std
+        if delta == 0:
+            return
+        bias.data[indices] += delta
+
+    def _compute_token_scores(
+        self, token_losses: torch.Tensor, valid_mask: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        good = torch.zeros_like(token_losses)
+        bad = torch.zeros_like(token_losses)
+        B, T = token_losses.shape
+        for b in range(B):
+            valid_indices = torch.nonzero(valid_mask[b], as_tuple=False).flatten()
+            if valid_indices.numel() == 0:
+                continue
+            losses = token_losses[b, valid_indices]
+            slice_size = max(1, int(valid_indices.numel() * self.token_ratio))
+            slice_size = min(slice_size, valid_indices.numel())
+            if slice_size <= 0:
+                continue
+            mean_loss = losses.mean()
+            good_vals, good_pos = torch.topk(losses, slice_size, largest=False)
+            bad_vals, bad_pos = torch.topk(losses, slice_size, largest=True)
+            good_scores = (mean_loss - good_vals).clamp(min=0)
+            bad_scores = (bad_vals - mean_loss).clamp(min=0)
+            good_indices = valid_indices[good_pos]
+            bad_indices = valid_indices[bad_pos]
+            good[b, good_indices] = good_scores
+            bad[b, bad_indices] = bad_scores
+        return good, bad
 def augment_training_batch(
     model: GRCEGPT,
     inputs: torch.Tensor,
@@ -650,15 +791,22 @@ class FeedForward(nn.Module):
     def __init__(self, config: ModelConfig) -> None:
         super().__init__()
         hidden = 4 * config.n_embd
-        self.net = nn.Sequential(
-            nn.Linear(config.n_embd, hidden),
-            nn.GELU(),
-            nn.Linear(hidden, config.n_embd),
-            nn.Dropout(config.dropout),
-        )
+        self.fc1 = nn.Linear(config.n_embd, hidden)
+        self.act = nn.GELU()
+        self.fc2 = nn.Linear(hidden, config.n_embd)
+        self.drop = nn.Dropout(config.dropout)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.net(x)
+    def forward(
+        self, x: torch.Tensor, *, record_mask: bool = False
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
+        hidden = self.fc1(x)
+        mask = None
+        if record_mask:
+            mask = hidden[:, -1, :] > 0
+        activated = self.act(hidden)
+        out = self.fc2(activated)
+        out = self.drop(out)
+        return out, mask
 
 
 class Block(nn.Module):
@@ -669,12 +817,14 @@ class Block(nn.Module):
         self.ln2 = nn.LayerNorm(config.n_embd)
         self.ff = FeedForward(config)
 
-    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(
+        self, x: torch.Tensor, *, record_mask: bool = False
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
         x = x + self.attn(self.ln1(x))
         pre_ff = self.ln2(x)
-        ff_out = self.ff(pre_ff)
+        ff_out, mask = self.ff(pre_ff, record_mask=record_mask)
         x = x + ff_out
-        return x, pre_ff, ff_out
+        return x, mask
 
 
 class GPTCore(nn.Module):
@@ -689,22 +839,31 @@ class GPTCore(nn.Module):
         self.head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
 
     def forward(
-        self, idx: torch.Tensor, block_biases: List[torch.Tensor] | None = None
-    ) -> Tuple[torch.Tensor, List[torch.Tensor]]:
+        self,
+        idx: torch.Tensor,
+        block_biases: List[torch.Tensor] | None = None,
+        *,
+        record_relu_mask: bool = False,
+    ) -> Tuple[torch.Tensor, List[torch.Tensor], List[torch.Tensor] | None]:
         B, T = idx.shape
         device = idx.device
         tok = self.tok_emb(idx)
         pos = self.pos_emb(torch.arange(T, device=device))
         x = self.drop(tok + pos)
         block_inputs: List[torch.Tensor] = []
+        relu_masks: List[torch.Tensor | None] | None = None
+        if record_relu_mask:
+            relu_masks = [None] * len(self.blocks)
         for layer_idx, block in enumerate(self.blocks):
             if block_biases is not None:
                 x = x + block_biases[layer_idx]
             block_inputs.append(x[:, -1, :])
-            x, _, _ = block(x)
+            x, layer_mask = block(x, record_mask=record_relu_mask)
+            if record_relu_mask and relu_masks is not None and layer_mask is not None:
+                relu_masks[layer_idx] = layer_mask
         x = self.ln_f(x)
         logits = self.head(x)
-        return logits, block_inputs
+        return logits, block_inputs, relu_masks
 
 
 class GRCEContextChannel(nn.Module):
@@ -782,6 +941,7 @@ class GRCEGPT(nn.Module):
         disable_context: bool = False,
         capture_activations: bool = False,
         think_token_id: int | None = None,
+        collect_relu_mask: bool = False,
     ) -> Tuple[torch.Tensor, torch.Tensor | None, dict | None]:
         B, T = idx.shape
         device = idx.device
@@ -802,6 +962,8 @@ class GRCEGPT(nn.Module):
         if think_token_id is not None:
             think_marker = self.core.tok_emb.weight[think_token_id]
         activation_store: dict | None = None
+        need_store = capture_activations or collect_relu_mask
+        relu_activity: list[list[torch.Tensor | None]] | None = [] if collect_relu_mask else None
         if capture_activations:
             activation_store = {
                 "block_norms": [[] for _ in range(self.config.n_layer)],
@@ -851,7 +1013,13 @@ class GRCEGPT(nn.Module):
                     )
                     full[:, -1, :] = bias_vec
                     block_biases.append(full)
-            logits, block_inputs = self.core(prefix, block_biases=block_biases)
+            logits, block_inputs, layer_masks = self.core(
+                prefix,
+                block_biases=block_biases,
+                record_relu_mask=collect_relu_mask,
+            )
+            if relu_activity is not None:
+                relu_activity.append(layer_masks)
             if activation_store is not None:
                 for layer_idx, block_inp in enumerate(block_inputs):
                     norms = torch.linalg.vector_norm(block_inp.detach(), dim=-1)
@@ -883,6 +1051,11 @@ class GRCEGPT(nn.Module):
                         activation_store["context_norms"].extend(ctx_norms.cpu().tolist())
             logits_steps.append(logits[:, -1:, :])
         logits = torch.cat(logits_steps, dim=1)
+        if relu_activity is not None:
+            if activation_store is None and need_store:
+                activation_store = {}
+            if activation_store is not None:
+                activation_store.setdefault("relu_activity", relu_activity)
         return logits, context, activation_store
 
 
@@ -1082,6 +1255,7 @@ def train_model(
     think_hard: bool,
     undo_settings: UndoSettings | None,
     *,
+    reward_relu: bool = False,
     cycle_wall_start: float,
     base_wall_seconds: float,
 ) -> Tuple[int, List[Dict[str, float]]]:
@@ -1092,6 +1266,11 @@ def train_model(
     think_enabled = think_settings is not None and think_settings.enabled
     undo_enabled = undo_settings is not None and undo_settings.enabled
     think_token_id = active_think_token_id(think_settings)
+    reward_tracker = (
+        ReLURewardTracker(model, steps, scale=reward_relu)
+        if reward_relu > 0
+        else None
+    )
     show_think_columns = think_enabled
     show_target_headers = think_enabled or undo_enabled
     for step in range(1, steps + 1):
@@ -1114,19 +1293,28 @@ def train_model(
             disable_context_rows=disable_rows,
             disable_think_rows=think_disabled_rows,
         )
-        logits, _, _ = model.forward_autoreg(
+        logits, _, activation_store = model.forward_autoreg(
             xb,
             yb,
             think_token_id=think_token_id,
+            collect_relu_mask=reward_tracker is not None,
         )
         logits = apply_think_slot_mask(logits, think_slot_mask, think_settings)
         logits_flat = logits.view(-1, logits.size(-1))
         loss_targets = build_loss_targets(yb, think_settings, random_mask)
-        main_loss = F.cross_entropy(
+        token_loss_flat = F.cross_entropy(
             logits_flat,
             loss_targets.view(-1),
+            reduction="none",
             ignore_index=LOSS_IGNORE_INDEX,
         )
+        token_losses = token_loss_flat.view_as(loss_targets)
+        valid_mask = loss_targets != LOSS_IGNORE_INDEX
+        denom = valid_mask.sum().item()
+        if denom == 0:
+            main_loss = token_loss_flat.sum() * 0
+        else:
+            main_loss = token_loss_flat.sum() / denom
         plan_required = None
         think_loss = logits.new_tensor(0.0)
         if think_settings is not None and think_settings.enabled:
@@ -1157,6 +1345,19 @@ def train_model(
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optim.step()
         total_steps += 1
+
+        if reward_tracker is not None:
+            relu_activity = None
+            if activation_store is not None:
+                relu_activity = activation_store.get("relu_activity")
+            if relu_activity is not None:
+                with torch.no_grad():
+                    reward_tracker.record_batch(
+                        relu_activity,
+                        token_losses.detach(),
+                        valid_mask.detach(),
+                    )
+                    reward_tracker.maybe_apply()
 
         if step == 1 or step % eval_interval == 0 or step == steps:
             model.eval()
@@ -1331,6 +1532,8 @@ def train_model(
                 record["test_loss_plain"] = float(split_metrics["test_nothink"]["ce"])
             history_updates.append(record)
     
+    if reward_tracker is not None:
+        reward_tracker.finalize()
     return total_steps, history_updates
 
 
@@ -1895,6 +2098,12 @@ def parse_args() -> argparse.Namespace:
         help="Dropout probability inside attention/FFN blocks.",
     )
     parser.add_argument(
+        "--reward-relu",
+        type=float,
+        default=0.0,
+        help="Enable experimental ReLU reward updates with the given scale (0 disables)",
+    )
+    parser.add_argument(
         "--eval-interval",
         type=int,
         default=10,
@@ -2411,6 +2620,7 @@ def main() -> None:
             )
             return
 
+        reward_scale = max(0.0, float(args.reward_relu))
         for cycle in range(1, args.cycles + 1):
             cycle_wall = time.time()
             cycle_cpu = time.process_time()
@@ -2468,6 +2678,7 @@ def main() -> None:
                 suppress_think_prompt=args.no_think_prompt,
                 think_hard=args.think_hard,
                 undo_settings=undo_settings,
+                reward_relu=reward_scale,
                 cycle_wall_start=cycle_wall,
                 base_wall_seconds=total_train_wall,
             )
