@@ -47,6 +47,20 @@ def build_vocab(paragraphs: List[str]) -> set[str]:
     return vocab
 
 
+def count_paragraphs_with_unique_words(paragraphs: List[str]) -> int:
+    word_occurrences: dict[str, int] = {}
+    for text in paragraphs:
+        tokens = {token for token in text.split() if token}
+        for token in tokens:
+            word_occurrences[token] = word_occurrences.get(token, 0) + 1
+    total = 0
+    for text in paragraphs:
+        tokens = {token for token in text.split() if token}
+        if any(word_occurrences.get(token, 0) == 1 for token in tokens):
+            total += 1
+    return total
+
+
 def plot_histogram(stats: List[CorpusStats], *, bins: int, output: pathlib.Path | None) -> None:
     fig, ax = plt.subplots(figsize=(8, 5))
     for corpus in stats:
@@ -100,6 +114,11 @@ def main() -> None:
 
     vocab = build_vocab(train_stats.paragraphs)
     print(f"train vocabulary size: {len(vocab)}")
+    unique_paragraphs = count_paragraphs_with_unique_words(train_stats.paragraphs)
+    print(
+        "paragraphs containing a word unique to that paragraph: "
+        f"{unique_paragraphs}/{len(train_stats.paragraphs)}"
+    )
 
     if args.plot_length_histogram:
         plot_histogram([train_stats, test_stats], bins=args.bins, output=args.output)
