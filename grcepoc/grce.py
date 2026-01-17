@@ -999,7 +999,7 @@ class GRCEContextChannel(nn.Module):
         else:
             self.layer_chunk = None
         if not self.disabled:
-            mid = 4 * config.n_grce
+            mid = 2 * config.n_grce if self.layered else 4 * config.n_grce
             self.pre_norms = nn.ModuleList(
                 nn.LayerNorm(config.n_embd) for _ in range(config.n_layer)
             )
