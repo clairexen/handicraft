@@ -2079,7 +2079,9 @@ def parse_args() -> argparse.Namespace:
         "--reward-relu",
         type=float,
         default=0.0,
-        help="Enable experimental ReLU reward updates with the given scale (0 disables)",
+        help=(
+            "Enable experimental ReLU reward updates with scale=10^{-value} (value<=0 disables)"
+        ),
     )
     parser.add_argument(
         "--eval-interval",
@@ -2598,7 +2600,9 @@ def main() -> None:
             )
             return
 
-        reward_scale = max(0.0, float(args.reward_relu))
+        reward_scale = 0.0
+        if args.reward_relu > 0:
+            reward_scale = 10 ** (-float(args.reward_relu))
         for cycle in range(1, args.cycles + 1):
             cycle_wall = time.time()
             cycle_cpu = time.process_time()
