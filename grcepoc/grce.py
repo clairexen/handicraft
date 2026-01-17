@@ -1780,12 +1780,33 @@ def normalize_prompt(text: str) -> str:
 def load_checkpoint_payload(path: pathlib.Path, device: torch.device) -> tuple[dict, dict]:
     payload = torch.load(path, map_location=device, weights_only=False)
     if isinstance(payload, dict) and "model" in payload:
-        state = payload["model"]
+        state = upgrade_state_dict(payload["model"])
+        payload["model"] = state
         meta = payload
     else:
-        state = payload
+        state = upgrade_state_dict(payload)
         meta = {}
     return state, meta
+
+
+def upgrade_state_dict(state: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    needs_upgrade = any(".ff.net." in key for key in state)
+    if not needs_upgrade:
+        return state
+    upgraded: dict[str, torch.Tensor] = {}
+    for key, value in state.items():
+        new_key = key
+        marker = ".ff.net."
+        if marker in key:
+            prefix, suffix = key.split(marker, 1)
+            if suffix.startswith("0."):
+                new_key = f"{prefix}.ff.fc1.{suffix[2:]}"
+            elif suffix.startswith("2."):
+                new_key = f"{prefix}.ff.fc2.{suffix[2:]}"
+            else:
+                continue
+        upgraded[new_key] = value
+    return upgraded
 
 
 def count_layers_from_state(state: dict[str, torch.Tensor]) -> int:
@@ -2507,13 +2528,8 @@ def main() -> None:
                     )
                 )
             except RuntimeError as err:
-                print(
-                    color_text(
-                        "Checkpoint load failed (shape mismatch); starting fresh.",
-                        Colors.MAGENTA,
-                    )
-                )
-                print(color_text(str(err), Colors.GRAY))
+                print(color_text("Checkpoint load failed (shape mismatch); starting fresh.", Colors.RED, bold=True))
+                print(color_text(str(err), Colors.RED))
         elif args.import_model:
             import_wall = time.time()
             import_cpu = time.process_time()
