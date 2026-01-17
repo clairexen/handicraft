@@ -49,14 +49,14 @@ UNDO_SYMBOL = "\u21A9"  # leftwards arrow with hook
 ASCII_LETTERS = set(string.ascii_letters)
 
 PROMPT_GOALS = [
-    ("the color of a red apple is", "red"),
-    ("the opposite of hot is", "cold"),
-    ("2 + 2 =", "4"),
-    ("water freezes at", "0"),
-    ("the first letter of the alphabet is", "a"),
-    ("sun rises in the", "east"),
-    ("earth's satellite is the", "moon"),
-    ("a baby cat is called a", "kitten"),
+    ("the color of a red apple is", " red"),
+    ("the opposite of hot is", " cold"),
+    ("2 + 2 =", " 4"),
+    ("water freezes at", " 0"),
+    ("the first letter of the alphabet is", " a"),
+    ("sun rises in the", " east"),
+    ("earth's satellite is the", " moon"),
+    ("a baby cat is called a", " kitten"),
 ]
 
 
@@ -233,6 +233,7 @@ class PromptTracker:
         self.tokenizer = tokenizer
         self.completed: list[bool] = []
         self._cache: dict[int, torch.Tensor] = {}
+        self._expected_token_ids: dict[int, List[int]] = {}
         self.load_state(state)
 
     def load_state(self, state: dict | None) -> None:
@@ -259,13 +260,20 @@ class PromptTracker:
 
     def expected_text(self, idx: int) -> str:
         return PROMPT_GOALS[idx][1]
+    
+    def expected_token_ids(self, idx: int) -> List[int]:
+        if idx not in self._expected_token_ids:
+            tensor = self.tokenizer.encode(self.expected_text(idx))
+            self._expected_token_ids[idx] = tensor.tolist()
+        return self._expected_token_ids[idx]
 
-    def mark_if_satisfied(self, idx: int, completion: str) -> bool:
+    def mark_if_satisfied(self, idx: int, completion_ids: List[int]) -> bool:
         if idx is None or idx < 0 or idx >= len(self.completed):
             return False
-        expected = self.expected_text(idx).strip().lower()
-        normalized = completion.strip().lower()
-        if normalized.startswith(expected) and not self.completed[idx]:
+        expected_ids = self.expected_token_ids(idx)
+        if len(completion_ids) < len(expected_ids):
+            return False
+        if completion_ids[: len(expected_ids)] == expected_ids and not self.completed[idx]:
             self.completed[idx] = True
             return True
         return False
@@ -1485,12 +1493,7 @@ def train_model(
             completion_ids = sample_ids[prompt_len:]
 
             if prompt_tracker is not None and current_prompt_idx is not None:
-                if completion_ids:
-                    completion_tensor = torch.tensor(completion_ids, dtype=torch.long)
-                    completion_text = tokenizer.decode(completion_tensor)
-                else:
-                    completion_text = ""
-                if prompt_tracker.mark_if_satisfied(current_prompt_idx, completion_text):
+                if prompt_tracker.mark_if_satisfied(current_prompt_idx, completion_ids):
                     expected = prompt_tracker.expected_text(current_prompt_idx)
                     print(
                         color_text(
@@ -2674,6 +2677,34 @@ def main() -> None:
                         Colors.YELLOW,
                     )
                 )
+                if prompt_tracker.remaining() < len(PROMPT_GOALS):
+                    satisfied = [
+                        idx
+                        for idx, done in enumerate(prompt_tracker.completed)
+                        if done
+                    ]
+                    if satisfied:
+                        total_prompts = len(PROMPT_GOALS)
+                        lines = []
+                        for idx in satisfied:
+                            text, expected = PROMPT_GOALS[idx]
+                            lines.append(
+                                color_text(
+                                    f"#{idx + 1}: '{text}' -> '{expected}'",
+                                    Colors.GREEN,
+                                )
+                            )
+                        print(
+                            "\n"
+                            + color_text(
+                                f"Satisfied prompts ({len(satisfied)}/{total_prompts}):",
+                                Colors.GREEN,
+                                bold=True,
+                            )
+                            + "\n"
+                            + "\n".join(lines)
+                            + "\n"
+                        )
             except RuntimeError as err:
                 print(color_text("Checkpoint load failed (shape mismatch); starting fresh.", Colors.RED, bold=True))
                 print(color_text(str(err), Colors.RED))
@@ -2893,31 +2924,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-                if prompt_tracker.remaining() < len(PROMPT_GOALS):
-                    satisfied = [
-                        idx
-                        for idx, done in enumerate(prompt_tracker.completed)
-                        if done
-                    ]
-                    if satisfied:
-                        total = len(PROMPT_GOALS)
-                        lines = []
-                        for idx in satisfied:
-                            text, expected = PROMPT_GOALS[idx]
-                            lines.append(
-                                color_text(
-                                    f"#{idx + 1}: '{text}' -> '{expected}'",
-                                    Colors.GREEN,
-                                )
-                            )
-                        print(
-                            "\n"
-                            + color_text(
-                                f"Satisfied prompts ({len(satisfied)}/{total}):",
-                                Colors.GREEN,
-                                bold=True,
-                            )
-                            + "\n"
-                            + "\n".join(lines)
-                            + "\n"
-                        )
