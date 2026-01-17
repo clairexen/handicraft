@@ -101,6 +101,10 @@ Below are two quick sweeps you can adapt.
     for cy in 20 20 30; do
 	python3 grce.py --cycles $cy --n-grce 0
 	python3 grce.py --cycles $cy --tag span2 --context-span 2
+    done
+    for cy in 2 3 5 10 10 20 20 30; do
+	python3 grce.py --cycles $cy --tag nogrce --nogrce-interval 30
+	python3 grce.py --cycles $cy --tag grce --nogrce-interval 0
     done'
     ```
 

@@ -921,6 +921,7 @@ class GRCEGPT(nn.Module):
         capture_activations: bool = False,
         think_token_id: int | None = None,
         collect_relu_mask: bool = False,
+        disable_context_dropout: bool = False,
     ) -> Tuple[torch.Tensor, torch.Tensor | None, dict | None]:
         B, T = idx.shape
         device = idx.device
@@ -1014,7 +1015,7 @@ class GRCEGPT(nn.Module):
                 else:
                     stop_grad = (t % span == 0)
                 use_grce = True
-                if self.training:
+                if self.training and not disable_context_dropout:
                     seq_len = max(1, self.config.block_size)
                     drop_prob = min(1.0, 1 / seq_len)
                     if random.random() < drop_prob:
@@ -1235,6 +1236,7 @@ def train_model(
     undo_settings: UndoSettings | None,
     *,
     reward_relu: bool = False,
+    nogrce_interval: int = 1,
     cycle_wall_start: float,
     base_wall_seconds: float,
 ) -> Tuple[int, List[Dict[str, float]]]:
@@ -1252,14 +1254,18 @@ def train_model(
     )
     show_think_columns = think_enabled
     show_target_headers = think_enabled or undo_enabled
+    nogrce_interval = max(0, int(nogrce_interval))
     for step in range(1, steps + 1):
         xb, yb = dataset.get_batch("train", block_size, batch_size, device)
-        disable_rows = set()
-        drop_target = 1
-        drop_prob = min(1.0, drop_target / max(1, batch_size))
-        for row_idx in range(batch_size):
-            if random.random() < drop_prob:
-                disable_rows.add(row_idx)
+        current_step_index = total_steps
+        nogrce_active = nogrce_interval > 0 and current_step_index % nogrce_interval == 0
+        disable_rows: set[int] = set()
+        if nogrce_active:
+            drop_target = 1
+            drop_prob = min(1.0, drop_target / max(1, batch_size))
+            for row_idx in range(batch_size):
+                if random.random() < drop_prob:
+                    disable_rows.add(row_idx)
         think_disabled_rows = set()
         if think_enabled and batch_size > 0:
             think_disabled_rows.add(random.randrange(batch_size))
@@ -1277,6 +1283,7 @@ def train_model(
             yb,
             think_token_id=think_token_id,
             collect_relu_mask=reward_tracker is not None,
+            disable_context_dropout=not nogrce_active,
         )
         logits = apply_think_slot_mask(logits, think_slot_mask, think_settings)
         logits_flat = logits.view(-1, logits.size(-1))
@@ -2098,6 +2105,12 @@ def parse_args() -> argparse.Namespace:
         help="Dropout probability inside attention/FFN blocks.",
     )
     parser.add_argument(
+        "--nogrce-interval",
+        type=int,
+        default=1,
+        help="Apply GRCE-disable dropout every N steps (0 disables)",
+    )
+    parser.add_argument(
         "--reward-relu",
         type=float,
         default=0.0,
@@ -2680,6 +2693,7 @@ def main() -> None:
                 think_hard=args.think_hard,
                 undo_settings=undo_settings,
                 reward_relu=reward_scale,
+                nogrce_interval=args.nogrce_interval,
                 cycle_wall_start=cycle_wall,
                 base_wall_seconds=total_train_wall,
             )
