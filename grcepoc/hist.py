@@ -247,8 +247,8 @@ def plot_metric_traces(
                 continue
             ax.plot(x_values, y_values, label=f"{label} – {metric}")
     ax.set_xlabel(x_label)
-    ax.set_ylabel("Metric")
-    ax.set_title("Loss history")
+    ax.set_ylabel("")
+    ax.set_title("")
     ax.legend()
     fig.tight_layout()
     plt.show()
