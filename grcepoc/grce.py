@@ -808,6 +808,7 @@ class ModelConfig:
     dropout: float = 0.05
     context_span: int = 2   # Detach gradients every N positions (0 disables detaching).
     context_dropout: int = 0  # Target number of GRCE dropouts per block (0 disables).
+    grce_layers: bool = False
 
 
 MODEL_CONFIG_TEMPLATE = ModelConfig()
@@ -928,14 +929,20 @@ class GRCEContextChannel(nn.Module):
         self.context_span = max(0, int(config.context_span))
         self.context_dim = config.n_grce
         self.context_dropout = max(0, int(config.context_dropout))
+        self.layered = config.grce_layers
+        if self.layered:
+            if config.n_layer <= 0 or config.n_grce % config.n_layer != 0:
+                raise ValueError("--grce-layers requires n_grce to be divisible by n_layer")
+            self.layer_chunk = config.n_grce // config.n_layer
+        else:
+            self.layer_chunk = None
         if not self.disabled:
             mid = 4 * config.n_grce
             self.pre_norms = nn.ModuleList(
                 nn.LayerNorm(config.n_embd) for _ in range(config.n_layer)
             )
             self.context_sampler = nn.ModuleList(
-                nn.Linear(config.n_embd, config.n_grce)
-                for _ in range(config.n_layer)
+                [self._build_sampler(config.n_embd, config.n_grce) for _ in range(config.n_layer)]
             )
             self.context_mlp = nn.Sequential(
                 nn.Linear(config.n_grce, mid),
@@ -944,9 +951,26 @@ class GRCEContextChannel(nn.Module):
             )
             self.context_norm = nn.LayerNorm(config.n_grce)
             self.context_bias_gen = nn.ModuleList(
-                nn.Linear(config.n_grce, config.n_embd)
-                for _ in range(config.n_layer)
+                [self._build_bias(config.n_grce, config.n_embd) for _ in range(config.n_layer)]
             )
+
+    def _build_sampler(self, in_dim: int, out_dim: int) -> nn.Module:
+        if not self.layered or self.layer_chunk is None:
+            return nn.Linear(in_dim, out_dim)
+        chunk = self.layer_chunk
+        return nn.Sequential(
+            nn.Linear(in_dim, chunk),
+            nn.Linear(chunk, out_dim),
+        )
+
+    def _build_bias(self, in_dim: int, out_dim: int) -> nn.Module:
+        if not self.layered or self.layer_chunk is None:
+            return nn.Linear(in_dim, out_dim)
+        chunk = self.layer_chunk
+        return nn.Sequential(
+            nn.Linear(in_dim, chunk),
+            nn.Linear(chunk, out_dim),
+        )
 
     def project(self, context: torch.Tensor) -> List[torch.Tensor]:
         if self.disabled:
@@ -2310,6 +2334,13 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--grce-layers",
+        action="store_true",
+        help=(
+            "Use per-layer GRCE sampling MLPs (requires n_grce % n_layer == 0)"
+        ),
+    )
+    parser.add_argument(
         "--prompt-cycle-prompts",
         type=int,
         default=10,
@@ -2581,6 +2612,7 @@ def main() -> None:
             dropout=args.dropout,
             context_span=max(0, args.context_span),
             context_dropout=1,
+            grce_layers=args.grce_layers,
         )
         model_tag = build_model_tag(config)
         if args.think > 0:
