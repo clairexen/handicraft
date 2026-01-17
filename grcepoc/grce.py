@@ -348,6 +348,12 @@ class ThinkSettings:
     @property
     def enabled(self) -> bool:
         return self.max_steps > 0 and self.token_id is not None
+
+
+def active_think_token_id(think: ThinkSettings | None) -> int | None:
+    if think is None or not think.enabled or think.token_id is None:
+        return None
+    return int(think.token_id)
 @dataclass
 class UndoSettings:
     max_pairs: int = 0
@@ -380,6 +386,7 @@ def augment_training_batch(
     torch.Tensor | None,
 ]:
     think_enabled = think is not None and think.enabled
+    think_token_id = active_think_token_id(think)
     forced_context_off = disable_context_rows or set()
     think_disabled_rows = disable_think_rows or set()
     undo_enabled = undo is not None and undo.enabled
@@ -400,7 +407,10 @@ def augment_training_batch(
     if need_logits:
         model.eval()
         with torch.no_grad():
-            full_logits, _, _ = model.forward_autoreg(inputs)
+            full_logits, _, _ = model.forward_autoreg(
+                inputs,
+                think_token_id=think_token_id,
+            )
     if prev_mode and need_logits:
         model.train()
     think_scores = None
@@ -771,6 +781,7 @@ class GRCEGPT(nn.Module):
         *,
         disable_context: bool = False,
         capture_activations: bool = False,
+        think_token_id: int | None = None,
     ) -> Tuple[torch.Tensor, torch.Tensor | None, dict | None]:
         B, T = idx.shape
         device = idx.device
@@ -780,6 +791,16 @@ class GRCEGPT(nn.Module):
             context_dim = self.context.context_dim
             context = torch.zeros(B, context_dim, device=device)
         logits_steps = []
+        pos_counters = torch.zeros(B, dtype=torch.long, device=device)
+        last_content_token = torch.full(
+            (B,),
+            -1,
+            dtype=torch.long,
+            device=device,
+        )
+        think_marker = None
+        if think_token_id is not None:
+            think_marker = self.core.tok_emb.weight[think_token_id]
         activation_store: dict | None = None
         if capture_activations:
             activation_store = {
@@ -788,9 +809,33 @@ class GRCEGPT(nn.Module):
             }
         for t in range(T):
             prefix = idx[:, : t + 1]
-            tok_last = self.core.tok_emb(prefix[:, -1])
-            pos_ids = torch.full((B,), t, device=device, dtype=torch.long)
+            token_ids = prefix[:, -1]
+            tok_last = self.core.tok_emb(token_ids)
+            think_mask = None
+            if think_token_id is not None:
+                think_mask = token_ids == think_token_id
+                if think_mask.any():
+                    tok_last = tok_last.clone()
+                    valid_prev = last_content_token >= 0
+                    if valid_prev.any():
+                        prev_emb = self.core.tok_emb(last_content_token.clamp(min=0))
+                        combined_mask = think_mask & valid_prev
+                        if combined_mask.any():
+                            tok_last[combined_mask] = prev_emb[combined_mask]
+                    if think_marker is not None:
+                        tok_last[think_mask] = tok_last[think_mask] + think_marker
+            pos_ids = pos_counters.clone()
+            if think_mask is not None and think_mask.any():
+                prior_pos = torch.clamp(pos_counters[think_mask] - 1, min=0)
+                pos_ids[think_mask] = prior_pos
             pos_emb = self.core.pos_emb(pos_ids)
+            if think_mask is not None:
+                content_mask = ~think_mask
+            else:
+                content_mask = torch.ones_like(token_ids, dtype=torch.bool)
+            if content_mask.any():
+                last_content_token[content_mask] = token_ids[content_mask]
+            pos_counters = pos_counters + content_mask.to(pos_counters.dtype)
             token_input = tok_last + pos_emb
             block_biases = None
             if use_context and context is not None:
@@ -923,7 +968,10 @@ def expand_prompt_with_thinking(
     max_insertions = max(0, think.max_steps)
     while pos < idx.size(1) and inserted < max_insertions:
         prefix = idx[:, : pos + 1]
-        logits, _, _ = model.forward_autoreg(prefix)
+        logits, _, _ = model.forward_autoreg(
+            prefix,
+            think_token_id=active_think_token_id(think),
+        )
         next_logits = logits[:, -1, :]
         top_ids = torch.argmax(next_logits, dim=-1)
         if int(top_ids.item()) == int(think.token_id):
@@ -961,6 +1009,7 @@ def evaluate_split(
         batches = [
             dataset.get_batch(split, block_size, batch_size, device) for _ in range(iters)
         ]
+    think_token_id = active_think_token_id(think_settings)
     for xb, yb in batches:
         aug_xb, aug_yb, random_mask, think_labels, think_slot_mask = augment_training_batch(
             model,
@@ -972,6 +1021,7 @@ def evaluate_split(
         logits, _, _ = model.forward_autoreg(
             aug_xb,
             disable_context=disable_context,
+            think_token_id=think_token_id,
         )
         logits = apply_think_slot_mask(logits, think_slot_mask, think_settings)
         loss_targets = build_loss_targets(aug_yb, think_settings, random_mask)
@@ -1041,6 +1091,7 @@ def train_model(
     printed_header = False
     think_enabled = think_settings is not None and think_settings.enabled
     undo_enabled = undo_settings is not None and undo_settings.enabled
+    think_token_id = active_think_token_id(think_settings)
     show_think_columns = think_enabled
     show_target_headers = think_enabled or undo_enabled
     for step in range(1, steps + 1):
@@ -1066,6 +1117,7 @@ def train_model(
         logits, _, _ = model.forward_autoreg(
             xb,
             yb,
+            think_token_id=think_token_id,
         )
         logits = apply_think_slot_mask(logits, think_slot_mask, think_settings)
         logits_flat = logits.view(-1, logits.size(-1))
@@ -1357,8 +1409,13 @@ def run_test_slice(
     model_device = next(model.parameters()).device
     seq = torch.tensor(indices, dtype=torch.long, device=model_device).unsqueeze(0)
     model.eval()
+    think_token_id = active_think_token_id(think_settings)
     with torch.no_grad():
-        logits, _, activations = model.forward_autoreg(seq, capture_activations=True)
+        logits, _, activations = model.forward_autoreg(
+            seq,
+            capture_activations=True,
+            think_token_id=think_token_id,
+        )
     preds = logits.argmax(dim=-1).squeeze(0).tolist()
     correct_mask = [False] * len(indices)
     for i in range(1, len(indices)):
@@ -1700,10 +1757,14 @@ def generate(
     model.eval()
     idx = idx.clone()
     prompt_len = idx.size(1)
+    think_token_id = active_think_token_id(think_settings)
     if not suppress_think and not suppress_think_prompt:
         if think_hard and think_settings is not None and think_settings.enabled:
             with torch.no_grad():
-                logits, _, _ = model.forward_autoreg(idx)
+                logits, _, _ = model.forward_autoreg(
+                    idx,
+                    think_token_id=think_token_id,
+                )
             prompt_ids = idx[0].tolist()
             think_token_id = think_settings.token_id
             new_tokens: list[int] = []
@@ -1725,7 +1786,10 @@ def generate(
             prompt_len = idx.size(1)
     for _ in range(steps):
         idx_cond = idx[:, -model.config.block_size :]
-        logits, _, _ = model.forward_autoreg(idx_cond)
+        logits, _, _ = model.forward_autoreg(
+            idx_cond,
+            think_token_id=think_token_id,
+        )
         logits_last = logits[:, -1, :]
         probs = F.softmax(logits_last, dim=-1)
         suppressed_ids: list[int] = []
