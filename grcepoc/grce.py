@@ -808,7 +808,7 @@ class ModelConfig:
     dropout: float = 0.05
     context_span: int = 2   # Detach gradients every N positions (0 disables detaching).
     context_dropout: int = 0  # Target number of GRCE dropouts per block (0 disables).
-    grce_layers: bool = False
+    grce_layered: bool = False
 
 
 MODEL_CONFIG_TEMPLATE = ModelConfig()
@@ -991,10 +991,10 @@ class GRCEContextChannel(nn.Module):
         self.context_span = max(0, int(config.context_span))
         self.context_dim = config.n_grce
         self.context_dropout = max(0, int(config.context_dropout))
-        self.layered = config.grce_layers
+        self.layered = config.grce_layered
         if self.layered:
             if config.n_layer <= 0 or config.n_grce % config.n_layer != 0:
-                raise ValueError("--grce-layers requires n_grce to be divisible by n_layer")
+                raise ValueError("--grce-layered requires n_grce to be divisible by n_layer")
             self.layer_chunk = config.n_grce // config.n_layer
         else:
             self.layer_chunk = None
@@ -2396,7 +2396,7 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--grce-layers",
+        "--grce-layered",
         action="store_true",
         help="Use per-layer GRCE sampling MLPs (requires n_grce %% n_layer == 0)",
     )
@@ -2677,13 +2677,13 @@ def main() -> None:
             dropout=args.dropout,
             context_span=max(0, args.context_span),
             context_dropout=1,
-            grce_layers=args.grce_layers,
+            grce_layered=args.grce_layered,
         )
         if args.print_size:
             describe_model_size(config)
             return
         model_tag = build_model_tag(config)
-        if args.grce_layers:
+        if args.grce_layered:
             model_tag += "_glayers"
         if args.think > 0:
             model_tag += f"_think{args.think}"
