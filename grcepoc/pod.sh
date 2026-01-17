@@ -93,8 +93,12 @@ case "${1:-}" in
     pull)
         rsync_pull
         ;;
+    shell)
+        ensure_remote_dirs
+        open_shell
+        ;;
     *)
-        echo "Usage: bash pod.sh {init|go|update|push|pull}" >&2
+        echo "Usage: bash pod.sh {init|go|update|put|push|pull|shell}" >&2
         exit 1
         ;;
 esac
