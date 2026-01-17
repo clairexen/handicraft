@@ -187,9 +187,9 @@ def parse_args() -> argparse.Namespace:
         help="load JSON file produced by --store (skips .pt loading)",
     )
     parser.add_argument(
-        "--no-nogrce",
+        "--nogrce",
         action="store_true",
-        help="suppress GRCE-disabled (nogrce) traces",
+        help="Display GRCE-disabled (nogrce) traces (hidden by default)",
     )
     parser.add_argument(
         "--default-test",
@@ -246,9 +246,9 @@ def discover_paths(explicit: List[pathlib.Path], json_dir: pathlib.Path) -> List
 def main() -> None:
     args = parse_args()
     if args.default_test:
-        if not args.train and not args.test:
-            args.test = True
-        args.no_nogrce = True
+        args.train = False
+        args.train_and_test = False
+        args.nogrce = False
     if args.stored:
         records = load_store(args.stored)
     else:
@@ -311,7 +311,7 @@ def main() -> None:
             args.store,
             include_train=show_train,
             include_test=show_test,
-            include_nogrce=not args.no_nogrce,
+            include_nogrce=args.nogrce,
         )
         if args.store_only:
             return
@@ -396,7 +396,7 @@ def main() -> None:
                 marker=None,
                 linewidth=line_width,
             )
-            if rec.train_nogrce and not args.no_nogrce:
+            if rec.train_nogrce and args.nogrce:
                 nogrce_values = rec.scaled_train_nogrce or rec.train_nogrce
                 nogrce_line, = ax.plot(
                     rec.scaled_steps,
@@ -418,7 +418,7 @@ def main() -> None:
                 marker=None,
                 linewidth=line_width,
             )
-            if rec.test_nogrce and not args.no_nogrce:
+            if rec.test_nogrce and args.nogrce:
                 nogrce_test_values = rec.scaled_test_nogrce or rec.test_nogrce
                 nogrce_line, = ax.plot(
                     rec.scaled_steps,

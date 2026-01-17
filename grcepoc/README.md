@@ -12,7 +12,7 @@ In other words, this channel is literally the recurrent shortcut that classic RN
 
 Plotting defaults:
 - `sweep1.py` plots the per-model JSON histories produced by `hist.py --write-json-dir ...`, showing both train/test traces when no flags are provided.
-- `--no-nogrce` hides the GRCE-disabled comparisons.
+- `--nogrce` shows the GRCE-disabled comparisons (hidden by default).
 - `--avg-span` averages runs with the same configuration label (span stripped).
 - `--store span_avg.json --store-only` writes exactly what you see, so you can feed it into analysis scripts.
 
@@ -91,7 +91,7 @@ You can reproduce the sweeps below; notice how even the `--context-span 1` run (
 
 Every evaluation logs both GRCE-enabled and GRCE-disabled losses, and `sweep1.py` draws both traces for quick comparison.
 
-For postprocessing, run for example `sweep1.py --avg-span --no-nogrce --store span_avg.json --store-only` and feed that JSON into your analysis scripts.
+For postprocessing, run for example `sweep1.py --avg-span --nogrce --store span_avg.json --store-only` and feed that JSON into your analysis scripts.
 
 ## Example training sweeps
 
