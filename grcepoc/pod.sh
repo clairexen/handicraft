@@ -19,6 +19,7 @@ fi
 SSH_BIN="${SSH_ARGS[0]}"
 REMOTE_HOST="${SSH_ARGS[1]}"
 SSH_OPTS=("${SSH_ARGS[@]:2}")
+SSH_OPTS+=("-o" "StrictHostKeyChecking=no" "-o" "UserKnownHostsFile=/dev/null")
 RSYNC_SSH=("$SSH_BIN" "${SSH_OPTS[@]}")
 RSYNC_COMMON=(-avz --no-perms --no-owner --no-group)
 
