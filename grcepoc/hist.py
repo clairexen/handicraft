@@ -58,6 +58,12 @@ def parse_args() -> argparse.Namespace:
         help="Pre-exported history JSON file (see --write-json)",
     )
     parser.add_argument(
+        "--model",
+        type=pathlib.Path,
+        default=pathlib.Path("model"),
+        help="Directory to search for checkpoints when --pt/--json are omitted",
+    )
+    parser.add_argument(
         "--list",
         action="store_true",
         help="List summary statistics for each source (default action)",
@@ -70,13 +76,19 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def load_history(pt_path: pathlib.Path) -> Tuple[str, List[Dict[str, float]]]:
+def load_history(pt_path: pathlib.Path) -> Tuple[str, List[Dict[str, float]], bool]:
     import torch
 
     payload = torch.load(pt_path, map_location="cpu")
-    history = payload.get("loss_history", []) if isinstance(payload, dict) else []
-    normalized = [normalize_entry(item) for item in history if isinstance(item, dict)]
-    return pt_path.name, normalized
+    if not isinstance(payload, dict):
+        return pt_path.name, [], False
+    history_payload = payload.get("loss_history")
+    if not isinstance(history_payload, list):
+        return pt_path.name, [], False
+    normalized = [
+        normalize_entry(item) for item in history_payload if isinstance(item, dict)
+    ]
+    return pt_path.name, normalized, True
 
 
 def load_json_history(json_path: pathlib.Path) -> Tuple[str, List[Dict[str, float]]]:
@@ -181,12 +193,28 @@ def format_table_json(columns: List[str], rows: List[List[float]]) -> str:
 
 def main() -> None:
     args = parse_args()
+    auto_pt_sources: set[pathlib.Path] = set()
+    if not args.pt and not args.json:
+        model_dir = args.model
+        if model_dir.exists():
+            pt_files = sorted(model_dir.glob("*.pt"))
+            if pt_files:
+                args.pt.extend(pt_files)
+                auto_pt_sources = set(pt_files)
+            else:
+                json_files = sorted(model_dir.glob("*.json"))
+                args.json.extend(json_files)
+        else:
+            print(f"warning: model directory {model_dir} not found")
     sources: List[Tuple[str, List[Dict[str, float]]]] = []
     for pt_path in args.pt:
         if not pt_path.exists():
             print(f"warning: missing checkpoint {pt_path}")
             continue
-        label, history = load_history(pt_path)
+        label, history, has_history = load_history(pt_path)
+        if pt_path in auto_pt_sources and not has_history:
+            print(f"Ignored: {pt_path.name}")
+            continue
         sources.append((label, history))
     for json_path in args.json:
         if not json_path.exists():
