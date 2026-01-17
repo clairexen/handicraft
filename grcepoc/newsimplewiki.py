@@ -65,10 +65,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data", type=pathlib.Path, default=pathlib.Path("data"))
     parser.add_argument("--bins", type=int, default=50, help="Number of histogram bins")
     parser.add_argument(
+        "--plot-length-histogram",
+        action="store_true",
+        help="Generate the paragraph-length histogram plot",
+    )
+    parser.add_argument(
         "--output",
         type=pathlib.Path,
         default=None,
-        help="Optional output PNG path",
+        help="Optional output PNG path (requires --plot)",
     )
     return parser.parse_args()
 
@@ -84,7 +89,8 @@ def main() -> None:
     print(train_stats.describe())
     print(test_stats.describe())
 
-    plot_histogram([train_stats, test_stats], bins=args.bins, output=args.output)
+    if args.plot_length_histogram:
+        plot_histogram([train_stats, test_stats], bins=args.bins, output=args.output)
 
 
 if __name__ == "__main__":
