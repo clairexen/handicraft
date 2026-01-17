@@ -746,9 +746,11 @@ class GRCEContextChannel(nn.Module):
         for ln, sampler, part in zip(self.pre_norms, self.context_sampler, pieces):
             messages.append(sampler(ln(part)))
         fused = torch.stack(messages, dim=0).sum(dim=0)
-        context = self.context_mlp(fused)
         if prev_context is not None:
             residual = prev_context.detach() if stop_grad else prev_context
+            fused = fused + residual
+        context = self.context_mlp(fused)
+        if prev_context is not None:
             context = context + residual
         context = self.context_norm(context)
         return context
