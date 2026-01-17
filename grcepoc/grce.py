@@ -717,7 +717,6 @@ class GRCEContextChannel(nn.Module):
             self.context_mlp = nn.Sequential(
                 nn.Linear(config.n_grce, mid),
                 nn.ReLU(),
-                nn.LayerNorm(mid),
                 nn.Linear(mid, config.n_grce),
             )
             self.context_norm = nn.LayerNorm(config.n_grce)
@@ -737,6 +736,7 @@ class GRCEContextChannel(nn.Module):
         self,
         block_inputs: List[torch.Tensor],
         *,
+        prev_context: torch.Tensor | None,
         stop_grad: bool,
     ) -> torch.Tensor:
         if self.disabled:
@@ -747,6 +747,9 @@ class GRCEContextChannel(nn.Module):
             messages.append(sampler(ln(part)))
         fused = torch.stack(messages, dim=0).sum(dim=0)
         context = self.context_mlp(fused)
+        if prev_context is not None:
+            residual = prev_context.detach() if stop_grad else prev_context
+            context = context + residual
         context = self.context_norm(context)
         return context
 
@@ -809,7 +812,11 @@ class GRCEGPT(nn.Module):
                     if random.random() < drop_prob:
                         use_grce = False
                 if use_grce:
-                    context = self.context.update(block_inputs, stop_grad=stop_grad)
+                    context = self.context.update(
+                        block_inputs,
+                        prev_context=context,
+                        stop_grad=stop_grad,
+                    )
             logits_steps.append(logits[:, -1:, :])
         logits = torch.cat(logits_steps, dim=1)
         return logits, context, None
