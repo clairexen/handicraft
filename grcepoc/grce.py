@@ -2666,27 +2666,6 @@ def main() -> None:
                 else:
                     model.load_state_dict(upgrade_state_dict(payload))
                 print(color_text(f"Loaded existing model from {model_path}", Colors.YELLOW))
-                if prompt_tracker.remaining() < len(PROMPT_GOALS):
-                    satisfied = [
-                        idx
-                        for idx, done in enumerate(prompt_tracker.completed)
-                        if done
-                    ]
-                    if satisfied:
-                        lines = []
-                        for idx in satisfied:
-                            text, expected = PROMPT_GOALS[idx]
-                            lines.append(
-                                color_text(
-                                    f"#{idx + 1}: '{text}' -> '{expected}'",
-                                    Colors.GREEN,
-                                )
-                            )
-                        print(
-                            color_text("Satisfied prompts:", Colors.GREEN, bold=True)
-                            + "\n"
-                            + "\n".join(lines)
-                        )
                 hours = total_train_wall / 3600.0
                 days = hours / 24.0
                 print(
@@ -2914,3 +2893,31 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+                if prompt_tracker.remaining() < len(PROMPT_GOALS):
+                    satisfied = [
+                        idx
+                        for idx, done in enumerate(prompt_tracker.completed)
+                        if done
+                    ]
+                    if satisfied:
+                        total = len(PROMPT_GOALS)
+                        lines = []
+                        for idx in satisfied:
+                            text, expected = PROMPT_GOALS[idx]
+                            lines.append(
+                                color_text(
+                                    f"#{idx + 1}: '{text}' -> '{expected}'",
+                                    Colors.GREEN,
+                                )
+                            )
+                        print(
+                            "\n"
+                            + color_text(
+                                f"Satisfied prompts ({len(satisfied)}/{total}):",
+                                Colors.GREEN,
+                                bold=True,
+                            )
+                            + "\n"
+                            + "\n".join(lines)
+                            + "\n"
+                        )
