@@ -102,6 +102,7 @@ class Colors:
     BLUE = "\033[94m"
     CYAN = "\033[96m"
     GREEN = "\033[92m"
+    RED = "\033[91m"
     MAGENTA = "\033[95m"
     YELLOW = "\033[93m"
     GRAY = "\033[90m"
