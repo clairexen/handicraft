@@ -1201,9 +1201,10 @@ class GRCEGPT(nn.Module):
 
 
 def build_model_tag(config: ModelConfig) -> str:
+    ctx_prefix = "xctx" if config.grce_layered else "ctx"
     tag = (
         f"v{config.vocab_size}_bs{config.block_size}_emb{config.n_embd}_"
-        f"layers{config.n_layer}_heads{config.n_head}_ctx{config.n_grce}"
+        f"layers{config.n_layer}_heads{config.n_head}_{ctx_prefix}{config.n_grce}"
     )
     return tag
 
@@ -2683,8 +2684,6 @@ def main() -> None:
             describe_model_size(config)
             return
         model_tag = build_model_tag(config)
-        if args.grce_layered:
-            model_tag += "_glayers"
         if args.think > 0:
             model_tag += f"_think{args.think}"
         if args.undo > 0:
