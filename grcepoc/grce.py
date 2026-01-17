@@ -2336,9 +2336,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--grce-layers",
         action="store_true",
-        help=(
-            "Use per-layer GRCE sampling MLPs (requires n_grce % n_layer == 0)"
-        ),
+        help="Use per-layer GRCE sampling MLPs (requires n_grce %% n_layer == 0)",
     )
     parser.add_argument(
         "--prompt-cycle-prompts",
