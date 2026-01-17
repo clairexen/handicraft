@@ -9,6 +9,8 @@ import pathlib
 import shutil
 from typing import Dict, Iterable, List, Tuple
 
+import matplotlib.pyplot as plt
+
 LEGACY_TARGET_FIELDS = {
     "train_loss_learned": "train_target",
     "train_loss_nogrce_learned": "train_target_nogrce",
@@ -78,6 +80,11 @@ def parse_args() -> argparse.Namespace:
         "--write-json-dir",
         type=pathlib.Path,
         help="Write per-source JSON files into the specified directory",
+    )
+    parser.add_argument(
+        "--plot-steps",
+        nargs="*",
+        help="Plot step vs metric (default: test_loss)",
     )
     return parser.parse_args()
 
@@ -197,6 +204,24 @@ def format_table_json(columns: List[str], rows: List[List[float]]) -> str:
     return "\n".join(lines)
 
 
+def plot_step_traces(sources: List[Tuple[str, List[Dict[str, float]]]], metrics: List[str]) -> None:
+    fig, ax = plt.subplots(figsize=(10, 5))
+    for label, history in sources:
+        steps = [rec.get("step", idx + 1) for idx, rec in enumerate(history)]
+        for metric in metrics:
+            values = [rec.get(metric) for rec in history]
+            if not any(v is not None for v in values):
+                continue
+            series = [float(v) if v is not None else float("nan") for v in values]
+            ax.plot(steps, series, label=f"{label} – {metric}")
+    ax.set_xlabel("Step")
+    ax.set_ylabel("Metric")
+    ax.set_title("Loss history")
+    ax.legend()
+    fig.tight_layout()
+    plt.show()
+
+
 def main() -> None:
     args = parse_args()
     auto_pt_sources: set[pathlib.Path] = set()
@@ -265,8 +290,12 @@ def main() -> None:
                     shutil.copy(log_candidate, dest_log)
                     print(f"copied log to {dest_log}")
         performed = True
+    if args.plot_steps is not None:
+        metrics = args.plot_steps if args.plot_steps else ["test_loss"]
+        plot_step_traces(sources, metrics)
+        performed = True
     if not performed:
-        print("no action taken (no list or write-json requested)")
+        print("no action taken (no list, plot or write-json requested)")
 
 
 if __name__ == "__main__":
