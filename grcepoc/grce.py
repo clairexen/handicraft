@@ -2628,7 +2628,7 @@ def main() -> None:
         prefix = f"{args.corpus}_model_"
         model_path = model_dir / f"{prefix}{model_tag}.pt"
         log_path = model_dir / f"{prefix}{model_tag}.log"
-        print(color_text(f"Model: {model_path}", Colors.BLUE))
+        print(color_text(f"Model: {model_path}", Colors.CYAN))
         print(color_text(f"Logfile: {log_path}", Colors.BLUE))
         temp_model = GRCEGPT(config)
         non_emb_params = sum(
@@ -2854,10 +2854,10 @@ def main() -> None:
             label = "".join(tags + plus_tags + minus_tags)
             hours = total_train_wall / 3600.0
             days = hours / 24.0
-            print(color_text(f"Model: {model_path}", Colors.CYAN))
+            print(color_text(f"\nModel: {model_path}", Colors.CYAN))
             print(
                 color_text(
-                    f"\n[{label}] Training Cycle {cycle}/{args.cycles}. "
+                    f"[{label}] Training Cycle {cycle}/{args.cycles}. "
                     f"Total training so far: {total_steps} steps, {hours:.2f} hours ({days:.2f} days)",
                     Colors.BLUE,
                 )
