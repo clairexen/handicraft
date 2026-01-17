@@ -175,7 +175,11 @@ def parse_args() -> argparse.Namespace:
         help=".pt checkpoint files (defaults to model/*.pt if omitted)",
     )
     parser.add_argument("--train", action="store_true", help="plot train losses only")
-    parser.add_argument("--test", action="store_true", help="plot test losses only")
+    parser.add_argument(
+        "--train-and-test",
+        action="store_true",
+        help="plot both train and test losses (default is test only)",
+    )
     parser.add_argument("--store", type=pathlib.Path, help="write loss curves to JSON file")
     parser.add_argument(
         "--stored",
@@ -291,11 +295,14 @@ def main() -> None:
 
         records = averaged
 
-    if args.train or args.test:
-        show_train = bool(args.train)
-        show_test = bool(args.test)
-    else:
+    if args.train_and_test:
         show_train = True
+        show_test = True
+    elif args.train:
+        show_train = True
+        show_test = False
+    else:
+        show_train = False
         show_test = True
 
     if args.store and records:
