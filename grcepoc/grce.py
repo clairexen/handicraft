@@ -759,7 +759,6 @@ def load_or_prepare_tokens(
     split: str,
     text_path: str,
     text: str | None,
-    limit: int,
     cache_path: pathlib.Path,
     tokenizer: GPT2TokenizerWrapper,
     seed: int,
@@ -769,9 +768,7 @@ def load_or_prepare_tokens(
         tokens = payload["tokens"].long()
         bytes_count = int(payload.get("bytes", 0))
         inserts = int(payload.get("inserts", 0))
-        trimmed_text = None
-        if text is not None:
-            trimmed_text = text if limit <= 0 else text[:limit]
+        trimmed_text = text
         print(color_text(f"Loaded cached {split} tokens from {cache_path}", Colors.YELLOW))
         return tokens, trimmed_text, bytes_count, inserts
 
@@ -781,9 +778,9 @@ def load_or_prepare_tokens(
         raise FileNotFoundError(
             f"No cached tokens at {cache_path} and source text missing for {split}."
         )
-    trimmed_text = text if limit <= 0 else text[:limit]
+    trimmed_text = text
     if not trimmed_text:
-        raise ValueError(f"Text for {split} split is empty after applying character limit")
+        raise ValueError(f"Text for {split} split is empty")
     tokens = tokenizer.encode_corpus(trimmed_text)
     bytes_count = len(trimmed_text.encode("utf-8"))
     inserts = 0
@@ -2224,15 +2221,6 @@ def generate(
 # CLI
 # -----------------------------------------------------------------------------
 
-def parse_char_arg(value: str) -> int:
-    value = value.strip().lower()
-    if value.endswith("k"):
-        return int(float(value[:-1]) * 1_000)
-    if value.endswith("m"):
-        return int(float(value[:-1]) * 1_000_000)
-    return int(value)
-
-
 def parse_range_arg(value: str) -> tuple[int, int]:
     parts = value.replace(" ", "").split("-", 1)
     if len(parts) != 2:
@@ -2352,24 +2340,6 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=5,
         help="How many mini-batches to average for evaluation losses.",
-    )
-    parser.add_argument(
-        "--vocab-chars",
-        type=str,
-        default="16M",
-        help="Optional limit on how many characters to feed into the tokenizer trainer.",
-    )
-    parser.add_argument(
-        "--train-chars",
-        type=str,
-        default="16M",
-        help="Optional limit on how many characters of the training file to use.",
-    )
-    parser.add_argument(
-        "--test-chars",
-        type=str,
-        default="4M",
-        help="Optional limit on how many characters of the test file to use.",
     )
     parser.add_argument(
         "--time",
@@ -2599,24 +2569,20 @@ def main() -> None:
         data_dir = pathlib.Path(args.data)
         train_path = data_dir / f"{args.corpus}-train.txt.gz"
         test_path = data_dir / f"{args.corpus}-test.txt.gz"
-        train_limit = parse_char_arg(args.train_chars)
-        test_limit = parse_char_arg(args.test_chars)
-        vocab_limit = parse_char_arg(args.vocab_chars)
-        tokenizer_limit = parse_char_arg(args.vocab_chars or args.train_chars)
-
         model_dir = pathlib.Path(args.model)
         model_dir.mkdir(parents=True, exist_ok=True)
 
         def limit_label(value: int) -> str:
             return str(value if value > 0 else "all")
 
+        full_dataset_label = limit_label(0)
         train_cache_path = (
             model_dir
-            / f"{args.corpus}_tokens_train_{limit_label(train_limit)}_{args.tokenizer_vocab}.pt"
+            / f"{args.corpus}_tokens_train_{full_dataset_label}_{args.tokenizer_vocab}.pt"
         )
         test_cache_path = (
             model_dir
-            / f"{args.corpus}_tokens_test_{limit_label(test_limit)}_{args.tokenizer_vocab}.pt"
+            / f"{args.corpus}_tokens_test_{full_dataset_label}_{args.tokenizer_vocab}.pt"
         )
 
         try:
@@ -2633,9 +2599,7 @@ def main() -> None:
                 raise
             full_test_text = None
 
-        tokenizer_key = (
-            f"{args.corpus}_vocab_{limit_label(tokenizer_limit)}_{args.tokenizer_vocab}"
-        )
+        tokenizer_key = f"{args.corpus}_vocab_{full_dataset_label}_{args.tokenizer_vocab}"
         tokenizer_path = model_dir / f"{tokenizer_key}.json"
         if not tokenizer_path.exists() and full_train_text is None:
             raise FileNotFoundError(
@@ -2644,9 +2608,7 @@ def main() -> None:
         print(color_text(f"Tokenizer: {tokenizer_path}", Colors.BLUE))
         tok_wall_start = time.time()
         tok_cpu_start = time.process_time()
-        vocab_source = ""
-        if full_train_text is not None:
-            vocab_source = full_train_text if vocab_limit == 0 else full_train_text[:vocab_limit]
+        vocab_source = full_train_text or ""
         tokenizer = GPT2TokenizerWrapper(
             vocab_source,
             tokenizer_path,
@@ -2672,7 +2634,6 @@ def main() -> None:
             "train",
             train_path,
             full_train_text,
-            train_limit,
             train_cache_path,
             tokenizer,
             seed=1234,
@@ -2682,7 +2643,6 @@ def main() -> None:
             "test",
             test_path,
             full_test_text,
-            test_limit,
             test_cache_path,
             tokenizer,
             seed=5678,
