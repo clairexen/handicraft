@@ -1630,6 +1630,7 @@ def train_model(
                 remaining = prompt_tracker.remaining() if prompt_tracker else 0
                 total_prompts = len(PROMPT_GOALS)
                 header_line = (
+                    "time | " +
                     color_text("step", Colors.CYAN)
                     + " | "
                     + color_text(train_header, Colors.GREEN)
@@ -1685,8 +1686,8 @@ def train_model(
             solved_prompts = total_prompts - remaining_prompts
             timestamp = time.strftime("%H:%M", time.localtime())
             line = (
-                color_text(f"[{timestamp}]", Colors.BLUE)
-                + " "
+                timestamp
+                + " | "
                 + color_text(f"{total_steps}", Colors.CYAN)
                 + " | "
                 + color_text(train_values, Colors.GREEN)
