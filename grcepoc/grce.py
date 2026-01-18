@@ -2827,7 +2827,6 @@ def main() -> None:
                             )
                             + "\n"
                             + "\n".join(lines)
-                            + "\n"
                         )
             except RuntimeError as err:
                 print(color_text("Checkpoint load failed (shape mismatch); starting fresh.", Colors.RED, bold=True))
