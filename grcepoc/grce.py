@@ -1680,7 +1680,8 @@ def train_model(
                 + color_text(train_values, Colors.GREEN)
                 + " | "
                 + color_text(test_values, Colors.MAGENTA)
-                + f" | sample ({solved_prompts}/{total_prompts}): "
+                + " | "
+                + color_text("sample: ", Colors.YELLOW)
                 + colored_sample
             )
             print(line)
