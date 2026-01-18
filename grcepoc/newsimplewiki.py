@@ -138,7 +138,7 @@ def drop_worst_paragraphs(
         to_remove = set(ranked[:drop_count])
         removed_tokens: set[str] = set()
         for idx in to_remove:
-            tokens = {token for token in paragraphs[idx].split() if token}
+            tokens = {token for token in paragraphs[idx].split() if token and token.isalpha()}
             removed_tokens.update(tokens)
         max_val = counts[ranked[0]] if ranked else 0
         active = [idx for idx in active if idx not in to_remove]
