@@ -243,6 +243,16 @@ def main() -> None:
         "paragraphs containing a word unique to that paragraph: "
         f"{unique_paragraphs}/{total_active} ({percent_unique:.2f}%)"
     )
+    sample_unique = [idx for idx, count in zip(train_active, unique_counts_list) if count > 0]
+    if sample_unique:
+        chosen = random.sample(sample_unique, min(5, len(sample_unique)))
+        example_tokens = []
+        for idx in chosen:
+            tokens = [token for token in train_paragraphs[idx].split() if token.isalpha()]
+            if tokens:
+                example_tokens.append(tokens[0])
+        if example_tokens:
+            print("  example unique words:", ", ".join(example_tokens))
 
     if args.save_active:
         save_active_indices(args.save_active, train_active)
