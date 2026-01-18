@@ -4,7 +4,7 @@ This repo extends a tiny picoGPT-style language model with a recurrent context c
 
 ## How the context channel works
 1. **Per-position capture.** For every position we collect the inputs to each Transformer block before self-attention/FFN work on them. Those vectors are the only items allowed to leak information across time.
-2. **Gradient-limited sampling.** Each block input goes through LayerNorm + a linear bottleneck `n_embd → n_grce`. The `n_layer` message vectors share weights across timesteps but are detached according to `--context-span` (span 0 keeps gradients, span 1 detaches every step, span N>1 detaches every Nth step).
+2. **Gradient-limited sampling.** Each block input goes through LayerNorm + a linear bottleneck `n_embd → n_grce`. The `n_layer` message vectors share weights across timesteps but are detached according to `--detach-span` (span 0 keeps gradients, span 1 detaches every step, span N>1 detaches every Nth step).
 3. **Context propagation.** All per-layer messages are summed, the (optionally detach-controlled) previous context is added into that fused vector, and the result is run through a shared MLP `n_grce → 4*n_grce → ReLU → n_grce`. The MLP output then adds the same (optionally detach-controlled) previous context again—just like a Transformer residual—before a final LayerNorm produces the next-step context. That LayerNormed output is the sole signal that crosses positions—nothing else persists across time.
 4. **Bias injection.** At the next position every block applies a single linear decoder `n_grce → n_embd`. The generated biases are added only to the newest token row of each block input, so the rest of the sequence remains untouched while the context acts as an additive steering signal.
 
@@ -16,7 +16,7 @@ This mechanism creates an explicit channel for time-domain (i.e. recurrent) sign
 
 Think of it this way: the original “Attention Is All You Need” insight was to rotate an interleaved recurrent stack by 90°, replace the fixed unit selector ("use the same layer from the previous token") with attention, and thereby remove the long gradient paths that made RNNs hard to train. GRCE rotates us back over depth, but instead of letting layers browse earlier positions, every layer at position N sends a small learned message to position N+1. A shared bottleneck MLP mixes those messages, and each layer in the next position adds a linear bias from the shared vector. That gives us the benefits of a depth-wise recurrent shortcut (context and role persistence) without the hard-to-train time-domain gradients—everything needed to predict the next token is already inside the previous stack, so GRCE just samples and forwards it.
 
-This means any layer at position N can send a context-related message to any layer at position N+1, and the training signal never has to cross the position boundary: by the time we emit the message, the previous stack has already computed everything it needs to predict the next token. In practice (see the sweeps in this repo), even `--context-span 1`—which suppresses cross-position gradients entirely—matches the default span: the channel just learns how to sample the information that already exists inside the previous position’s layers.
+This means any layer at position N can send a context-related message to any layer at position N+1, and the training signal never has to cross the position boundary: by the time we emit the message, the previous stack has already computed everything it needs to predict the next token. In practice (see the sweeps in this repo), even `--detach-span 1`—which suppresses cross-position gradients entirely—matches the default span: the channel just learns how to sample the information that already exists inside the previous position’s layers.
 
 One way to view this is: attention killed recurrence by rotating the computation over depth and letting every position look backwards. GRCE rotates part of that structure back, but with the same philosophy—keep the bottleneck tight, use learned linear emitters/decoders, and place the only nonlinear mixing in a single shared layer. The result is a recurrent path that is just as easy to train as the rest of the Transformer because gradients never have to walk through time.
 
@@ -81,26 +81,26 @@ Key switches:
 - `--report N` skips training entirely, loads the latest checkpoint (if any), and prints `N` completions of the configured prompt.
 - `--test N` dumps `block_size` tokens from the test split starting at cursor `N`; if the model supports thinking tokens it also runs the model over that window and inserts predicted `<think>` tokens in-line so you can inspect where the network wants to branch into reasoning mode.
 - `--no-newlines` keeps the sampler from emitting newline tokens so completions stay on one line.
-You can reproduce the sweeps below; notice how even the `--context-span 1` run (which detaches the recurrent gradients entirely) tracks all other spans almost perfectly, confirming that the channel only needs to learn what to sample, not how to backpropagate across positions.
+You can reproduce the sweeps below; notice how even the `--detach-span 1` run (which detaches the recurrent gradients entirely) tracks all other spans almost perfectly, confirming that the channel only needs to learn what to sample, not how to backpropagate across positions.
 
 ## Example training sweeps
 
 Below are two quick sweeps you can adapt.
 
-1. **GRCE vs span variants.** Demonstrates the benefit of the GRCE path and the weak dependence on `--context-span`.
+1. **GRCE vs span variants.** Demonstrates the benefit of the GRCE path and the weak dependence on `--detach-span`.
 
     ```bash
     time bash -exc '
     for cy in 2 3 5 10 10; do
 	python3 grce.py --cycles $cy --n-grce 0
-	python3 grce.py --cycles $cy --tag span0 --context-span 0
-	python3 grce.py --cycles $cy --tag span1 --context-span 1
-	python3 grce.py --cycles $cy --tag span2 --context-span 2
-	python3 grce.py --cycles $cy --tag span3 --context-span 3
+	python3 grce.py --cycles $cy --tag span0 --detach-span 0
+	python3 grce.py --cycles $cy --tag span1 --detach-span 1
+	python3 grce.py --cycles $cy --tag span2 --detach-span 2
+	python3 grce.py --cycles $cy --tag span3 --detach-span 3
     done
     for cy in 20 20 30; do
 	python3 grce.py --cycles $cy --n-grce 0
-	python3 grce.py --cycles $cy --tag span2 --context-span 2
+	python3 grce.py --cycles $cy --tag span2 --detach-span 2
     done
     ```
 
@@ -143,7 +143,8 @@ Below are two quick sweeps you can adapt.
 - **Testing:** Eval prints test/train losses plus a colorized sample; prompts are cyan/green, completions yellow/magenta, and the GRCE-disabled loss is shown for comparison.
 - **Local CPU sanity checks:** run a tiny model to keep turnaround fast:
   ```bash
-  .venv/bin/python3 grce.py --device cpu --cycles 2 --steps 20 --block-size 16 --batch-size 4 --n-layer 2 --n-head 2 --n-embd 64 --n-grce 16 --context-span 4 --eval-interval 10 --eval-iters 1 --generate 5
+  .venv/bin/python3 grce.py --device cpu --cycles 2 --steps 20 --block-size 16 --batch-size 4 --n-layer 2 --n-head 2 --n-embd 64 --n-grce 16 --detach-span 4 --eval-interval 10 --eval-iters 1 --generate 5
   ```
   This fits in RAM and exercises the GRCE dropout path without a GPU.
+- **Detaching parts of the stack:** `--detach-layer K` severs gradients after Transformer layer `K` (1-based), letting you freeze the lower stack while training fresh layers on top.
 **Environment note:** always run tooling via `.venv/bin/python3` (and related entrypoints) so the local dependencies are available; the system python may lack the required packages, or there even may be no system python.

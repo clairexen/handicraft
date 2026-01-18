@@ -806,10 +806,11 @@ class ModelConfig:
     n_embd: int = 192       # GPT-2 base uses 768 embedding dims.
     n_grce: int = 64        # GRCE context dims.
     dropout: float = 0.05
-    context_span: int = 2   # Detach gradients every N positions (0 disables detaching).
+    detach_span: int = 0    # Detach gradients every N positions (0 disables detaching).
     context_dropout: int = 0  # Target number of GRCE dropouts per block (0 disables).
     grce_layered: bool = False
     detach_context: bool = True  # Whether to detach recurring context when span triggers.
+    detach_layer: int = -1       # Layer index (1-based) after which to detach Transformer grads.
 
 
 MODEL_CONFIG_TEMPLATE = ModelConfig()
@@ -955,6 +956,9 @@ class GPTCore(nn.Module):
         self.blocks = nn.ModuleList([Block(config) for _ in range(config.n_layer)])
         self.ln_f = nn.LayerNorm(config.n_embd)
         self.head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+        self.detach_layer = max(-1, int(getattr(config, "detach_layer", -1)))
+        if self.detach_layer > len(self.blocks):
+            self.detach_layer = len(self.blocks)
 
     def forward(
         self,
@@ -977,6 +981,8 @@ class GPTCore(nn.Module):
                 x = x + block_biases[layer_idx]
             block_inputs.append(x[:, -1, :])
             x, layer_mask = block(x, record_mask=record_relu_mask)
+            if self.detach_layer > 0 and (layer_idx + 1) == self.detach_layer:
+                x = x.detach()
             if record_relu_mask and relu_masks is not None and layer_mask is not None:
                 relu_masks[layer_idx] = layer_mask
         x = self.ln_f(x)
@@ -989,7 +995,7 @@ class GRCEContextChannel(nn.Module):
         super().__init__()
         self.disabled = config.n_grce <= 0
         self.config = config
-        self.context_span = max(0, int(config.context_span))
+        self.detach_span = max(0, int(getattr(config, "detach_span", 0)))
         self.context_dim = config.n_grce
         self.context_dropout = max(0, int(config.context_dropout))
         self.layered = config.grce_layered
@@ -1171,7 +1177,7 @@ class GRCEGPT(nn.Module):
                         norms.cpu().tolist()
                     )
             if use_context and context is not None:
-                span = self.context.context_span
+                span = self.context.detach_span
                 if span <= 0:
                     stop_grad = False
                 elif span == 1:
@@ -2288,9 +2294,9 @@ def parse_args() -> argparse.Namespace:
         help="Dimension of the recurrent GRCE context; use 0 to disable the channel.",
     )
     parser.add_argument(
-        "--context-span",
+        "--detach-span",
         type=int,
-        default=2,
+        default=0,
         help="Detach GRCE context gradients every N positions (0 disables detaching).",
     )
     parser.add_argument(
@@ -2303,6 +2309,12 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=defaults.dropout,
         help="Dropout probability inside attention/FFN blocks.",
+    )
+    parser.add_argument(
+        "--detach-layer",
+        type=int,
+        default=-1,
+        help="If >0, detach gradients after this Transformer layer (1-based index).",
     )
     parser.add_argument(
         "--nogrce-interval",
@@ -2687,10 +2699,11 @@ def main() -> None:
             n_embd=args.n_embd,
             n_grce=args.n_grce,
             dropout=args.dropout,
-            context_span=max(0, args.context_span),
+            detach_span=max(0, args.detach_span),
             context_dropout=1,
             grce_layered=args.grce_layered,
             detach_context=(not args.no_detach_ctx),
+            detach_layer=max(-1, args.detach_layer),
         )
         if args.print_size:
             describe_model_size(config)
