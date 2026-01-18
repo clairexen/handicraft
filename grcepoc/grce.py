@@ -1583,10 +1583,12 @@ def train_model(
             if prompt_tracker is not None and current_prompt_idx is not None:
                 if prompt_tracker.mark_if_satisfied(current_prompt_idx, completion_ids):
                     expected = prompt_tracker.expected_text(current_prompt_idx)
+                    prompt_text = PROMPT_GOALS[current_prompt_idx][0]
                     print(
                         color_text(
-                            f"Prompt #{current_prompt_idx + 1} satisfied (expected '{expected}')",
-                            Colors.GREEN,
+                            f"Prompt #{current_prompt_idx + 1} satisfied: {prompt_text} (expected '{expected}')",
+                            Colors.YELLOW,
+                            bold=True,
                         )
                     )
 
