@@ -809,6 +809,7 @@ class ModelConfig:
     context_span: int = 2   # Detach gradients every N positions (0 disables detaching).
     context_dropout: int = 0  # Target number of GRCE dropouts per block (0 disables).
     grce_layered: bool = False
+    detach_context: bool = True  # Whether to detach recurring context when span triggers.
 
 
 MODEL_CONFIG_TEMPLATE = ModelConfig()
@@ -992,6 +993,7 @@ class GRCEContextChannel(nn.Module):
         self.context_dim = config.n_grce
         self.context_dropout = max(0, int(config.context_dropout))
         self.layered = config.grce_layered
+        self.detach_context = bool(getattr(config, "detach_context", True))
         if self.layered:
             if config.n_layer <= 0 or config.n_grce % config.n_layer != 0:
                 raise ValueError("--grce-layered requires n_grce to be divisible by n_layer")
@@ -1056,7 +1058,8 @@ class GRCEContextChannel(nn.Module):
             messages.append(sampler(ln(part)))
         fused = torch.stack(messages, dim=0).sum(dim=0)
         if prev_context is not None:
-            residual = prev_context.detach() if stop_grad else prev_context
+            detach_prev = stop_grad and self.detach_context
+            residual = prev_context.detach() if detach_prev else prev_context
             fused = fused + residual
         context = self.context_mlp(fused)
         if prev_context is not None:
@@ -2291,6 +2294,11 @@ def parse_args() -> argparse.Namespace:
         help="Detach GRCE context gradients every N positions (0 disables detaching).",
     )
     parser.add_argument(
+        "--no-detach-ctx",
+        action="store_true",
+        help="Keep gradients through the recurrent GRCE context even when spans trigger",
+    )
+    parser.add_argument(
         "--dropout",
         type=float,
         default=defaults.dropout,
@@ -2682,6 +2690,7 @@ def main() -> None:
             context_span=max(0, args.context_span),
             context_dropout=1,
             grce_layered=args.grce_layered,
+            detach_context=(not args.no_detach_ctx),
         )
         if args.print_size:
             describe_model_size(config)
