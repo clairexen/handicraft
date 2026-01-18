@@ -1693,7 +1693,7 @@ def train_model(
             line_parts.append(color_text(f"{total_steps}", Colors.CYAN))
             line_parts.append(color_text(train_values, Colors.GREEN))
             line_parts.append(color_text(test_values, Colors.MAGENTA))
-            line = " | ".join(line_parts) + " | " + color_text("sample: ", Colors.YELLOW) + colored_sample
+            line = " | ".join(line_parts) + " | " + colored_sample
             print(line)
             eval_now = time.time()
             cycle_wall_elapsed = max(0.0, eval_now - cycle_wall_start)
