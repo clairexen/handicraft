@@ -2538,6 +2538,13 @@ def parse_args() -> argparse.Namespace:
     )
     size_parser.set_defaults(command="size")
 
+    init_parser = subparsers.add_parser(
+        "init",
+        help="Create a fresh checkpoint (and tokenizer if missing) without training",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    init_parser.set_defaults(command="init")
+
     print_train_parser = subparsers.add_parser(
         "print-train",
         help="Print a START-END token range from the train split and exit",
@@ -2565,7 +2572,10 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     if args.command is None:
         parser.print_help()
-        parser.exit(1, "\nPlease specify a command (train, report, or test).\n")
+        parser.exit(
+            1,
+            "\nPlease specify a command (train, report, test, size, print-train, print-test, or init).\n",
+        )
     if args.tiny:
         def flag_present(flag: str) -> bool:
             return any(arg == flag or arg.startswith(f"{flag}=") for arg in raw_cli_args)
@@ -2625,28 +2635,29 @@ def main() -> None:
             raise ValueError("--pt is only supported for inference/debug commands")
         if args.import_model:
             raise ValueError("--pt cannot be combined with --import-model")
-        if not args.pt.exists():
-            raise FileNotFoundError(f"Checkpoint {args.pt} not found")
-        checkpoint_override_payload = torch.load(
-            args.pt, map_location="cpu", weights_only=False
-        )
-        saved_config = checkpoint_override_payload.get("config")
-        if saved_config is None:
-            raise ValueError(
-                "Checkpoint lacks config metadata; re-save it with the latest format."
+        if selected_action != "init":
+            if not args.pt.exists():
+                raise FileNotFoundError(f"Checkpoint {args.pt} not found")
+            checkpoint_override_payload = torch.load(
+                args.pt, map_location="cpu", weights_only=False
             )
-        checkpoint_override_config = ModelConfig(**saved_config)
-        args.block_size = checkpoint_override_config.block_size
-        args.n_layer = checkpoint_override_config.n_layer
-        args.n_head = checkpoint_override_config.n_head
-        args.n_embd = checkpoint_override_config.n_embd
-        args.n_grce = checkpoint_override_config.n_grce
-        args.dropout = checkpoint_override_config.dropout
-        args.detach_span = checkpoint_override_config.detach_span
-        args.no_detach_ctx = not checkpoint_override_config.detach_context
-        args.detach_layer = checkpoint_override_config.detach_layer
-        args.grce_xctx = checkpoint_override_config.grce_xctx
-        args.tokenizer_vocab = checkpoint_override_config.vocab_size
+            saved_config = checkpoint_override_payload.get("config")
+            if saved_config is None:
+                raise ValueError(
+                    "Checkpoint lacks config metadata; re-save it with the latest format."
+                )
+            checkpoint_override_config = ModelConfig(**saved_config)
+            args.block_size = checkpoint_override_config.block_size
+            args.n_layer = checkpoint_override_config.n_layer
+            args.n_head = checkpoint_override_config.n_head
+            args.n_embd = checkpoint_override_config.n_embd
+            args.n_grce = checkpoint_override_config.n_grce
+            args.dropout = checkpoint_override_config.dropout
+            args.detach_span = checkpoint_override_config.detach_span
+            args.no_detach_ctx = not checkpoint_override_config.detach_context
+            args.detach_layer = checkpoint_override_config.detach_layer
+            args.grce_xctx = checkpoint_override_config.grce_xctx
+            args.tokenizer_vocab = checkpoint_override_config.vocab_size
 
     ansi_file = None
     try:
@@ -2857,6 +2868,26 @@ def main() -> None:
             f"Learned embedding vectors: {emb_vectors} "
             f"(token={tok_vecs}, position={pos_vecs}); params={emb_params:,}"
         )
+
+        if selected_action == "init":
+            target_path = model_path
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            if target_path.exists():
+                raise FileExistsError(
+                    f"Checkpoint {target_path} already exists; remove it or choose a different --model/--pt."
+                )
+            init_payload = {
+                "model": temp_model.state_dict(),
+                "dataset": dataset.state_dict(),
+                "total_steps": 0,
+                "loss_history": [],
+                "config": asdict(config),
+                "train_wall_seconds": 0.0,
+                "prompt_state": None,
+            }
+            torch.save(init_payload, target_path)
+            print(color_text(f"Initialized new checkpoint at {target_path}", Colors.GREEN))
+            return
 
         cmdline = " ".join(shlex.quote(arg) for arg in sys.argv)
         timestamp = datetime.now(timezone.utc).isoformat()
