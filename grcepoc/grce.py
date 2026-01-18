@@ -2476,6 +2476,11 @@ def parse_args() -> argparse.Namespace:
         default="",
         help="Comma-separated layer numbers (1-indexed) to insert during import",
     )
+    import_group.add_argument(
+        "--pt",
+        type=pathlib.Path,
+        help="Load an explicit checkpoint file for inference/debugging commands",
+    )
     subparsers = parser.add_subparsers(
         dest="command",
         title="commands",
@@ -2612,6 +2617,36 @@ def main() -> None:
     random.seed(42)
 
     selected_action = args.command
+
+    checkpoint_override_payload: dict | None = None
+    checkpoint_override_config: ModelConfig | None = None
+    if args.pt:
+        if selected_action == "train":
+            raise ValueError("--pt is only supported for inference/debug commands")
+        if args.import_model:
+            raise ValueError("--pt cannot be combined with --import-model")
+        if not args.pt.exists():
+            raise FileNotFoundError(f"Checkpoint {args.pt} not found")
+        checkpoint_override_payload = torch.load(
+            args.pt, map_location="cpu", weights_only=False
+        )
+        saved_config = checkpoint_override_payload.get("config")
+        if saved_config is None:
+            raise ValueError(
+                "Checkpoint lacks config metadata; re-save it with the latest format."
+            )
+        checkpoint_override_config = ModelConfig(**saved_config)
+        args.block_size = checkpoint_override_config.block_size
+        args.n_layer = checkpoint_override_config.n_layer
+        args.n_head = checkpoint_override_config.n_head
+        args.n_embd = checkpoint_override_config.n_embd
+        args.n_grce = checkpoint_override_config.n_grce
+        args.dropout = checkpoint_override_config.dropout
+        args.detach_span = checkpoint_override_config.detach_span
+        args.no_detach_ctx = not checkpoint_override_config.detach_context
+        args.detach_layer = checkpoint_override_config.detach_layer
+        args.grce_xctx = checkpoint_override_config.grce_xctx
+        args.tokenizer_vocab = checkpoint_override_config.vocab_size
 
     ansi_file = None
     try:
@@ -2770,7 +2805,7 @@ def main() -> None:
         )
         print(tok_summary)
 
-        config = ModelConfig(
+        config = checkpoint_override_config or ModelConfig(
             vocab_size=tokenizer.vocab_size,
             block_size=args.block_size,
             n_layer=args.n_layer,
@@ -2796,11 +2831,17 @@ def main() -> None:
             cleaned = re.sub(r"[^0-9A-Za-z]+", "", extra_tag)
             if cleaned:
                 model_tag += f"_{cleaned}"
-        prefix = f"{args.corpus}_model_"
-        model_path = model_dir / f"{prefix}{model_tag}.pt"
-        log_path = model_dir / f"{prefix}{model_tag}.log"
-        print(color_text(f"Model: {model_path}", Colors.CYAN))
-        print(color_text(f"Logfile: {log_path}", Colors.BLUE))
+        if args.pt:
+            model_path = args.pt
+            log_path = args.pt.with_suffix(".log")
+            print(color_text(f"Model (--pt): {model_path}", Colors.CYAN))
+            print(color_text(f"Logfile (--pt): {log_path}", Colors.BLUE))
+        else:
+            prefix = f"{args.corpus}_model_"
+            model_path = model_dir / f"{prefix}{model_tag}.pt"
+            log_path = model_dir / f"{prefix}{model_tag}.log"
+            print(color_text(f"Model: {model_path}", Colors.CYAN))
+            print(color_text(f"Logfile: {log_path}", Colors.BLUE))
         temp_model = GRCEGPT(config)
         non_emb_params = sum(
             p.numel()
@@ -2870,7 +2911,8 @@ def main() -> None:
         total_steps = 0
         loss_history: List[Dict[str, float]] = []
         total_train_wall = 0.0
-        if model_path.exists():
+        payload = checkpoint_override_payload
+        if payload is None and model_path.exists():
             if args.import_model:
                 raise ValueError(
                     "--import-model can only be used when no existing checkpoint is present"
@@ -2880,6 +2922,7 @@ def main() -> None:
                 map_location=device,
                 weights_only=False,  # checkpoints also store dataset offsets/counters
             )
+        if payload is not None:
             try:
                 if isinstance(payload, dict) and "model" in payload:
                     upgraded = upgrade_state_dict(payload["model"])
