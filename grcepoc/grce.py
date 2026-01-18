@@ -1412,6 +1412,7 @@ def train_model(
     cycle_wall_start: float,
     base_wall_seconds: float,
     cycle_prompt_indices: List[int] | None = None,
+    show_time: bool = False,
 ) -> Tuple[int, List[Dict[str, float]]]:
     optim = torch.optim.AdamW(model.parameters(), lr=3e-4)
     total_steps = start_step
@@ -1629,14 +1630,15 @@ def train_model(
                     test_header += "  plain"
                 remaining = prompt_tracker.remaining() if prompt_tracker else 0
                 total_prompts = len(PROMPT_GOALS)
-                header_line = (
-                    "time | " +
-                    color_text("step", Colors.CYAN)
-                    + " | "
-                    + color_text(train_header, Colors.GREEN)
-                    + " | "
-                    + color_text(test_header, Colors.MAGENTA)
-                    + color_text(f" | sample ({total_prompts - remaining}/{total_prompts})", Colors.YELLOW)
+                header_parts: List[str] = []
+                if show_time:
+                    header_parts.append("time")
+                header_parts.append(color_text("step", Colors.CYAN))
+                header_parts.append(color_text(train_header, Colors.GREEN))
+                header_parts.append(color_text(test_header, Colors.MAGENTA))
+                header_line = " | ".join(header_parts) + color_text(
+                    f" | sample ({total_prompts - remaining}/{total_prompts})",
+                    Colors.YELLOW,
                 )
                 print(header_line)
                 printed_header = True
@@ -1684,19 +1686,14 @@ def train_model(
             total_prompts = len(PROMPT_GOALS)
             remaining_prompts = prompt_tracker.remaining() if prompt_tracker else total_prompts
             solved_prompts = total_prompts - remaining_prompts
-            timestamp = time.strftime("%H:%M", time.localtime())
-            line = (
-                timestamp
-                + " | "
-                + color_text(f"{total_steps}", Colors.CYAN)
-                + " | "
-                + color_text(train_values, Colors.GREEN)
-                + " | "
-                + color_text(test_values, Colors.MAGENTA)
-                + " | "
-                + color_text("sample: ", Colors.YELLOW)
-                + colored_sample
-            )
+            line_parts: List[str] = []
+            if show_time:
+                timestamp = time.strftime("%H:%M", time.localtime())
+                line_parts.append(timestamp)
+            line_parts.append(color_text(f"{total_steps}", Colors.CYAN))
+            line_parts.append(color_text(train_values, Colors.GREEN))
+            line_parts.append(color_text(test_values, Colors.MAGENTA))
+            line = " | ".join(line_parts) + " | " + color_text("sample: ", Colors.YELLOW) + colored_sample
             print(line)
             eval_now = time.time()
             cycle_wall_elapsed = max(0.0, eval_now - cycle_wall_start)
@@ -2365,6 +2362,11 @@ def parse_args() -> argparse.Namespace:
         help="Optional limit on how many characters of the test file to use.",
     )
     parser.add_argument(
+        "--time",
+        action="store_true",
+        help="Prefix training progress logs with local HH:MM timestamps",
+    )
+    parser.add_argument(
         "--generate",
         type=int,
         default=10,
@@ -3022,6 +3024,7 @@ def main() -> None:
                 cycle_wall_start=cycle_wall,
                 base_wall_seconds=total_train_wall,
                 cycle_prompt_indices=cycle_prompt_indices,
+                show_time=args.time,
             )
             loss_history.extend(updates)
 
