@@ -137,8 +137,13 @@ def drop_worst_paragraphs(
         to_remove = set(ranked[:drop_count])
         max_val = counts[ranked[0]] if ranked else 0
         active = [idx for idx in active if idx not in to_remove]
+        remaining = len(active)
+        updated_counts = unique_word_counts(paragraphs, active)
+        unique_remaining = sum(1 for idx in active if updated_counts.get(idx, 0) > 0)
+        percent = (unique_remaining / remaining * 100) if remaining else 0
         print(
-            f"drop iteration {step + 1}: removed {len(to_remove)} paragraphs (max unique={max_val})"
+            f"drop iteration {step + 1}: removed {len(to_remove)} paragraphs (max unique={max_val}); "
+            f"unique paragraphs remaining: {unique_remaining}/{remaining} ({percent:.2f}%)"
         )
     return active
 
