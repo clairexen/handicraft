@@ -808,7 +808,7 @@ class ModelConfig:
     dropout: float = 0.05
     detach_span: int = 0    # Detach gradients every N positions (0 disables detaching).
     context_dropout: int = 0  # Target number of GRCE dropouts per block (0 disables).
-    grce_layered: bool = False
+    grce_xctx: bool = False
     detach_context: bool = True  # Whether to detach recurring context when span triggers.
     detach_layer: int = -1       # Layer index (1-based) after which to detach Transformer grads.
 
@@ -998,11 +998,11 @@ class GRCEContextChannel(nn.Module):
         self.detach_span = max(0, int(getattr(config, "detach_span", 0)))
         self.context_dim = config.n_grce
         self.context_dropout = max(0, int(config.context_dropout))
-        self.layered = config.grce_layered
+        self.layered = config.grce_xctx
         self.detach_context = bool(getattr(config, "detach_context", True))
         if self.layered:
             if config.n_layer <= 0 or config.n_grce % config.n_layer != 0:
-                raise ValueError("--grce-layered requires n_grce to be divisible by n_layer")
+                raise ValueError("--grce-xctx requires n_grce to be divisible by n_layer")
             self.layer_chunk = config.n_grce // config.n_layer
         else:
             self.layer_chunk = None
@@ -1210,7 +1210,7 @@ class GRCEGPT(nn.Module):
 
 
 def build_model_tag(config: ModelConfig) -> str:
-    ctx_prefix = "xctx" if config.grce_layered else "ctx"
+    ctx_prefix = "xctx" if config.grce_xctx else "ctx"
     tag = (
         f"v{config.vocab_size}_bs{config.block_size}_emb{config.n_embd}_"
         f"layers{config.n_layer}_heads{config.n_head}_{ctx_prefix}{config.n_grce}"
@@ -1683,8 +1683,11 @@ def train_model(
             total_prompts = len(PROMPT_GOALS)
             remaining_prompts = prompt_tracker.remaining() if prompt_tracker else total_prompts
             solved_prompts = total_prompts - remaining_prompts
+            timestamp = time.strftime("%H:%M", time.localtime())
             line = (
-                color_text(f"{total_steps}", Colors.CYAN)
+                color_text(f"[{timestamp}]", Colors.BLUE)
+                + " "
+                + color_text(f"{total_steps}", Colors.CYAN)
                 + " | "
                 + color_text(train_values, Colors.GREEN)
                 + " | "
@@ -2420,9 +2423,12 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--grce-layered",
+        "--grce-xctx",
         action="store_true",
-        help="Use per-layer GRCE sampling MLPs (requires n_grce %% n_layer == 0)",
+        help=(
+            "Split the GRCE context into per-layer chunks with independent samplers/decoders "
+            "(requires n_grce %% n_layer == 0)"
+        ),
     )
     parser.add_argument(
         "--print-size",
@@ -2701,7 +2707,7 @@ def main() -> None:
             dropout=args.dropout,
             detach_span=max(0, args.detach_span),
             context_dropout=1,
-            grce_layered=args.grce_layered,
+            grce_xctx=args.grce_xctx,
             detach_context=(not args.no_detach_ctx),
             detach_layer=max(-1, args.detach_layer),
         )
