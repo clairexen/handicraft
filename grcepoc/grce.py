@@ -1634,8 +1634,8 @@ def train_model(
                 if show_time:
                     header_parts.append("time")
                 header_parts.append(color_text("step", Colors.CYAN))
-                header_parts.append(color_text(train_header, Colors.GREEN))
-                header_parts.append(color_text(test_header, Colors.MAGENTA))
+                header_parts.append(color_text(train_header, Colors.MAGENTA))
+                header_parts.append(color_text(test_header, Colors.GREEN))
                 header_line = " | ".join(header_parts) + color_text(
                     f" | sample ({total_prompts - remaining}/{total_prompts})",
                     Colors.YELLOW,
@@ -1689,10 +1689,10 @@ def train_model(
             line_parts: List[str] = []
             if show_time:
                 timestamp = time.strftime("%H:%M", time.localtime())
-                line_parts.append(timestamp)
+                line_parts.append(color_text(timestamp, Colors.BLUE))
             line_parts.append(color_text(f"{total_steps}", Colors.CYAN))
-            line_parts.append(color_text(train_values, Colors.GREEN))
-            line_parts.append(color_text(test_values, Colors.MAGENTA))
+            line_parts.append(color_text(train_values, Colors.MAGENTA))
+            line_parts.append(color_text(test_values, Colors.GREEN))
             line = " | ".join(line_parts) + " | " + colored_sample
             print(line)
             eval_now = time.time()
