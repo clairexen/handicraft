@@ -222,9 +222,11 @@ def main() -> None:
     unique_counts_map = unique_word_counts(train_paragraphs, train_active)
     unique_counts_list = [unique_counts_map[idx] for idx in train_active]
     unique_paragraphs = sum(1 for count in unique_counts_list if count > 0)
+    total_active = len(train_active)
+    percent_unique = (unique_paragraphs / total_active * 100) if total_active else 0
     print(
         "paragraphs containing a word unique to that paragraph: "
-        f"{unique_paragraphs}/{len(train_active)}"
+        f"{unique_paragraphs}/{total_active} ({percent_unique:.2f}%)"
     )
 
     if args.save_active:
