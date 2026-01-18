@@ -2232,6 +2232,16 @@ def parse_char_arg(value: str) -> int:
         return int(float(value[:-1]) * 1_000_000)
     return int(value)
 
+
+def parse_range_arg(value: str) -> tuple[int, int]:
+    parts = value.replace(" ", "").split("-", 1)
+    if len(parts) != 2:
+        raise ValueError(f"Invalid range '{value}'. Expected format START-END.")
+    start, end = int(parts[0]), int(parts[1])
+    if end < start:
+        raise ValueError(f"Range end {end} is smaller than start {start}.")
+    return start, end
+
 def parse_args() -> argparse.Namespace:
     defaults = MODEL_CONFIG_TEMPLATE
     raw_cli_args = sys.argv[1:]
@@ -2365,6 +2375,18 @@ def parse_args() -> argparse.Namespace:
         "--time",
         action="store_true",
         help="Prefix training progress logs with local HH:MM timestamps",
+    )
+    parser.add_argument(
+        "--print-train",
+        type=str,
+        default=None,
+        help="Print a START-END token range from the train split and exit",
+    )
+    parser.add_argument(
+        "--print-test",
+        type=str,
+        default=None,
+        help="Print a START-END token range from the test split and exit",
     )
     parser.add_argument(
         "--generate",
@@ -2694,6 +2716,43 @@ def main() -> None:
             train_path=train_path,
             test_path=test_path,
         )
+
+        if args.print_train or args.print_test:
+            def emit_range(label: str, tokens: torch.Tensor, spec: str) -> None:
+                start, end = parse_range_arg(spec)
+                total = int(tokens.numel())
+                if total == 0:
+                    print(color_text(f"{label} corpus is empty", Colors.MAGENTA))
+                    return
+                if start < 0 or end < 0 or start >= total or end >= total:
+                    raise ValueError(
+                        f"{label} range {start}-{end} is outside 0-{total - 1}"
+                    )
+                subset = tokens[start : end + 1].tolist()
+                print(
+                    color_text(
+                        f"{label} tokens {start}-{end} (count {len(subset)}):",
+                        Colors.CYAN,
+                    )
+                )
+                chunk_size = 128
+                for offset in range(0, len(subset), chunk_size):
+                    chunk_tokens = subset[offset : offset + chunk_size]
+                    colored = color_tokens(
+                        tokenizer,
+                        chunk_tokens,
+                        [Colors.MAGENTA, Colors.GREEN],
+                        bold=False,
+                        think_token_id=tokenizer.think_id,
+                        undo_token_id=tokenizer.undo_id,
+                    )
+                    print(colored)
+
+            if args.print_train:
+                emit_range("Train", train_tokens, args.print_train)
+            if args.print_test:
+                emit_range("Test", test_tokens, args.print_test)
+            return
 
         tok_summary = (
             f"[tokenizer] wall={time.time()-tok_wall_start:.2f}s cpu={time.process_time()-tok_cpu_start:.2f}s\n"
