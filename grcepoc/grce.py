@@ -148,9 +148,11 @@ class GPT2TokenizerWrapper:
         train_text: str,
         cache_path: pathlib.Path,
         vocab_size: int,
+        pretrained_json: str | None = None,
     ) -> None:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         self.cache_path = cache_path
+        self.pretrained_json = pretrained_json
         self.extra_special_tokens: list[str] = []
         self.extra_special_tokens.append(THINK_TOKEN)
         self.extra_special_tokens.append(UNDO_TOKEN)
@@ -184,6 +186,14 @@ class GPT2TokenizerWrapper:
                 GPT2TokenizerFast(tokenizer_file=str(cache_path)),
                 extra_special_tokens,
             )
+        if self.pretrained_json:
+            tokenizer = Tokenizer.from_str(self.pretrained_json)
+            tk = GPT2TokenizerFast(tokenizer_object=tokenizer)
+            try:
+                cache_path.write_text(self.pretrained_json, encoding="utf-8")
+            except OSError:
+                pass  # best-effort cache write
+            return self._configure_special_tokens(tk, extra_special_tokens)
         tokenizer = Tokenizer(BPE(unk_token=None))
         tokenizer.pre_tokenizer = ByteLevel(add_prefix_space=False)
         tokenizer.decoder = ByteLevelDecoder()
@@ -2630,6 +2640,7 @@ def main() -> None:
 
     checkpoint_override_payload: dict | None = None
     checkpoint_override_config: ModelConfig | None = None
+    checkpoint_override_tokenizer_json: str | None = None
     if args.pt:
         if selected_action == "train":
             raise ValueError("--pt is only supported for inference/debug commands")
@@ -2647,6 +2658,9 @@ def main() -> None:
                     "Checkpoint lacks config metadata; re-save it with the latest format."
                 )
             checkpoint_override_config = ModelConfig(**saved_config)
+            checkpoint_override_tokenizer_json = checkpoint_override_payload.get(
+                "tokenizer_json"
+            )
             args.block_size = checkpoint_override_config.block_size
             args.n_layer = checkpoint_override_config.n_layer
             args.n_head = checkpoint_override_config.n_head
@@ -2710,7 +2724,16 @@ def main() -> None:
             vocab_source,
             tokenizer_path,
             args.tokenizer_vocab,
+            pretrained_json=checkpoint_override_tokenizer_json,
         )
+        tokenizer_json = checkpoint_override_tokenizer_json
+        if tokenizer_json is None:
+            try:
+                tokenizer_json = tokenizer_path.read_text(encoding="utf-8")
+            except FileNotFoundError:
+                raise FileNotFoundError(
+                    f"Tokenizer cache {tokenizer_path} not found; rerun without --pt to rebuild."
+                )
 
         newline_token_id = None
         newline_tokens = tokenizer.tokenizer.encode("\n", add_special_tokens=False)
@@ -2884,6 +2907,7 @@ def main() -> None:
                 "config": asdict(config),
                 "train_wall_seconds": 0.0,
                 "prompt_state": None,
+                "tokenizer_json": tokenizer_json,
             }
             torch.save(init_payload, target_path)
             print(color_text(f"Initialized new checkpoint at {target_path}", Colors.GREEN))
@@ -3050,6 +3074,7 @@ def main() -> None:
                     "config": asdict(config),
                     "train_wall_seconds": total_train_wall,
                     "prompt_state": prompt_tracker.serialize() if prompt_tracker else None,
+                    "tokenizer_json": tokenizer_json,
                 },
                 model_path,
             )
@@ -3209,6 +3234,7 @@ def main() -> None:
                     "config": asdict(config),
                     "train_wall_seconds": total_train_wall,
                     "prompt_state": prompt_tracker.serialize() if prompt_tracker else None,
+                    "tokenizer_json": tokenizer_json,
                 },
                 model_path,
             )
