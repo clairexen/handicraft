@@ -76,10 +76,9 @@ Key switches:
 - `--model DIR` selects where checkpoints, logs, and tokenizer caches live (default `model/`).
 - `--import-model some.pt` seeds a new run from an existing checkpoint. Use `--drop-layers i,j,...` to delete specific source layers (1-indexed) and `--add-layers i,j,...` to specify where new randomly initialized layers should be inserted so the total matches the new `--n-layer`. `--trim-model` lets you shrink other tensor dimensions (embedding width, vocab, etc.) while copying whatever fits. The importer enforces that the number of attention heads (`--n-head`) stays the same and that every overlapping tensor slice lines up, carries over the total step counter, and writes a fresh `.pt` with an empty loss history.
 - `--undo N` inserts up to `N` random+undo pairs per block (filler loss ignored, undo enforced).
-- `--report-count N` skips training entirely, loads the latest checkpoint (if any), and prints `N` completions of the configured prompt.
-- `--train` explicitly requests the standard training loop (this is the default when no other action is given).
-- `--report N` skips training entirely, loads the latest checkpoint (if any), and prints `N` completions of the configured prompt.
-- `--test N` dumps `block_size` tokens from the test split starting at cursor `N`; if the model supports thinking tokens it also runs the model over that window and inserts predicted `<think>` tokens in-line so you can inspect where the network wants to branch into reasoning mode.
+- `train` is the main command and runs the standard training loop with the configured cycles/steps.
+- `report -n N` (or `report --count N`) loads the latest checkpoint and prints `N` prompt completions without running another training cycle.
+- `test --start N` dumps `block_size` tokens from the test split starting at cursor `N`; if the model supports thinking tokens it also runs the model over that window and inserts predicted `<think>` tokens in-line so you can inspect where the network wants to branch into reasoning mode.
 - `--no-newlines` keeps the sampler from emitting newline tokens so completions stay on one line.
 You can reproduce the sweeps below; notice how even the `--detach-span 1` run (which detaches the recurrent gradients entirely) tracks all other spans almost perfectly, confirming that the channel only needs to learn what to sample, not how to backpropagate across positions.
 

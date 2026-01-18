@@ -2364,21 +2364,46 @@ def parse_args() -> argparse.Namespace:
         default=10,
         help="Number of new tokens to sample after training",
     )
-    parser.add_argument(
-        "--train",
-        action="store_true",
-        help="Run the standard training loop (default action if none specified)",
+    subparsers = parser.add_subparsers(
+        dest="command",
+        title="commands",
+        metavar="COMMAND",
+        help="Action to perform",
     )
-    parser.add_argument(
-        "--report",
+    parser.set_defaults(command=None, report_count=None, test_start=None)
+
+    train_parser = subparsers.add_parser(
+        "train",
+        help="Run the standard training loop",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    train_parser.set_defaults(command="train")
+
+    report_parser = subparsers.add_parser(
+        "report",
+        help="Skip training and generate completions",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    report_parser.add_argument(
+        "-n",
+        "--count",
+        dest="report_count",
+        type=int,
+        default=10,
+        help="How many completions to generate",
+    )
+
+    test_parser = subparsers.add_parser(
+        "test",
+        help="Print block_size tokens from the test corpus",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    test_parser.add_argument(
+        "--start",
+        dest="test_start",
         type=int,
         default=0,
-        help="If >0, skip training and generate this many completions",
-    )
-    parser.add_argument(
-        "--test",
-        type=int,
-        help="Print block_size tokens from the test corpus starting at cursor N",
+        help="Cursor offset within the test corpus to begin printing",
     )
     parser.add_argument(
         "--no-newlines",
@@ -2499,6 +2524,9 @@ def parse_args() -> argparse.Namespace:
         help="Comma-separated layer numbers (1-indexed) to insert during import",
     )
     args = parser.parse_args()
+    if args.command is None:
+        parser.print_help()
+        parser.exit(1, "\nPlease specify a command (train, report, or test).\n")
     if args.tiny:
         def flag_present(flag: str) -> bool:
             return any(arg == flag or arg.startswith(f"{flag}=") for arg in raw_cli_args)
@@ -2549,18 +2577,7 @@ def main() -> None:
     torch.manual_seed(42)
     random.seed(42)
 
-    actions: list[str] = []
-    if args.train:
-        actions.append("train")
-    if args.report > 0:
-        actions.append("report")
-    if args.test is not None:
-        actions.append("test")
-    if not actions:
-        actions.append("train")
-    if len(actions) > 1:
-        raise ValueError("Specify only one of --train, --report, or --test")
-    selected_action = actions[0]
+    selected_action = args.command
 
     ansi_file = None
     try:
@@ -2946,7 +2963,7 @@ def main() -> None:
                 tokenizer=tokenizer,
                 prompt_tokens=prompt_tokens,
                 sample_len=args.generate,
-                count=args.report,
+                count=args.report_count,
                 device=device,
                 suppress_newlines=args.no_newlines,
                 newline_token_id=newline_token_id,
@@ -2963,7 +2980,7 @@ def main() -> None:
                 tokenizer=tokenizer,
                 model=model,
                 block_size=args.block_size,
-                start_pos=args.test,
+                start_pos=args.test_start,
                 think_settings=think_settings,
             )
             return
