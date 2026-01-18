@@ -2683,18 +2683,8 @@ def main() -> None:
         model_dir = pathlib.Path(args.model)
         model_dir.mkdir(parents=True, exist_ok=True)
 
-        def limit_label(value: int) -> str:
-            return str(value if value > 0 else "all")
-
-        full_dataset_label = limit_label(0)
-        train_cache_path = (
-            model_dir
-            / f"{args.corpus}_tokens_train_{full_dataset_label}_{args.tokenizer_vocab}.pt"
-        )
-        test_cache_path = (
-            model_dir
-            / f"{args.corpus}_tokens_test_{full_dataset_label}_{args.tokenizer_vocab}.pt"
-        )
+        train_cache_path = model_dir / f"{args.corpus}_tokens_train_{args.tokenizer_vocab}.pt"
+        test_cache_path = model_dir / f"{args.corpus}_tokens_test_{args.tokenizer_vocab}.pt"
 
         try:
             full_train_text = load_text_file(train_path)
@@ -2710,7 +2700,7 @@ def main() -> None:
                 raise
             full_test_text = None
 
-        tokenizer_key = f"{args.corpus}_vocab_{full_dataset_label}_{args.tokenizer_vocab}"
+        tokenizer_key = f"{args.corpus}_vocab_{args.tokenizer_vocab}"
         tokenizer_path = model_dir / f"{tokenizer_key}.json"
         if not tokenizer_path.exists() and full_train_text is None:
             raise FileNotFoundError(
