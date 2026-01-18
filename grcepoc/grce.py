@@ -2236,92 +2236,140 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
-    parser.add_argument(
+    generic = parser.add_argument_group("Generic options")
+    generic.add_argument(
         "--corpus",
         type=str,
         default="simplewiki",
         help="Dataset base name; expects data/<name>-train.txt.gz and ...-test.txt.gz.",
     )
-    parser.add_argument(
+    generic.add_argument(
         "--data",
         type=str,
         default="data",
         help="Directory containing <corpus>-train.txt.gz and <corpus>-test.txt.gz",
     )
-    parser.add_argument("--device", type=str, default="cuda", help="cpu or cuda")
-    parser.add_argument("--steps", type=int, default=100, help="Training steps per cycle")
-    parser.add_argument(
-        "--cycles",
-        type=int,
-        default=100,
-        help="Repeat the full training/eval/update cycle N times.",
+    generic.add_argument("--device", type=str, default="cuda", help="cpu or cuda")
+    generic.add_argument(
+        "--model",
+        type=str,
+        default="model",
+        help="Directory where checkpoints/logs/tokenizers are stored",
     )
-    parser.add_argument(
+
+    model_group = parser.add_argument_group("Model configuration")
+    model_group.add_argument(
         "--block-size",
         type=int,
         default=defaults.block_size,
         help="Number of tokens per training sample",
     )
-    parser.add_argument(
-        "--batch-size",
-        type=int,
-        default=64,
-        help="Number of sequences per optimization step.",
-    )
-    parser.add_argument(
+    model_group.add_argument(
         "--n-layer",
         type=int,
         default=defaults.n_layer,
         help="Number of transformer blocks (GPT-2 base uses 12).",
     )
-    parser.add_argument(
+    model_group.add_argument(
         "--n-head",
         type=int,
         default=defaults.n_head,
         help="Number of attention heads per block (GPT-2 base uses 12).",
     )
-    parser.add_argument(
+    model_group.add_argument(
         "--n-embd",
         type=int,
         default=defaults.n_embd,
         help="Embedding/hidden dimension (GPT-2 base uses 768).",
     )
-    parser.add_argument(
+    model_group.add_argument(
         "--n-grce",
         type=int,
         default=defaults.n_grce,
         help="Dimension of the recurrent GRCE context; use 0 to disable the channel.",
     )
-    parser.add_argument(
+    model_group.add_argument(
+        "--tokenizer-vocab",
+        type=int,
+        default=defaults.vocab_size,
+        help="Vocabulary size for the GPT-2 style byte-level BPE tokenizer.",
+    )
+    model_group.add_argument(
+        "--think",
+        type=int,
+        default=0,
+        help=(
+            "Enable think mode with up to N inserted thinking tokens per block; "
+            "adds the <think> special token"
+        ),
+    )
+    model_group.add_argument(
+        "--undo",
+        type=int,
+        default=0,
+        help="Enable undo pairs with up to N random+undo sequences per block",
+    )
+    model_group.add_argument(
+        "--grce-xctx",
+        action="store_true",
+        help=(
+            "Split the GRCE context into per-layer chunks with independent samplers/decoders "
+            "(requires n_grce %% n_layer == 0)"
+        ),
+    )
+    model_group.add_argument(
+        "--tiny",
+        action="store_true",
+        help=(
+            "Shortcut for --block-size 16 --batch-size 4 --n-layer 2 --n-head 2 "
+            "--n-embd 64 --n-grce 16"
+        ),
+    )
+
+    training_group = parser.add_argument_group("Training schedule")
+    training_group.add_argument("--steps", type=int, default=100, help="Training steps per cycle")
+    training_group.add_argument(
+        "--cycles",
+        type=int,
+        default=100,
+        help="Repeat the full training/eval/update cycle N times.",
+    )
+    training_group.add_argument(
+        "--batch-size",
+        type=int,
+        default=64,
+        help="Number of sequences per optimization step.",
+    )
+    training_group.add_argument(
         "--detach-span",
         type=int,
         default=0,
         help="Detach GRCE context gradients every N positions (0 disables detaching).",
     )
-    parser.add_argument(
+    training_group.add_argument(
         "--no-detach-ctx",
         action="store_true",
         help="Keep gradients through the recurrent GRCE context even when spans trigger",
     )
-    parser.add_argument(
+    training_group.add_argument(
         "--dropout",
         type=float,
         default=defaults.dropout,
         help="Dropout probability inside attention/FFN blocks.",
     )
-    parser.add_argument(
+    training_group.add_argument(
         "--detach-layer",
         type=int,
         default=-1,
         help="If >0, detach gradients after this Transformer layer (1-based index).",
     )
-    parser.add_argument(
+    training_group.add_argument(
         "--nogrce-interval",
         type=int,
         default=1,
         help="Apply GRCE-disable dropout every N steps (0 disables)",
     )
-    parser.add_argument(
+    training_group.add_argument(
         "--reward-relu",
         type=float,
         default=0.0,
@@ -2329,40 +2377,104 @@ def parse_args() -> argparse.Namespace:
             "Enable experimental ReLU reward updates with scale=10^{-value} (value<=0 disables)"
         ),
     )
-    parser.add_argument(
+    training_group.add_argument(
         "--eval-interval",
         type=int,
         default=10,
         help="How often to run train/test evaluation steps.",
     )
-    parser.add_argument(
+    training_group.add_argument(
         "--eval-iters",
         type=int,
         default=5,
         help="How many mini-batches to average for evaluation losses.",
     )
-    parser.add_argument(
-        "--time",
-        action="store_true",
-        help="Prefix training progress logs with local HH:MM timestamps",
+    training_group.add_argument(
+        "--prompt-cycle-prompts",
+        type=int,
+        default=10,
+        help="How many unsatisfied prompts to test each cycle",
     )
-    parser.add_argument(
-        "--print-train",
+
+    sampling_group = parser.add_argument_group("Sampling & reporting")
+    sampling_group.add_argument(
+        "--prompt",
         type=str,
-        default=None,
-        help="Print a START-END token range from the train split and exit",
+        default="ai will",
+        help="Prompt used for generation",
     )
-    parser.add_argument(
-        "--print-test",
-        type=str,
-        default=None,
-        help="Print a START-END token range from the test split and exit",
-    )
-    parser.add_argument(
+    sampling_group.add_argument(
         "--generate",
         type=int,
         default=10,
         help="Number of new tokens to sample after training",
+    )
+    sampling_group.add_argument(
+        "--no-newlines",
+        action="store_true",
+        help="During sampling/reporting, avoid emitting newline tokens",
+    )
+    sampling_group.add_argument(
+        "--no-think",
+        action="store_true",
+        help="During sampling/reporting, suppress thinking tokens entirely",
+    )
+    sampling_group.add_argument(
+        "--no-think-prompt",
+        action="store_true",
+        help="Do not insert thinking tokens inside the prompt during sampling/reporting",
+    )
+    sampling_group.add_argument(
+        "--think-hard",
+        action="store_true",
+        help="While processing the prompt, insert thinking tokens after every mispredicted token",
+    )
+
+    logging_group = parser.add_argument_group("Logging & diagnostics")
+    logging_group.add_argument(
+        "--time",
+        action="store_true",
+        help="Prefix training progress logs with local HH:MM timestamps",
+    )
+    logging_group.add_argument(
+        "--debug-interrupt",
+        action="store_true",
+        help="If set, re-raise KeyboardInterrupt with a full stack trace.",
+    )
+    logging_group.add_argument(
+        "--no-ansi",
+        action="store_true",
+        help="Suppress the parallel .ansi log (which preserves ANSI colors)",
+    )
+
+    import_group = parser.add_argument_group("Checkpoint import/export")
+    import_group.add_argument(
+        "--tag",
+        action="append",
+        default=[],
+        help="Append an extra _TAG suffix to the model name (can be repeated)",
+    )
+    import_group.add_argument(
+        "--import-model",
+        type=pathlib.Path,
+        help="Initialize from another checkpoint when creating a new model",
+    )
+    import_group.add_argument(
+        "--trim-model",
+        action="store_true",
+        help="Allow importing into a smaller model by dropping overflow",
+    )
+    import_group.add_argument(
+        "--drop-layers",
+        type=str,
+        default="",
+        help="Comma-separated layer numbers (1-indexed) to remove during import",
+    )
+    import_group.add_argument(
+        "--add-layers",
+        type=str,
+        default="",
+        help="Comma-separated layer numbers (1-indexed) to insert during import",
     )
     subparsers = parser.add_subparsers(
         dest="command",
@@ -2370,7 +2482,13 @@ def parse_args() -> argparse.Namespace:
         metavar="COMMAND",
         help="Action to perform",
     )
-    parser.set_defaults(command=None, report_count=None, test_start=None)
+    parser.set_defaults(
+        command=None,
+        report_count=None,
+        test_start=None,
+        print_train_range=None,
+        print_test_range=None,
+    )
 
     train_parser = subparsers.add_parser(
         "train",
@@ -2384,6 +2502,7 @@ def parse_args() -> argparse.Namespace:
         help="Skip training and generate completions",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
+    report_parser.set_defaults(command="report")
     report_parser.add_argument(
         "-n",
         "--count",
@@ -2398,6 +2517,7 @@ def parse_args() -> argparse.Namespace:
         help="Print block_size tokens from the test corpus",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
+    test_parser.set_defaults(command="test")
     test_parser.add_argument(
         "--start",
         dest="test_start",
@@ -2405,124 +2525,38 @@ def parse_args() -> argparse.Namespace:
         default=0,
         help="Cursor offset within the test corpus to begin printing",
     )
-    parser.add_argument(
-        "--no-newlines",
-        action="store_true",
-        help="During sampling/reporting, avoid emitting newline tokens",
-    )
-    parser.add_argument(
-        "--no-think",
-        action="store_true",
-        help="During sampling/reporting, suppress thinking tokens entirely",
-    )
-    parser.add_argument(
-        "--no-think-prompt",
-        action="store_true",
-        help="Do not insert thinking tokens inside the prompt during sampling/reporting",
-    )
-    parser.add_argument(
-        "--think-hard",
-        action="store_true",
-        help="While processing the prompt, insert thinking tokens after every mispredicted token",
-    )
-    parser.add_argument(
-        "--think",
-        type=int,
-        default=0,
-        help=(
-            "Enable think mode with up to N inserted thinking tokens per block; "
-            "adds the <think> special token"
-        ),
-    )
-    parser.add_argument(
-        "--tiny",
-        action="store_true",
-        help=(
-            "Shortcut for --block-size 16 --batch-size 4 --n-layer 2 --n-head 2 "
-            "--n-embd 64 --n-grce 16"
-        ),
-    )
-    parser.add_argument(
-        "--grce-xctx",
-        action="store_true",
-        help=(
-            "Split the GRCE context into per-layer chunks with independent samplers/decoders "
-            "(requires n_grce %% n_layer == 0)"
-        ),
-    )
-    parser.add_argument(
-        "--print-size",
-        action="store_true",
+
+    size_parser = subparsers.add_parser(
+        "size",
         help="Print parameter breakdown for the configured model and exit",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument(
-        "--prompt-cycle-prompts",
-        type=int,
-        default=10,
-        help="How many unsatisfied prompts to test each cycle",
+    size_parser.set_defaults(command="size")
+
+    print_train_parser = subparsers.add_parser(
+        "print-train",
+        help="Print a START-END token range from the train split and exit",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument(
-        "--undo",
-        type=int,
-        default=0,
-        help="Enable undo pairs with up to N random+undo sequences per block",
-    )
-    parser.add_argument(
-        "--tag",
-        action="append",
-        default=[],
-        help="Append an extra _TAG suffix to the model name (can be repeated)",
-    )
-    parser.add_argument(
-        "--prompt",
+    print_train_parser.add_argument(
+        "print_train_range",
         type=str,
-        default="ai will",
-        help="Prompt used for generation",
+        help="Range to print, in START-END form",
     )
-    parser.add_argument(
-        "--tokenizer-vocab",
-        type=int,
-        default=defaults.vocab_size,
-        help="Vocabulary size for the GPT-2 style byte-level BPE tokenizer.",
+    print_train_parser.set_defaults(command="print_train")
+
+    print_test_parser = subparsers.add_parser(
+        "print-test",
+        help="Print a START-END token range from the test split and exit",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument(
-        "--model",
+    print_test_parser.add_argument(
+        "print_test_range",
         type=str,
-        default="model",
-        help="Directory where checkpoints/logs/tokenizers are stored",
+        help="Range to print, in START-END form",
     )
-    parser.add_argument(
-        "--debug-interrupt",
-        action="store_true",
-        help="If set, re-raise KeyboardInterrupt with a full stack trace.",
-    )
-    parser.add_argument(
-        "--no-ansi",
-        action="store_true",
-        help="Suppress the parallel .ansi log (which preserves ANSI colors)",
-    )
-    parser.add_argument(
-        "--import-model",
-        type=pathlib.Path,
-        help="Initialize from another checkpoint when creating a new model",
-    )
-    parser.add_argument(
-        "--trim-model",
-        action="store_true",
-        help="Allow importing into a smaller model by dropping overflow",
-    )
-    parser.add_argument(
-        "--drop-layers",
-        type=str,
-        default="",
-        help="Comma-separated layer numbers (1-indexed) to remove during import",
-    )
-    parser.add_argument(
-        "--add-layers",
-        type=str,
-        default="",
-        help="Comma-separated layer numbers (1-indexed) to insert during import",
-    )
+    print_test_parser.set_defaults(command="print_test")
+
     args = parser.parse_args()
     if args.command is None:
         parser.print_help()
@@ -2694,7 +2728,7 @@ def main() -> None:
             test_path=test_path,
         )
 
-        if args.print_train or args.print_test:
+        if selected_action in {"print_train", "print_test"}:
             def emit_range(label: str, tokens: torch.Tensor, spec: str) -> None:
                 start, end = parse_range_arg(spec)
                 total = int(tokens.numel())
@@ -2725,10 +2759,10 @@ def main() -> None:
                     )
                     print(colored)
 
-            if args.print_train:
-                emit_range("Train", train_tokens, args.print_train)
-            if args.print_test:
-                emit_range("Test", test_tokens, args.print_test)
+            if selected_action == "print_train":
+                emit_range("Train", train_tokens, args.print_train_range)
+            if selected_action == "print_test":
+                emit_range("Test", test_tokens, args.print_test_range)
             return
 
         tok_summary = (
@@ -2750,7 +2784,7 @@ def main() -> None:
             detach_context=(not args.no_detach_ctx),
             detach_layer=max(-1, args.detach_layer),
         )
-        if args.print_size:
+        if selected_action == "size":
             describe_model_size(config)
             return
         model_tag = build_model_tag(config)
