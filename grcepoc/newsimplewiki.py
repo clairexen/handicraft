@@ -142,8 +142,8 @@ def drop_worst_paragraphs(
         unique_remaining = sum(1 for idx in active if updated_counts.get(idx, 0) > 0)
         percent = (unique_remaining / remaining * 100) if remaining else 0
         print(
-            f"drop iteration {step + 1}: removed {len(to_remove)} paragraphs (max unique={max_val}); "
-            f"unique paragraphs remaining: {unique_remaining}/{remaining} ({percent:.2f}%)"
+            f"drop iteration {step + 1}: removed {len(to_remove)} paragraphs (max unique words in paragraph={max_val}); "
+            f"paragraphs with unique words remaining: {unique_remaining}/{remaining} ({percent:.2f}%)"
         )
     return active
 
