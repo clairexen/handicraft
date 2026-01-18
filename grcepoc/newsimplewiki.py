@@ -48,16 +48,32 @@ def build_vocab(paragraphs: List[str]) -> set[str]:
     return vocab
 
 
-def unique_word_counts(paragraphs: List[str], indices: List[int]) -> dict[int, int]:
+def _tokenize_words(text: str) -> set[str]:
+    return {token.lower() for token in text.split() if token.isalpha()}
+
+
+def compute_unique_word_data(
+    paragraphs: List[str], indices: List[int]
+) -> tuple[dict[int, int], dict[int, List[str]]]:
     word_occurrences: dict[str, int] = {}
+    token_cache: dict[int, set[str]] = {}
     for idx in indices:
-        tokens = {token for token in paragraphs[idx].split() if token}
+        tokens = _tokenize_words(paragraphs[idx])
+        token_cache[idx] = tokens
         for token in tokens:
             word_occurrences[token] = word_occurrences.get(token, 0) + 1
     counts: dict[int, int] = {}
+    unique_words: dict[int, List[str]] = {}
     for idx in indices:
-        tokens = {token for token in paragraphs[idx].split() if token}
-        counts[idx] = sum(1 for token in tokens if word_occurrences.get(token, 0) == 1)
+        tokens = token_cache[idx]
+        uniques = [token for token in tokens if word_occurrences.get(token, 0) == 1]
+        unique_words[idx] = uniques
+        counts[idx] = len(uniques)
+    return counts, unique_words
+
+
+def unique_word_counts(paragraphs: List[str], indices: List[int]) -> dict[int, int]:
+    counts, _ = compute_unique_word_data(paragraphs, indices)
     return counts
 
 
@@ -133,17 +149,16 @@ def drop_worst_paragraphs(
     for step in range(iterations):
         if len(active) <= drop_count:
             break
-        counts = unique_word_counts(paragraphs, active)
+        counts, unique_words_map = compute_unique_word_data(paragraphs, active)
         ranked = sorted(active, key=lambda idx: (counts[idx], idx), reverse=True)
         to_remove = set(ranked[:drop_count])
         removed_tokens: set[str] = set()
         for idx in to_remove:
-            tokens = {token for token in paragraphs[idx].split() if token and token.isalpha()}
-            removed_tokens.update(tokens)
+            removed_tokens.update(unique_words_map.get(idx, []))
         max_val = counts[ranked[0]] if ranked else 0
         active = [idx for idx in active if idx not in to_remove]
         remaining = len(active)
-        updated_counts = unique_word_counts(paragraphs, active)
+        updated_counts, _ = compute_unique_word_data(paragraphs, active)
         unique_remaining = sum(1 for idx in active if updated_counts.get(idx, 0) > 0)
         percent = (unique_remaining / remaining * 100) if remaining else 0
         print(
@@ -234,7 +249,10 @@ def main() -> None:
 
     vocab = build_vocab(train_stats.paragraphs)
     print(f"train vocabulary size: {len(vocab)}")
-    unique_counts_map = unique_word_counts(train_paragraphs, train_active)
+    # Reuse full unique-word data so we can surface actual rare tokens later.
+    unique_counts_map, unique_words_map = compute_unique_word_data(
+        train_paragraphs, train_active
+    )
     unique_counts_list = [unique_counts_map[idx] for idx in train_active]
     unique_paragraphs = sum(1 for count in unique_counts_list if count > 0)
     total_active = len(train_active)
@@ -248,9 +266,9 @@ def main() -> None:
         chosen = random.sample(sample_unique, min(5, len(sample_unique)))
         example_tokens = []
         for idx in chosen:
-            tokens = [token for token in train_paragraphs[idx].split() if token.isalpha()]
+            tokens = unique_words_map.get(idx, [])
             if tokens:
-                example_tokens.append(tokens[0])
+                example_tokens.append(random.choice(tokens))
         if example_tokens:
             print("  example unique words:", ", ".join(example_tokens))
 
