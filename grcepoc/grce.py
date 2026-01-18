@@ -2973,14 +2973,6 @@ def main() -> None:
             label = "".join(tags + plus_tags + minus_tags)
             hours = total_train_wall / 3600.0
             days = hours / 24.0
-            print(color_text(f"\nModel: {model_path}", Colors.CYAN))
-            print(
-                color_text(
-                    f"[{label}] Training Cycle {cycle}/{args.cycles}. "
-                    f"Total training so far: {total_steps} steps, {hours:.2f} hours ({days:.2f} days)",
-                    Colors.BLUE,
-                )
-            )
             cycle_prompt_indices: List[int] | None = None
             if prompt_tracker is not None and args.prompt_cycle_prompts > 0:
                 cycle_prompt_indices = prompt_tracker.pending_indices(args.prompt_cycle_prompts)
@@ -2995,8 +2987,38 @@ def main() -> None:
                 * args.batch_size
                 * max(1, args.eval_iters * count_eval_calls(args.steps, args.eval_interval))
             )
+            train_start = int(dataset.positions.get("train", 0))
+            test_start = int(dataset.positions.get("test", 0))
             dataset.prepare_cycle("train", train_chars_cycle)
             dataset.prepare_cycle("test", test_chars_cycle)
+
+            train_chunk = dataset.chunks.get("train")
+            test_chunk = dataset.chunks.get("test")
+
+            def format_range(start: int, span: int) -> str:
+                if span <= 0:
+                    return f"{start}-{start}"
+                end = start + span - 1
+                return f"{start}-{end}"
+
+            train_span = int(train_chunk.size(0)) if train_chunk is not None else 0
+            test_span = int(test_chunk.size(0)) if test_chunk is not None else 0
+            train_range = format_range(train_start, train_span)
+            test_range = format_range(test_start, test_span)
+            print(
+                color_text(
+                    f"\nDataset: train tokens {train_range}, test tokens {test_range}",
+                    Colors.CYAN,
+                )
+            )
+            print(color_text(f"Model: {model_path}", Colors.CYAN))
+            print(
+                color_text(
+                    f"[{label}] Training Cycle {cycle}/{args.cycles}. "
+                    f"Total training so far: {total_steps} steps, {hours:.2f} hours ({days:.2f} days)",
+                    Colors.BLUE,
+                )
+            )
 
             total_steps, updates = train_model(
                 model,
