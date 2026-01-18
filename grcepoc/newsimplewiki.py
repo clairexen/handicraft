@@ -7,7 +7,7 @@ import gzip
 import pathlib
 import random
 from dataclasses import dataclass
-from typing import List
+from typing import Dict, List
 
 import matplotlib.pyplot as plt
 
@@ -42,14 +42,57 @@ def load_corpus(path: pathlib.Path) -> List[str]:
 def build_vocab(paragraphs: List[str]) -> set[str]:
     vocab: set[str] = set()
     for text in paragraphs:
-        for token in text.split():
-            if token:
-                vocab.add(token)
+        for token in _iter_tokens(text):
+            vocab.add(token)
     return vocab
 
 
+def filter_paragraphs_by_vocab(
+    paragraphs: List[str], vocab: set[str]
+) -> tuple[List[str], int]:
+    filtered: List[str] = []
+    removed = 0
+    for text in paragraphs:
+        tokens = _tokenize_words(text)
+        if tokens and not tokens.issubset(vocab):
+            removed += 1
+            continue
+        filtered.append(text)
+    return filtered, removed
+
+
+def _iter_tokens(text: str):
+    for token in text.split():
+        if token.isalpha():
+            yield token.lower()
+
+
 def _tokenize_words(text: str) -> set[str]:
-    return {token.lower() for token in text.split() if token.isalpha()}
+    return set(_iter_tokens(text))
+
+
+def compute_word_frequencies(paragraphs: List[str], indices: List[int]) -> Dict[str, int]:
+    frequencies: dict[str, int] = {}
+    for idx in indices:
+        for token in _tokenize_words(paragraphs[idx]):
+            frequencies[token] = frequencies.get(token, 0) + 1
+    return frequencies
+
+
+def min_frequency_scores(
+    paragraphs: List[str],
+    indices: List[int],
+    frequencies: Dict[str, int],
+) -> tuple[dict[int, int], List[int]]:
+    scores: dict[int, int] = {}
+    empty: List[int] = []
+    for idx in indices:
+        tokens = _tokenize_words(paragraphs[idx])
+        if not tokens:
+            empty.append(idx)
+            continue
+        scores[idx] = min(frequencies.get(token, 0) for token in tokens)
+    return scores, empty
 
 
 def compute_unique_word_data(
@@ -109,6 +152,22 @@ def plot_unique_histogram(counts: List[int], *, bins: int, output: pathlib.Path 
     if output:
         fig.savefig(output, dpi=120)
         print(f"Saved unique-word histogram to {output}")
+    else:
+        plt.show()
+
+
+def plot_min_frequency_histogram(
+    scores: List[int], *, bins: int, output: pathlib.Path | None
+) -> None:
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.hist(scores, bins=bins, alpha=0.7, color="tab:green")
+    ax.set_xlabel("Least-common word frequency per paragraph")
+    ax.set_ylabel("Count")
+    ax.set_title("Paragraph-level least-common word frequency distribution")
+    fig.tight_layout()
+    if output:
+        fig.savefig(output, dpi=120)
+        print(f"Saved min-frequency histogram to {output}")
     else:
         plt.show()
 
@@ -200,6 +259,17 @@ def parse_args() -> argparse.Namespace:
         help="Optional output PNG for unique word plot",
     )
     parser.add_argument(
+        "--plot-min-frequency-histogram",
+        action="store_true",
+        help="Generate histogram of least-common word frequencies per paragraph",
+    )
+    parser.add_argument(
+        "--min-frequency-output",
+        type=pathlib.Path,
+        default=None,
+        help="Optional output PNG for least-common frequency plot",
+    )
+    parser.add_argument(
         "--drop-count",
         type=int,
         default=1000,
@@ -208,7 +278,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--drop-iterations",
         type=int,
-        default=10,
+        default=0,
         help="How many drop iterations to perform (set 0 to disable)",
     )
     parser.add_argument(
@@ -222,6 +292,18 @@ def parse_args() -> argparse.Namespace:
         type=pathlib.Path,
         default=None,
         help="Read initial train paragraph indices (one per line)",
+    )
+    parser.add_argument(
+        "--write",
+        type=pathlib.Path,
+        default=None,
+        help="Write the active train paragraphs to the specified plaintext file",
+    )
+    parser.add_argument(
+        "--write-test",
+        type=pathlib.Path,
+        default=None,
+        help="Write the filtered test paragraphs (only using train vocabulary) to the specified plaintext file",
     )
     return parser.parse_args()
 
@@ -242,7 +324,8 @@ def main() -> None:
         )
     train_subset = [train_paragraphs[idx] for idx in train_active]
     train_stats = CorpusStats("train", train_subset)
-    test_stats = CorpusStats("test", load_corpus(test_path))
+    test_paragraphs = load_corpus(test_path)
+    test_stats = CorpusStats("test", test_paragraphs)
 
     print(train_stats.describe())
     print(test_stats.describe())
@@ -272,8 +355,39 @@ def main() -> None:
         if example_tokens:
             print("  example unique words:", ", ".join(example_tokens))
 
+    word_frequencies = compute_word_frequencies(train_paragraphs, train_active)
+    min_freq_map, empty_indices = min_frequency_scores(
+        train_paragraphs, train_active, word_frequencies
+    )
+    min_freq_values = [min_freq_map[idx] for idx in train_active if idx not in empty_indices]
+    if empty_indices:
+        print(
+            "paragraphs skipped for least-common frequency (no alphabetic words): "
+            f"{len(empty_indices)}"
+        )
+    if min_freq_values:
+        min_score = min(min_freq_values)
+        max_score = max(min_freq_values)
+        avg_score = sum(min_freq_values) / len(min_freq_values)
+        print(
+            "least-common word frequency per paragraph: "
+            f"min={min_score} max={max_score} avg={avg_score:.2f}"
+        )
+
     if args.save_active:
         save_active_indices(args.save_active, train_active)
+    if args.write:
+        args.write.parent.mkdir(parents=True, exist_ok=True)
+        args.write.write_text("\n".join(train_subset) + "\n", encoding="utf-8")
+        print(f"Wrote {len(train_subset)} paragraphs to {args.write}")
+    if args.write_test:
+        filtered_test, removed_test = filter_paragraphs_by_vocab(test_paragraphs, vocab)
+        args.write_test.parent.mkdir(parents=True, exist_ok=True)
+        args.write_test.write_text("\n".join(filtered_test) + "\n", encoding="utf-8")
+        print(
+            f"Wrote {len(filtered_test)} test paragraphs to {args.write_test}"
+            f" (removed {removed_test})"
+        )
 
     if args.plot_length_histogram:
         plot_histogram([train_stats, test_stats], bins=args.bins, output=args.output)
@@ -282,6 +396,12 @@ def main() -> None:
             unique_counts_list,
             bins=args.bins,
             output=args.unique_output,
+        )
+    if args.plot_min_frequency_histogram:
+        plot_min_frequency_histogram(
+            min_freq_values,
+            bins=args.bins,
+            output=args.min_frequency_output,
         )
 
 
