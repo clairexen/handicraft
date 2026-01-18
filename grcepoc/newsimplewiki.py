@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import gzip
 import pathlib
+import random
 from dataclasses import dataclass
 from typing import List
 
@@ -135,6 +136,10 @@ def drop_worst_paragraphs(
         counts = unique_word_counts(paragraphs, active)
         ranked = sorted(active, key=lambda idx: (counts[idx], idx), reverse=True)
         to_remove = set(ranked[:drop_count])
+        removed_tokens: set[str] = set()
+        for idx in to_remove:
+            tokens = {token for token in paragraphs[idx].split() if token}
+            removed_tokens.update(tokens)
         max_val = counts[ranked[0]] if ranked else 0
         active = [idx for idx in active if idx not in to_remove]
         remaining = len(active)
@@ -145,6 +150,11 @@ def drop_worst_paragraphs(
             f"drop iteration {step + 1}: removed {len(to_remove)} paragraphs (max unique words in paragraph={max_val}); "
             f"paragraphs with unique words remaining: {unique_remaining}/{remaining} ({percent:.2f}%)"
         )
+        removed_list = list(removed_tokens)
+        random.shuffle(removed_list)
+        sample = removed_list[:5]
+        if sample:
+            print("  eliminated sample:", ", ".join(sample))
     return active
 
 
