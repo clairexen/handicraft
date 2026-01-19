@@ -2612,6 +2612,8 @@ def parse_args() -> argparse.Namespace:
             args.n_embd = 64
         if not flag_present("--n-grce"):
             args.n_grce = 16
+        if not flag_present("--corpus"):
+            args.corpus = "simplestwiki"
     return args
 
 
