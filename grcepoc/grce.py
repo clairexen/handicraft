@@ -1843,6 +1843,8 @@ def train_model(
                 default_prompt_boundary and boundary_blocklist is not None
             )
             current_prompt_idx = None
+            use_argmax_completion = random.random() < 0.5
+            sampling_strategy = "argmax" if use_argmax_completion else "sample"
             if prompt_tracker is not None:
                 while prompt_queue and prompt_tracker.is_completed(prompt_queue[0]):
                     prompt_queue.pop(0)
@@ -1867,6 +1869,7 @@ def train_model(
                     first_token_blocklist=(
                         boundary_blocklist if prompt_needs_boundary_flag else None
                     ),
+                    sampling_strategy=sampling_strategy,
                 )
             model.train()
             sample_ids = sample_tokens[0].detach().cpu().tolist()
@@ -1898,6 +1901,7 @@ def train_model(
                 tokenizer,
                 completion_ids,
                 [Colors.YELLOW, Colors.CYAN],
+                bold=use_argmax_completion,
                 think_token_id=tokenizer.think_id,
                 undo_token_id=tokenizer.undo_id,
                 noun_detector=noun_detector,
@@ -2035,6 +2039,8 @@ def run_report_mode(
     base_len = prompt_tokens.size(1)
     with torch.no_grad():
         for idx in range(1, count + 1):
+            use_argmax_completion = idx == 1
+            sampling_strategy = "argmax" if use_argmax_completion else "sample"
             generated, prompt_len = generate(
                 model,
                 prompt_tokens.clone(),
@@ -2048,6 +2054,7 @@ def run_report_mode(
                 first_token_blocklist=(
                     boundary_blocklist if default_prompt_boundary else None
                 ),
+                sampling_strategy=sampling_strategy,
             )
             tokens = generated[0].detach().cpu().tolist()
             prompt_ids = tokens[:prompt_len]
@@ -2065,6 +2072,7 @@ def run_report_mode(
                 tokenizer,
                 completion_ids,
                 [Colors.YELLOW, Colors.CYAN],
+                bold=use_argmax_completion,
                 think_token_id=tokenizer.think_id,
                 undo_token_id=tokenizer.undo_id,
                 noun_detector=noun_detector,
@@ -2534,6 +2542,7 @@ def generate(
     suppress_think_prompt: bool = False,
     think_hard: bool = False,
     first_token_blocklist: Sequence[int] | None = None,
+    sampling_strategy: str = "sample",
 ) -> tuple[torch.Tensor, int]:
     model.eval()
     idx = idx.clone()
@@ -2589,7 +2598,10 @@ def generate(
             mask = sums.squeeze(-1) > 0
             if mask.any():
                 probs[mask] = modified[mask] / sums[mask]
-        next_token = torch.multinomial(probs, num_samples=1)
+        if sampling_strategy == "argmax":
+            next_token = torch.argmax(probs, dim=-1, keepdim=True)
+        else:
+            next_token = torch.multinomial(probs, num_samples=1)
         idx = torch.cat([idx, next_token], dim=1)
         if enforce_first_token_guard:
             enforce_first_token_guard = False
