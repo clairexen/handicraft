@@ -2834,6 +2834,14 @@ def main() -> None:
                 emit_range("Test", test_tokens, args.print_test_range)
             return
 
+        train_token_count = int(train_tokens.numel())
+        test_token_count = int(test_tokens.numel())
+        print(
+            color_text(
+                f"Dataset size: {train_token_count:,} train tokens, {test_token_count:,} test tokens",
+                Colors.CYAN,
+            )
+        )
         tok_summary = (
             f"[tokenizer] wall={time.time()-tok_wall_start:.2f}s cpu={time.process_time()-tok_cpu_start:.2f}s\n"
         )
