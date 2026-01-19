@@ -1583,6 +1583,7 @@ def train_model(
     base_wall_seconds: float,
     cycle_prompt_indices: List[int] | None = None,
     show_time: bool = False,
+    underline_tokens: bool = False,
 ) -> Tuple[int, List[Dict[str, float]]]:
     optim = torch.optim.AdamW(model.parameters(), lr=3e-4)
     total_steps = start_step
@@ -1591,7 +1592,11 @@ def train_model(
     think_enabled = think_settings is not None and think_settings.enabled
     undo_enabled = undo_settings is not None and undo_settings.enabled
     think_token_id = active_think_token_id(think_settings)
-    noun_detector = NounExpectationDetector(model, tokenizer, think_token_id)
+    noun_detector = (
+        NounExpectationDetector(model, tokenizer, think_token_id)
+        if underline_tokens
+        else None
+    )
     reward_tracker = (
         ReLURewardTracker(model, steps, scale=reward_relu)
         if reward_relu > 0
@@ -1910,10 +1915,13 @@ def run_report_mode(
     suppress_think: bool,
     suppress_think_prompt: bool,
     think_hard: bool,
+    underline_tokens: bool = False,
 ) -> None:
     model.eval()
     think_token_id = active_think_token_id(think_settings)
-    noun_detector = NounExpectationDetector(model, tokenizer, think_token_id)
+    noun_detector = None
+    if underline_tokens:
+        noun_detector = NounExpectationDetector(model, tokenizer, think_token_id)
     base_len = prompt_tokens.size(1)
     with torch.no_grad():
         for idx in range(1, count + 1):
@@ -1965,6 +1973,7 @@ def run_test_slice(
     block_size: int,
     start_pos: int | None,
     think_settings: ThinkSettings | None,
+    underline_tokens: bool = False,
 ) -> None:
     tokens = dataset.test_tokens
     if tokens.numel() == 0:
@@ -1978,7 +1987,9 @@ def run_test_slice(
     seq = torch.tensor(indices, dtype=torch.long, device=model_device).unsqueeze(0)
     model.eval()
     think_token_id = active_think_token_id(think_settings)
-    noun_detector = NounExpectationDetector(model, tokenizer, think_token_id)
+    noun_detector = None
+    if underline_tokens:
+        noun_detector = NounExpectationDetector(model, tokenizer, think_token_id)
     with torch.no_grad():
         logits, _, activations = model.forward_autoreg(
             seq,
@@ -2669,6 +2680,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="While processing the prompt, insert thinking tokens after every mispredicted token",
     )
+    sampling_group.add_argument(
+        "--underline",
+        action="store_true",
+        help="Underline console tokens when the pronoun detector strongly expects a pronoun",
+    )
 
     logging_group = parser.add_argument_group("Logging & diagnostics")
     logging_group.add_argument(
@@ -3336,6 +3352,7 @@ def main() -> None:
                 suppress_think=args.no_think,
                 suppress_think_prompt=args.no_think_prompt,
                 think_hard=args.think_hard,
+                underline_tokens=args.underline,
             )
             return
 
@@ -3347,6 +3364,7 @@ def main() -> None:
                 block_size=args.block_size,
                 start_pos=args.test_start,
                 think_settings=think_settings,
+                underline_tokens=args.underline,
             )
             return
 
@@ -3448,6 +3466,7 @@ def main() -> None:
                 base_wall_seconds=total_train_wall,
                 cycle_prompt_indices=cycle_prompt_indices,
                 show_time=args.time,
+                underline_tokens=args.underline,
             )
             loss_history.extend(updates)
 
