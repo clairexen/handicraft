@@ -73,9 +73,9 @@ def parse_args() -> argparse.Namespace:
         help="Stop when no word appears in <= N lines (default 1)",
     )
     parser.add_argument(
-        "--plot",
+        "--no-plot",
         action="store_true",
-        help="Plot histograms of word and line scores instead of shrinking",
+        help="Disable histogram plotting",
     )
     parser.add_argument(
         "--loop",
@@ -117,7 +117,7 @@ def main() -> None:
     plot_before = None
     plot_after = None
     plot_path = pathlib.Path(f"shrink-{split_label}.png")
-    if args.plot:
+    if not args.no_plot:
         initial_counts = analyze_lines(current_lines, word_re=word_re)
         if not initial_counts:
             print("No words found; nothing to plot.")
@@ -129,7 +129,7 @@ def main() -> None:
         loop_iterations = max(0, args.loop)
     last_word_counts: dict[str, int] = {}
     if loop_iterations == 0:
-        if args.plot and plot_before is not None:
+        if not args.no_plot and plot_before is not None:
             fig, axes = plt.subplots(1, 2, figsize=(12, 5))
             axes[0].hist(
                 plot_before[0],
@@ -210,7 +210,7 @@ def main() -> None:
     output_path = pathlib.Path(f"shrink-{split_label}.txt")
     output_path.write_text("\n".join(current_lines) + "\n")
     print(f"\nWrote {len(current_lines):,} lines to {output_path}")
-    if args.plot and plot_before is not None:
+    if not args.no_plot and plot_before is not None:
         plot_after = compute_scores(current_lines, last_word_counts)
         fig, axes = plt.subplots(2, 2, figsize=(12, 10))
         axes[0][0].hist(
