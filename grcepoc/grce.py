@@ -111,6 +111,8 @@ ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 class Colors:
     RESET = "\033[0m"
     BOLD = "\033[1m"
+    UNDERLINE = "\033[4m"
+    UNDERLINE = "\033[4m"
     BLUE = "\033[94m"
     CYAN = "\033[96m"
     GREEN = "\033[92m"
@@ -121,9 +123,126 @@ class Colors:
     WHITE = "\033[97m"
 
 
-def color_text(text: str, color: str, *, bold: bool = False) -> str:
-    prefix = Colors.BOLD if bold else ""
+def color_text(text: str, color: str, *, bold: bool = False, underline: bool = False) -> str:
+    prefix = ""
+    if bold:
+        prefix += Colors.BOLD
+    if underline:
+        prefix += Colors.UNDERLINE
     return f"{prefix}{color}{text}{Colors.RESET}"
+
+
+NOUN_PROFORM_WORDS = [
+    "i",
+    "you",
+    "he",
+    "she",
+    "it",
+    "we",
+    "they",
+    "me",
+    "him",
+    "her",
+    "us",
+    "them",
+    "my",
+    "your",
+    "his",
+    "her",
+    "its",
+    "our",
+    "their",
+    "mine",
+    "yours",
+    "hers",
+    "ours",
+    "theirs",
+    "myself",
+    "yourself",
+    "himself",
+    "herself",
+    "itself",
+    "ourselves",
+    "yourselves",
+    "themselves",
+    "this",
+    "that",
+    "these",
+    "those",
+    "who",
+    "whom",
+    "whose",
+]
+
+NON_NOUN_PROFORM_WORDS = [
+    "do",
+    "does",
+    "did",
+    "done",
+    "doing",
+    "so",
+    "such",
+    "thus",
+    "there",
+    "here",
+    "then",
+    "therefore",
+    "thereby",
+    "therein",
+    "thereof",
+]
+
+PRONOUN_DOMINANCE_RATIO = 2.0
+PRONOUN_MIN_MASS = 0.05
+
+
+class NounExpectationDetector:
+    def __init__(
+        self,
+        model: "GRCEGPT",
+        tokenizer: "GPT2TokenizerWrapper",
+        think_token_id: int | None,
+    ) -> None:
+        self.model = model
+        self.tokenizer = tokenizer
+        self.device = next(model.parameters()).device
+        self.think_token_id = think_token_id
+        self.max_context = getattr(model.config, "block_size", 0)
+        self.noun_token_ids = sorted(tokenizer.noun_proform_token_ids)
+        self.other_token_ids = sorted(tokenizer.other_proform_token_ids)
+
+    def _prob_mass(self, probs: torch.Tensor, token_ids: list[int]) -> float:
+        if not token_ids:
+            return 0.0
+        index = torch.tensor(token_ids, device=probs.device, dtype=torch.long)
+        return float(probs.index_select(0, index).sum().item())
+
+    def requires_pronoun(self, prefix_tokens: list[int]) -> bool:
+        if not prefix_tokens or not self.noun_token_ids:
+            return False
+        context = prefix_tokens[-self.max_context :] if self.max_context > 0 else prefix_tokens
+        idx = torch.tensor(context, dtype=torch.long, device=self.device).unsqueeze(0)
+        was_training = self.model.training
+        if was_training:
+            self.model.eval()
+        try:
+            with torch.no_grad():
+                logits, _, _ = self.model.forward_autoreg(
+                    idx,
+                    think_token_id=self.think_token_id,
+                )
+        finally:
+            if was_training:
+                self.model.train()
+        next_logits = logits[:, -1, :].squeeze(0)
+        probs = torch.softmax(next_logits, dim=-1)
+        pronoun_mass = self._prob_mass(probs, self.noun_token_ids)
+        if pronoun_mass < PRONOUN_MIN_MASS:
+            return False
+        other_mass = self._prob_mass(probs, self.other_token_ids)
+        if other_mass <= 0.0:
+            return True
+        return pronoun_mass >= other_mass * PRONOUN_DOMINANCE_RATIO
 
 
 class Tee:
@@ -173,6 +292,10 @@ class GPT2TokenizerWrapper:
         self.non_special_ids = [
             tok_id for tok_id in range(self.vocab_size) if tok_id not in self.special_ids
         ]
+        self.noun_proform_token_ids = self._collect_proform_token_ids(NOUN_PROFORM_WORDS)
+        self.other_proform_token_ids = self._collect_proform_token_ids(
+            NON_NOUN_PROFORM_WORDS
+        )
 
     def _load_or_train(
         self,
@@ -221,6 +344,35 @@ class GPT2TokenizerWrapper:
         if extra_special_tokens:
             tk.add_special_tokens({"additional_special_tokens": extra_special_tokens})
         return tk
+
+    def _collect_proform_token_ids(self, words: list[str]) -> set[int]:
+        token_ids: set[int] = set()
+        for word in words:
+            token_ids.update(self._token_ids_for_word(word))
+        return token_ids
+
+    def _token_ids_for_word(self, word: str) -> set[int]:
+        base = word.lower()
+        token_ids: set[int] = set()
+        variants = {base, base.capitalize(), base.upper()}
+        for variant in variants:
+            for prefix in ("", " "):
+                text = f"{prefix}{variant}"
+                encoded = self.tokenizer.encode(text, add_special_tokens=False)
+                if len(encoded) != 1:
+                    continue
+                tok_id = encoded[0]
+                decoded = (
+                    self.tokenizer.decode([tok_id], clean_up_tokenization_spaces=False)
+                    .strip()
+                    .lower()
+                )
+                if decoded == base:
+                    token_ids.add(tok_id)
+        return token_ids
+
+    def is_noun_proform_token(self, token_id: int) -> bool:
+        return token_id in self.noun_proform_token_ids
 
     def encode(self, text: str) -> torch.Tensor:
         ids = self.tokenizer.encode(text, add_special_tokens=False)
@@ -1439,6 +1591,7 @@ def train_model(
     think_enabled = think_settings is not None and think_settings.enabled
     undo_enabled = undo_settings is not None and undo_settings.enabled
     think_token_id = active_think_token_id(think_settings)
+    noun_detector = NounExpectationDetector(model, tokenizer, think_token_id)
     reward_tracker = (
         ReLURewardTracker(model, steps, scale=reward_relu)
         if reward_relu > 0
@@ -1626,6 +1779,7 @@ def train_model(
                 bold=False,
                 think_token_id=tokenizer.think_id,
                 undo_token_id=tokenizer.undo_id,
+                noun_detector=noun_detector,
             )
             completion_text = color_tokens(
                 tokenizer,
@@ -1633,6 +1787,8 @@ def train_model(
                 [Colors.YELLOW, Colors.CYAN],
                 think_token_id=tokenizer.think_id,
                 undo_token_id=tokenizer.undo_id,
+                noun_detector=noun_detector,
+                context_prefix=prompt_ids,
             )
             colored_sample = prefix_text + completion_text
             if not printed_header:
@@ -1756,6 +1912,8 @@ def run_report_mode(
     think_hard: bool,
 ) -> None:
     model.eval()
+    think_token_id = active_think_token_id(think_settings)
+    noun_detector = NounExpectationDetector(model, tokenizer, think_token_id)
     base_len = prompt_tokens.size(1)
     with torch.no_grad():
         for idx in range(1, count + 1):
@@ -1780,6 +1938,7 @@ def run_report_mode(
                 bold=False,
                 think_token_id=tokenizer.think_id,
                 undo_token_id=tokenizer.undo_id,
+                noun_detector=noun_detector,
             )
             completion_text = color_tokens(
                 tokenizer,
@@ -1787,6 +1946,8 @@ def run_report_mode(
                 [Colors.YELLOW, Colors.CYAN],
                 think_token_id=tokenizer.think_id,
                 undo_token_id=tokenizer.undo_id,
+                noun_detector=noun_detector,
+                context_prefix=prompt_ids,
             )
             print(
                 color_text(f"[report {idx:02d}]", Colors.CYAN)
@@ -1817,6 +1978,7 @@ def run_test_slice(
     seq = torch.tensor(indices, dtype=torch.long, device=model_device).unsqueeze(0)
     model.eval()
     think_token_id = active_think_token_id(think_settings)
+    noun_detector = NounExpectationDetector(model, tokenizer, think_token_id)
     with torch.no_grad():
         logits, _, activations = model.forward_autoreg(
             seq,
@@ -1844,6 +2006,7 @@ def run_test_slice(
         bold=False,
         think_token_id=tokenizer.think_id,
         undo_token_id=tokenizer.undo_id,
+        noun_detector=noun_detector,
     )
     print(
         color_text(
@@ -1862,6 +2025,7 @@ def run_test_slice(
         correct_mask=correct_mask,
         completion_colors=[Colors.YELLOW, Colors.CYAN],
         bold_correct=True,
+        noun_detector=noun_detector,
     )
     print("decoded:", baseline)
     prob_matrix = torch.softmax(logits, dim=-1).squeeze(0)
@@ -1952,26 +2116,42 @@ def color_tokens(
     correct_mask: list[bool] | None = None,
     completion_colors: list[str] | None = None,
     bold_correct: bool = False,
+    noun_detector: NounExpectationDetector | None = None,
+    context_prefix: list[int] | None = None,
 ) -> str:
     parts: list[str] = []
     color_index = 0
     completion_index = 0
+    prefix_tokens: list[int] = list(context_prefix or [])
+    in_word = False
+    underline_active = False
+    word_connectors = {"'", "-"}
     for idx, tok in enumerate(tokens):
         if think_token_id is not None and tok == think_token_id:
             piece = THINK_SYMBOL
             color = Colors.WHITE
             parts.append(color_text(piece, color, bold=True))
             color_index += 1
+            in_word = False
+            underline_active = False
+            prefix_tokens.append(tok)
             continue
         if undo_token_id is not None and tok == undo_token_id:
             piece = UNDO_SYMBOL
             color = Colors.BLUE
             parts.append(color_text(piece, color, bold=True))
             color_index += 1
+            in_word = False
+            underline_active = False
+            prefix_tokens.append(tok)
             continue
-        piece = tokenizer.tokenizer.decode([tok], clean_up_tokenization_spaces=False)
-        piece = tidy(piece, replace_newline=replace_newline)
-        if not piece:
+        raw_piece = tokenizer.tokenizer.decode([tok], clean_up_tokenization_spaces=False)
+        if not raw_piece:
+            prefix_tokens.append(tok)
+            continue
+        display_piece = tidy(raw_piece, replace_newline=replace_newline)
+        if not display_piece:
+            prefix_tokens.append(tok)
             continue
         palette = colors
         if correct_mask is not None and correct_mask[idx]:
@@ -1983,7 +2163,47 @@ def color_tokens(
             color = palette[color_index % len(palette)]
             color_index += 1
             use_bold = bold
-        parts.append(color_text(piece, color, bold=use_bold))
+        # display_piece already computed for early checks; reuse the same string
+        char_pairs = list(zip(raw_piece, display_piece))
+        segments: list[tuple[str, bool]] = []
+        current_segment: list[str] = []
+        current_underlined = underline_active
+
+        def flush_segment() -> None:
+            nonlocal current_segment
+            if not current_segment:
+                return
+            text = "".join(current_segment)
+            segments.append((text, current_underlined))
+            current_segment = []
+
+        for raw_char, display_char in char_pairs:
+            char_is_letter = raw_char.isalpha()
+            char_is_word_char = char_is_letter or (in_word and raw_char in word_connectors)
+            if in_word and not char_is_word_char:
+                flush_segment()
+                in_word = False
+                underline_active = False
+                current_underlined = underline_active
+            if not in_word and char_is_letter:
+                flush_segment()
+                if noun_detector is not None:
+                    underline_active = noun_detector.requires_pronoun(prefix_tokens)
+                else:
+                    underline_active = False
+                in_word = True
+                current_underlined = underline_active
+            if current_underlined != underline_active:
+                flush_segment()
+                current_underlined = underline_active
+            current_segment.append(display_char)
+        flush_segment()
+        if not segments:
+            prefix_tokens.append(tok)
+            continue
+        for text, underlined in segments:
+            parts.append(color_text(text, color, bold=use_bold, underline=underlined))
+        prefix_tokens.append(tok)
     return "".join(parts)
 
 
