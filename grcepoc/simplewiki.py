@@ -39,6 +39,19 @@ def main() -> None:
     for word, count in reversed(sorted_words[-10:]):
         print(f"  {word:20s} {count:>8d}")
 
+    unique_lines = 0
+    unique_words = {word for word, count in word_counts.items() if count == 1}
+    if unique_words:
+        for line in lines:
+            words = set(word_re.findall(line.lower()))
+            if any(word in unique_words for word in words):
+                unique_lines += 1
+        percent = (unique_lines / len(lines)) * 100 if lines else 0.0
+        print(
+            f"\nLines containing unique words: {unique_lines:,} "
+            f"({percent:.2f}% of corpus)"
+        )
+
 
 if __name__ == "__main__":
     main()
