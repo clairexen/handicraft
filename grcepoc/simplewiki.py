@@ -19,9 +19,12 @@ def read_lines(path: pathlib.Path) -> list[str]:
 
 
 def main() -> None:
+    print("Loading corpus...")
     corpus_path = pathlib.Path("data") / "simplewiki-train.txt.gz"
     lines = read_lines(corpus_path)
     print(f"Loaded {len(lines):,} lines from {corpus_path}")
+
+    print("\nAnalyzing...")
     word_re = re.compile(r"[a-z]+")
     word_counts: dict[str, int] = collections.Counter()
     for line in lines:
@@ -32,13 +35,14 @@ def main() -> None:
         print("no words found")
         return
     sorted_words = sorted(word_counts.items(), key=lambda item: item[1])
-    print("\nLeast popular words (line coverage):")
-    for word, count in sorted_words[:10]:
+    print("Most popular words (line coverage):")
+    for word, count in reversed(sorted_words[-5:]):
         print(f"  {word:20s} {count:>8d}")
-    print("\nMost popular words (line coverage):")
-    for word, count in reversed(sorted_words[-10:]):
+    print("Least popular words (line coverage):")
+    for word, count in sorted_words[:5]:
         print(f"  {word:20s} {count:>8d}")
 
+    print("\nUnique...")
     unique_lines = 0
     unique_words = {word for word, count in word_counts.items() if count == 1}
     if unique_words:
@@ -48,7 +52,7 @@ def main() -> None:
                 unique_lines += 1
         percent = (unique_lines / len(lines)) * 100 if lines else 0.0
         print(
-            f"\nLines containing unique words: {unique_lines:,} "
+            f"Lines containing unique words: {unique_lines:,} "
             f"({percent:.2f}% of corpus)"
         )
 
