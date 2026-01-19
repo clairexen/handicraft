@@ -792,20 +792,40 @@ def augment_training_batch(
         think_slot_mask = torch.zeros_like(inputs, dtype=torch.bool, device=device)
         if full_logits is not None and think is not None and think.token_id is not None:
             think_scores = full_logits[..., think.token_id]
+    seq_think_quota = 0
+    think_row_set: set[int] = set()
+    special_think_row: int | None = None
+    if think_enabled and think is not None:
+        seq_think_quota = max(0, int(think.max_steps))
+        if seq_think_quota > 0:
+            eligible_rows = [
+                row_idx
+                for row_idx in range(B)
+                if row_idx not in think_disabled_rows and row_idx not in forced_context_off
+            ]
+            quota = min(seq_think_quota, len(eligible_rows))
+            think_row_set = set(eligible_rows[:quota])
+        if forced_context_off:
+            special_think_row = sorted(forced_context_off)[0]
+
+    def sample_scaled_value() -> int:
+        u = random.random()
+        return int((u * u * block_size) / 4)
+
     for row in range(B):
-        row_think_active = think_enabled and row not in think_disabled_rows and row not in forced_context_off
+        row_is_special = special_think_row is not None and row == special_think_row
+        row_think_active = False
+        if think_enabled and think is not None and think.token_id is not None:
+            if row_is_special:
+                row_think_active = True
+            elif row in think_row_set:
+                row_think_active = True
         max_insert_budget = block_size - 1
-        think_cap = think.max_steps if row_think_active else 0
-        think_cap = min(max_insert_budget, think_cap)
-        think_count = random.randint(0, think_cap) if think_cap > 0 else 0
-        remaining_budget = max_insert_budget - think_count
         undo_cap = undo.max_pairs if undo_enabled else 0
+        remaining_budget = max_insert_budget
         undo_cap = min(undo_cap, remaining_budget // 2)
         undo_pairs = random.randint(0, undo_cap) if undo_cap > 0 else 0
-        max_think_allowed = (block_size - 2 * undo_pairs) // 2
-        if think_count > max_think_allowed:
-            think_count = max_think_allowed
-        keep_len = block_size - think_count - 2 * undo_pairs
+        keep_len = block_size - 2 * undo_pairs
         keep_len = max(1, keep_len)
         seq_entries = [
             {
@@ -816,7 +836,10 @@ def augment_training_batch(
             for idx in range(keep_len)
         ]
         tail_token = int(targets[row, keep_len - 1].item())
-        seq_entries.append({"token": tail_token, "tag": "base", "base_index": None})
+
+        def truncate_entries() -> None:
+            if len(seq_entries) > block_size:
+                del seq_entries[block_size:]
 
         if undo_enabled and undo_pairs > 0:
             row_logits = full_logits[row] if full_logits is not None else None
@@ -847,63 +870,106 @@ def augment_training_batch(
                         "base_index": None,
                     },
                 )
+                truncate_entries()
 
-        if row_think_active and think_count > 0 and think_scores is not None:
-            scores = think_scores[row, :keep_len]
-            if scores.numel() > 0:
-                picks = min(think_count + 1, scores.numel())
-                topk = torch.topk(scores, picks).indices.tolist()
-                selected_positions = topk[:]
-                drop_total = min(2, len(selected_positions))
-                if drop_total > 0:
-                    drop_choices = sorted(
-                        random.sample(range(len(selected_positions)), k=drop_total), reverse=True
-                    )
-                    for idx in drop_choices:
-                        selected_positions.pop(idx)
-                selected_positions = selected_positions[:think_count]
-                needed = max(0, think_count - len(selected_positions))
-                if needed > 0:
-                    selected_set = set(selected_positions)
-                    remaining_positions = [
-                        pos for pos in range(keep_len) if pos not in selected_set
-                    ]
-                    random.shuffle(remaining_positions)
-                    selected_positions.extend(remaining_positions[:needed])
-                random.shuffle(selected_positions)
-                for pos in selected_positions:
-                    insert_idx = None
-                    for idx, entry in enumerate(seq_entries):
-                        if entry.get("base_index") == pos:
-                            insert_idx = idx
-                            break
-                    if insert_idx is None:
-                        insert_idx = len(seq_entries) - 1
+        think_token_val = int(think.token_id) if think is not None and think.token_id is not None else None
+        if row_think_active and think_token_val is not None:
+            if row_is_special:
+                random_count = random.randint(1, max(1, block_size - 1))
+                for _ in range(random_count):
+                    insert_pos = random.randint(0, len(seq_entries))
                     seq_entries.insert(
-                        insert_idx,
+                        insert_pos,
                         {
-                            "token": int(think.token_id),
-                            "tag": "think",
+                            "token": think_token_val,
+                            "tag": "think_random",
                             "base_index": None,
                         },
                     )
+                    truncate_entries()
+            else:
+                R = sample_scaled_value()
+                H = sample_scaled_value()
+                T = sample_scaled_value()
+                if R > 0:
+                    expanded: list[dict] = []
+                    for entry in seq_entries:
+                        expanded.append(entry)
+                        for _ in range(R):
+                            expanded.append(
+                                {
+                                    "token": think_token_val,
+                                    "tag": "think_repeat",
+                                    "base_index": None,
+                                }
+                            )
+                    seq_entries = expanded[:block_size]
+                if T > 0 and think_scores is not None:
+                    for _ in range(T):
+                        base_positions = [
+                            (idx, entry)
+                            for idx, entry in enumerate(seq_entries)
+                            if entry.get("base_index") is not None
+                        ]
+                        if not base_positions:
+                            break
+                        scores = [
+                            float(think_scores[row, entry[1]["base_index"]].item())
+                            for entry in base_positions
+                        ]
+                        max_score = max(scores)
+                        weights = [math.exp(val - max_score) for val in scores]
+                        total_weight = sum(weights)
+                        if total_weight <= 0:
+                            break
+                        normalized = [w / total_weight for w in weights]
+                        chosen_entry = random.choices(base_positions, weights=normalized, k=1)[0]
+                        insert_idx = chosen_entry[0] + 1
+                        seq_entries.insert(
+                            insert_idx,
+                            {
+                                "token": think_token_val,
+                                "tag": "think_weighted",
+                                "base_index": None,
+                            },
+                        )
+                        truncate_entries()
+                if H > 0:
+                    for _ in range(H):
+                        if len(seq_entries) >= block_size:
+                            seq_entries.pop()
+                        last_base = None
+                        for idx in range(len(seq_entries) - 1, -1, -1):
+                            if seq_entries[idx].get("base_index") is not None:
+                                last_base = idx
+                                break
+                        insert_idx = (last_base + 1) if last_base is not None else len(seq_entries)
+                        seq_entries.insert(
+                            insert_idx,
+                            {
+                                "token": think_token_val,
+                                "tag": "think_tail",
+                                "base_index": None,
+                            },
+                        )
+                        truncate_entries()
 
+        seq_tokens = [entry["token"] for entry in seq_entries[:block_size]]
         seq_tensor = torch.tensor(
-            [entry["token"] for entry in seq_entries], dtype=inputs.dtype, device=device
+            seq_tokens + [tail_token], dtype=inputs.dtype, device=device
         )
         new_inputs[row] = seq_tensor[:-1]
         new_targets[row] = seq_tensor[1:]
         if random_mask is not None:
-            for idx, entry in enumerate(seq_entries[:-1]):
+            for idx, entry in enumerate(seq_entries):
                 if entry.get("tag") == "undo_filler":
                     target_idx = idx - 1
                     if 0 <= target_idx < block_size:
                         random_mask[row, target_idx] = True
-        if think_labels is not None:
-            for idx, entry in enumerate(seq_entries[:-1]):
-                if entry.get("tag") == "think":
-                    label = seq_entries[idx + 1]["token"]
-                    think_labels[row, idx] = int(label)
+        if think_labels is not None and think_token_val is not None:
+            for idx in range(block_size):
+                if int(new_inputs[row, idx].item()) == think_token_val:
+                    think_labels[row, idx] = int(new_targets[row, idx].item())
         if think_slot_mask is not None:
             think_slot_mask[row].fill_(row_think_active)
 
