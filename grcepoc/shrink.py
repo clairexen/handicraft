@@ -56,6 +56,11 @@ def parse_args() -> argparse.Namespace:
         help="Corpus base name inside data/ (uses <name>-train.txt.gz)",
     )
     parser.add_argument(
+        "--test",
+        action="store_true",
+        help="Operate on the test split instead of the train split",
+    )
+    parser.add_argument(
         "--strip",
         type=float,
         default=1.0,
@@ -82,12 +87,11 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    split_label = "test" if args.test else "train"
     if args.corpus:
-        corpus_path = pathlib.Path("data") / f"{args.corpus}-train.txt.gz"
-        test_path = pathlib.Path("data") / f"{args.corpus}-test.txt.gz"
+        corpus_path = pathlib.Path("data") / f"{args.corpus}-{split_label}.txt.gz"
     else:
-        corpus_path = pathlib.Path("shrink-train.txt")
-        test_path = pathlib.Path("shrink-test.txt")
+        corpus_path = pathlib.Path(f"shrink-{split_label}.txt")
     lines = read_lines(corpus_path)
     if args.quick_test and len(lines) > 10_000:
         lines = lines[:10_000]
@@ -119,19 +123,6 @@ def main() -> None:
             print("No words found; nothing to plot.")
             return
         plot_before = compute_scores(current_lines, initial_counts)
-        if not run_loop:
-            fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-            axes[0].hist(plot_before[0], bins=50, color="skyblue", edgecolor="black")
-            axes[0].set_title("Word score distribution (before)")
-            axes[0].set_xlabel("100 * log(count) / log(total lines)")
-            axes[0].set_ylabel("Frequency")
-            axes[1].hist(plot_before[1], bins=50, color="salmon", edgecolor="black")
-            axes[1].set_title("Line score distribution (before)")
-            axes[1].set_xlabel("RMS word score per line (scaled)")
-            axes[1].set_ylabel("Frequency")
-            fig.tight_layout()
-            plt.show()
-            return
     if args.loop and args.loop > 0:
         max_iterations = min(args.loop, 10)
     else:
@@ -150,6 +141,9 @@ def main() -> None:
             axes[1].set_ylabel("Frequency")
             fig.tight_layout()
             plt.show()
+        output_path = pathlib.Path(f"shrink-{split_label}.txt")
+        output_path.write_text("\n".join(current_lines) + "\n")
+        print(f"\nWrote {len(current_lines):,} lines to {output_path}")
         return
 
     for iteration in range(1, max_iterations + 1):
@@ -199,28 +193,9 @@ def main() -> None:
             if idx not in removed_indices
         ]
 
-    shrink_train_path = pathlib.Path("shrink-train.txt")
-    shrink_train_path.write_text("\n".join(current_lines) + "\n")
-    print(f"\nWrote {len(current_lines):,} shrunk lines to {shrink_train_path}")
-
-    print("\nFiltering test corpus...")
-    try:
-        test_lines = read_lines(test_path)
-    except FileNotFoundError as exc:
-        print(f"warning: {exc}; skipping test shrink")
-        return
-    vocab = set(last_word_counts.keys()) if last_word_counts else set()
-    filtered_test = []
-    for line in test_lines:
-        words = set(word_re.findall(line.lower()))
-        if words and vocab and any(word not in vocab for word in words):
-            continue
-        filtered_test.append(line)
-    shrink_test_path = pathlib.Path("shrint-test.txt")
-    shrink_test_path.write_text("\n".join(filtered_test) + "\n")
-    print(
-        f"Kept {len(filtered_test):,}/{len(test_lines):,} test lines in {shrink_test_path}"
-    )
+    output_path = pathlib.Path(f"shrink-{split_label}.txt")
+    output_path.write_text("\n".join(current_lines) + "\n")
+    print(f"\nWrote {len(current_lines):,} lines to {output_path}")
     if args.plot and plot_before is not None:
         plot_after = compute_scores(current_lines, last_word_counts)
         fig, axes = plt.subplots(2, 2, figsize=(12, 10))
