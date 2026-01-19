@@ -812,9 +812,9 @@ class ModelConfig:
     n_head: int = 4         # GPT-2 base uses 12 attention heads.
     n_embd: int = 192       # GPT-2 base uses 768 embedding dims.
     n_grce: int = 64        # GRCE context dims.
+    grce_xctx: bool = False
     dropout: float = 0.05
     detach_span: int = 0    # Detach gradients every N positions (0 disables detaching).
-    grce_xctx: bool = False
     detach_context: bool = True  # Whether to detach recurring context when span triggers.
     detach_layer: int = -1       # Layer index (1-based) after which to detach Transformer grads.
 
