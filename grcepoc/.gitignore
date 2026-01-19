@@ -1,6 +1,12 @@
 /data/simplewiki_tokens_test_*.pt
 /data/simplewiki_tokens_train_*.pt
 /data/simplewiki_vocab_*.json
+/data/simplerwiki_tokens_test_*.pt
+/data/simplerwiki_tokens_train_*.pt
+/data/simplerwiki_vocab_*.json
+/data/simplestwiki_tokens_test_*.pt
+/data/simplestwiki_tokens_train_*.pt
+/data/simplestwiki_vocab_*.json
 /.venv/
 /.backup/
 /model/

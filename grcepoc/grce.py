@@ -2605,13 +2605,13 @@ def parse_args() -> argparse.Namespace:
         if not flag_present("--batch-size"):
             args.batch_size = 4
         if not flag_present("--n-layer"):
-            args.n_layer = 2
+            args.n_layer = 6
         if not flag_present("--n-head"):
-            args.n_head = 2
+            args.n_head = 4
         if not flag_present("--n-embd"):
-            args.n_embd = 64
+            args.n_embd = 32
         if not flag_present("--n-grce"):
-            args.n_grce = 16
+            args.n_grce = 12
         if not flag_present("--corpus"):
             args.corpus = "simplestwiki"
     return args
