@@ -2693,8 +2693,8 @@ def main() -> None:
         model_dir = pathlib.Path(args.model)
         model_dir.mkdir(parents=True, exist_ok=True)
 
-        train_cache_path = model_dir / f"{args.corpus}_tokens_train_{args.tokenizer_vocab}.pt"
-        test_cache_path = model_dir / f"{args.corpus}_tokens_test_{args.tokenizer_vocab}.pt"
+        train_cache_path = data_dir / f"{args.corpus}_tokens_train_{args.tokenizer_vocab}.pt"
+        test_cache_path = data_dir / f"{args.corpus}_tokens_test_{args.tokenizer_vocab}.pt"
 
         try:
             full_train_text = load_text_file(train_path)
@@ -2711,7 +2711,7 @@ def main() -> None:
             full_test_text = None
 
         tokenizer_key = f"{args.corpus}_vocab_{args.tokenizer_vocab}"
-        tokenizer_path = model_dir / f"{tokenizer_key}.json"
+        tokenizer_path = data_dir / f"{tokenizer_key}.json"
         if not tokenizer_path.exists() and full_train_text is None:
             raise FileNotFoundError(
                 f"Tokenizer cache {tokenizer_path} not found and training text is unavailable."
