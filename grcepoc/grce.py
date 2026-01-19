@@ -262,6 +262,8 @@ class Tee:
 
 
 class GPT2TokenizerWrapper:
+    EXTRA_SPECIAL_TOKENS = [THINK_TOKEN, UNDO_TOKEN]
+
     def __init__(
         self,
         train_text: str,
@@ -272,9 +274,7 @@ class GPT2TokenizerWrapper:
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         self.cache_path = cache_path
         self.pretrained_json = pretrained_json
-        self.extra_special_tokens: list[str] = []
-        self.extra_special_tokens.append(THINK_TOKEN)
-        self.extra_special_tokens.append(UNDO_TOKEN)
+        self.extra_special_tokens: list[str] = list(self.EXTRA_SPECIAL_TOKENS)
         self.tokenizer = self._load_or_train(
             train_text,
             cache_path,
@@ -962,7 +962,7 @@ class ModelConfig:
     block_size: int = 64    # GPT-2 base uses 1024 tokens.
     n_layer: int = 12       # GPT-2 base uses 12 layers.
     n_head: int = 8         # GPT-2 base uses 12 attention heads.
-    n_embd: int = 128       # GPT-2 base uses 768 embedding dims.
+    n_embd: int = 256       # GPT-2 base uses 768 embedding dims.
     n_grce: int = 64        # GRCE context dims.
     grce_xctx: bool = False
     dropout: float = 0.05
@@ -2964,7 +2964,12 @@ def main() -> None:
         tok_wall_start = time.time()
         tok_cpu_start = time.process_time()
         vocab_source = full_train_text or ""
-        target_vocab = max(0, args.tokenizer_vocab - 2)
+        reserved_tokens = 1 + len(GPT2TokenizerWrapper.EXTRA_SPECIAL_TOKENS)
+        if args.tokenizer_vocab <= reserved_tokens:
+            raise ValueError(
+                f"--tokenizer-vocab must exceed reserved tokens ({reserved_tokens}); got {args.tokenizer_vocab}"
+            )
+        target_vocab = max(0, args.tokenizer_vocab - reserved_tokens)
         tokenizer = GPT2TokenizerWrapper(
             vocab_source,
             tokenizer_path,
