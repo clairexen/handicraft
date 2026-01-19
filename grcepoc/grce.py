@@ -18,7 +18,7 @@ import re
 import shlex
 import sys
 import time
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, asdict, fields
 from datetime import datetime, timezone
 from typing import Dict, List, Tuple
 
@@ -814,7 +814,6 @@ class ModelConfig:
     n_grce: int = 64        # GRCE context dims.
     dropout: float = 0.05
     detach_span: int = 0    # Detach gradients every N positions (0 disables detaching).
-    context_dropout: int = 0  # Target number of GRCE dropouts per block (0 disables).
     grce_xctx: bool = False
     detach_context: bool = True  # Whether to detach recurring context when span triggers.
     detach_layer: int = -1       # Layer index (1-based) after which to detach Transformer grads.
@@ -1004,7 +1003,6 @@ class GRCEContextChannel(nn.Module):
         self.config = config
         self.detach_span = max(0, int(getattr(config, "detach_span", 0)))
         self.context_dim = config.n_grce
-        self.context_dropout = max(0, int(config.context_dropout))
         self.layered = config.grce_xctx
         self.detach_context = bool(getattr(config, "detach_context", True))
         if self.layered:
@@ -1098,7 +1096,6 @@ class GRCEGPT(nn.Module):
         capture_activations: bool = False,
         think_token_id: int | None = None,
         collect_relu_mask: bool = False,
-        disable_context_dropout: bool = False,
     ) -> Tuple[torch.Tensor, torch.Tensor | None, dict | None]:
         B, T = idx.shape
         device = idx.device
@@ -1191,21 +1188,14 @@ class GRCEGPT(nn.Module):
                     stop_grad = True
                 else:
                     stop_grad = (t % span == 0)
-                use_grce = True
-                if self.training and not disable_context_dropout:
-                    seq_len = max(1, self.config.block_size)
-                    drop_prob = min(1.0, 1 / seq_len)
-                    if random.random() < drop_prob:
-                        use_grce = False
-                if use_grce:
-                    context, raw_context = self.context.update(
-                        block_inputs,
-                        prev_context=context,
-                        stop_grad=stop_grad,
-                    )
-                    if activation_store is not None:
-                        ctx_norms = torch.linalg.vector_norm(raw_context.detach(), dim=-1)
-                        activation_store["context_norms"].extend(ctx_norms.cpu().tolist())
+                context, raw_context = self.context.update(
+                    block_inputs,
+                    prev_context=context,
+                    stop_grad=stop_grad,
+                )
+                if activation_store is not None:
+                    ctx_norms = torch.linalg.vector_norm(raw_context.detach(), dim=-1)
+                    activation_store["context_norms"].extend(ctx_norms.cpu().tolist())
             logits_steps.append(logits[:, -1:, :])
         logits = torch.cat(logits_steps, dim=1)
         if relu_activity is not None:
@@ -1465,7 +1455,6 @@ def train_model(
             yb,
             think_token_id=think_token_id,
             collect_relu_mask=reward_tracker is not None,
-            disable_context_dropout=not nogrce_active,
         )
         logits = apply_think_slot_mask(logits, think_slot_mask, think_settings)
         logits_flat = logits.view(-1, logits.size(-1))
@@ -2838,12 +2827,14 @@ def main() -> None:
             n_grce=args.n_grce,
             dropout=args.dropout,
             detach_span=max(0, args.detach_span),
-            context_dropout=1,
             grce_xctx=args.grce_xctx,
             detach_context=(not args.no_detach_ctx),
             detach_layer=max(-1, args.detach_layer),
         )
         if selected_action == "size":
+            print(color_text("Model geometry:", Colors.CYAN, bold=True))
+            for cfg_field in fields(ModelConfig):
+                print(f"  {cfg_field.name}: {getattr(config, cfg_field.name)}")
             describe_model_size(config)
             return
         model_tag = build_model_tag(config)
