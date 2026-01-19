@@ -2693,29 +2693,35 @@ def main() -> None:
         model_dir = pathlib.Path(args.model)
         model_dir.mkdir(parents=True, exist_ok=True)
 
+        must_build_tokenizer = selected_action == "init"
         train_cache_path = data_dir / f"{args.corpus}_tokens_train_{args.tokenizer_vocab}.pt"
         test_cache_path = data_dir / f"{args.corpus}_tokens_test_{args.tokenizer_vocab}.pt"
 
-        try:
+        if must_build_tokenizer:
             full_train_text = load_text_file(train_path)
-        except FileNotFoundError:
-            if not train_cache_path.exists():
-                raise
-            full_train_text = None
-
-        try:
             full_test_text = load_text_file(test_path)
-        except FileNotFoundError:
-            if not test_cache_path.exists():
-                raise
+        else:
+            full_train_text = None
             full_test_text = None
+            if not train_cache_path.exists():
+                raise FileNotFoundError(
+                    f"Train token cache {train_cache_path} not found; run 'init' first."
+                )
+            if not test_cache_path.exists():
+                raise FileNotFoundError(
+                    f"Test token cache {test_cache_path} not found; run 'init' first."
+                )
 
         tokenizer_key = f"{args.corpus}_vocab_{args.tokenizer_vocab}"
         tokenizer_path = data_dir / f"{tokenizer_key}.json"
-        if not tokenizer_path.exists() and full_train_text is None:
-            raise FileNotFoundError(
-                f"Tokenizer cache {tokenizer_path} not found and training text is unavailable."
-            )
+        tokenizer_json = checkpoint_override_tokenizer_json
+        if tokenizer_json is None:
+            if tokenizer_path.exists():
+                tokenizer_json = tokenizer_path.read_text(encoding="utf-8")
+            elif not must_build_tokenizer:
+                raise FileNotFoundError(
+                    f"Tokenizer cache {tokenizer_path} not found; run 'init' first or supply --pt."
+                )
         print(color_text(f"Tokenizer: {tokenizer_path}", Colors.BLUE))
         tok_wall_start = time.time()
         tok_cpu_start = time.process_time()
@@ -2725,16 +2731,9 @@ def main() -> None:
             vocab_source,
             tokenizer_path,
             target_vocab,
-            pretrained_json=checkpoint_override_tokenizer_json,
+            pretrained_json=tokenizer_json,
         )
-        tokenizer_json = checkpoint_override_tokenizer_json
-        if tokenizer_json is None:
-            try:
-                tokenizer_json = tokenizer_path.read_text(encoding="utf-8")
-            except FileNotFoundError:
-                raise FileNotFoundError(
-                    f"Tokenizer cache {tokenizer_path} not found; rerun without --pt to rebuild."
-                )
+        tokenizer_json = tokenizer_json or tokenizer_path.read_text(encoding="utf-8")
 
         newline_token_id = None
         newline_tokens = tokenizer.tokenizer.encode("\n", add_special_tokens=False)
