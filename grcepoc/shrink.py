@@ -117,6 +117,7 @@ def main() -> None:
     plot_before = None
     plot_after = None
     run_loop = args.loop is not None and args.loop > 0
+    plot_path = pathlib.Path(f"shrink-{split_label}.png")
     if args.plot:
         initial_counts = analyze_lines(current_lines, word_re=word_re)
         if not initial_counts:
@@ -140,7 +141,8 @@ def main() -> None:
             axes[1].set_xlabel("RMS word score per line (scaled)")
             axes[1].set_ylabel("Frequency")
             fig.tight_layout()
-            plt.show()
+            fig.savefig(plot_path)
+            print(f"Saved plot to {plot_path}")
         output_path = pathlib.Path(f"shrink-{split_label}.txt")
         output_path.write_text("\n".join(current_lines) + "\n")
         print(f"\nWrote {len(current_lines):,} lines to {output_path}")
@@ -216,7 +218,8 @@ def main() -> None:
         axes[1][1].set_xlabel("RMS word score per line (scaled)")
         axes[1][1].set_ylabel("Frequency")
         fig.tight_layout()
-        plt.show()
+        fig.savefig(plot_path)
+        print(f"Saved plot to {plot_path}")
 
 
 if __name__ == "__main__":
