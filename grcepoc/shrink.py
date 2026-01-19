@@ -124,6 +124,7 @@ def main() -> None:
             print("No words found; nothing to plot.")
             return
         plot_before = compute_scores(current_lines, initial_counts)
+        print(f"Initial vocabulary size: {len(initial_counts):,}")
     if args.loop and args.loop > 0:
         max_iterations = min(args.loop, 10)
     else:
@@ -166,6 +167,7 @@ def main() -> None:
             break
         print(f"\nIteration {iteration}: analyzing {len(current_lines):,} lines")
         word_counts = analyze_lines(current_lines, word_re=word_re)
+        print(f"Vocabulary size this iteration: {len(word_counts):,}")
         last_word_counts = word_counts
         stop_words = {
             word for word, count in word_counts.items() if count <= max(1, args.stop)
