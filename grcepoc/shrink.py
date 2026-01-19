@@ -72,6 +72,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Plot histograms of word and line scores instead of shrinking",
     )
+    parser.add_argument(
+        "--loop",
+        type=int,
+        help="Number of shrink iterations to run (default: disabled)",
+    )
     return parser.parse_args()
 
 
@@ -90,37 +95,64 @@ def main() -> None:
     word_re = re.compile(r"[a-z]+")
     scale = 100.0 / math.log(max(len(lines), 2))
     current_lines = list(lines)
-    if args.plot:
-        word_counts = analyze_lines(current_lines, word_re=word_re)
-        if not word_counts:
-            print("No words found; nothing to plot.")
-            return
-        word_scores = [math.log(max(count, 1)) * scale for count in word_counts.values()]
+    def compute_scores(lines: list[str], counts: dict[str, int]) -> tuple[list[float], list[float]]:
+        word_scores = [math.log(max(count, 1)) * scale for count in counts.values()]
         line_scores: list[float] = []
-        for line in current_lines:
+        for line in lines:
             words = set(word_re.findall(line.lower()))
             if not words:
                 continue
             accum = 0.0
             for word in words:
-                count = word_counts.get(word, 1)
+                count = counts.get(word, 1)
                 weighted = math.log(max(count, 1)) * scale
                 accum += weighted ** 2
             line_scores.append(math.sqrt(accum / len(words)))
-        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-        axes[0].hist(word_scores, bins=50, color="skyblue", edgecolor="black")
-        axes[0].set_title("Word score distribution")
-        axes[0].set_xlabel("100 * log(count) / log(total lines)")
-        axes[0].set_ylabel("Frequency")
-        axes[1].hist(line_scores, bins=50, color="salmon", edgecolor="black")
-        axes[1].set_title("Line score distribution")
-        axes[1].set_xlabel("RMS word score per line (scaled)")
-        axes[1].set_ylabel("Frequency")
-        fig.tight_layout()
-        plt.show()
-        return
+        return word_scores, line_scores
+
+    plot_before = None
+    plot_after = None
+    run_loop = args.loop is not None and args.loop > 0
+    if args.plot:
+        initial_counts = analyze_lines(current_lines, word_re=word_re)
+        if not initial_counts:
+            print("No words found; nothing to plot.")
+            return
+        plot_before = compute_scores(current_lines, initial_counts)
+        if not run_loop:
+            fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+            axes[0].hist(plot_before[0], bins=50, color="skyblue", edgecolor="black")
+            axes[0].set_title("Word score distribution (before)")
+            axes[0].set_xlabel("100 * log(count) / log(total lines)")
+            axes[0].set_ylabel("Frequency")
+            axes[1].hist(plot_before[1], bins=50, color="salmon", edgecolor="black")
+            axes[1].set_title("Line score distribution (before)")
+            axes[1].set_xlabel("RMS word score per line (scaled)")
+            axes[1].set_ylabel("Frequency")
+            fig.tight_layout()
+            plt.show()
+            return
+    if args.loop and args.loop > 0:
+        max_iterations = min(args.loop, 10)
+    else:
+        max_iterations = 0
     last_word_counts: dict[str, int] = {}
-    for iteration in range(1, 11):
+    if max_iterations == 0:
+        if args.plot and plot_before is not None:
+            fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+            axes[0].hist(plot_before[0], bins=50, color="skyblue", edgecolor="black")
+            axes[0].set_title("Word score distribution (before)")
+            axes[0].set_xlabel("100 * log(count) / log(total lines)")
+            axes[0].set_ylabel("Frequency")
+            axes[1].hist(plot_before[1], bins=50, color="salmon", edgecolor="black")
+            axes[1].set_title("Line score distribution (before)")
+            axes[1].set_xlabel("RMS word score per line (scaled)")
+            axes[1].set_ylabel("Frequency")
+            fig.tight_layout()
+            plt.show()
+        return
+
+    for iteration in range(1, max_iterations + 1):
         if not current_lines:
             print(f"\nIteration {iteration}: no lines remain, stopping early.")
             break
@@ -187,6 +219,27 @@ def main() -> None:
     print(
         f"Kept {len(filtered_test):,}/{len(test_lines):,} test lines in {shrink_test_path}"
     )
+    if args.plot and plot_before is not None:
+        plot_after = compute_scores(current_lines, last_word_counts)
+        fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+        axes[0][0].hist(plot_before[0], bins=50, color="skyblue", edgecolor="black")
+        axes[0][0].set_title("Word score distribution (before)")
+        axes[0][0].set_xlabel("100 * log(count) / log(total lines)")
+        axes[0][0].set_ylabel("Frequency")
+        axes[0][1].hist(plot_before[1], bins=50, color="salmon", edgecolor="black")
+        axes[0][1].set_title("Line score distribution (before)")
+        axes[0][1].set_xlabel("RMS word score per line (scaled)")
+        axes[0][1].set_ylabel("Frequency")
+        axes[1][0].hist(plot_after[0], bins=50, color="skyblue", edgecolor="black")
+        axes[1][0].set_title("Word score distribution (after)")
+        axes[1][0].set_xlabel("100 * log(count) / log(total lines)")
+        axes[1][0].set_ylabel("Frequency")
+        axes[1][1].hist(plot_after[1], bins=50, color="salmon", edgecolor="black")
+        axes[1][1].set_title("Line score distribution (after)")
+        axes[1][1].set_xlabel("RMS word score per line (scaled)")
+        axes[1][1].set_ylabel("Frequency")
+        fig.tight_layout()
+        plt.show()
 
 
 if __name__ == "__main__":
