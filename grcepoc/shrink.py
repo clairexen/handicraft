@@ -46,7 +46,7 @@ def analyze_lines(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--quick-test",
+        "--quick",
         action="store_true",
         help="Only analyze the first 10,000 lines",
     )
@@ -93,7 +93,7 @@ def main() -> None:
     else:
         corpus_path = pathlib.Path(f"shrink-{split_label}.txt")
     lines = read_lines(corpus_path)
-    if args.quick_test and len(lines) > 10_000:
+    if args.quick and len(lines) > 10_000:
         lines = lines[:10_000]
     print(f"Loaded {len(lines):,} lines from {corpus_path}")
     word_re = re.compile(r"[a-z]+")
