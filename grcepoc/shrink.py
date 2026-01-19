@@ -12,6 +12,19 @@ import re
 
 import matplotlib.pyplot as plt
 
+STOP_WORDS = {"county", "census", "municipalit"}
+
+
+def collect_word_counts(
+    lines: list[str], *, word_re: re.Pattern[str]
+) -> dict[str, int]:
+    word_counts: dict[str, int] = collections.Counter()
+    for line in lines:
+        words = set(word_re.findall(line.lower()))
+        for word in words:
+            word_counts[word] += 1
+    return word_counts
+
 def read_lines(path: pathlib.Path) -> list[str]:
     if not path.exists():
         raise FileNotFoundError(f"Missing corpus file: {path}")
@@ -26,11 +39,7 @@ def analyze_lines(
     word_re: re.Pattern[str],
     top_k: int = 5,
 ) -> dict[str, int]:
-    word_counts: dict[str, int] = collections.Counter()
-    for line in lines:
-        words = set(word_re.findall(line.lower()))
-        for word in words:
-            word_counts[word] += 1
+    word_counts = collect_word_counts(lines, word_re=word_re)
     if not word_counts:
         return {}
     sorted_words = sorted(word_counts.items(), key=lambda item: item[1])
@@ -41,6 +50,18 @@ def analyze_lines(
     for word, count in sorted_words[:top_k]:
         print(f"  {word:20s} {count:>8d}")
     return word_counts
+
+
+def print_dictionary(counts: dict[str, int], top_n: int | None = None) -> None:
+    if not counts:
+        print("Dictionary is empty; nothing to display.")
+        return
+    print("\nFull dictionary (word -> line count):")
+    entries = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    if top_n is not None and top_n > 0:
+        entries = entries[:top_n]
+    for word, count in entries:
+        print(f"{word}\t{count}")
 
 
 def parse_args() -> argparse.Namespace:
@@ -83,6 +104,25 @@ def parse_args() -> argparse.Namespace:
         default=10,
         help="Number of shrink iterations to run (default 10)",
     )
+    parser.add_argument(
+        "--top",
+        type=int,
+        default=100,
+        help="Number of most frequent words to show when printing the dictionary (default 100; 0 shows all)",
+    )
+    parser.add_argument(
+        "--dict",
+        dest="show_dict",
+        action="store_true",
+        default=True,
+        help="Print the dictionary sorted by word frequency after filtering (default)",
+    )
+    parser.add_argument(
+        "--no-dict",
+        dest="show_dict",
+        action="store_false",
+        help="Skip dictionary output",
+    )
     return parser.parse_args()
 
 
@@ -100,6 +140,12 @@ def main() -> None:
     word_re = re.compile(r"[a-z]+")
     scale = 100.0 / math.log(max(len(lines), 2))
     current_lines = list(lines)
+    if STOP_WORDS:
+        lowered = [line for line in current_lines if not any(word in line.lower() for word in STOP_WORDS)]
+        removed = len(current_lines) - len(lowered)
+        if removed:
+            print(f"Filtered out {removed:,} lines due to stop words {sorted(STOP_WORDS)}")
+        current_lines = lowered
     def compute_scores(lines: list[str], counts: dict[str, int]) -> tuple[list[float], list[float]]:
         word_scores = [math.log(max(count, 1)) * scale for count in counts.values()]
         line_scores: list[float] = []
@@ -118,18 +164,23 @@ def main() -> None:
     plot_before = None
     plot_after = None
     plot_path = pathlib.Path(f"shrink-{split_label}.png")
-    if not args.no_plot:
+    need_initial = not args.no_plot
+    initial_counts = None
+    if need_initial:
         initial_counts = analyze_lines(current_lines, word_re=word_re)
         if not initial_counts:
-            print("No words found; nothing to plot.")
+            print("No words found; nothing to analyze.")
             return
-        plot_before = compute_scores(current_lines, initial_counts)
-        print(f"Initial vocabulary size: {len(initial_counts):,}")
+        if not args.no_plot:
+            plot_before = compute_scores(current_lines, initial_counts)
+            print(f"Initial vocabulary size: {len(initial_counts):,}")
     loop_iterations = 0
     if args.loop is not None:
         loop_iterations = max(0, args.loop)
-    last_word_counts: dict[str, int] = {}
     if loop_iterations == 0:
+        if args.show_dict:
+            final_counts = collect_word_counts(current_lines, word_re=word_re)
+            print_dictionary(final_counts, top_n=args.top)
         if not args.no_plot and plot_before is not None:
             fig, axes = plt.subplots(1, 2, figsize=(12, 5))
             axes[0].hist(
@@ -167,7 +218,6 @@ def main() -> None:
         print(f"\nIteration {iteration}: analyzing {len(current_lines):,} lines")
         word_counts = analyze_lines(current_lines, word_re=word_re)
         print(f"Vocabulary size this iteration: {len(word_counts):,}")
-        last_word_counts = word_counts
         stop_words = {
             word for word, count in word_counts.items() if count <= max(1, args.stop)
         }
@@ -208,11 +258,14 @@ def main() -> None:
             if idx not in removed_indices
         ]
 
+    final_counts = collect_word_counts(current_lines, word_re=word_re)
+    if args.show_dict:
+        print_dictionary(final_counts, top_n=args.top)
     output_path = pathlib.Path(f"shrink-{split_label}.txt")
     output_path.write_text("\n".join(current_lines) + "\n")
     print(f"\nWrote {len(current_lines):,} lines to {output_path}")
     if not args.no_plot and plot_before is not None:
-        plot_after = compute_scores(current_lines, last_word_counts)
+        plot_after = compute_scores(current_lines, final_counts)
         fig, axes = plt.subplots(2, 2, figsize=(12, 10))
         axes[0][0].hist(
             plot_before[0],
