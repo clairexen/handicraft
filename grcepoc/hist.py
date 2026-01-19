@@ -87,6 +87,27 @@ def parse_args() -> argparse.Namespace:
         help="Plot step vs metric (default: test_loss)",
     )
     parser.add_argument(
+        "--step-period",
+        type=int,
+        default=0,
+        help="If >0, reshape step traces into segments of this many samples and overlay them",
+    )
+    parser.add_argument(
+        "--plot-relative",
+        action="store_true",
+        help="Subtract the first value of each trace/segment before plotting",
+    )
+    parser.add_argument(
+        "--plot-deltas",
+        action="store_true",
+        help="Plot first differences instead of raw values",
+    )
+    parser.add_argument(
+        "--plot-sum",
+        action="store_true",
+        help="Plot the cumulative sum (integral) of each trace",
+    )
+    parser.add_argument(
         "--plot-time",
         nargs="*",
         help="Plot train_wall_seconds vs metric (default: test_loss)",
@@ -231,11 +252,55 @@ def _series_from_field(history: List[Dict[str, float]], field: str, default_sequ
     return values
 
 
+def _split_segments(values: List[float], period: int) -> List[List[float]]:
+    if period <= 1 or period > len(values):
+        return [values]
+    segments: List[List[float]] = []
+    chunk_count = len(values) // period
+    for idx in range(chunk_count):
+        start = idx * period
+        segments.append(values[start : start + period])
+    return segments
+
+
+def _apply_transforms(
+    x_values: List[float],
+    y_values: List[float],
+    *,
+    relative: bool,
+    deltas: bool,
+    cumulative: bool,
+) -> Tuple[List[float], List[float]]:
+    if not y_values:
+        return x_values, y_values
+    y_proc = list(y_values)
+    x_proc = list(x_values)
+    if relative:
+        base = y_proc[0]
+        y_proc = [val - base for val in y_proc]
+    if deltas and len(y_proc) > 1:
+        y_proc = [y_proc[i + 1] - y_proc[i] for i in range(len(y_proc) - 1)]
+        x_proc = x_proc[1:]
+    if cumulative:
+        total = 0.0
+        cumulative_vals = []
+        for val in y_proc:
+            total += val
+            cumulative_vals.append(total)
+        y_proc = cumulative_vals
+    return x_proc, y_proc
+
+
 def plot_metric_traces(
     sources: List[Tuple[str, List[Dict[str, float]]]],
     metrics: List[str],
     x_field: str,
     x_label: str,
+    *,
+    step_period: int = 0,
+    relative: bool = False,
+    deltas: bool = False,
+    cumulative: bool = False,
 ) -> None:
     fig, ax = plt.subplots(figsize=(10, 5))
     for label, history in sources:
@@ -248,7 +313,25 @@ def plot_metric_traces(
             y_values = _series_from_field(history, metric)
             if not any(not math.isnan(val) for val in y_values):
                 continue
-            ax.plot(x_values, y_values, label=f"{label} – {metric}")
+            x_series = x_values
+            y_series = y_values
+            if x_field == "step" and step_period > 1:
+                y_segments = _split_segments(y_series, step_period)
+                x_segments = [list(range(len(seg))) for seg in y_segments]
+            else:
+                y_segments = [y_series]
+                x_segments = [x_series]
+            for x_seg, y_seg in zip(x_segments, y_segments):
+                x_plot, y_plot = _apply_transforms(
+                    x_seg,
+                    y_seg,
+                    relative=relative,
+                    deltas=deltas,
+                    cumulative=cumulative,
+                )
+                if not y_plot:
+                    continue
+                ax.plot(x_plot, y_plot, label=f"{label} – {metric}")
     ax.set_xlabel(x_label)
     ax.set_ylabel("")
     ax.set_title("")
@@ -330,15 +413,40 @@ def main() -> None:
         performed = True
     if args.plot_steps is not None:
         metrics = args.plot_steps if args.plot_steps else ["test_loss"]
-        plot_metric_traces(sources, metrics, "step", "Step")
+        plot_metric_traces(
+            sources,
+            metrics,
+            "step",
+            "Step",
+            step_period=args.step_period,
+            relative=args.plot_relative,
+            deltas=args.plot_deltas,
+            cumulative=args.plot_sum,
+        )
         performed = True
     if args.plot_time is not None:
         metrics = args.plot_time if args.plot_time else ["test_loss"]
-        plot_metric_traces(sources, metrics, "train_wall_seconds", "Train wall seconds")
+        plot_metric_traces(
+            sources,
+            metrics,
+            "train_wall_seconds",
+            "Train wall seconds",
+            relative=args.plot_relative,
+            deltas=args.plot_deltas,
+            cumulative=args.plot_sum,
+        )
         performed = True
     if args.plot_timestamp is not None:
         metrics = args.plot_timestamp if args.plot_timestamp else ["test_loss"]
-        plot_metric_traces(sources, metrics, "unix_time", "Unix time")
+        plot_metric_traces(
+            sources,
+            metrics,
+            "unix_time",
+            "Unix time",
+            relative=args.plot_relative,
+            deltas=args.plot_deltas,
+            cumulative=args.plot_sum,
+        )
         performed = True
     if not performed:
         print("no action taken (no list, plot or write-json requested)")
