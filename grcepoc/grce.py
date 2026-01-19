@@ -836,10 +836,12 @@ def augment_training_batch(
             for idx in range(keep_len)
         ]
         tail_token = int(targets[row, keep_len - 1].item())
+        tail_entry = {"token": tail_token, "tag": "base", "base_index": None}
 
         def truncate_entries() -> None:
-            if len(seq_entries) > block_size:
-                del seq_entries[block_size:]
+            limit = block_size + 1
+            if len(seq_entries) > limit:
+                del seq_entries[limit:]
 
         if undo_enabled and undo_pairs > 0:
             row_logits = full_logits[row] if full_logits is not None else None
@@ -870,7 +872,7 @@ def augment_training_batch(
                         "base_index": None,
                     },
                 )
-                truncate_entries()
+        truncate_entries()
 
         think_token_val = int(think.token_id) if think is not None and think.token_id is not None else None
         if row_think_active and think_token_val is not None:
@@ -903,7 +905,8 @@ def augment_training_batch(
                                     "base_index": None,
                                 }
                             )
-                    seq_entries = expanded[:block_size]
+                    seq_entries = expanded
+                    truncate_entries()
                 if T > 0 and think_scores is not None:
                     for _ in range(T):
                         base_positions = [
@@ -954,14 +957,20 @@ def augment_training_batch(
                         )
                         truncate_entries()
 
-        seq_tokens = [entry["token"] for entry in seq_entries[:block_size]]
+        seq_entries.append(tail_entry)
+        truncate_entries()
+        if len(seq_entries) < block_size + 1:
+            padding_token = seq_entries[-1]["token"]
+            while len(seq_entries) < block_size + 1:
+                seq_entries.append({"token": padding_token, "tag": "pad", "base_index": None})
+
         seq_tensor = torch.tensor(
-            seq_tokens + [tail_token], dtype=inputs.dtype, device=device
+            [entry["token"] for entry in seq_entries], dtype=inputs.dtype, device=device
         )
         new_inputs[row] = seq_tensor[:-1]
         new_targets[row] = seq_tensor[1:]
         if random_mask is not None:
-            for idx, entry in enumerate(seq_entries):
+            for idx, entry in enumerate(seq_entries[:-1]):
                 if entry.get("tag") == "undo_filler":
                     target_idx = idx - 1
                     if 0 <= target_idx < block_size:
@@ -996,6 +1005,62 @@ def apply_think_slot_mask(
         disable_mask, -1e9
     )
     return logits
+
+
+def disable_think_logits(
+    logits: torch.Tensor, think: ThinkSettings | None
+) -> torch.Tensor:
+    if think is None or not think.enabled or think.token_id is None:
+        return logits
+    logits[..., int(think.token_id)] = -1e9
+    return logits
+
+
+def compute_think_alignment_loss(
+    model: GRCEGPT,
+    logits: torch.Tensor,
+    inputs: torch.Tensor,
+    targets: torch.Tensor,
+    per_token_loss: torch.Tensor,
+    think: ThinkSettings | None,
+) -> torch.Tensor:
+    if think is None or not think.enabled or think.token_id is None:
+        return logits.new_tensor(0.0)
+    think_id = int(think.token_id)
+    mask = inputs == think_id
+    if not mask.any():
+        return logits.new_tensor(0.0)
+    emb_table = model.core.tok_emb.weight
+    think_emb = emb_table[think_id]
+    head = model.core.head
+    loss_accum = logits.new_tensor(0.0)
+    count = 0
+    B, T = inputs.shape
+    for b in range(B):
+        for t in range(T - 1):
+            if not mask[b, t]:
+                continue
+            target_id = int(targets[b, t].item())
+            next_target = int(targets[b, t + 1].item())
+            if target_id == LOSS_IGNORE_INDEX or next_target == LOSS_IGNORE_INDEX:
+                continue
+            A = float(per_token_loss[b, t].item())
+            B_loss = float(per_token_loss[b, t + 1].item())
+            denom = A + B_loss
+            if denom <= 0:
+                continue
+            ratio = A / (denom + 1e-6)
+            next_emb = emb_table[target_id]
+            mix_vec = next_emb + think_emb * ratio
+            target_logits = head(mix_vec.unsqueeze(0)).squeeze(0)
+            target_probs = F.softmax(target_logits.detach(), dim=-1)
+            output_logits = logits[b, t]
+            log_probs = F.log_softmax(output_logits, dim=-1)
+            loss_accum = loss_accum - torch.sum(target_probs * log_probs)
+            count += 1
+    if count > 0:
+        loss_accum = loss_accum / count
+    return loss_accum
 
 
 
@@ -1227,7 +1292,7 @@ class GPTCore(nn.Module):
         block_biases: List[torch.Tensor] | None = None,
         *,
         record_relu_mask: bool = False,
-    ) -> Tuple[torch.Tensor, List[torch.Tensor], List[torch.Tensor] | None]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, List[torch.Tensor], List[torch.Tensor] | None]:
         B, T = idx.shape
         device = idx.device
         tok = self.tok_emb(idx)
@@ -1248,7 +1313,7 @@ class GPTCore(nn.Module):
                 relu_masks[layer_idx] = layer_mask
         x = self.ln_f(x)
         logits = self.head(x)
-        return logits, block_inputs, relu_masks
+        return logits, x, block_inputs, relu_masks
 
 
 class GRCEContextChannel(nn.Module):
@@ -1360,6 +1425,7 @@ class GRCEGPT(nn.Module):
             context_dim = self.context.context_dim
             context = torch.zeros(B, context_dim, device=device)
         logits_steps = []
+        hidden_steps = []
         pos_counters = torch.zeros(B, dtype=torch.long, device=device)
         last_content_token = torch.full(
             (B,),
@@ -1422,7 +1488,7 @@ class GRCEGPT(nn.Module):
                     )
                     full[:, -1, :] = bias_vec
                     block_biases.append(full)
-            logits, block_inputs, layer_masks = self.core(
+            logits, hidden_layer, block_inputs, layer_masks = self.core(
                 prefix,
                 block_biases=block_biases,
                 record_relu_mask=collect_relu_mask,
@@ -1452,13 +1518,15 @@ class GRCEGPT(nn.Module):
                     ctx_norms = torch.linalg.vector_norm(raw_context.detach(), dim=-1)
                     activation_store["context_norms"].extend(ctx_norms.cpu().tolist())
             logits_steps.append(logits[:, -1:, :])
+            hidden_steps.append(hidden_layer[:, -1:, :])
         logits = torch.cat(logits_steps, dim=1)
+        hidden = torch.cat(hidden_steps, dim=1)
         if relu_activity is not None:
             if activation_store is None and need_store:
                 activation_store = {}
             if activation_store is not None:
                 activation_store.setdefault("relu_activity", relu_activity)
-        return logits, context, activation_store
+        return logits, hidden, activation_store
 
 
 def build_model_tag(config: ModelConfig) -> str:
@@ -1468,47 +1536,6 @@ def build_model_tag(config: ModelConfig) -> str:
         f"layers{config.n_layer}_heads{config.n_head}_{ctx_prefix}{config.n_grce}"
     )
     return tag
-
-
-def compute_think_penalty(
-    logits: torch.Tensor,
-    targets: torch.Tensor,
-    think_token_id: int | None,
-    plan_required: torch.Tensor | None = None,
-) -> torch.Tensor:
-    if think_token_id is None:
-        return logits.new_tensor(0.0)
-    mask = targets == think_token_id
-    if not mask.any():
-        return logits.new_tensor(0.0)
-    probs = F.softmax(logits, dim=-1)
-    preds = torch.argmax(logits, dim=-1)
-    entries: list[torch.Tensor] = []
-    labels: list[float] = []
-    B, T = targets.shape
-    for b in range(B):
-        think_positions = torch.nonzero(mask[b], as_tuple=False).flatten()
-        if think_positions.numel() == 0:
-            continue
-        for pos_tensor in think_positions:
-            pos = int(pos_tensor.item())
-            next_idx = pos + 1
-            while next_idx < T and targets[b, next_idx] == think_token_id:
-                next_idx += 1
-            label = 0.0
-            if next_idx < T:
-                label = 1.0 if preds[b, next_idx] == targets[b, next_idx] else 0.0
-            if plan_required is not None:
-                plan_needed = bool(plan_required[b, pos_tensor.item()])
-                if not plan_needed:
-                    label = 0.0
-            entries.append(probs[b, pos, think_token_id])
-            labels.append(label)
-    if not entries:
-        return logits.new_tensor(0.0)
-    prob_tensor = torch.stack(entries)
-    label_tensor = prob_tensor.new_tensor(labels)
-    return F.binary_cross_entropy(prob_tensor, label_tensor)
 
 
 LOSS_IGNORE_INDEX = -100
@@ -1587,49 +1614,44 @@ def evaluate_split(
         ]
     think_token_id = active_think_token_id(think_settings)
     for xb, yb in batches:
-        aug_xb, aug_yb, random_mask, think_labels, think_slot_mask = augment_training_batch(
+        aug_xb, aug_yb, random_mask, _, think_slot_mask = augment_training_batch(
             model,
             xb,
             yb,
             think_settings,
             undo_settings,
         )
-        logits, _, _ = model.forward_autoreg(
+        raw_logits, _, _ = model.forward_autoreg(
             aug_xb,
             disable_context=disable_context,
             think_token_id=think_token_id,
         )
-        logits = apply_think_slot_mask(logits, think_slot_mask, think_settings)
+        logits_main = disable_think_logits(raw_logits.clone(), think_settings)
+        logits_main = apply_think_slot_mask(logits_main, think_slot_mask, think_settings)
         loss_targets = build_loss_targets(aug_yb, think_settings, random_mask)
-        main_loss = F.cross_entropy(
-            logits.view(-1, logits.size(-1)),
+        logits_flat = logits_main.view(-1, logits_main.size(-1))
+        per_token = F.cross_entropy(
+            logits_flat,
             loss_targets.view(-1),
+            reduction="none",
             ignore_index=LOSS_IGNORE_INDEX,
         )
-        total_loss = main_loss
-        if think_settings is not None and think_settings.enabled:
-            plan_required = None
-            if think_labels is not None and think_settings.token_id is not None:
-                mask = think_labels >= 0
-                if mask.any():
-                    plan_logits = logits.clone()
-                    plan_logits[..., think_settings.token_id] = -1e9
-                    selected_logits = plan_logits[mask]
-                    targets_plan = think_labels[mask]
-                    plan_loss = F.cross_entropy(
-                        selected_logits,
-                        targets_plan,
-                    )
-                    total_loss = total_loss + plan_loss
-                    plan_required = torch.zeros_like(think_labels, dtype=torch.bool)
-                    plan_pred = torch.argmax(selected_logits, dim=-1)
-                    plan_required[mask] = plan_pred != targets_plan
-            total_loss = total_loss + compute_think_penalty(
-                logits,
-                aug_yb,
-                think_settings.token_id,
-                plan_required=plan_required,
-            )
+        per_token_matrix = per_token.view_as(loss_targets)
+        valid_mask = loss_targets != LOSS_IGNORE_INDEX
+        denom = valid_mask.sum().item()
+        if denom == 0:
+            main_loss = per_token.sum() * 0
+        else:
+            main_loss = per_token.sum() / denom
+        align_loss = compute_think_alignment_loss(
+            model,
+            raw_logits,
+            aug_xb,
+            loss_targets,
+            per_token_matrix.detach(),
+            think_settings,
+        )
+        total_loss = main_loss + align_loss
         ce_losses.append(main_loss.item())
         learned_losses.append(total_loss.item())
     ce_avg = sum(ce_losses) / len(ce_losses)
@@ -1713,15 +1735,17 @@ def train_model(
             disable_context_rows=disable_rows,
             disable_think_rows=think_disabled_rows,
         )
-        logits, _, activation_store = model.forward_autoreg(
+        logits, hidden_states, activation_store = model.forward_autoreg(
             xb,
             yb,
             think_token_id=think_token_id,
             collect_relu_mask=reward_tracker is not None,
         )
-        logits = apply_think_slot_mask(logits, think_slot_mask, think_settings)
-        logits_flat = logits.view(-1, logits.size(-1))
+        raw_logits = logits
+        logits_main = disable_think_logits(raw_logits.clone(), think_settings)
+        logits_main = apply_think_slot_mask(logits_main, think_slot_mask, think_settings)
         loss_targets = build_loss_targets(yb, think_settings, random_mask)
+        logits_flat = logits_main.view(-1, logits_main.size(-1))
         token_loss_flat = F.cross_entropy(
             logits_flat,
             loss_targets.view(-1),
@@ -1735,31 +1759,15 @@ def train_model(
             main_loss = token_loss_flat.sum() * 0
         else:
             main_loss = token_loss_flat.sum() / denom
-        plan_required = None
-        think_loss = logits.new_tensor(0.0)
-        if think_settings is not None and think_settings.enabled:
-            think_loss = compute_think_penalty(
-                logits,
-                yb,
-                think_settings.token_id,
-                plan_required=plan_required,
-            )
-        plan_loss = logits.new_tensor(0.0)
-        if think_labels is not None and think_settings is not None and think_settings.token_id is not None:
-            mask = think_labels >= 0
-            if mask.any():
-                plan_logits = logits.clone()
-                plan_logits[..., think_settings.token_id] = -1e9
-                selected_logits = plan_logits[mask]
-                targets_plan = think_labels[mask]
-                plan_loss = F.cross_entropy(
-                    selected_logits,
-                    targets_plan,
-                )
-                plan_pred = torch.argmax(selected_logits, dim=-1)
-                plan_required = torch.zeros_like(think_labels, dtype=torch.bool)
-                plan_required[mask] = plan_pred != targets_plan
-        loss = main_loss + think_loss + plan_loss
+        align_loss = compute_think_alignment_loss(
+            model,
+            raw_logits,
+            xb,
+            loss_targets,
+            token_losses.detach(),
+            think_settings,
+        )
+        loss = main_loss + align_loss
         optim.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -2665,8 +2673,8 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=0,
         help=(
-            "Enable think mode with up to N inserted thinking tokens per block; "
-            "adds the <think> special token"
+            "Enable think mode for N sequences per training batch (and permit up to N "
+            "thinking insertions during sampling); adds the <think> special token"
         ),
     )
     model_group.add_argument(
