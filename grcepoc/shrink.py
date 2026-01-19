@@ -12,6 +12,7 @@ import re
 
 import matplotlib.pyplot as plt
 
+LOG10 = math.log(10.0)
 
 def read_lines(path: pathlib.Path) -> list[str]:
     if not path.exists():
@@ -95,7 +96,7 @@ def main() -> None:
         if not word_counts:
             print("No words found; nothing to plot.")
             return
-        word_scores = [math.log(max(count, 1)) for count in word_counts.values()]
+        word_scores = [math.log(max(count, 1)) / LOG10 for count in word_counts.values()]
         line_scores: list[float] = []
         for line in current_lines:
             words = word_re.findall(line.lower())
@@ -104,16 +105,17 @@ def main() -> None:
             accum = 0.0
             for word in words:
                 count = word_counts.get(word, 1)
-                accum += math.log(max(count, 1)) ** 2
+                log10_val = math.log(max(count, 1)) / LOG10
+                accum += log10_val ** 2
             line_scores.append(math.sqrt(accum / len(words)))
         fig, axes = plt.subplots(1, 2, figsize=(12, 5))
         axes[0].hist(word_scores, bins=50, color="skyblue", edgecolor="black")
         axes[0].set_title("Word score distribution")
-        axes[0].set_xlabel("log(line count)")
+        axes[0].set_xlabel("log10(line count)")
         axes[0].set_ylabel("Frequency")
         axes[1].hist(line_scores, bins=50, color="salmon", edgecolor="black")
         axes[1].set_title("Line score distribution")
-        axes[1].set_xlabel("RMS word score per line")
+        axes[1].set_xlabel("RMS word score per line (log10)")
         axes[1].set_ylabel("Frequency")
         fig.tight_layout()
         plt.show()
@@ -141,7 +143,8 @@ def main() -> None:
                 accum = 0.0
                 for word in words:
                     count = word_counts.get(word, 1)
-                    accum += math.log(max(count, 1)) ** 2
+                    log10_val = math.log(max(count, 1)) / LOG10
+                    accum += log10_val ** 2
                 score = math.sqrt(accum / len(words))
             score_entries.append((score, idx, line))
         score_entries.sort()
