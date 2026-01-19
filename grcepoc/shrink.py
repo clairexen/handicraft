@@ -98,7 +98,7 @@ def main() -> None:
         word_scores = [math.log(max(count, 1)) * scale for count in word_counts.values()]
         line_scores: list[float] = []
         for line in current_lines:
-            words = word_re.findall(line.lower())
+            words = set(word_re.findall(line.lower()))
             if not words:
                 continue
             accum = 0.0
@@ -135,7 +135,7 @@ def main() -> None:
             break
         score_entries = []
         for idx, line in enumerate(current_lines):
-            words = word_re.findall(line.lower())
+            words = set(word_re.findall(line.lower()))
             if not words:
                 score = 0.0
             else:
