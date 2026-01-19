@@ -1052,11 +1052,13 @@ def compute_think_alignment_loss(
             ratio = A / (denom + 1e-6)
             next_emb = emb_table[target_id]
             mix_vec = next_emb + think_emb * ratio
+            mix_vec = next_emb + 0.5 * (mix_vec - next_emb)
             target_logits = head(mix_vec.unsqueeze(0)).squeeze(0)
             target_probs = F.softmax(target_logits.detach(), dim=-1)
             output_logits = logits[b, t]
             log_probs = F.log_softmax(output_logits, dim=-1)
-            loss_accum = loss_accum - torch.sum(target_probs * log_probs)
+            diff = target_probs - log_probs.exp()
+            loss_accum = loss_accum + 0.5 * torch.sum(diff * diff)
             count += 1
     if count > 0:
         loss_accum = loss_accum / count
