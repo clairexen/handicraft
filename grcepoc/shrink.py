@@ -10,6 +10,8 @@ import math
 import pathlib
 import re
 
+import matplotlib.pyplot as plt
+
 
 def read_lines(path: pathlib.Path) -> list[str]:
     if not path.exists():
@@ -66,6 +68,11 @@ def parse_args() -> argparse.Namespace:
         default=1,
         help="Stop when no word appears in <= N lines (default 1)",
     )
+    parser.add_argument(
+        "--plot",
+        action="store_true",
+        help="Plot histograms of word and line scores instead of shrinking",
+    )
     return parser.parse_args()
 
 
@@ -83,6 +90,34 @@ def main() -> None:
     print(f"Loaded {len(lines):,} lines from {corpus_path}")
     word_re = re.compile(r"[a-z]+")
     current_lines = list(lines)
+    if args.plot:
+        word_counts = analyze_lines(current_lines, word_re=word_re)
+        if not word_counts:
+            print("No words found; nothing to plot.")
+            return
+        word_scores = [math.log(max(count, 1)) for count in word_counts.values()]
+        line_scores: list[float] = []
+        for line in current_lines:
+            words = word_re.findall(line.lower())
+            if not words:
+                continue
+            accum = 0.0
+            for word in words:
+                count = word_counts.get(word, 1)
+                accum += math.log(max(count, 1)) ** 2
+            line_scores.append(math.sqrt(accum / len(words)))
+        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+        axes[0].hist(word_scores, bins=50, color="skyblue", edgecolor="black")
+        axes[0].set_title("Word score distribution")
+        axes[0].set_xlabel("log(line count)")
+        axes[0].set_ylabel("Frequency")
+        axes[1].hist(line_scores, bins=50, color="salmon", edgecolor="black")
+        axes[1].set_title("Line score distribution")
+        axes[1].set_xlabel("RMS word score per line")
+        axes[1].set_ylabel("Frequency")
+        fig.tight_layout()
+        plt.show()
+        return
     last_word_counts: dict[str, int] = {}
     for iteration in range(1, 11):
         if not current_lines:
