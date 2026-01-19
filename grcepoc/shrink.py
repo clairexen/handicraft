@@ -132,11 +132,23 @@ def main() -> None:
     if max_iterations == 0:
         if args.plot and plot_before is not None:
             fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-            axes[0].hist(plot_before[0], bins=50, color="skyblue", edgecolor="black")
+            axes[0].hist(
+                plot_before[0],
+                bins=20,
+                range=(0, 100),
+                color="skyblue",
+                edgecolor="black",
+            )
             axes[0].set_title("Word score distribution (before)")
             axes[0].set_xlabel("100 * log(count) / log(total lines)")
             axes[0].set_ylabel("Frequency")
-            axes[1].hist(plot_before[1], bins=50, color="salmon", edgecolor="black")
+            axes[1].hist(
+                plot_before[1],
+                bins=20,
+                range=(0, 100),
+                color="salmon",
+                edgecolor="black",
+            )
             axes[1].set_title("Line score distribution (before)")
             axes[1].set_xlabel("RMS word score per line (scaled)")
             axes[1].set_ylabel("Frequency")
@@ -201,19 +213,43 @@ def main() -> None:
     if args.plot and plot_before is not None:
         plot_after = compute_scores(current_lines, last_word_counts)
         fig, axes = plt.subplots(2, 2, figsize=(12, 10))
-        axes[0][0].hist(plot_before[0], bins=50, color="skyblue", edgecolor="black")
+        axes[0][0].hist(
+            plot_before[0],
+            bins=20,
+            range=(0, 100),
+            color="skyblue",
+            edgecolor="black",
+        )
         axes[0][0].set_title("Word score distribution (before)")
         axes[0][0].set_xlabel("100 * log(count) / log(total lines)")
         axes[0][0].set_ylabel("Frequency")
-        axes[0][1].hist(plot_before[1], bins=50, color="salmon", edgecolor="black")
+        axes[0][1].hist(
+            plot_before[1],
+            bins=20,
+            range=(0, 100),
+            color="salmon",
+            edgecolor="black",
+        )
         axes[0][1].set_title("Line score distribution (before)")
         axes[0][1].set_xlabel("RMS word score per line (scaled)")
         axes[0][1].set_ylabel("Frequency")
-        axes[1][0].hist(plot_after[0], bins=50, color="skyblue", edgecolor="black")
+        axes[1][0].hist(
+            plot_after[0],
+            bins=20,
+            range=(0, 100),
+            color="skyblue",
+            edgecolor="black",
+        )
         axes[1][0].set_title("Word score distribution (after)")
         axes[1][0].set_xlabel("100 * log(count) / log(total lines)")
         axes[1][0].set_ylabel("Frequency")
-        axes[1][1].hist(plot_after[1], bins=50, color="salmon", edgecolor="black")
+        axes[1][1].hist(
+            plot_after[1],
+            bins=20,
+            range=(0, 100),
+            color="salmon",
+            edgecolor="black",
+        )
         axes[1][1].set_title("Line score distribution (after)")
         axes[1][1].set_xlabel("RMS word score per line (scaled)")
         axes[1][1].set_ylabel("Frequency")
