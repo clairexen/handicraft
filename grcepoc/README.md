@@ -30,7 +30,7 @@ Ignoring embeddings and other lower-order pieces, two terms dominate:
 
 ## Think tokens
 
-`--think N` now means “activate thinking on exactly `N` sequences per batch”. The training loop first evaluates the untouched batch to collect logits, then chooses the first `N` eligible rows (plus one extra when GRCE dropout fires). For each chosen row we sample three non-negative integers `R`, `T`, and `H` by drawing `u ~ U[0,1)`, squaring it, multiplying by `block_size/4`, and flooring. These act as simple compute budgets:
+`--think N` means “activate thinking on exactly `N` sequences per batch” in training. The training loop first evaluates the untouched batch to collect logits, then chooses the first `N` eligible rows (plus one extra when GRCE dropout fires). For each chosen row we sample three non-negative integers `R`, `T`, and `H` by drawing `u ~ U[0,1)`, squaring it, multiplying by `block_size/4`, and flooring. These act as simple compute budgets:
 
 1. **Repeat phase (`R`).** After every base token we insert `R` `<think>` tokens, truncating any overflow. When `R>0` this dramatically shrinks the effective context and forces the model to reuse the same slot multiple times.
 2. **Targeted inserts (`T`).** We look at the logits we saved earlier and insert `T` more `<think>` tokens, sampling positions proportionally to their probability of emitting `<think>`. This gives the model practice placing thought where it already “wants” it.
