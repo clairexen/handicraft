@@ -825,8 +825,8 @@ MODEL_CONFIG_TEMPLATE = ModelConfig()
 def describe_model_size(config: ModelConfig) -> None:
     model = GRCEGPT(config)
     categories = {
-        "token_embeddings": 0,
-        "position_embeddings": 0,
+        "tokens": 0,
+        "positions": 0,
         "core": 0,
         "context": 0,
     }
@@ -837,14 +837,21 @@ def describe_model_size(config: ModelConfig) -> None:
         "bias": 0,
         "norm": 0,
     }
+    feature_defs = [
+        ("attn qkv", (".attn.key", ".attn.query", ".attn.value"), True),
+        ("attn proj", (".attn.proj",), True),
+        ("ffn fc1", (".ff.fc1",), False),
+        ("ffn fc2", (".ff.fc2",), False),
+    ]
+    feature_totals = {name: 0 for name, _, _ in feature_defs}
     for name, param in model.named_parameters():
         if not param.requires_grad:
             continue
         size = param.numel()
         if name.startswith("core.tok_emb"):
-            categories["token_embeddings"] += size
+            categories["tokens"] += size
         elif name.startswith("core.pos_emb"):
-            categories["position_embeddings"] += size
+            categories["positions"] += size
         elif name.startswith("context"):
             categories["context"] += size
             if ".context_sampler" in name:
@@ -864,24 +871,38 @@ def describe_model_size(config: ModelConfig) -> None:
                         layer_counts[idx] += size
                 except ValueError:
                     pass
+            for feature_name, substrings, _ in feature_defs:
+                if any(sub in name for sub in substrings):
+                    feature_totals[feature_name] += size
+                    break
     total = sum(categories.values())
-    print(
-        f"\nTransformer stack breakdown ({config.n_layer} layers):"
-    )
-    for idx, size in enumerate(layer_counts):
-        mb = size * 4 / 1_000_000
-        print(f"  layer {idx:02d}: {size:>12,d} params ({mb:.2f} MB)")
+    print("\nGlobal resources:")
+    for label in ("tokens", "positions"):
+        mp = categories[label] / 1_000_000
+        print(f"  {label:8s}: {mp:6.3f} MP")
+    print("\nTransformer resources:")
+    stack_total = sum(layer_counts)
+    per_block_mp = stack_total / max(1, config.n_layer) / 1_000_000
+    per_head_mp = per_block_mp / max(1, config.n_head)
+    print(f"  per-block total : {per_block_mp:6.3f} MP")
+    print(f"  per-head total  : {per_head_mp:6.3f} MP")
+    for feature_name, _, has_head in feature_defs:
+        stack = feature_totals[feature_name]
+        block = stack / max(1, config.n_layer)
+        line = f"  {feature_name:12s}: {stack / 1_000_000:6.3f} MP : {block / 1_000_000:6.3f} MP"
+        if has_head:
+            head = block / max(1, config.n_head)
+            line += f" : {head / 1_000_000:6.3f} MP/head"
+        print(line)
     print("\nGRCE resource breakdown:")
     for label, size in context_parts.items():
-        mb = size * 4 / 1_000_000
-        print(f"  {label:10s}: {size:>12,d} params ({mb:.2f} MB)")
+        print(f"  {label:10s}: {size / 1_000_000:.3f} MP")
     print("\nModel parameter breakdown:")
     for label, size in categories.items():
-        mb = size * 4 / 1_000_000
         pct = (size / total * 100) if total else 0
-        print(f"  {label:22s}: {size:>12,d} params ({mb:.2f} MB, {pct:.1f}%)")
+        print(f"  {label:12s}: {size / 1_000_000:.3f} MP ({pct:5.1f}%)")
     if total:
-        print(f"  {'total':22s}: {total:>12,d} params ({total*4/1_000_000:.2f} MB)")
+        print(f"  total        : {total / 1_000_000:.3f} MP")
 
 
 class CausalSelfAttention(nn.Module):
