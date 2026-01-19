@@ -1710,7 +1710,10 @@ def train_model(
         if reward_relu > 0
         else None
     )
-    prompt_queue = list(cycle_prompt_indices or [])
+    if prompt_tracker is not None:
+        prompt_queue = prompt_tracker.pending_indices()
+    else:
+        prompt_queue = []
     show_think_columns = think_enabled
     show_target_headers = think_enabled or undo_enabled
     nogrce_interval = max(0, int(nogrce_interval))
@@ -1840,7 +1843,7 @@ def train_model(
                 default_prompt_boundary and boundary_blocklist is not None
             )
             current_prompt_idx = None
-            if prompt_tracker is not None and prompt_queue:
+            if prompt_tracker is not None:
                 while prompt_queue and prompt_tracker.is_completed(prompt_queue[0]):
                     prompt_queue.pop(0)
                 if prompt_queue:
@@ -2765,12 +2768,7 @@ def parse_args() -> argparse.Namespace:
         default=5,
         help="How many mini-batches to average for evaluation losses.",
     )
-    training_group.add_argument(
-        "--prompt-cycle-prompts",
-        type=int,
-        default=10,
-        help="How many unsatisfied prompts to test each cycle",
-    )
+
 
     sampling_group = parser.add_argument_group("Sampling & reporting")
     sampling_group.add_argument(
@@ -3539,14 +3537,6 @@ def main() -> None:
             label = "".join(tags + plus_tags + minus_tags)
             hours = total_train_wall / 3600.0
             days = hours / 24.0
-            cycle_prompt_indices: List[int] | None = None
-            if prompt_tracker is not None and args.prompt_cycle_prompts > 0:
-                cycle_prompt_indices = prompt_tracker.pending_indices(args.prompt_cycle_prompts)
-                if cycle_prompt_indices:
-                    preview_lines = []
-                    for idx in cycle_prompt_indices:
-                        text, expected = PROMPT_GOALS[idx]
-                        preview_lines.append(f"#{idx + 1}: '{text}' -> '{expected}'")
             train_chars_cycle = (args.block_size + 1) * args.batch_size * args.steps
             test_chars_cycle = (
                 (args.block_size + 1)
@@ -3611,7 +3601,7 @@ def main() -> None:
                 nogrce_interval=args.nogrce_interval,
                 cycle_wall_start=cycle_wall,
                 base_wall_seconds=total_train_wall,
-                cycle_prompt_indices=cycle_prompt_indices,
+                cycle_prompt_indices=None,
                 show_time=args.time,
                 underline_tokens=args.underline,
                 default_prompt_boundary=default_prompt_boundary,
