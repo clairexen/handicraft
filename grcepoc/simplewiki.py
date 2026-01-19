@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import collections
 import gzip
+import math
 import pathlib
 import re
 
@@ -23,8 +24,7 @@ def analyze_lines(
     *,
     word_re: re.Pattern[str],
     top_k: int = 5,
-    strip_threshold: int,
-) -> tuple[dict[str, int], int, set[str]]:
+) -> dict[str, int]:
     word_counts: dict[str, int] = collections.Counter()
     for line in lines:
         words = set(word_re.findall(line.lower()))
@@ -39,20 +39,7 @@ def analyze_lines(
     print("Least popular words (line coverage):")
     for word, count in sorted_words[:top_k]:
         print(f"  {word:20s} {count:>8d}")
-    strip_words = {
-        word for word, count in word_counts.items() if count <= max(1, strip_threshold)
-    }
-    strip_lines = 0
-    if strip_words:
-        for line in lines:
-            if any(word in strip_words for word in word_re.findall(line.lower())):
-                strip_lines += 1
-    percent = (strip_lines / len(lines)) * 100 if lines else 0.0
-    print(
-        f"Lines containing strip words (<= {strip_threshold} lines): "
-        f"{strip_lines:,} ({percent:.2f}% of corpus)"
-    )
-    return word_counts, strip_lines, strip_words
+    return word_counts
 
 
 def parse_args() -> argparse.Namespace:
@@ -91,30 +78,43 @@ def main() -> None:
             print(f"\nIteration {iteration}: no lines remain, stopping early.")
             break
         print(f"\nIteration {iteration}: analyzing {len(current_lines):,} lines")
-        word_counts, _, strip_words = analyze_lines(
-            current_lines,
-            word_re=word_re,
-            strip_threshold=max(1, args.strip),
-        )
+        word_counts = analyze_lines(current_lines, word_re=word_re)
         stop_words = {
             word for word, count in word_counts.items() if count <= max(1, args.stop)
         }
         if not stop_words:
             print(f"No words remain with <= {args.stop} lines; stopping.")
             break
-        if not strip_words:
-            print("No words meet strip threshold; stopping.")
+        score_entries = []
+        for idx, line in enumerate(current_lines):
+            words = word_re.findall(line.lower())
+            if not words:
+                score = 0.0
+            else:
+                accum = 0.0
+                for word in words:
+                    count = word_counts.get(word, 1)
+                    accum += math.log(max(count, 1)) ** 2
+                score = math.sqrt(accum / len(words))
+            score_entries.append((score, idx, line))
+        score_entries.sort()
+        strip_count = min(len(score_entries), max(1, args.strip))
+        if strip_count <= 0:
+            print("Strip count is zero; stopping.")
             break
-        filtered = []
-        for line in current_lines:
-            line_words = set(word_re.findall(line.lower()))
-            if not any(word in strip_words for word in line_words):
-                filtered.append(line)
-        removed = len(current_lines) - len(filtered)
+        removed_indices = {score_entries[i][1] for i in range(strip_count)}
+        removed_scores = [score_entries[i][0] for i in range(strip_count)]
+        min_score = removed_scores[0]
+        max_score = removed_scores[-1]
         print(
-            f"Filtered out {removed:,} lines containing words with <= {args.strip} lines."
+            f"Removing {strip_count} lowest-scoring lines: "
+            f"scores {min_score:.4f} – {max_score:.4f}"
         )
-        current_lines = filtered
+        current_lines = [
+            line
+            for idx, line in enumerate(current_lines)
+            if idx not in removed_indices
+        ]
 
 
 if __name__ == "__main__":
