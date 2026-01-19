@@ -2312,7 +2312,7 @@ def parse_args() -> argparse.Namespace:
         "--tokenizer-vocab",
         type=int,
         default=defaults.vocab_size,
-        help="Vocabulary size for the GPT-2 style byte-level BPE tokenizer.",
+        help="Total vocabulary size for the GPT-2 style tokenizer (including special tokens)",
     )
     model_group.add_argument(
         "--think",
@@ -2720,10 +2720,11 @@ def main() -> None:
         tok_wall_start = time.time()
         tok_cpu_start = time.process_time()
         vocab_source = full_train_text or ""
+        target_vocab = max(0, args.tokenizer_vocab - 2)
         tokenizer = GPT2TokenizerWrapper(
             vocab_source,
             tokenizer_path,
-            args.tokenizer_vocab,
+            target_vocab,
             pretrained_json=checkpoint_override_tokenizer_json,
         )
         tokenizer_json = checkpoint_override_tokenizer_json
