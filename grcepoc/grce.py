@@ -410,24 +410,43 @@ class GPT2TokenizerWrapper:
 class PromptTracker:
     def __init__(self, tokenizer: GPT2TokenizerWrapper, state: dict | None = None) -> None:
         self.tokenizer = tokenizer
-        self.completed: list[bool] = []
+        self.status: list[int] = []  # 0=unsolved, 1=solved via sampling, 2=solved via argmax
         self._cache: dict[int, torch.Tensor] = {}
         self._expected_token_ids: dict[int, List[int]] = {}
         self.load_state(state)
 
     def load_state(self, state: dict | None) -> None:
-        if state and isinstance(state.get("completed"), list):
-            raw = state.get("completed", [])
-            self.completed = [bool(val) for val in raw][: len(PROMPT_GOALS)]
-        if len(self.completed) != len(PROMPT_GOALS):
-            self.completed = [False] * len(PROMPT_GOALS)
+        total = len(PROMPT_GOALS)
+        raw_status: list[int] | None = None
+        if state and isinstance(state.get("status"), list):
+            raw_status = state.get("status")
+        elif state and isinstance(state.get("completed"), list):
+            raw_status = [2 if bool(val) else 0 for val in state.get("completed", [])]
+        if raw_status is None:
+            self.status = [0] * total
+        else:
+            cleaned: list[int] = []
+            for val in raw_status[:total]:
+                try:
+                    intval = int(val)
+                except (TypeError, ValueError):
+                    intval = 0
+                if intval not in (0, 1, 2):
+                    intval = 2 if intval else 0
+                cleaned.append(intval)
+            if len(cleaned) != total:
+                cleaned.extend([0] * (total - len(cleaned)))
+            self.status = cleaned
 
     def serialize(self) -> dict:
-        return {"completed": list(self.completed)}
+        return {
+            "status": list(self.status),
+            "completed": [val == 2 for val in self.status],
+        }
 
     def next_goal(self) -> tuple[int | None, tuple[str, str] | None]:
-        for idx, done in enumerate(self.completed):
-            if not done:
+        for idx, val in enumerate(self.status):
+            if val < 2:
                 return idx, PROMPT_GOALS[idx]
         return None, None
 
@@ -446,28 +465,47 @@ class PromptTracker:
             self._expected_token_ids[idx] = tensor.tolist()
         return self._expected_token_ids[idx]
 
-    def mark_if_satisfied(self, idx: int, completion_ids: List[int]) -> bool:
-        if idx is None or idx < 0 or idx >= len(self.completed):
-            return False
+    def state(self, idx: int) -> int:
+        if idx < 0 or idx >= len(self.status):
+            return 2
+        return self.status[idx]
+
+    def mark_if_satisfied(
+        self, idx: int, completion_ids: List[int], *, used_argmax: bool
+    ) -> tuple[bool, int, int]:
+        if idx is None or idx < 0 or idx >= len(PROMPT_GOALS):
+            return False, 0, 0
+        prev = self.status[idx]
         expected_ids = self.expected_token_ids(idx)
         if len(completion_ids) < len(expected_ids):
-            return False
-        if completion_ids[: len(expected_ids)] == expected_ids and not self.completed[idx]:
-            self.completed[idx] = True
-            return True
-        return False
+            return False, prev, prev
+        matched = completion_ids[: len(expected_ids)] == expected_ids
+        new_state = prev
+        if matched:
+            if used_argmax:
+                new_state = 2
+            elif prev == 0:
+                new_state = 1
+        self.status[idx] = new_state
+        return matched, prev, new_state
 
     def remaining(self) -> int:
-        return sum(1 for done in self.completed if not done)
+        return sum(1 for val in self.status if val < 2)
 
     def is_completed(self, idx: int | None) -> bool:
-        return idx is None or self.completed[idx]
+        return idx is None or self.status[idx] == 2
 
     def pending_indices(self, limit: int | None = None) -> List[int]:
-        indices = [i for i, done in enumerate(self.completed) if not done]
+        indices = [i for i, val in enumerate(self.status) if val < 2]
         if limit is not None:
             return indices[: max(0, int(limit))]
         return indices
+
+    def counts(self) -> tuple[int, int, int]:
+        random_only = sum(1 for val in self.status if val == 1)
+        solved = sum(1 for val in self.status if val == 2)
+        total = len(self.status)
+        return random_only, solved, total
 
 
 @dataclass
@@ -1687,7 +1725,6 @@ def train_model(
     nogrce_interval: int = 1,
     cycle_wall_start: float,
     base_wall_seconds: float,
-    cycle_prompt_indices: List[int] | None = None,
     show_time: bool = False,
     underline_tokens: bool = False,
     default_prompt_boundary: bool = False,
@@ -1711,9 +1748,18 @@ def train_model(
         else None
     )
     if prompt_tracker is not None:
-        prompt_queue = prompt_tracker.pending_indices()
+        prompt_queue: list[int] = prompt_tracker.pending_indices()
     else:
         prompt_queue = []
+
+    def enqueue_prompt(idx: int, *, front: bool = False) -> None:
+        if prompt_tracker is None or idx is None or idx < 0:
+            return
+        prompt_queue[:] = [existing for existing in prompt_queue if existing != idx]
+        if front:
+            prompt_queue.insert(0, idx)
+        else:
+            prompt_queue.append(idx)
     show_think_columns = think_enabled
     show_target_headers = think_enabled or undo_enabled
     nogrce_interval = max(0, int(nogrce_interval))
@@ -1856,11 +1902,24 @@ def train_model(
                         boundary_blocklist is not None
                         and prompt_needs_boundary(prompt_text)
                     )
-                sample_tokens, prompt_len = generate(
-                    model,
-                    prompt_input.clone(),
-                    sample_chars,
-                    suppress_newlines=suppress_newlines,
+                    state_val = prompt_tracker.state(current_prompt_idx)
+                    if state_val == 1:
+                        use_argmax_completion = True
+                    else:
+                        use_argmax_completion = random.random() < 0.5
+                    sampling_strategy = (
+                        "argmax" if use_argmax_completion else "sample"
+                    )
+                else:
+                    use_argmax_completion = random.random() < 0.5
+                    sampling_strategy = (
+                        "argmax" if use_argmax_completion else "sample"
+                    )
+            sample_tokens, prompt_len = generate(
+                model,
+                prompt_input.clone(),
+                sample_chars,
+                suppress_newlines=suppress_newlines,
                     newline_token_id=newline_token_id,
                     think_settings=think_settings,
                     suppress_think=suppress_think_output,
@@ -1877,15 +1936,26 @@ def train_model(
             completion_ids = sample_ids[prompt_len:]
 
             if prompt_tracker is not None and current_prompt_idx is not None:
-                if prompt_tracker.mark_if_satisfied(current_prompt_idx, completion_ids):
+                matched, prev_state, new_state = prompt_tracker.mark_if_satisfied(
+                    current_prompt_idx,
+                    completion_ids,
+                    used_argmax=use_argmax_completion,
+                )
+                if matched and new_state == 2 and prev_state != 2:
                     expected = prompt_tracker.expected_text(current_prompt_idx)
                     prompt_text = PROMPT_GOALS[current_prompt_idx][0]
+                    mode = "argmax" if use_argmax_completion else "random"
                     print(
                         color_text(
-                            f"Prompt #{current_prompt_idx + 1} satisfied: {prompt_text} (expected '{expected}')",
+                            f"Prompt #{current_prompt_idx + 1} satisfied ({mode}): {prompt_text} (expected '{expected}')",
                             Colors.YELLOW,
                             bold=True,
                         )
+                    )
+                if new_state < 2:
+                    enqueue_prompt(
+                        current_prompt_idx,
+                        front=(new_state == 1),
                     )
 
             prefix_text = color_tokens(
@@ -1918,8 +1988,12 @@ def train_model(
                 if show_think_columns:
                     train_header += "  plain"
                     test_header += "  plain"
-                remaining = prompt_tracker.remaining() if prompt_tracker else 0
-                total_prompts = len(PROMPT_GOALS)
+                if prompt_tracker is not None:
+                    random_only_count, solved_count, total_prompts = prompt_tracker.counts()
+                else:
+                    total_prompts = len(PROMPT_GOALS)
+                    random_only_count = 0
+                    solved_count = 0
                 header_parts: List[str] = []
                 if show_time:
                     header_parts.append("time")
@@ -1927,7 +2001,7 @@ def train_model(
                 header_parts.append(color_text(train_header, Colors.MAGENTA))
                 header_parts.append(color_text(test_header, Colors.GREEN))
                 header_line = " | ".join(header_parts) + color_text(
-                    f" | sample ({total_prompts - remaining}/{total_prompts})",
+                    f" | sample ({random_only_count}/{solved_count}/{total_prompts})",
                     Colors.YELLOW,
                 )
                 print(header_line)
@@ -1973,9 +2047,12 @@ def train_model(
             if show_think_columns:
                 test_parts.append(format_metric("test_nothink", include_target=False))
             test_values = "  ".join(test_parts)
-            total_prompts = len(PROMPT_GOALS)
-            remaining_prompts = prompt_tracker.remaining() if prompt_tracker else total_prompts
-            solved_prompts = total_prompts - remaining_prompts
+            if prompt_tracker is not None:
+                random_only_count, solved_prompts, total_prompts = prompt_tracker.counts()
+            else:
+                total_prompts = len(PROMPT_GOALS)
+                random_only_count = 0
+                solved_prompts = 0
             line_parts: List[str] = []
             if show_time:
                 timestamp = time.strftime("%H:%M", time.localtime())
@@ -3405,9 +3482,7 @@ def main() -> None:
                 )
                 if prompt_tracker.remaining() < len(PROMPT_GOALS):
                     satisfied = [
-                        idx
-                        for idx, done in enumerate(prompt_tracker.completed)
-                        if done
+                        idx for idx, state in enumerate(prompt_tracker.status) if state == 2
                     ]
                     if satisfied:
                         total_prompts = len(PROMPT_GOALS)
@@ -3613,7 +3688,6 @@ def main() -> None:
                 nogrce_interval=args.nogrce_interval,
                 cycle_wall_start=cycle_wall,
                 base_wall_seconds=total_train_wall,
-                cycle_prompt_indices=None,
                 show_time=args.time,
                 underline_tokens=args.underline,
                 default_prompt_boundary=default_prompt_boundary,
