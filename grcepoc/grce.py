@@ -20,7 +20,7 @@ import sys
 import time
 from dataclasses import dataclass, field, asdict, fields
 from datetime import datetime, timezone
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Sequence
 
 import torch
 import torch.nn as nn
@@ -47,6 +47,7 @@ THINK_SYMBOL = "\u2754"  # white question mark
 UNDO_TOKEN = "<undo>"
 UNDO_SYMBOL = "\u21A9"  # leftwards arrow with hook
 ASCII_LETTERS = set(string.ascii_letters)
+ASCII_LOWERCASE = set(string.ascii_lowercase)
 
 PROMPT_GOALS = [
     ("ice", " cold"),
@@ -296,6 +297,7 @@ class GPT2TokenizerWrapper:
         self.other_proform_token_ids = self._collect_proform_token_ids(
             NON_NOUN_PROFORM_WORDS
         )
+        self.leading_alpha_token_ids = sorted(self._collect_leading_alpha_tokens())
 
     def _load_or_train(
         self,
@@ -369,6 +371,20 @@ class GPT2TokenizerWrapper:
                 )
                 if decoded == base:
                     token_ids.add(tok_id)
+        return token_ids
+
+    def _collect_leading_alpha_tokens(self) -> set[int]:
+        token_ids: set[int] = set()
+        for tok_id in self.non_special_ids:
+            try:
+                piece = self.tokenizer.decode([tok_id], clean_up_tokenization_spaces=False)
+            except KeyError:
+                continue
+            if not piece:
+                continue
+            first = piece[0]
+            if first in ASCII_LOWERCASE:
+                token_ids.add(tok_id)
         return token_ids
 
     def is_noun_proform_token(self, token_id: int) -> bool:
@@ -1584,6 +1600,8 @@ def train_model(
     cycle_prompt_indices: List[int] | None = None,
     show_time: bool = False,
     underline_tokens: bool = False,
+    default_prompt_boundary: bool = False,
+    boundary_blocklist: Sequence[int] | None = None,
 ) -> Tuple[int, List[Dict[str, float]]]:
     optim = torch.optim.AdamW(model.parameters(), lr=3e-4)
     total_steps = start_step
@@ -1741,14 +1759,22 @@ def train_model(
                             "ce": float(ce_loss),
                             "learned": float(learned_loss),
                         }
-                prompt_input = sample_prompt
-                current_prompt_idx = None
-                if prompt_tracker is not None and prompt_queue:
-                    while prompt_queue and prompt_tracker.is_completed(prompt_queue[0]):
-                        prompt_queue.pop(0)
-                    if prompt_queue:
-                        current_prompt_idx = prompt_queue.pop(0)
-                        prompt_input = prompt_tracker.prompt_tensor(current_prompt_idx, device)
+            prompt_input = sample_prompt
+            prompt_needs_boundary_flag = (
+                default_prompt_boundary and boundary_blocklist is not None
+            )
+            current_prompt_idx = None
+            if prompt_tracker is not None and prompt_queue:
+                while prompt_queue and prompt_tracker.is_completed(prompt_queue[0]):
+                    prompt_queue.pop(0)
+                if prompt_queue:
+                    current_prompt_idx = prompt_queue.pop(0)
+                    prompt_input = prompt_tracker.prompt_tensor(current_prompt_idx, device)
+                    prompt_text = PROMPT_GOALS[current_prompt_idx][0]
+                    prompt_needs_boundary_flag = (
+                        boundary_blocklist is not None
+                        and prompt_needs_boundary(prompt_text)
+                    )
                 sample_tokens, prompt_len = generate(
                     model,
                     prompt_input.clone(),
@@ -1759,6 +1785,9 @@ def train_model(
                     suppress_think=suppress_think_output,
                     suppress_think_prompt=suppress_think_prompt,
                     think_hard=think_hard,
+                    first_token_blocklist=(
+                        boundary_blocklist if prompt_needs_boundary_flag else None
+                    ),
                 )
             model.train()
             sample_ids = sample_tokens[0].detach().cpu().tolist()
@@ -1916,6 +1945,8 @@ def run_report_mode(
     suppress_think_prompt: bool,
     think_hard: bool,
     underline_tokens: bool = False,
+    default_prompt_boundary: bool = False,
+    boundary_blocklist: Sequence[int] | None = None,
 ) -> None:
     model.eval()
     think_token_id = active_think_token_id(think_settings)
@@ -1935,6 +1966,9 @@ def run_report_mode(
                 suppress_think=suppress_think,
                 suppress_think_prompt=suppress_think_prompt,
                 think_hard=think_hard,
+                first_token_blocklist=(
+                    boundary_blocklist if default_prompt_boundary else None
+                ),
             )
             tokens = generated[0].detach().cpu().tolist()
             prompt_ids = tokens[:prompt_len]
@@ -2234,6 +2268,14 @@ def normalize_prompt(text: str) -> str:
     return text.replace(FANCY_SPACE, " ").replace(FANCY_ENTER, "\n")
 
 
+def prompt_needs_boundary(text: str) -> bool:
+    trimmed = text.rstrip()
+    if not trimmed:
+        return False
+    last = trimmed[-1].lower()
+    return last in ASCII_LOWERCASE
+
+
 def load_checkpoint_payload(path: pathlib.Path, device: torch.device) -> tuple[dict, dict]:
     payload = torch.load(path, map_location=device, weights_only=False)
     if isinstance(payload, dict) and "model" in payload:
@@ -2412,6 +2454,7 @@ def generate(
     suppress_think: bool = False,
     suppress_think_prompt: bool = False,
     think_hard: bool = False,
+    first_token_blocklist: Sequence[int] | None = None,
 ) -> tuple[torch.Tensor, int]:
     model.eval()
     idx = idx.clone()
@@ -2443,6 +2486,8 @@ def generate(
         else:
             idx = expand_prompt_with_thinking(model, idx, think_settings)
             prompt_len = idx.size(1)
+    enforce_first_token_guard = bool(first_token_blocklist)
+    blocklist = list(first_token_blocklist or [])
     for _ in range(steps):
         idx_cond = idx[:, -model.config.block_size :]
         logits, _, _ = model.forward_autoreg(
@@ -2456,6 +2501,8 @@ def generate(
             suppressed_ids.append(int(newline_token_id))
         if suppress_think and think_settings is not None and think_settings.token_id is not None:
             suppressed_ids.append(int(think_settings.token_id))
+        if enforce_first_token_guard and blocklist:
+            suppressed_ids.extend(blocklist)
         if suppressed_ids:
             modified = probs.clone()
             modified[:, suppressed_ids] = 0
@@ -2465,6 +2512,8 @@ def generate(
                 probs[mask] = modified[mask] / sums[mask]
         next_token = torch.multinomial(probs, num_samples=1)
         idx = torch.cat([idx, next_token], dim=1)
+        if enforce_first_token_guard:
+            enforce_first_token_guard = False
     return idx, prompt_len
 
 
@@ -2679,6 +2728,11 @@ def parse_args() -> argparse.Namespace:
         "--think-hard",
         action="store_true",
         help="While processing the prompt, insert thinking tokens after every mispredicted token",
+    )
+    sampling_group.add_argument(
+        "--no-boundary",
+        action="store_true",
+        help="Allow completions to continue immediately after the prompt without enforcing a word boundary",
     )
     sampling_group.add_argument(
         "--underline",
@@ -2991,6 +3045,16 @@ def main() -> None:
             max_pairs=args.undo,
             token_id=tokenizer.undo_id,
             fill_choices=[],
+        )
+
+        enforce_boundary_guard = not args.no_boundary
+        boundary_blocklist = (
+            tokenizer.leading_alpha_token_ids if enforce_boundary_guard else None
+        )
+        default_prompt_boundary = (
+            enforce_boundary_guard
+            and boundary_blocklist is not None
+            and prompt_needs_boundary(args.prompt)
         )
 
         train_tokens, train_text, train_bytes, train_inserts = load_or_prepare_tokens(
@@ -3358,6 +3422,8 @@ def main() -> None:
                 suppress_think_prompt=args.no_think_prompt,
                 think_hard=args.think_hard,
                 underline_tokens=args.underline,
+                default_prompt_boundary=default_prompt_boundary,
+                boundary_blocklist=boundary_blocklist,
             )
             return
 
@@ -3472,6 +3538,8 @@ def main() -> None:
                 cycle_prompt_indices=cycle_prompt_indices,
                 show_time=args.time,
                 underline_tokens=args.underline,
+                default_prompt_boundary=default_prompt_boundary,
+                boundary_blocklist=boundary_blocklist,
             )
             loss_history.extend(updates)
 
