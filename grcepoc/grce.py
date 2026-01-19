@@ -3110,22 +3110,6 @@ def main() -> None:
 
     selected_action = args.command
 
-    if selected_action == "reset":
-        if args.pt is None:
-            raise ValueError("--pt must point to the checkpoint to reset when using the reset command")
-        target_path = args.pt
-        if not target_path.exists():
-            raise FileNotFoundError(f"Checkpoint {target_path} not found")
-        payload = torch.load(target_path, map_location="cpu", weights_only=False)
-        empty_state = {
-            "status": [0] * len(PROMPT_GOALS),
-            "completed": [False] * len(PROMPT_GOALS),
-        }
-        payload["prompt_state"] = empty_state
-        torch.save(payload, target_path)
-        print(color_text(f"Reset prompt tracking in {target_path}", Colors.GREEN))
-        return
-
     checkpoint_override_payload: dict | None = None
     checkpoint_override_config: ModelConfig | None = None
     checkpoint_override_tokenizer_json: str | None = None
@@ -3377,8 +3361,8 @@ def main() -> None:
             prefix = f"{args.corpus}_model_"
             model_path = model_dir / f"{prefix}{model_tag}.pt"
             log_path = model_dir / f"{prefix}{model_tag}.log"
-            print(color_text(f"Model: {model_path}", Colors.CYAN))
-            print(color_text(f"Logfile: {log_path}", Colors.BLUE))
+        print(color_text(f"Model: {model_path}", Colors.CYAN))
+        print(color_text(f"Logfile: {log_path}", Colors.BLUE))
         temp_model = GRCEGPT(config)
         non_emb_params = sum(
             p.numel()
@@ -3414,6 +3398,20 @@ def main() -> None:
             }
             torch.save(init_payload, target_path)
             print(color_text(f"Initialized new checkpoint at {target_path}", Colors.GREEN))
+            return
+
+        if selected_action == "reset":
+            target_path = model_path
+            if not target_path.exists():
+                raise FileNotFoundError(f"Checkpoint {target_path} not found")
+            payload = torch.load(target_path, map_location="cpu", weights_only=False)
+            empty_state = {
+                "status": [0] * len(PROMPT_GOALS),
+                "completed": [False] * len(PROMPT_GOALS),
+            }
+            payload["prompt_state"] = empty_state
+            torch.save(payload, target_path)
+            print(color_text(f"Reset prompt tracking in {target_path}", Colors.GREEN))
             return
 
         cmdline = " ".join(shlex.quote(arg) for arg in sys.argv)
