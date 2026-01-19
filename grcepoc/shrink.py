@@ -31,7 +31,7 @@ def analyze_lines(
         for word in words:
             word_counts[word] += 1
     if not word_counts:
-        return {}, 0, set()
+        return {}
     sorted_words = sorted(word_counts.items(), key=lambda item: item[1])
     print("Most popular words (line coverage):")
     for word, count in reversed(sorted_words[-top_k:]):
@@ -50,6 +50,11 @@ def parse_args() -> argparse.Namespace:
         help="Only analyze the first 10,000 lines",
     )
     parser.add_argument(
+        "--corpus",
+        type=str,
+        help="Corpus base name inside data/ (uses <name>-train.txt.gz)",
+    )
+    parser.add_argument(
         "--strip",
         type=int,
         default=1,
@@ -66,19 +71,26 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    corpus_path = pathlib.Path("data") / "simplewiki-train.txt.gz"
+    if args.corpus:
+        corpus_path = pathlib.Path("data") / f"{args.corpus}-train.txt.gz"
+        test_path = pathlib.Path("data") / f"{args.corpus}-test.txt.gz"
+    else:
+        corpus_path = pathlib.Path("shrink-train.txt")
+        test_path = pathlib.Path("shrink-test.txt")
     lines = read_lines(corpus_path)
     if args.quick_test and len(lines) > 10_000:
         lines = lines[:10_000]
     print(f"Loaded {len(lines):,} lines from {corpus_path}")
     word_re = re.compile(r"[a-z]+")
     current_lines = list(lines)
+    last_word_counts: dict[str, int] = {}
     for iteration in range(1, 11):
         if not current_lines:
             print(f"\nIteration {iteration}: no lines remain, stopping early.")
             break
         print(f"\nIteration {iteration}: analyzing {len(current_lines):,} lines")
         word_counts = analyze_lines(current_lines, word_re=word_re)
+        last_word_counts = word_counts
         stop_words = {
             word for word, count in word_counts.items() if count <= max(1, args.stop)
         }
@@ -115,6 +127,29 @@ def main() -> None:
             for idx, line in enumerate(current_lines)
             if idx not in removed_indices
         ]
+
+    shrink_train_path = pathlib.Path("shrink-train.txt")
+    shrink_train_path.write_text("\n".join(current_lines) + "\n")
+    print(f"\nWrote {len(current_lines):,} shrunk lines to {shrink_train_path}")
+
+    print("\nFiltering test corpus...")
+    try:
+        test_lines = read_lines(test_path)
+    except FileNotFoundError as exc:
+        print(f"warning: {exc}; skipping test shrink")
+        return
+    vocab = set(last_word_counts.keys()) if last_word_counts else set()
+    filtered_test = []
+    for line in test_lines:
+        words = set(word_re.findall(line.lower()))
+        if words and vocab and any(word not in vocab for word in words):
+            continue
+        filtered_test.append(line)
+    shrink_test_path = pathlib.Path("shrint-test.txt")
+    shrink_test_path.write_text("\n".join(filtered_test) + "\n")
+    print(
+        f"Kept {len(filtered_test):,}/{len(test_lines):,} test lines in {shrink_test_path}"
+    )
 
 
 if __name__ == "__main__":
