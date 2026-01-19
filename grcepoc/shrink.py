@@ -126,7 +126,7 @@ def main() -> None:
         print(f"Initial vocabulary size: {len(initial_counts):,}")
     loop_iterations = 0
     if args.loop is not None:
-        loop_iterations = max(0, min(args.loop, 10))
+        loop_iterations = max(0, args.loop)
     last_word_counts: dict[str, int] = {}
     if loop_iterations == 0:
         if args.plot and plot_before is not None:
