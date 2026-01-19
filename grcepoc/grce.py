@@ -2260,7 +2260,7 @@ def parse_args() -> argparse.Namespace:
     generic.add_argument(
         "--corpus",
         type=str,
-        default="simplewiki",
+        default="simplerwiki",
         help="Dataset base name; expects data/<name>-train.txt.gz and ...-test.txt.gz.",
     )
     generic.add_argument(
