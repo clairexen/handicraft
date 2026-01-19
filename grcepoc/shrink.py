@@ -63,8 +63,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--strip",
         type=float,
-        default=1.0,
-        help="Percentage of lines to remove per iteration (default 1%%)",
+        default=5.0,
+        help="Percentage of lines to remove per iteration (default 5%%)",
     )
     parser.add_argument(
         "--stop",
@@ -80,7 +80,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--loop",
         type=int,
-        help="Number of shrink iterations to run (default: 0 = disabled)",
+        default=10,
+        help="Number of shrink iterations to run (default 10)",
     )
     return parser.parse_args()
 
