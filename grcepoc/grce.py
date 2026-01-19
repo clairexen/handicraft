@@ -502,10 +502,10 @@ class PromptTracker:
         return indices
 
     def counts(self) -> tuple[int, int, int]:
-        random_only = sum(1 for val in self.status if val == 1)
+        random_or_better = sum(1 for val in self.status if val > 0)
         solved = sum(1 for val in self.status if val == 2)
         total = len(self.status)
-        return random_only, solved, total
+        return random_or_better, solved, total
 
 
 @dataclass
