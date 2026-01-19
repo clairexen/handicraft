@@ -2588,7 +2588,7 @@ def parse_args() -> argparse.Namespace:
     training_group.add_argument(
         "--batch-size",
         type=int,
-        default=64,
+        default=32,
         help="Number of sequences per optimization step.",
     )
     training_group.add_argument(
