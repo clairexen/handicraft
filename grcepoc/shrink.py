@@ -12,8 +12,6 @@ import re
 
 import matplotlib.pyplot as plt
 
-LOG10 = math.log(10.0)
-
 def read_lines(path: pathlib.Path) -> list[str]:
     if not path.exists():
         raise FileNotFoundError(f"Missing corpus file: {path}")
@@ -90,13 +88,14 @@ def main() -> None:
         lines = lines[:10_000]
     print(f"Loaded {len(lines):,} lines from {corpus_path}")
     word_re = re.compile(r"[a-z]+")
+    scale = 100.0 / math.log(max(len(lines), 2))
     current_lines = list(lines)
     if args.plot:
         word_counts = analyze_lines(current_lines, word_re=word_re)
         if not word_counts:
             print("No words found; nothing to plot.")
             return
-        word_scores = [math.log(max(count, 1)) / LOG10 for count in word_counts.values()]
+        word_scores = [math.log(max(count, 1)) * scale for count in word_counts.values()]
         line_scores: list[float] = []
         for line in current_lines:
             words = word_re.findall(line.lower())
@@ -105,17 +104,17 @@ def main() -> None:
             accum = 0.0
             for word in words:
                 count = word_counts.get(word, 1)
-                log10_val = math.log(max(count, 1)) / LOG10
-                accum += log10_val ** 2
+                weighted = math.log(max(count, 1)) * scale
+                accum += weighted ** 2
             line_scores.append(math.sqrt(accum / len(words)))
         fig, axes = plt.subplots(1, 2, figsize=(12, 5))
         axes[0].hist(word_scores, bins=50, color="skyblue", edgecolor="black")
         axes[0].set_title("Word score distribution")
-        axes[0].set_xlabel("log10(line count)")
+        axes[0].set_xlabel("100 * log(count) / log(total lines)")
         axes[0].set_ylabel("Frequency")
         axes[1].hist(line_scores, bins=50, color="salmon", edgecolor="black")
         axes[1].set_title("Line score distribution")
-        axes[1].set_xlabel("RMS word score per line (log10)")
+        axes[1].set_xlabel("RMS word score per line (scaled)")
         axes[1].set_ylabel("Frequency")
         fig.tight_layout()
         plt.show()
@@ -143,8 +142,8 @@ def main() -> None:
                 accum = 0.0
                 for word in words:
                     count = word_counts.get(word, 1)
-                    log10_val = math.log(max(count, 1)) / LOG10
-                    accum += log10_val ** 2
+                    weighted = math.log(max(count, 1)) * scale
+                    accum += weighted ** 2
                 score = math.sqrt(accum / len(words))
             score_entries.append((score, idx, line))
         score_entries.sort()
