@@ -3042,12 +3042,19 @@ def parse_args() -> argparse.Namespace:
     )
     print_test_parser.set_defaults(command="print_test")
 
+    reset_parser = subparsers.add_parser(
+        "reset",
+        help="Reset prompt-tracking metadata inside a checkpoint",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    reset_parser.set_defaults(command="reset")
+
     args = parser.parse_args()
     if args.command is None:
         parser.print_help()
         parser.exit(
             1,
-            "\nPlease specify a command (train, report, test, size, print-train, print-test, or init).\n",
+            "\nPlease specify a command (train, report, test, size, print-train, print-test, init, or reset).\n",
         )
     if args.tiny:
         def flag_present(flag: str) -> bool:
@@ -3102,6 +3109,22 @@ def main() -> None:
     random.seed(42)
 
     selected_action = args.command
+
+    if selected_action == "reset":
+        if args.pt is None:
+            raise ValueError("--pt must point to the checkpoint to reset when using the reset command")
+        target_path = args.pt
+        if not target_path.exists():
+            raise FileNotFoundError(f"Checkpoint {target_path} not found")
+        payload = torch.load(target_path, map_location="cpu", weights_only=False)
+        empty_state = {
+            "status": [0] * len(PROMPT_GOALS),
+            "completed": [False] * len(PROMPT_GOALS),
+        }
+        payload["prompt_state"] = empty_state
+        torch.save(payload, target_path)
+        print(color_text(f"Reset prompt tracking in {target_path}", Colors.GREEN))
+        return
 
     checkpoint_override_payload: dict | None = None
     checkpoint_override_config: ModelConfig | None = None
