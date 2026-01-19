@@ -57,9 +57,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--strip",
-        type=int,
-        default=1,
-        help="Remove lines containing words that appear in <= N lines (default 1)",
+        type=float,
+        default=1.0,
+        help="Percentage of lines to remove per iteration (default 1%%)",
     )
     parser.add_argument(
         "--stop",
@@ -179,7 +179,9 @@ def main() -> None:
                 score = math.sqrt(accum / len(words))
             score_entries.append((score, idx, line))
         score_entries.sort()
-        strip_count = min(len(score_entries), max(1, args.strip))
+        strip_fraction = max(0.0, args.strip)
+        strip_count = max(1, int(len(score_entries) * strip_fraction / 100.0))
+        strip_count = min(strip_count, len(score_entries))
         if strip_count <= 0:
             print("Strip count is zero; stopping.")
             break
