@@ -50,13 +50,14 @@ ASCII_LETTERS = set(string.ascii_letters)
 ASCII_LOWERCASE = set(string.ascii_lowercase)
 
 PROMPT_GOALS = [
-    ("ice", " cold"),
+    ("ice is", " cold"),
+    ("fire is", " hot"),
     ("one plus one is", " two"),
-    ("the first letter of the alphabet is", " a"),
+    ("the first letter of the alphabet is the letter", " a"),
     ("the color of a red apple is", " red"),
     ("the opposite of hot is", " cold"),
     ("water freezes at", " 0"),
-    ("sun rises in the", " east"),
+    ("the sun rises in the", " east"),
     ("earth's satellite is the", " moon"),
     ("a baby cat is called a", " kitten"),
 ]
