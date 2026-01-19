@@ -80,7 +80,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--loop",
         type=int,
-        help="Number of shrink iterations to run (default: disabled)",
+        help="Number of shrink iterations to run (default: 0 = disabled)",
     )
     return parser.parse_args()
 
@@ -116,7 +116,6 @@ def main() -> None:
 
     plot_before = None
     plot_after = None
-    run_loop = args.loop is not None and args.loop > 0
     plot_path = pathlib.Path(f"shrink-{split_label}.png")
     if args.plot:
         initial_counts = analyze_lines(current_lines, word_re=word_re)
@@ -125,12 +124,11 @@ def main() -> None:
             return
         plot_before = compute_scores(current_lines, initial_counts)
         print(f"Initial vocabulary size: {len(initial_counts):,}")
-    if args.loop and args.loop > 0:
-        max_iterations = min(args.loop, 10)
-    else:
-        max_iterations = 0
+    loop_iterations = 0
+    if args.loop is not None:
+        loop_iterations = max(0, min(args.loop, 10))
     last_word_counts: dict[str, int] = {}
-    if max_iterations == 0:
+    if loop_iterations == 0:
         if args.plot and plot_before is not None:
             fig, axes = plt.subplots(1, 2, figsize=(12, 5))
             axes[0].hist(
@@ -161,7 +159,7 @@ def main() -> None:
         print(f"\nWrote {len(current_lines):,} lines to {output_path}")
         return
 
-    for iteration in range(1, max_iterations + 1):
+    for iteration in range(1, loop_iterations + 1):
         if not current_lines:
             print(f"\nIteration {iteration}: no lines remain, stopping early.")
             break
