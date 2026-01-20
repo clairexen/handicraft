@@ -317,6 +317,8 @@ def plot_metric_traces(
         if not history:
             continue
         x_values = _series_from_field(history, x_field, default_sequence=True)
+        if x_field == "train_wall_seconds":
+            x_values = [val / 3600.0 if not math.isnan(val) else val for val in x_values]
         if not any(not math.isnan(val) for val in x_values):
             continue
         for metric in metrics:
@@ -440,7 +442,7 @@ def main() -> None:
             sources,
             metrics,
             "train_wall_seconds",
-            "Train wall seconds",
+            "Train wall hours",
             relative=args.plot_relative,
             deltas=args.plot_deltas,
             cumulative=args.plot_sum,
