@@ -1763,7 +1763,7 @@ def train_model(
     prompt_tracker: PromptTracker | None = None,
     *,
     reward_relu: bool = False,
-    noctx_interval: int = 1,
+    context_dropout_interval: int = 1,
     cycle_wall_start: float,
     base_wall_seconds: float,
     show_time: bool = False,
@@ -1803,13 +1803,16 @@ def train_model(
             prompt_queue.append(idx)
     show_think_columns = think_enabled
     show_target_headers = think_enabled or undo_enabled
-    noctx_interval = max(0, int(noctx_interval))
+    context_dropout_interval = max(0, int(context_dropout_interval))
     for step in range(1, steps + 1):
         xb, yb = dataset.get_batch("train", block_size, batch_size, device)
         current_step_index = total_steps
-        noctx_active = noctx_interval > 0 and current_step_index % noctx_interval == 0
+        context_dropout_active = (
+            context_dropout_interval > 0
+            and current_step_index % context_dropout_interval == 0
+        )
         disable_rows: set[int] = set()
-        if noctx_active:
+        if context_dropout_active:
             drop_target = 1
             drop_prob = min(1.0, drop_target / max(1, batch_size))
             for row_idx in range(batch_size):
@@ -2873,7 +2876,7 @@ def parse_args() -> argparse.Namespace:
         help="If >0, detach gradients after this Transformer layer (1-based index).",
     )
     training_group.add_argument(
-        "--noctx-interval",
+        "--context-dropout-interval",
         type=int,
         default=1,
         help="Apply context-disable dropout every N steps (0 disables)",
@@ -3761,7 +3764,7 @@ def main() -> None:
                 undo_settings=undo_settings,
                 prompt_tracker=prompt_tracker,
                 reward_relu=reward_scale,
-                noctx_interval=args.noctx_interval,
+                context_dropout_interval=args.context_dropout_interval,
                 cycle_wall_start=cycle_wall,
                 base_wall_seconds=total_train_wall,
                 show_time=args.time,
