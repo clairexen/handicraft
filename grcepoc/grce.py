@@ -3685,6 +3685,10 @@ def main() -> None:
                 plus_tags.append("+GRCE")
             else:
                 minus_tags.append(" wo/GRCE")
+            if args.n_xctx > 0:
+                plus_tags.append("+XCTX")
+            else:
+                minus_tags.append(" wo/XCTX")
             if args.think > 0:
                 plus_tags.append("+THINK")
             else:
