@@ -1152,8 +1152,8 @@ class ModelConfig:
     n_layer: int = 12       # GPT-2 base uses 12 layers.
     n_head: int = 8         # GPT-2 base uses 12 attention heads.
     n_embd: int = 256       # GPT-2 base uses 768 embedding dims.
-    n_grce: int = 64        # GRCE context dims.
-    grce_xctx: bool = False
+    n_grce: int = 64        # Narrow GRCE context dims.
+    n_xctx: int = 0         # Wide (layer-partitioned) context dims.
     dropout: float = 0.05
     detach_span: int = 0    # Detach gradients every N positions (0 disables detaching).
     detach_context: bool = True  # Whether to detach recurring context when span triggers.
@@ -1359,36 +1359,42 @@ class GPTCore(nn.Module):
 
 
 class GRCEContextChannel(nn.Module):
-    def __init__(self, config: ModelConfig) -> None:
+    def __init__(
+        self,
+        config: ModelConfig,
+        *,
+        width: int,
+        layered: bool,
+    ) -> None:
         super().__init__()
-        self.disabled = config.n_grce <= 0
         self.config = config
+        self.context_dim = int(width)
+        self.layered = layered
+        self.disabled = self.context_dim <= 0
         self.detach_span = max(0, int(getattr(config, "detach_span", 0)))
-        self.context_dim = config.n_grce
-        self.layered = config.grce_xctx
         self.detach_context = bool(getattr(config, "detach_context", True))
         if self.layered:
-            if config.n_layer <= 0 or config.n_grce % config.n_layer != 0:
-                raise ValueError("--grce-xctx requires n_grce to be divisible by n_layer")
-            self.layer_chunk = config.n_grce // config.n_layer
+            if config.n_layer <= 0 or self.context_dim % config.n_layer != 0:
+                raise ValueError("--n-xctx requires n_xctx to be divisible by n_layer")
+            self.layer_chunk = self.context_dim // config.n_layer
         else:
             self.layer_chunk = None
         if not self.disabled:
-            mid = 2 * config.n_grce if self.layered else 4 * config.n_grce
+            mid = 2 * self.context_dim if self.layered else 4 * self.context_dim
             self.pre_norms = nn.ModuleList(
                 nn.LayerNorm(config.n_embd) for _ in range(config.n_layer)
             )
             self.context_sampler = nn.ModuleList(
-                [self._build_sampler(config.n_embd, config.n_grce) for _ in range(config.n_layer)]
+                [self._build_sampler(config.n_embd, self.context_dim) for _ in range(config.n_layer)]
             )
             self.context_mlp = nn.Sequential(
-                nn.Linear(config.n_grce, mid),
+                nn.Linear(self.context_dim, mid),
                 nn.ReLU(),
-                nn.Linear(mid, config.n_grce),
+                nn.Linear(mid, self.context_dim),
             )
-            self.context_norm = nn.LayerNorm(config.n_grce)
+            self.context_norm = nn.LayerNorm(self.context_dim)
             self.context_bias_gen = nn.ModuleList(
-                [self._build_bias(config.n_grce, config.n_embd) for _ in range(config.n_layer)]
+                [self._build_bias(self.context_dim, config.n_embd) for _ in range(config.n_layer)]
             )
 
     def _build_sampler(self, in_dim: int, out_dim: int) -> nn.Module:
@@ -1447,7 +1453,15 @@ class GRCEGPT(nn.Module):
         super().__init__()
         self.config = config
         self.core = GPTCore(config)
-        self.context = GRCEContextChannel(config)
+        self.context_channels: list[GRCEContextChannel] = []
+        if config.n_grce > 0:
+            self.context_channels.append(
+                GRCEContextChannel(config, width=config.n_grce, layered=False)
+            )
+        if config.n_xctx > 0:
+            self.context_channels.append(
+                GRCEContextChannel(config, width=config.n_xctx, layered=True)
+            )
 
     def forward_autoreg(
         self,
@@ -1461,11 +1475,17 @@ class GRCEGPT(nn.Module):
     ) -> Tuple[torch.Tensor, torch.Tensor | None, dict | None]:
         B, T = idx.shape
         device = idx.device
-        use_context = not self.context.disabled and not disable_context
-        context = None
+        active_channels: list[GRCEContextChannel] = []
+        if not disable_context:
+            for channel in self.context_channels:
+                if channel.disabled:
+                    continue
+                active_channels.append(channel)
+        use_context = bool(active_channels)
+        context_states: list[torch.Tensor] = []
         if use_context:
-            context_dim = self.context.context_dim
-            context = torch.zeros(B, context_dim, device=device)
+            for channel in active_channels:
+                context_states.append(torch.zeros(B, channel.context_dim, device=device))
         logits_steps = []
         hidden_steps = []
         pos_counters = torch.zeros(B, dtype=torch.long, device=device)
@@ -1517,19 +1537,27 @@ class GRCEGPT(nn.Module):
             pos_counters = pos_counters + content_mask.to(pos_counters.dtype)
             token_input = tok_last + pos_emb
             block_biases = None
-            if use_context and context is not None:
-                bias_vectors = self.context.project(context)
-                block_biases = []
-                for bias_vec in bias_vectors:
-                    full = torch.zeros(
-                        B,
-                        prefix.size(1),
-                        self.config.n_embd,
-                        device=device,
-                        dtype=bias_vec.dtype,
-                    )
-                    full[:, -1, :] = bias_vec
-                    block_biases.append(full)
+            if use_context:
+                for channel, state in zip(active_channels, context_states):
+                    bias_vectors = channel.project(state)
+                    channel_biases: list[torch.Tensor] = []
+                    for bias_vec in bias_vectors:
+                        full = torch.zeros(
+                            B,
+                            prefix.size(1),
+                            self.config.n_embd,
+                            device=device,
+                            dtype=bias_vec.dtype,
+                        )
+                        full[:, -1, :] = bias_vec
+                        channel_biases.append(full)
+                    if block_biases is None:
+                        block_biases = channel_biases
+                    else:
+                        for layer_idx in range(len(block_biases)):
+                            block_biases[layer_idx] = (
+                                block_biases[layer_idx] + channel_biases[layer_idx]
+                            )
             logits, hidden_layer, block_inputs, layer_masks = self.core(
                 prefix,
                 block_biases=block_biases,
@@ -1543,22 +1571,24 @@ class GRCEGPT(nn.Module):
                     activation_store["block_norms"][layer_idx].extend(
                         norms.cpu().tolist()
                     )
-            if use_context and context is not None:
-                span = self.context.detach_span
-                if span <= 0:
-                    stop_grad = False
-                elif span == 1:
-                    stop_grad = True
-                else:
-                    stop_grad = (t % span == 0)
-                context, raw_context = self.context.update(
-                    block_inputs,
-                    prev_context=context,
-                    stop_grad=stop_grad,
-                )
-                if activation_store is not None:
-                    ctx_norms = torch.linalg.vector_norm(raw_context.detach(), dim=-1)
-                    activation_store["context_norms"].extend(ctx_norms.cpu().tolist())
+            if use_context:
+                for idx_ch, channel in enumerate(active_channels):
+                    span = channel.detach_span
+                    if span <= 0:
+                        stop_grad = False
+                    elif span == 1:
+                        stop_grad = True
+                    else:
+                        stop_grad = (t % span == 0)
+                    new_state, raw_context = channel.update(
+                        block_inputs,
+                        prev_context=context_states[idx_ch],
+                        stop_grad=stop_grad,
+                    )
+                    context_states[idx_ch] = new_state
+                    if activation_store is not None:
+                        ctx_norms = torch.linalg.vector_norm(raw_context.detach(), dim=-1)
+                        activation_store["context_norms"].extend(ctx_norms.cpu().tolist())
             logits_steps.append(logits[:, -1:, :])
             hidden_steps.append(hidden_layer[:, -1:, :])
         logits = torch.cat(logits_steps, dim=1)
@@ -1572,11 +1602,12 @@ class GRCEGPT(nn.Module):
 
 
 def build_model_tag(config: ModelConfig) -> str:
-    ctx_prefix = "xctx" if config.grce_xctx else "ctx"
     tag = (
         f"v{config.vocab_size}_bs{config.block_size}_emb{config.n_embd}_"
-        f"layers{config.n_layer}_heads{config.n_head}_{ctx_prefix}{config.n_grce}"
+        f"layers{config.n_layer}_heads{config.n_head}_ctx{config.n_grce}"
     )
+    if config.n_xctx > 0:
+        tag += f"_xctx{config.n_xctx}"
     return tag
 
 
@@ -2780,11 +2811,11 @@ def parse_args() -> argparse.Namespace:
         help="Enable undo pairs with up to N random+undo sequences per block",
     )
     model_group.add_argument(
-        "--grce-xctx",
-        action="store_true",
+        "--n-xctx",
+        type=int,
+        default=0,
         help=(
-            "Split the GRCE context into per-layer chunks with independent samplers/decoders "
-            "(requires n_grce %% n_layer == 0)"
+            "Dimension of the wide (layer-partitioned) context channel; requires n_xctx to be divisible by n_layer"
         ),
     )
     model_group.add_argument(
@@ -3131,6 +3162,14 @@ def main() -> None:
                 raise ValueError(
                     "Checkpoint lacks config metadata; re-save it with the latest format."
                 )
+            saved_config = dict(saved_config)
+            legacy_xctx = bool(saved_config.pop("grce_xctx", False))
+            if "n_xctx" not in saved_config:
+                if legacy_xctx:
+                    saved_config["n_xctx"] = int(saved_config.get("n_grce", 0))
+                    saved_config["n_grce"] = 0
+                else:
+                    saved_config["n_xctx"] = 0
             checkpoint_override_config = ModelConfig(**saved_config)
             checkpoint_override_tokenizer_json = checkpoint_override_payload.get(
                 "tokenizer_json"
@@ -3140,11 +3179,11 @@ def main() -> None:
             args.n_head = checkpoint_override_config.n_head
             args.n_embd = checkpoint_override_config.n_embd
             args.n_grce = checkpoint_override_config.n_grce
+            args.n_xctx = checkpoint_override_config.n_xctx
             args.dropout = checkpoint_override_config.dropout
             args.detach_span = checkpoint_override_config.detach_span
             args.no_detach_ctx = not checkpoint_override_config.detach_context
             args.detach_layer = checkpoint_override_config.detach_layer
-            args.grce_xctx = checkpoint_override_config.grce_xctx
             args.tokenizer_vocab = checkpoint_override_config.vocab_size
 
     ansi_file = None
@@ -3326,6 +3365,8 @@ def main() -> None:
         )
         print(tok_summary)
 
+        if args.n_xctx > 0 and args.n_xctx % max(1, args.n_layer) != 0:
+            raise ValueError("--n-xctx must be divisible by --n-layer")
         config = checkpoint_override_config or ModelConfig(
             vocab_size=tokenizer.vocab_size,
             block_size=args.block_size,
@@ -3333,9 +3374,9 @@ def main() -> None:
             n_head=args.n_head,
             n_embd=args.n_embd,
             n_grce=args.n_grce,
+            n_xctx=args.n_xctx,
             dropout=args.dropout,
             detach_span=max(0, args.detach_span),
-            grce_xctx=args.grce_xctx,
             detach_context=(not args.no_detach_ctx),
             detach_layer=max(-1, args.detach_layer),
         )

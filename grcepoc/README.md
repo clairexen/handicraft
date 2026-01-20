@@ -42,6 +42,8 @@ For every `<think>` slot we compute the normal CE using a decoder with the `<thi
 
 During sampling/reporting we flip a coin for each completion: heads means argmax, tails means sampling from the predicted distribution. Prompts that have only been solved via the random path stay in the queue and are retried with argmax until the top candidate alone satisfies the goal. The progress header shows `sample (random-only/argmax/total)` so you can track both counts at a glance, and completions generated via argmax are the only ones rendered in bold.
 
+The recurrent context has two independent width knobs. `--n-grce` controls the narrow GRCE bottleneck, while `--n-xctx` enables a per-layer “wide” channel. You can use either on its own or enable both to run a low-bandwidth recurrent shortcut alongside a higher-bandwidth per-layer path, with their projected biases simply adding together before they enter each Transformer block.
+
 ## Undo tokens
 
 `--undo N` injects up to `U≤N` *undo pairs* into every training block. Each pair contributes a random filler token immediately followed by a dedicated `<undo>` marker (rendered as `↩` in the logs). We shorten the base chunk to `block_size - T - 2U` tokens so the augmented sample still fits the configured block size, splice the undo pairs in sequence (allowing nesting when a later pair lands inside an earlier one), and only then insert the `T` think tokens. During loss computation the filler tokens are ignored entirely, while the `<undo>` tokens are enforced like any other label so the model learns to clean up after each random detour. Undo pairs stay in-place for all evaluations, keeping the reported losses comparable to standard runs while giving the sampler a reversible scratch pad it can lean on during training.
