@@ -95,11 +95,6 @@ def parse_args() -> argparse.Namespace:
         help="Write per-source JSON files into the specified directory",
     )
     parser.add_argument(
-        "--plot-steps",
-        nargs="*",
-        help="Plot step vs metric (default: test_loss)",
-    )
-    parser.add_argument(
         "--step-period",
         type=int,
         default=0,
@@ -121,14 +116,19 @@ def parse_args() -> argparse.Namespace:
         help="Plot the cumulative sum (integral) of each trace",
     )
     parser.add_argument(
+        "--plot-steps",
+        nargs="*",
+        help="Plot step vs metric (default: test_loss); use ':' to split metrics into subplots",
+    )
+    parser.add_argument(
         "--plot-time",
         nargs="*",
-        help="Plot train_wall_seconds vs metric (default: test_loss)",
+        help="Plot train_wall_seconds vs metric (default: test_loss); ':' makes separate subplots",
     )
     parser.add_argument(
         "--plot-timestamp",
         nargs="*",
-        help="Plot unix_time vs metric (default: test_loss)",
+        help="Plot unix_time vs metric (default: test_loss); ':' makes separate subplots",
     )
     return parser.parse_args()
 
@@ -305,9 +305,23 @@ def _apply_transforms(
     return x_proc, y_proc
 
 
+def _build_metric_groups(values: list[str] | None, fallback: list[str]) -> list[list[str]]:
+    if not values:
+        return [list(fallback)]
+    groups: list[list[str]] = [[]]
+    for token in values:
+        if token == ":":
+            if groups[-1]:
+                groups.append([])
+            continue
+        groups[-1].append(token)
+    groups = [group for group in groups if group]
+    return groups or [list(fallback)]
+
+
 def plot_metric_traces(
     sources: List[Tuple[str, List[Dict[str, float]]]],
-    metrics: List[str],
+    metric_groups: List[List[str]],
     x_field: str,
     x_label: str,
     *,
@@ -316,42 +330,54 @@ def plot_metric_traces(
     deltas: bool = False,
     cumulative: bool = False,
 ) -> None:
-    fig, ax = plt.subplots(figsize=(10, 5))
-    for label, history in sources:
-        if not history:
-            continue
-        x_values = _series_from_field(history, x_field, default_sequence=True)
-        if x_field == "train_wall_seconds":
-            x_values = [val / 3600.0 if not math.isnan(val) else val for val in x_values]
-        if not any(not math.isnan(val) for val in x_values):
-            continue
-        for metric in metrics:
-            y_values = _series_from_field(history, metric)
-            if not any(not math.isnan(val) for val in y_values):
+    num_groups = max(1, len(metric_groups))
+    fig, axes = plt.subplots(
+        num_groups,
+        1,
+        figsize=(10, 4 * num_groups),
+        sharex=True,
+    )
+    if num_groups == 1:
+        axes = [axes]
+    for idx_ax, (ax, metrics) in enumerate(zip(axes, metric_groups)):
+        for label, history in sources:
+            if not history:
                 continue
-            x_series = x_values
-            y_series = y_values
-            if x_field == "step" and step_period > 1:
-                y_segments = _split_segments(y_series, step_period)
-                x_segments = [list(range(len(seg))) for seg in y_segments]
-            else:
-                y_segments = [y_series]
-                x_segments = [x_series]
-            for x_seg, y_seg in zip(x_segments, y_segments):
-                x_plot, y_plot = _apply_transforms(
-                    x_seg,
-                    y_seg,
-                    relative=relative,
-                    deltas=deltas,
-                    cumulative=cumulative,
-                )
-                if not y_plot:
+            x_values = _series_from_field(history, x_field, default_sequence=True)
+            if x_field == "train_wall_seconds":
+                x_values = [val / 3600.0 if not math.isnan(val) else val for val in x_values]
+            if not any(not math.isnan(val) for val in x_values):
+                continue
+            for metric in metrics:
+                y_values = _series_from_field(history, metric)
+                if not any(not math.isnan(val) for val in y_values):
                     continue
-                ax.plot(x_plot, y_plot, label=f"{label} – {metric}")
-    ax.set_xlabel(x_label)
-    ax.set_ylabel("")
-    ax.set_title("")
-    ax.legend()
+                x_series = x_values
+                y_series = y_values
+                if x_field == "step" and step_period > 1:
+                    y_segments = _split_segments(y_series, step_period)
+                    x_segments = [list(range(len(seg))) for seg in y_segments]
+                else:
+                    y_segments = [y_series]
+                    x_segments = [x_series]
+                for x_seg, y_seg in zip(x_segments, y_segments):
+                    x_plot, y_plot = _apply_transforms(
+                        x_seg,
+                        y_seg,
+                        relative=relative,
+                        deltas=deltas,
+                        cumulative=cumulative,
+                    )
+                    if not y_plot:
+                        continue
+                    ax.plot(x_plot, y_plot, label=f"{label} – {metric}")
+        ylabel = ", ".join(metrics) if metrics else "metric"
+        ax.set_ylabel(ylabel)
+        if idx_ax == num_groups - 1:
+            ax.set_xlabel(x_label)
+        else:
+            ax.set_xlabel("")
+        ax.legend()
     fig.tight_layout()
     plt.show()
 
@@ -428,10 +454,10 @@ def main() -> None:
                     print(f"copied log to {dest_log}")
         performed = True
     if args.plot_steps is not None:
-        metrics = args.plot_steps if args.plot_steps else ["test_loss"]
+        metric_groups = _build_metric_groups(args.plot_steps, ["test_loss"])
         plot_metric_traces(
             sources,
-            metrics,
+            metric_groups,
             "step",
             "Step",
             step_period=args.step_period,
@@ -441,10 +467,10 @@ def main() -> None:
         )
         performed = True
     if args.plot_time is not None:
-        metrics = args.plot_time if args.plot_time else ["test_loss"]
+        metric_groups = _build_metric_groups(args.plot_time, ["test_loss"])
         plot_metric_traces(
             sources,
-            metrics,
+            metric_groups,
             "train_wall_seconds",
             "Train wall hours",
             relative=args.plot_relative,
@@ -453,10 +479,10 @@ def main() -> None:
         )
         performed = True
     if args.plot_timestamp is not None:
-        metrics = args.plot_timestamp if args.plot_timestamp else ["test_loss"]
+        metric_groups = _build_metric_groups(args.plot_timestamp, ["test_loss"])
         plot_metric_traces(
             sources,
-            metrics,
+            metric_groups,
             "unix_time",
             "Unix time",
             relative=args.plot_relative,
