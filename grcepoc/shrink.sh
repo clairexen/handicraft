@@ -13,6 +13,6 @@ gzip --rsyncable -9 < shrink-test.txt > data/simplerwiki-test.txt.gz
 for x in 1 2 3; do python shrink.py --test; done
 gzip --rsyncable -9 < shrink-test.txt > data/simplestwiki-test.txt.gz
 
-rm -f data/simple{,r,st}wiki_tokens_test_2000.pt
+rm -vf data/simple{,r,st}wiki_tokens_{test,train}_2000.pt
 rm -f shrink-{train,test}.{txt,png}
 exit 0
