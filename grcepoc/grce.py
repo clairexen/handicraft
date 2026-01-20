@@ -1453,7 +1453,7 @@ class GRCEGPT(nn.Module):
         super().__init__()
         self.config = config
         self.core = GPTCore(config)
-        self.context_channels: list[GRCEContextChannel] = []
+        self.context_channels = nn.ModuleList()
         if config.n_grce > 0:
             self.context_channels.append(
                 GRCEContextChannel(config, width=config.n_grce, layered=False)
