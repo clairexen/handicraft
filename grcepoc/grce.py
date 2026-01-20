@@ -2448,25 +2448,23 @@ def train_model(
                     return " -- "
                 return f"{value:.2f}"
 
-            train_parts = [
-                format_metric("train", key)
-                for _, key in normal_group + diag_group
-            ]
-            if show_think_columns:
-                train_parts.extend(
-                    format_metric("train", key) for _, key in think_group
+            def format_groups(split: str) -> str:
+                normal_vals = "  ".join(
+                    format_metric(split, key) for _, key in normal_group
                 )
-            train_values = "  ".join(train_parts)
+                diag_vals = "  ".join(
+                    format_metric(split, key) for _, key in diag_group
+                )
+                pieces = [normal_vals, diag_vals]
+                if show_think_columns:
+                    think_vals = "  ".join(
+                        format_metric(split, key) for _, key in think_group
+                    )
+                    pieces.append(think_vals)
+                return " : ".join(pieces)
 
-            test_parts = [
-                format_metric("test", key)
-                for _, key in normal_group + diag_group
-            ]
-            if show_think_columns:
-                test_parts.extend(
-                    format_metric("test", key) for _, key in think_group
-                )
-            test_values = "  ".join(test_parts)
+            train_values = format_groups("train")
+            test_values = format_groups("test")
             if prompt_tracker is not None:
                 random_only_count, solved_prompts, total_prompts = prompt_tracker.counts()
             else:
@@ -3213,8 +3211,8 @@ def parse_args() -> argparse.Namespace:
         "--tiny",
         action="store_true",
         help=(
-            "Shortcut for --block-size 16 --batch-size 4 --n-layer 2 --n-head 2 "
-            "--n-embd 64 --n-grce 16"
+            "Shortcut for --batch-size 8 --block-size 8 --n-layer 3 --n-head 2 "
+            "--n-embd 8 --n-grce 4 --n-xctx 12 --steps 2 --cycles 1"
         ),
     )
 
@@ -3488,19 +3486,23 @@ def parse_args() -> argparse.Namespace:
             return any(arg == flag or arg.startswith(f"{flag}=") for arg in raw_cli_args)
 
         if not flag_present("--block-size"):
-            args.block_size = 16
+            args.block_size = 8
         if not flag_present("--batch-size"):
-            args.batch_size = 4
+            args.batch_size = 8
         if not flag_present("--n-layer"):
-            args.n_layer = 6
+            args.n_layer = 3
         if not flag_present("--n-head"):
-            args.n_head = 4
+            args.n_head = 2
         if not flag_present("--n-embd"):
-            args.n_embd = 32
+            args.n_embd = 8
         if not flag_present("--n-grce"):
-            args.n_grce = 12
+            args.n_grce = 4
         if not flag_present("--n-xctx"):
-            args.n_xctx = 48
+            args.n_xctx = 12
+        if not flag_present("--steps"):
+            args.steps = 2
+        if not flag_present("--cycles"):
+            args.cycles = 1
         if not flag_present("--corpus"):
             args.corpus = "simplestwiki"
     return args
