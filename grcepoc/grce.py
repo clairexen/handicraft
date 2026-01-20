@@ -1778,6 +1778,7 @@ def evaluate_split(
     iters: int,
     *,
     disable_context: bool = False,
+    disable_attention: bool = False,
     think_settings: ThinkSettings | None = None,
     undo_settings: UndoSettings | None = None,
     batches: list[tuple[torch.Tensor, torch.Tensor]] | None = None,
@@ -1800,10 +1801,16 @@ def evaluate_split(
             disable_think_rows=None,
             forced_think_rows=None,
         )
+        attention_disabled_rows = None
+        if disable_attention:
+            attention_disabled_rows = torch.ones(
+                aug_xb.size(0), dtype=torch.bool, device=device
+            )
         raw_logits, _, _ = model.forward_autoreg(
             aug_xb,
             disable_context=disable_context,
             think_token_id=think_token_id,
+            attention_disabled_rows=attention_disabled_rows,
         )
         logits_main = disable_think_logits(raw_logits.clone(), think_settings)
         logits_main = apply_think_slot_mask(logits_main, think_slot_mask, think_settings)
@@ -2053,7 +2060,11 @@ def train_model(
                         dataset.get_batch(split, block_size, batch_size, device)
                         for _ in range(eval_iters)
                     ]
-                    for suffix, disable in (("", False), ("_noctx", True)):
+                    for suffix, disable_ctx, disable_att in (
+                        ("", False, False),
+                        ("_noctx", True, False),
+                        ("_noatt", False, True),
+                    ):
                         ce_loss, learned_loss = evaluate_split(
                             model,
                             dataset,
@@ -2062,7 +2073,8 @@ def train_model(
                             batch_size,
                             split,
                             eval_iters,
-                            disable_context=disable,
+                            disable_context=disable_ctx,
+                            disable_attention=disable_att,
                             think_settings=think_settings,
                             undo_settings=undo_settings,
                             batches=cached_batches[split],
@@ -2185,11 +2197,13 @@ def train_model(
             colored_sample = prefix_text + completion_text
             if not printed_header:
                 if show_target_headers:
-                    train_header = "train loss (target)  noctx (target)"
-                    test_header = "test loss (target)  noctx (target)"
+                    train_header = (
+                        "train loss (target)  noctx (target)  noatt (target)"
+                    )
+                    test_header = "test loss (target)  noctx (target)  noatt (target)"
                 else:
-                    train_header = "train loss  noctx"
-                    test_header = "test loss  noctx"
+                    train_header = "train loss  noctx  noatt"
+                    test_header = "test loss  noctx  noatt"
                 if show_think_columns:
                     train_header += "  plain"
                     test_header += "  plain"
@@ -2240,6 +2254,7 @@ def train_model(
             train_parts = [
                 format_metric("train"),
                 format_metric("train_noctx"),
+                format_metric("train_noatt"),
             ]
             if show_think_columns:
                 train_parts.append(format_metric("train_nothink", include_target=False))
@@ -2248,6 +2263,7 @@ def train_model(
             test_parts = [
                 format_metric("test"),
                 format_metric("test_noctx"),
+                format_metric("test_noatt"),
             ]
             if show_think_columns:
                 test_parts.append(format_metric("test_nothink", include_target=False))
@@ -2277,10 +2293,14 @@ def train_model(
                 "train_target": float(split_metrics["train"]["learned"]),
                 "train_loss_noctx": float(split_metrics["train_noctx"]["ce"]),
                 "train_target_noctx": float(split_metrics["train_noctx"]["learned"]),
+                "train_loss_noatt": float(split_metrics["train_noatt"]["ce"]),
+                "train_target_noatt": float(split_metrics["train_noatt"]["learned"]),
                 "test_loss": float(split_metrics["test"]["ce"]),
                 "test_target": float(split_metrics["test"]["learned"]),
                 "test_loss_noctx": float(split_metrics["test_noctx"]["ce"]),
                 "test_target_noctx": float(split_metrics["test_noctx"]["learned"]),
+                "test_loss_noatt": float(split_metrics["test_noatt"]["ce"]),
+                "test_target_noatt": float(split_metrics["test_noatt"]["learned"]),
                 "train_wall_seconds": float(total_wall_seconds),
                 "unix_time": float(eval_now),
                 "train_cursor": int(dataset.positions.get("train", 0)),

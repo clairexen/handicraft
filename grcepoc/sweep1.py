@@ -16,9 +16,11 @@ LEGACY_TARGET_FIELDS = {
     "train_loss_learned": "train_target",
     "train_loss_nogrce_learned": "train_target_noctx",
     "train_loss_noctx_learned": "train_target_noctx",
+    "train_loss_noatt_learned": "train_target_noatt",
     "test_loss_learned": "test_target",
     "test_loss_nogrce_learned": "test_target_noctx",
     "test_loss_noctx_learned": "test_target_noctx",
+    "test_loss_noatt_learned": "test_target_noatt",
 }
 
 LEGACY_PLAIN_FIELDS = {
@@ -28,11 +30,13 @@ LEGACY_PLAIN_FIELDS = {
     "test_loss_nothink_learned": "test_target",
 }
 
-LEGACY_NOCTX_FIELDS = {
+LEGACY_SPECIAL_FIELDS = {
     "train_loss_nogrce": "train_loss_noctx",
     "test_loss_nogrce": "test_loss_noctx",
     "train_nogrce": "train_noctx",
     "test_nogrce": "test_noctx",
+    "train_loss_noatt": "train_loss_noatt",
+    "test_loss_noatt": "test_loss_noatt",
 }
 
 
@@ -49,7 +53,7 @@ def normalize_history_entry(entry: Dict[str, float]) -> Dict[str, float]:
 
     apply_aliases(LEGACY_TARGET_FIELDS)
     apply_aliases(LEGACY_PLAIN_FIELDS)
-    apply_aliases(LEGACY_NOCTX_FIELDS)
+    apply_aliases(LEGACY_SPECIAL_FIELDS)
     return normalized
 
 
@@ -61,6 +65,8 @@ class LossRecord:
     test: List[float]
     train_noctx: Optional[List[float]] = None
     test_noctx: Optional[List[float]] = None
+    train_noatt: Optional[List[float]] = None
+    test_noatt: Optional[List[float]] = None
 
 
 def load_records(json_paths: Iterable[pathlib.Path]) -> List[LossRecord]:
@@ -100,6 +106,8 @@ def load_records(json_paths: Iterable[pathlib.Path]) -> List[LossRecord]:
         test_ng = extract_series("test_loss_noctx")
         if test_ng is None:
             test_ng = extract_series("test_loss_nogrce")
+        train_noatt = extract_series("train_loss_noatt")
+        test_noatt = extract_series("test_loss_noatt")
         if not train and not test:
             continue
         records.append(
@@ -110,6 +118,8 @@ def load_records(json_paths: Iterable[pathlib.Path]) -> List[LossRecord]:
                 test=[float(v) for v in test],
                 train_noctx=[float(v) for v in train_ng] if train_ng else None,
                 test_noctx=[float(v) for v in test_ng] if test_ng else None,
+                train_noatt=[float(v) for v in train_noatt] if train_noatt else None,
+                test_noatt=[float(v) for v in test_noatt] if test_noatt else None,
             )
         )
     return records
@@ -143,6 +153,16 @@ def load_store(path: pathlib.Path) -> List[LossRecord]:
                     if entry.get("test_noctx") or entry.get("test_nogrce")
                     else None
                 ),
+                train_noatt=(
+                    list(map(float, entry.get("train_noatt", [])))
+                    if entry.get("train_noatt")
+                    else None
+                ),
+                test_noatt=(
+                    list(map(float, entry.get("test_noatt", [])))
+                    if entry.get("test_noatt")
+                    else None
+                ),
             )
         )
     return records
@@ -155,6 +175,7 @@ def store_records(
     include_train: bool,
     include_test: bool,
     include_noctx: bool,
+    include_noatt: bool,
 ) -> None:
     payload = [
         {
@@ -170,6 +191,16 @@ def store_records(
             **(
                 {"test_noctx": rec.test_noctx}
                 if include_test and include_noctx and rec.test_noctx is not None
+                else {}
+            ),
+            **(
+                {"train_noatt": rec.train_noatt}
+                if include_train and include_noatt and rec.train_noatt is not None
+                else {}
+            ),
+            **(
+                {"test_noatt": rec.test_noatt}
+                if include_test and include_noatt and rec.test_noatt is not None
                 else {}
             ),
         }
@@ -204,6 +235,11 @@ def parse_args() -> argparse.Namespace:
         "--noctx",
         action="store_true",
         help="Display context-disabled (noctx) traces (hidden by default)",
+    )
+    parser.add_argument(
+        "--noatt",
+        action="store_true",
+        help="Display attention-disabled (noatt) traces (hidden by default)",
     )
     parser.add_argument(
         "--default-test",
@@ -263,6 +299,7 @@ def main() -> None:
         args.train = False
         args.train_and_test = False
         args.noctx = False
+        args.noatt = False
     if args.stored:
         records = load_store(args.stored)
     else:
@@ -304,6 +341,8 @@ def main() -> None:
                     test=test_avg or base.test,
                     train_noctx=None,
                     test_noctx=None,
+                    train_noatt=None,
+                    test_noatt=None,
                 )
             )
 
@@ -326,6 +365,7 @@ def main() -> None:
             include_train=show_train,
             include_test=show_test,
             include_noctx=args.noctx,
+            include_noatt=args.noatt,
         )
         if args.store_only:
             return
@@ -355,6 +395,8 @@ def main() -> None:
         rec.scaled_test = compute_scaled_series(rec.test, is_think=is_think)
         rec.scaled_train_noctx = compute_scaled_series(rec.train_noctx, is_think=is_think)
         rec.scaled_test_noctx = compute_scaled_series(rec.test_noctx, is_think=is_think)
+        rec.scaled_train_noatt = compute_scaled_series(rec.train_noatt, is_think=is_think)
+        rec.scaled_test_noatt = compute_scaled_series(rec.test_noatt, is_think=is_think)
 
     steps_per_cycle = 100
     print(f"Loaded {len(records)} trace(s):")
@@ -398,6 +440,7 @@ def main() -> None:
         else:
             solid_style = "-"
         noctx_style = "-."
+        noatt_style = "--"
         line_width = 3.0 if is_think else 1.5
         if show_train and rec.train:
             train_values = rec.scaled_train
@@ -421,6 +464,17 @@ def main() -> None:
                     marker=None,
                     linewidth=line_width,
                 )
+            if rec.train_noatt and args.noatt:
+                noatt_values = rec.scaled_train_noatt or rec.train_noatt
+                noatt_line, = ax.plot(
+                    rec.scaled_steps,
+                    noatt_values,
+                    label=f"{label} train (noatt)",
+                    linestyle=noatt_style,
+                    color=base_color,
+                    marker=None,
+                    linewidth=line_width,
+                )
         if show_test and rec.test:
             test_values = rec.scaled_test
             test_line, = ax.plot(
@@ -439,6 +493,17 @@ def main() -> None:
                     noctx_test_values,
                     label=f"{label} test (noctx)",
                     linestyle=noctx_style,
+                    color=base_color,
+                    marker=None,
+                    linewidth=line_width,
+                )
+            if rec.test_noatt and args.noatt:
+                noatt_test_values = rec.scaled_test_noatt or rec.test_noatt
+                noatt_line, = ax.plot(
+                    rec.scaled_steps,
+                    noatt_test_values,
+                    label=f"{label} test (noatt)",
+                    linestyle=noatt_style,
                     color=base_color,
                     marker=None,
                     linewidth=line_width,

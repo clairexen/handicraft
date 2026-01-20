@@ -15,9 +15,11 @@ LEGACY_TARGET_FIELDS = {
     "train_loss_learned": "train_target",
     "train_loss_nogrce_learned": "train_target_noctx",
     "train_loss_noctx_learned": "train_target_noctx",
+    "train_loss_noatt_learned": "train_target_noatt",
     "test_loss_learned": "test_target",
     "test_loss_nogrce_learned": "test_target_noctx",
     "test_loss_noctx_learned": "test_target_noctx",
+    "test_loss_noatt_learned": "test_target_noatt",
 }
 
 LEGACY_NOCTX_FIELDS = {
@@ -40,10 +42,14 @@ ALLOWED_FIELDS = {
     "train_target",
     "train_loss_noctx",
     "train_target_noctx",
+    "train_loss_noatt",
+    "train_target_noatt",
     "test_loss",
     "test_target",
     "test_loss_noctx",
     "test_target_noctx",
+    "test_loss_noatt",
+    "test_target_noatt",
     "train_loss_plain",
     "test_loss_plain",
     "train_wall_seconds",
