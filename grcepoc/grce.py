@@ -1364,41 +1364,44 @@ class GRCEContextChannel(nn.Module):
         config: ModelConfig,
         *,
         width: int,
-        layered: bool,
+        is_xctx: bool,
     ) -> None:
         super().__init__()
         self.config = config
         self.context_dim = int(width)
-        self.layered = layered
+        self.is_xctx = is_xctx
         self.disabled = self.context_dim <= 0
         self.detach_span = max(0, int(getattr(config, "detach_span", 0)))
         self.detach_context = bool(getattr(config, "detach_context", True))
-        if self.layered:
+        if self.is_xctx:
             if config.n_layer <= 0 or self.context_dim % config.n_layer != 0:
                 raise ValueError("--n-xctx requires n_xctx to be divisible by n_layer")
             self.layer_chunk = self.context_dim // config.n_layer
         else:
             self.layer_chunk = None
         if not self.disabled:
-            mid = 2 * self.context_dim if self.layered else 4 * self.context_dim
             self.pre_norms = nn.ModuleList(
                 nn.LayerNorm(config.n_embd) for _ in range(config.n_layer)
             )
             self.context_sampler = nn.ModuleList(
                 [self._build_sampler(config.n_embd, self.context_dim) for _ in range(config.n_layer)]
             )
-            self.context_mlp = nn.Sequential(
-                nn.Linear(self.context_dim, mid),
-                nn.ReLU(),
-                nn.Linear(mid, self.context_dim),
-            )
+            if self.is_xctx:
+                self.context_mlp = None
+            else:
+                mid = 4 * self.context_dim
+                self.context_mlp = nn.Sequential(
+                    nn.Linear(self.context_dim, mid),
+                    nn.ReLU(),
+                    nn.Linear(mid, self.context_dim),
+                )
             self.context_norm = nn.LayerNorm(self.context_dim)
             self.context_bias_gen = nn.ModuleList(
                 [self._build_bias(self.context_dim, config.n_embd) for _ in range(config.n_layer)]
             )
 
     def _build_sampler(self, in_dim: int, out_dim: int) -> nn.Module:
-        if not self.layered or self.layer_chunk is None:
+        if not self.is_xctx or self.layer_chunk is None:
             return nn.Linear(in_dim, out_dim)
         chunk = self.layer_chunk
         return nn.Sequential(
@@ -1407,7 +1410,7 @@ class GRCEContextChannel(nn.Module):
         )
 
     def _build_bias(self, in_dim: int, out_dim: int) -> nn.Module:
-        if not self.layered or self.layer_chunk is None:
+        if not self.is_xctx or self.layer_chunk is None:
             return nn.Linear(in_dim, out_dim)
         chunk = self.layer_chunk
         return nn.Sequential(
@@ -1440,9 +1443,12 @@ class GRCEContextChannel(nn.Module):
             detach_prev = stop_grad and self.detach_context
             residual = prev_context.detach() if detach_prev else prev_context
             fused = fused + residual
-        context = self.context_mlp(fused)
-        if prev_context is not None:
-            context = context + residual
+        if self.context_mlp is not None:
+            context = self.context_mlp(fused)
+            if prev_context is not None:
+                context = context + residual
+        else:
+            context = fused
         raw_context = context
         context = self.context_norm(context)
         return context, raw_context
@@ -1456,11 +1462,11 @@ class GRCEGPT(nn.Module):
         self.context_channels = nn.ModuleList()
         if config.n_grce > 0:
             self.context_channels.append(
-                GRCEContextChannel(config, width=config.n_grce, layered=False)
+                GRCEContextChannel(config, width=config.n_grce, is_xctx=False)
             )
         if config.n_xctx > 0:
             self.context_channels.append(
-                GRCEContextChannel(config, width=config.n_xctx, layered=True)
+                GRCEContextChannel(config, width=config.n_xctx, is_xctx=True)
             )
 
     def forward_autoreg(
