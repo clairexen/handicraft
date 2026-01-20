@@ -12,16 +12,7 @@ import re
 import matplotlib.pyplot as plt
 
 
-LEGACY_TARGET_FIELDS = {
-    "train_loss_learned": "train_target",
-    "train_loss_nogrce_learned": "train_target_noctx",
-    "train_loss_noctx_learned": "train_target_noctx",
-    "train_loss_noatt_learned": "train_target_noatt",
-    "test_loss_learned": "test_target",
-    "test_loss_nogrce_learned": "test_target_noctx",
-    "test_loss_noctx_learned": "test_target_noctx",
-    "test_loss_noatt_learned": "test_target_noatt",
-}
+LEGACY_TARGET_FIELDS = {}
 
 LEGACY_NOTHINK_FIELDS = {
     "train_loss_plain": "train_loss_nothink",

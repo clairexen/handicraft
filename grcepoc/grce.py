@@ -1782,9 +1782,8 @@ def evaluate_split(
     think_settings: ThinkSettings | None = None,
     undo_settings: UndoSettings | None = None,
     batches: list[tuple[torch.Tensor, torch.Tensor]] | None = None,
-) -> tuple[float, float]:
+) -> float:
     ce_losses = []
-    learned_losses = []
     if batches is None:
         batches = [
             dataset.get_batch(split, block_size, batch_size, device) for _ in range(iters)
@@ -1822,27 +1821,15 @@ def evaluate_split(
             reduction="none",
             ignore_index=LOSS_IGNORE_INDEX,
         )
-        per_token_matrix = per_token.view_as(loss_targets)
         valid_mask = loss_targets != LOSS_IGNORE_INDEX
         denom = valid_mask.sum().item()
         if denom == 0:
             main_loss = per_token.sum() * 0
         else:
             main_loss = per_token.sum() / denom
-        align_loss = compute_think_alignment_loss(
-            model,
-            raw_logits,
-            aug_xb,
-            loss_targets,
-            per_token_matrix.detach(),
-            think_settings,
-        )
-        total_loss = main_loss + align_loss
         ce_losses.append(main_loss.item())
-        learned_losses.append(total_loss.item())
     ce_avg = sum(ce_losses) / len(ce_losses)
-    learned_avg = sum(learned_losses) / len(learned_losses)
-    return ce_avg, learned_avg
+    return ce_avg
 
 
 def train_model(
@@ -2065,7 +2052,7 @@ def train_model(
                         ("_noctx", True, False),
                         ("_noatt", False, True),
                     ):
-                        ce_loss, learned_loss = evaluate_split(
+                        ce_loss = evaluate_split(
                             model,
                             dataset,
                             device,
@@ -2081,10 +2068,9 @@ def train_model(
                         )
                         split_metrics[f"{split}{suffix}"] = {
                             "ce": float(ce_loss),
-                            "learned": float(learned_loss),
                         }
                     if think_settings is not None and think_settings.enabled:
-                        ce_loss, learned_loss = evaluate_split(
+                        ce_loss = evaluate_split(
                             model,
                             dataset,
                             device,
@@ -2099,7 +2085,6 @@ def train_model(
                         )
                         split_metrics[f"{split}_nothink"] = {
                             "ce": float(ce_loss),
-                            "learned": float(learned_loss),
                         }
             prompt_input = sample_prompt
             prompt_needs_boundary_flag = (
@@ -2170,9 +2155,10 @@ def train_model(
                         )
                     )
                 if new_state < 2:
+                    front_requeue = new_state == 1 and prev_state == 0
                     enqueue_prompt(
                         current_prompt_idx,
-                        front=(new_state == 1),
+                        front=front_requeue,
                     )
 
             prefix_text = color_tokens(
@@ -2196,14 +2182,8 @@ def train_model(
             )
             colored_sample = prefix_text + completion_text
             if not printed_header:
-                if show_target_headers:
-                    train_header = (
-                        "train loss (target)  noctx (target)  noatt (target)"
-                    )
-                    test_header = "test loss (target)  noctx (target)  noatt (target)"
-                else:
-                    train_header = "train loss  noctx  noatt"
-                    test_header = "test loss  noctx  noatt"
+                train_header = "train loss  noctx  noatt"
+                test_header = "test loss  noctx  noatt"
                 if show_think_columns:
                     train_header += "  nothink"
                     test_header += "  nothink"
@@ -2226,29 +2206,9 @@ def train_model(
                 print(header_line)
                 printed_header = True
 
-            hidden_target_warning_emitted = False
-
-            def format_metric(key: str, *, include_target: bool = True) -> str:
-                nonlocal hidden_target_warning_emitted
+            def format_metric(key: str) -> str:
                 metric = split_metrics[key]
                 ce_val = metric["ce"]
-                target_val = metric["learned"]
-                differs = abs(target_val - ce_val) >= 1e-6
-                if (
-                    not show_target_headers
-                    and differs
-                    and not hidden_target_warning_emitted
-                    and include_target
-                ):
-                    print(
-                        color_text(
-                            "warning: target values differ but target columns are hidden",
-                            Colors.YELLOW,
-                        )
-                    )
-                    hidden_target_warning_emitted = True
-                if show_target_headers and include_target:
-                    return f"{ce_val:.2f} ({target_val:.2f})"
                 return f"{ce_val:.2f}"
 
             train_parts = [
@@ -2257,7 +2217,7 @@ def train_model(
                 format_metric("train_noatt"),
             ]
             if show_think_columns:
-                train_parts.append(format_metric("train_nothink", include_target=False))
+                train_parts.append(format_metric("train_nothink"))
             train_values = "  ".join(train_parts)
 
             test_parts = [
@@ -2266,7 +2226,7 @@ def train_model(
                 format_metric("test_noatt"),
             ]
             if show_think_columns:
-                test_parts.append(format_metric("test_nothink", include_target=False))
+                test_parts.append(format_metric("test_nothink"))
             test_values = "  ".join(test_parts)
             if prompt_tracker is not None:
                 random_only_count, solved_prompts, total_prompts = prompt_tracker.counts()
@@ -2290,17 +2250,11 @@ def train_model(
             record = {
                 "step": total_steps,
                 "train_loss": float(split_metrics["train"]["ce"]),
-                "train_target": float(split_metrics["train"]["learned"]),
                 "train_loss_noctx": float(split_metrics["train_noctx"]["ce"]),
-                "train_target_noctx": float(split_metrics["train_noctx"]["learned"]),
                 "train_loss_noatt": float(split_metrics["train_noatt"]["ce"]),
-                "train_target_noatt": float(split_metrics["train_noatt"]["learned"]),
                 "test_loss": float(split_metrics["test"]["ce"]),
-                "test_target": float(split_metrics["test"]["learned"]),
                 "test_loss_noctx": float(split_metrics["test_noctx"]["ce"]),
-                "test_target_noctx": float(split_metrics["test_noctx"]["learned"]),
                 "test_loss_noatt": float(split_metrics["test_noatt"]["ce"]),
-                "test_target_noatt": float(split_metrics["test_noatt"]["learned"]),
                 "train_wall_seconds": float(total_wall_seconds),
                 "unix_time": float(eval_now),
                 "train_cursor": int(dataset.positions.get("train", 0)),
@@ -3742,13 +3696,36 @@ def main() -> None:
                     )
                 )
                 if prompt_tracker.remaining() < len(PROMPT_GOALS):
-                    satisfied = [
+                    solved_argmax = [
                         idx for idx, state in enumerate(prompt_tracker.status) if state == 2
                     ]
-                    if satisfied:
-                        total_prompts = len(PROMPT_GOALS)
+                    solved_random_only = [
+                        idx for idx, state in enumerate(prompt_tracker.status) if state == 1
+                    ]
+                    total_prompts = len(PROMPT_GOALS)
+                    if solved_random_only:
                         lines = []
-                        for idx in satisfied:
+                        for idx in solved_random_only:
+                            text, expected = PROMPT_GOALS[idx]
+                            lines.append(
+                                color_text(
+                                    f"#{idx + 1}: '{text}' -> '{expected}'",
+                                    Colors.YELLOW,
+                                )
+                            )
+                        print(
+                            "\n"
+                            + color_text(
+                                f"Random-only prompts ({len(solved_random_only)}/{total_prompts}):",
+                                Colors.YELLOW,
+                                bold=True,
+                            )
+                            + "\n"
+                            + "\n".join(lines)
+                        )
+                    if solved_argmax:
+                        lines = []
+                        for idx in solved_argmax:
                             text, expected = PROMPT_GOALS[idx]
                             lines.append(
                                 color_text(
@@ -3759,7 +3736,7 @@ def main() -> None:
                         print(
                             "\n"
                             + color_text(
-                                f"Satisfied prompts ({len(satisfied)}/{total_prompts}):",
+                                f"Argmax-satisfied prompts ({len(solved_argmax)}/{total_prompts}):",
                                 Colors.GREEN,
                                 bold=True,
                             )

@@ -11,25 +11,11 @@ from typing import Dict, Iterable, List, Tuple
 
 import matplotlib.pyplot as plt
 
-LEGACY_TARGET_FIELDS = {
-    "train_loss_learned": "train_target",
-    "train_loss_nogrce_learned": "train_target_noctx",
-    "train_loss_noctx_learned": "train_target_noctx",
-    "train_loss_noatt_learned": "train_target_noatt",
-    "test_loss_learned": "test_target",
-    "test_loss_nogrce_learned": "test_target_noctx",
-    "test_loss_noctx_learned": "test_target_noctx",
-    "test_loss_noatt_learned": "test_target_noatt",
-}
+LEGACY_TARGET_FIELDS = {}
 
-LEGACY_NOCTX_FIELDS = {
+LEGACY_SPECIAL_FIELDS = {
     "train_loss_nogrce": "train_loss_noctx",
-    "train_target_nogrce": "train_target_noctx",
     "test_loss_nogrce": "test_loss_noctx",
-    "test_target_nogrce": "test_target_noctx",
-}
-
-LEGACY_NOTHINK_FIELDS = {
     "train_loss_plain": "train_loss_nothink",
     "test_loss_plain": "test_loss_nothink",
 }
@@ -37,17 +23,11 @@ LEGACY_NOTHINK_FIELDS = {
 ALLOWED_FIELDS = {
     "step",
     "train_loss",
-    "train_target",
     "train_loss_noctx",
-    "train_target_noctx",
     "train_loss_noatt",
-    "train_target_noatt",
     "test_loss",
-    "test_target",
     "test_loss_noctx",
-    "test_target_noctx",
     "test_loss_noatt",
-    "test_target_noatt",
     "train_loss_nothink",
     "test_loss_nothink",
     "train_wall_seconds",
@@ -182,8 +162,7 @@ def normalize_entry(entry: Dict[str, float]) -> Dict[str, float]:
                 out[new_key] = value
 
     apply_alias(LEGACY_TARGET_FIELDS)
-    apply_alias(LEGACY_NOTHINK_FIELDS)
-    apply_alias(LEGACY_NOCTX_FIELDS)
+    apply_alias(LEGACY_SPECIAL_FIELDS)
     filtered = {k: v for k, v in out.items() if k in ALLOWED_FIELDS}
     return filtered
 
