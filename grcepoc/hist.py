@@ -29,11 +29,9 @@ LEGACY_NOCTX_FIELDS = {
     "test_target_nogrce": "test_target_noctx",
 }
 
-LEGACY_PLAIN_FIELDS = {
-    "train_loss_nothink": "train_loss_plain",
-    "test_loss_nothink": "test_loss_plain",
-    "train_loss_nothink_learned": "train_target",
-    "test_loss_nothink_learned": "test_target",
+LEGACY_NOTHINK_FIELDS = {
+    "train_loss_plain": "train_loss_nothink",
+    "test_loss_plain": "test_loss_nothink",
 }
 
 ALLOWED_FIELDS = {
@@ -50,8 +48,8 @@ ALLOWED_FIELDS = {
     "test_target_noctx",
     "test_loss_noatt",
     "test_target_noatt",
-    "train_loss_plain",
-    "test_loss_plain",
+    "train_loss_nothink",
+    "test_loss_nothink",
     "train_wall_seconds",
     "unix_time",
     "train_cursor",
@@ -184,7 +182,7 @@ def normalize_entry(entry: Dict[str, float]) -> Dict[str, float]:
                 out[new_key] = value
 
     apply_alias(LEGACY_TARGET_FIELDS)
-    apply_alias(LEGACY_PLAIN_FIELDS)
+    apply_alias(LEGACY_NOTHINK_FIELDS)
     apply_alias(LEGACY_NOCTX_FIELDS)
     filtered = {k: v for k, v in out.items() if k in ALLOWED_FIELDS}
     return filtered

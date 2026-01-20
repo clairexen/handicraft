@@ -2205,8 +2205,8 @@ def train_model(
                     train_header = "train loss  noctx  noatt"
                     test_header = "test loss  noctx  noatt"
                 if show_think_columns:
-                    train_header += "  plain"
-                    test_header += "  plain"
+                    train_header += "  nothink"
+                    test_header += "  nothink"
                 if prompt_tracker is not None:
                     random_only_count, solved_count, total_prompts = prompt_tracker.counts()
                 else:
@@ -2307,8 +2307,8 @@ def train_model(
                 "test_cursor": int(dataset.positions.get("test", 0)),
             }
             if "train_nothink" in split_metrics:
-                record["train_loss_plain"] = float(split_metrics["train_nothink"]["ce"])
-                record["test_loss_plain"] = float(split_metrics["test_nothink"]["ce"])
+                record["train_loss_nothink"] = float(split_metrics["train_nothink"]["ce"])
+                record["test_loss_nothink"] = float(split_metrics["test_nothink"]["ce"])
             history_updates.append(record)
     
     if reward_tracker is not None:

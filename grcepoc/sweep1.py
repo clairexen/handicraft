@@ -23,11 +23,9 @@ LEGACY_TARGET_FIELDS = {
     "test_loss_noatt_learned": "test_target_noatt",
 }
 
-LEGACY_PLAIN_FIELDS = {
-    "train_loss_nothink": "train_loss_plain",
-    "test_loss_nothink": "test_loss_plain",
-    "train_loss_nothink_learned": "train_target",
-    "test_loss_nothink_learned": "test_target",
+LEGACY_NOTHINK_FIELDS = {
+    "train_loss_plain": "train_loss_nothink",
+    "test_loss_plain": "test_loss_nothink",
 }
 
 LEGACY_SPECIAL_FIELDS = {
@@ -52,7 +50,7 @@ def normalize_history_entry(entry: Dict[str, float]) -> Dict[str, float]:
                 normalized[new_key] = value
 
     apply_aliases(LEGACY_TARGET_FIELDS)
-    apply_aliases(LEGACY_PLAIN_FIELDS)
+    apply_aliases(LEGACY_NOTHINK_FIELDS)
     apply_aliases(LEGACY_SPECIAL_FIELDS)
     return normalized
 
