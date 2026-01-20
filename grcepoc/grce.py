@@ -2242,7 +2242,7 @@ def train_model(
                         dataset.get_batch(split, block_size, batch_size, device)
                         for _ in range(eval_iters)
                     ]
-                    split_metrics[split]["normal"] = float(
+                    split_metrics[split]["with_think"] = float(
                         evaluate_split(
                             model,
                             dataset,
@@ -2264,7 +2264,22 @@ def train_model(
                         undo_settings=None,
                         batches=cached_batches[split],
                     )
-                    split_metrics[split]["noctx"] = float(
+                    split_metrics[split]["plain"] = float(
+                        evaluate_split(
+                            model,
+                            dataset,
+                            device,
+                            block_size,
+                            batch_size,
+                            split,
+                            eval_iters,
+                            disable_context=False,
+                            disable_xctx=False,
+                            disable_attention=False,
+                            **plain_kwargs,
+                        )
+                    )
+                    split_metrics[split]["plain_noctx"] = float(
                         evaluate_split(
                             model,
                             dataset,
@@ -2279,7 +2294,7 @@ def train_model(
                             **plain_kwargs,
                         )
                     )
-                    split_metrics[split]["noatt"] = float(
+                    split_metrics[split]["plain_noatt"] = float(
                         evaluate_split(
                             model,
                             dataset,
@@ -2294,7 +2309,7 @@ def train_model(
                             **plain_kwargs,
                         )
                     )
-                    split_metrics[split]["none"] = float(
+                    split_metrics[split]["plain_none"] = float(
                         evaluate_split(
                             model,
                             dataset,
@@ -2411,10 +2426,6 @@ def train_model(
                 context_prefix=prompt_ids,
             )
             colored_sample = prefix_text + completion_text
-            normal_group = [("normal", "normal")]
-            diag_group = [("noctx", "noctx"), ("noatt", "noatt"), ("none", "none")]
-            think_group = [("think", "think"), ("2x", "think2x"), ("3x", "think3x")]
-
             if not printed_header:
                 if prompt_tracker is not None:
                     random_only_count, solved_count, total_prompts = prompt_tracker.counts()
@@ -2422,13 +2433,11 @@ def train_model(
                     total_prompts = len(PROMPT_GOALS)
                     random_only_count = 0
                     solved_count = 0
-                base_labels = [label for label, _ in normal_group + diag_group]
-                train_header = "train loss : " + " ".join(base_labels)
-                test_header = "test loss : " + " ".join(base_labels)
+                train_header = "train loss : normal noctx noatt none"
+                test_header = "test loss : normal noctx noatt none"
                 if show_think_columns:
-                    think_labels = [label for label, _ in think_group]
-                    train_header += " : " + " ".join(think_labels)
-                    test_header += " : " + " ".join(think_labels)
+                    train_header += " : think 2x 3x"
+                    test_header += " : think 2x 3x"
                 header_parts: List[str] = []
                 if show_time:
                     header_parts.append("time")
@@ -2448,23 +2457,23 @@ def train_model(
                     return " -- "
                 return f"{value:.2f}"
 
-            def format_groups(split: str) -> str:
-                normal_vals = "  ".join(
-                    format_metric(split, key) for _, key in normal_group
-                )
+            def format_line(split: str) -> str:
+                primary = format_metric(split, "with_think")
                 diag_vals = "  ".join(
-                    format_metric(split, key) for _, key in diag_group
+                    format_metric(split, key)
+                    for key in ("plain", "plain_noctx", "plain_noatt", "plain_none")
                 )
-                pieces = [normal_vals, diag_vals]
+                parts = [primary, diag_vals]
                 if show_think_columns:
                     think_vals = "  ".join(
-                        format_metric(split, key) for _, key in think_group
+                        format_metric(split, key)
+                        for key in ("think", "think2x", "think3x")
                     )
-                    pieces.append(think_vals)
-                return " : ".join(pieces)
+                    parts.append(think_vals)
+                return " : ".join(parts)
 
-            train_values = format_groups("train")
-            test_values = format_groups("test")
+            train_values = format_line("train")
+            test_values = format_line("test")
             if prompt_tracker is not None:
                 random_only_count, solved_prompts, total_prompts = prompt_tracker.counts()
             else:
@@ -2486,14 +2495,16 @@ def train_model(
 
             record = {
                 "step": total_steps,
-                "train_loss": float(split_metrics["train"].get("normal", 0.0)),
-                "train_loss_noctx": float(split_metrics["train"].get("noctx", 0.0)),
-                "train_loss_noatt": float(split_metrics["train"].get("noatt", 0.0)),
-                "train_loss_none": float(split_metrics["train"].get("none", 0.0)),
-                "test_loss": float(split_metrics["test"].get("normal", 0.0)),
-                "test_loss_noctx": float(split_metrics["test"].get("noctx", 0.0)),
-                "test_loss_noatt": float(split_metrics["test"].get("noatt", 0.0)),
-                "test_loss_none": float(split_metrics["test"].get("none", 0.0)),
+                "train_loss": float(split_metrics["train"].get("with_think", 0.0)),
+                "train_loss_plain": float(split_metrics["train"].get("plain", 0.0)),
+                "train_loss_noctx": float(split_metrics["train"].get("plain_noctx", 0.0)),
+                "train_loss_noatt": float(split_metrics["train"].get("plain_noatt", 0.0)),
+                "train_loss_none": float(split_metrics["train"].get("plain_none", 0.0)),
+                "test_loss": float(split_metrics["test"].get("with_think", 0.0)),
+                "test_loss_plain": float(split_metrics["test"].get("plain", 0.0)),
+                "test_loss_noctx": float(split_metrics["test"].get("plain_noctx", 0.0)),
+                "test_loss_noatt": float(split_metrics["test"].get("plain_noatt", 0.0)),
+                "test_loss_none": float(split_metrics["test"].get("plain_none", 0.0)),
                 "train_wall_seconds": float(total_wall_seconds),
                 "unix_time": float(eval_now),
                 "train_cursor": int(dataset.positions.get("train", 0)),

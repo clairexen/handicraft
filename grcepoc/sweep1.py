@@ -15,17 +15,19 @@ import matplotlib.pyplot as plt
 LEGACY_TARGET_FIELDS = {}
 
 LEGACY_NOTHINK_FIELDS = {
-    "train_loss_plain": "train_loss_nothink",
-    "test_loss_plain": "test_loss_nothink",
+    "train_loss_nothink": "train_plain",
+    "test_loss_nothink": "test_plain",
 }
 
 LEGACY_SPECIAL_FIELDS = {
-    "train_loss_nogrce": "train_loss_noctx",
-    "test_loss_nogrce": "test_loss_noctx",
+    "train_loss_plain": "train_plain",
+    "test_loss_plain": "test_plain",
+    "train_loss_nogrce": "train_noctx",
+    "test_loss_nogrce": "test_noctx",
     "train_nogrce": "train_noctx",
     "test_nogrce": "test_noctx",
-    "train_loss_noatt": "train_loss_noatt",
-    "test_loss_noatt": "test_loss_noatt",
+    "train_loss_noatt": "train_noatt",
+    "test_loss_noatt": "test_noatt",
 }
 
 
@@ -52,6 +54,8 @@ class LossRecord:
     steps: List[int]
     train: List[float]
     test: List[float]
+    train_plain: Optional[List[float]] = None
+    test_plain: Optional[List[float]] = None
     train_noctx: Optional[List[float]] = None
     test_noctx: Optional[List[float]] = None
     train_noatt: Optional[List[float]] = None
@@ -103,6 +107,8 @@ def load_records(json_paths: Iterable[pathlib.Path]) -> List[LossRecord]:
         test_ng = extract_series("test_loss_noctx")
         if test_ng is None:
             test_ng = extract_series("test_loss_nogrce")
+        train_plain = extract_series("train_loss_plain")
+        test_plain = extract_series("test_loss_plain")
         train_noatt = extract_series("train_loss_noatt")
         test_noatt = extract_series("test_loss_noatt")
         train_none = extract_series("train_loss_none")
@@ -121,6 +127,8 @@ def load_records(json_paths: Iterable[pathlib.Path]) -> List[LossRecord]:
                 steps=steps,
                 train=[float(v) for v in train],
                 test=[float(v) for v in test],
+                train_plain=[float(v) for v in train_plain] if train_plain else None,
+                test_plain=[float(v) for v in test_plain] if test_plain else None,
                 train_noctx=[float(v) for v in train_ng] if train_ng else None,
                 test_noctx=[float(v) for v in test_ng] if test_ng else None,
                 train_noatt=[float(v) for v in train_noatt] if train_noatt else None,
@@ -153,9 +161,19 @@ def load_store(path: pathlib.Path) -> List[LossRecord]:
                 train=list(map(float, entry.get("train", [])))
                 if entry.get("train")
                 else [],
+                train_plain=(
+                    list(map(float, entry.get("train_plain", [])))
+                    if entry.get("train_plain")
+                    else None
+                ),
                 test=list(map(float, entry.get("test", [])))
                 if entry.get("test")
                 else [],
+                test_plain=(
+                    list(map(float, entry.get("test_plain", [])))
+                    if entry.get("test_plain")
+                    else None
+                ),
                 train_noctx=(
                     list(map(float, entry.get("train_noctx", []) or entry.get("train_nogrce", [])))
                     if entry.get("train_noctx") or entry.get("train_nogrce")
@@ -254,6 +272,16 @@ def store_records(
             **(
                 {"test_noatt": rec.test_noatt}
                 if include_test and include_noatt and rec.test_noatt is not None
+                else {}
+            ),
+            **(
+                {"train_plain": rec.train_plain}
+                if include_train and rec.train_plain is not None
+                else {}
+            ),
+            **(
+                {"test_plain": rec.test_plain}
+                if include_test and rec.test_plain is not None
                 else {}
             ),
             **(
