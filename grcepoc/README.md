@@ -42,7 +42,7 @@ For every `<think>` slot we compute the normal CE using a decoder with the `<thi
 
 During sampling/reporting we flip a coin for each completion: heads means argmax, tails means sampling from the predicted distribution. Prompts that have only been solved via the random path stay in the queue and are retried with argmax until the top candidate alone satisfies the goal. The progress header shows `sample (random-only/argmax/total)` so you can track both counts at a glance, and completions generated via argmax are the only ones rendered in bold.
 
-The recurrent context has two independent width knobs. `--n-grce` controls the narrow GRCE bottleneck, while `--n-xctx` enables a per-layer “wide” channel. You can use either on its own or enable both to run a low-bandwidth recurrent shortcut alongside a higher-bandwidth per-layer path, with their projected biases simply adding together before they enter each Transformer block.
+The recurrent context has two width knobs. `--n-grce` controls a narrow, low-bandwidth GRCE bottleneck, while `--n-xctx` enables a wider channel that uses the same overall method with minor modifications and a much larger context vector space. Use either on its own or enable both—their projected biases simply add before each Transformer block—so you can mix a steady recurrent signal with a higher-bandwidth shortcut.
 
 ## Undo tokens
 
@@ -141,6 +141,7 @@ Below are two quick sweeps you can adapt.
 - **Project focus:** Gradient-limited Recurrent Context Encoding (GRCE) atop a picoGPT-style SimpleWiki language model.
 - **Model defaults:** `n_layer=8`, `n_head=8`, `n_embd=192`, `n_grce=96`, `block_size=64`, `dropout=0.05`, `vocab_size=2000`.
 - **GRCE geometry:** each layer owns a sampler `LayerNorm → n_embd → n_grce`; sampled vectors are summed, passed through a shared MLP `n_grce → 4*n_grce → ReLU → LayerNorm → n_grce`, then per-layer decoders `n_grce → n_embd` inject the biases.
+- **XCTX geometry:** identical workflow, just swapping `n_grce` for `n_xctx` so the channel has more headroom, and the sampler projects down to `n_xctx // n_layer` for every layer before projecting onto `n_xctx`, with the bias-injectors projecting onto `n_xctx // n_layer` for every layer before projecting onto `n_embd`.
 - **Parameter dominance:** ignoring embeddings, the stack costs `~12 * n_layer * n_embd^2`, and the GRCE path adds `~2 * n_layer * n_embd * n_grce + 4 * n_grce^2` when enabled.
 - **Tokenizer workflow:** Byte-level BPE trained on up to `--vocab-chars` characters; saved to `model/<trainstem>_<limit>_<vocab>.json` alongside checkpoints.
 - **Chunks per cycle:** Train chunk size `(block_size+1)*batch_size*steps`; test chunk size `(block_size+1)*batch_size*eval_iters*eval_calls` (where `eval_calls` covers step 1, every `eval_interval`, and the final step).
