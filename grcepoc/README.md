@@ -38,13 +38,13 @@ Ignoring embeddings and other lower-order pieces, two terms dominate:
 
 ## Think tokens
 
-`--think N` means “activate thinking on exactly `N` sequences per batch” in training. The training loop first evaluates the untouched batch to collect logits, then chooses the first `N` eligible rows (plus one extra when GRCE dropout fires). For each chosen row we sample three non-negative integers `R`, `T`, and `H` by drawing `u ~ U[0,1)`, squaring it, multiplying by `block_size/4`, and flooring. These act as simple compute budgets:
+`--think N` means “activate thinking on exactly `N` sequences per batch” in training. The training loop first evaluates the untouched batch to collect logits, then chooses the first `N` eligible rows (plus one extra when context dropout fires). For each chosen row we sample three non-negative integers `R`, `T`, and `H` by drawing `u ~ U[0,1)`, squaring it, multiplying by `block_size/4`, and flooring. These act as simple compute budgets:
 
 1. **Repeat phase (`R`).** After every base token we insert `R` `<think>` tokens, truncating any overflow. When `R>0` this dramatically shrinks the effective context and forces the model to reuse the same slot multiple times.
 2. **Targeted inserts (`T`).** We look at the logits we saved earlier and insert `T` more `<think>` tokens, sampling positions proportionally to their probability of emitting `<think>`. This gives the model practice placing thought where it already “wants” it.
 3. **Tail padding (`H`).** Finally we append `<think>` tokens just before the block boundary until we have inserted at least `H` trailing planners, ensuring the network also learns to finish a thought explicitly.
 
-Undo fillers (when `--undo` is active) are spliced in before all of the above, and one sequence per batch is always left plain so the model keeps calibrating on non-thinking data. If GRCE dropout removes a row we additionally create a “chaos” sample where a random number of `<think>` tokens are sprinkled at random positions.
+Undo fillers (when `--undo` is active) are spliced in before all of the above, and one sequence per batch is always left plain so the model keeps calibrating on non-thinking data. When `--context-dropout-interval` fires (and at least one context channel is enabled) we carve out two special rows: one runs the entire block with GRCE/XCTX disabled (a pure Transformer baseline) and one keeps context everywhere except at a single randomly chosen timestep where the recurrent state and bias updates are zeroed. If `<think>` is enabled we also designate a third special row—distinct from the context experiments—where context flows normally but a random number of `<think>` tokens are sprinkled at random positions. That trio guarantees every dropout step simultaneously trains the network on “no context,” “punctured context,” and “random-think” sequences.
 
 For every `<think>` slot we compute the normal CE using a decoder with the `<think>` logit disabled (so the loss remains comparable to non-thinking runs). We also compute an **alignment loss**: let `A` be that CE at position `N`, `B` the CE at `N+1`, and `ratio = A/(A+B+ε)`. We blend the next-token embedding with the `<think>` embedding by `ratio`, decode it, and compare that soft distribution against the *unmodified* decoder output. Conceptually this enforces the intended behavior: early `<think>` evaluations still carry some mixture of “target vs. reasoning”, while the final stack converges on the exact target token. The alignment loss replaces the old plan head/penalty system.
 
@@ -159,6 +159,7 @@ Below are two quick sweeps you can adapt.
   ```bash
   .venv/bin/python3 grce.py --device cpu --cycles 2 --steps 20 --block-size 16 --batch-size 4 --n-layer 2 --n-head 2 --n-embd 64 --n-grce 16 --detach-span 4 --eval-interval 10 --eval-iters 1 --generate 5
   ```
-  This fits in RAM and exercises the GRCE dropout path without a GPU.
+  This fits in RAM and exercises the context dropout path without a GPU.
 - **Detaching parts of the stack:** `--detach-layer K` severs gradients after Transformer layer `K` (1-based), letting you freeze the lower stack while training fresh layers on top.
+- **Context dropout:** `--context-dropout-interval N` (default `1`) reserves two diagnostic rows every `N` steps when a context channel is active—one with GRCE/XCTX fully disabled and one whose recurrent signal is zeroed at a single random timestep—and, if `<think>` is enabled, a third “random think” row where context stays on but `<think>` tokens are sprinkled randomly.
 **Environment note:** always run tooling via `.venv/bin/python3` (and related entrypoints) so the local dependencies are available; the system python may lack the required packages, or there even may be no system python.

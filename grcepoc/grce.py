@@ -791,6 +791,7 @@ def augment_training_batch(
     *,
     disable_context_rows: set[int] | None = None,
     disable_think_rows: set[int] | None = None,
+    forced_think_rows: set[int] | None = None,
 ) -> tuple[
     torch.Tensor,
     torch.Tensor,
@@ -801,6 +802,7 @@ def augment_training_batch(
     think_enabled = think is not None and think.enabled
     think_token_id = active_think_token_id(think)
     forced_context_off = disable_context_rows or set()
+    forced_think_rows = forced_think_rows or set()
     think_disabled_rows = disable_think_rows or set()
     undo_enabled = undo is not None and undo.enabled
     if not think_enabled and not undo_enabled:
@@ -834,7 +836,7 @@ def augment_training_batch(
             think_scores = full_logits[..., think.token_id]
     seq_think_quota = 0
     think_row_set: set[int] = set()
-    special_think_row: int | None = None
+    special_think_rows: set[int] = set(forced_think_rows)
     if think_enabled and think is not None:
         seq_think_quota = max(0, int(think.max_steps))
         if seq_think_quota > 0:
@@ -845,15 +847,14 @@ def augment_training_batch(
             ]
             quota = min(seq_think_quota, len(eligible_rows))
             think_row_set = set(eligible_rows[:quota])
-        if forced_context_off:
-            special_think_row = sorted(forced_context_off)[0]
+        special_think_rows.update(forced_think_rows)
 
     def sample_scaled_value() -> int:
         u = random.random()
         return int((u * u * block_size) / 4)
 
     for row in range(B):
-        row_is_special = special_think_row is not None and row == special_think_row
+        row_is_special = row in special_think_rows
         row_think_active = False
         if think_enabled and think is not None and think.token_id is not None:
             if row_is_special:
@@ -1735,6 +1736,9 @@ def evaluate_split(
             yb,
             think_settings,
             undo_settings,
+            disable_context_rows=None,
+            disable_think_rows=None,
+            forced_think_rows=None,
         )
         raw_logits, _, _ = model.forward_autoreg(
             aug_xb,
@@ -1838,16 +1842,19 @@ def train_model(
     show_think_columns = think_enabled
     show_target_headers = think_enabled or undo_enabled
     context_dropout_interval = max(0, int(context_dropout_interval))
+    context_path_enabled = bool(model.context_channels)
     for step in range(1, steps + 1):
         xb, yb = dataset.get_batch("train", block_size, batch_size, device)
         current_step_index = total_steps
         context_dropout_active = (
-            context_dropout_interval > 0
+            context_path_enabled
+            and context_dropout_interval > 0
             and current_step_index % context_dropout_interval == 0
         )
-        disable_rows: set[int] = set()
+        context_special_rows: set[int] = set()
         context_disabled_mask: torch.Tensor | None = None
         context_dropout_positions: torch.Tensor | None = None
+        puncture_row: int | None = None
         if context_dropout_active and batch_size > 0:
             context_disabled_mask = torch.zeros(batch_size, dtype=torch.bool, device=device)
             context_dropout_positions = torch.full(
@@ -1859,23 +1866,40 @@ def train_model(
             all_rows = list(range(batch_size))
             full_row = random.choice(all_rows)
             context_disabled_mask[full_row] = True
-            disable_rows.add(full_row)
+            context_special_rows.add(full_row)
             partial_candidates = [idx for idx in all_rows if idx != full_row]
             partial_row = random.choice(partial_candidates) if partial_candidates else full_row
-            disable_rows.add(partial_row)
+            puncture_row = partial_row
             drop_position = random.randrange(max(1, block_size))
             context_dropout_positions[partial_row] = drop_position
         think_disabled_rows = set()
         if think_enabled and batch_size > 0:
             think_disabled_rows.add(random.randrange(batch_size))
+        forced_think_rows: set[int] = set()
+        if context_dropout_active and think_enabled and batch_size > 0:
+            excluded = set(context_special_rows)
+            if puncture_row is not None:
+                excluded.add(puncture_row)
+            available = [
+                idx
+                for idx in range(batch_size)
+                if idx not in excluded and idx not in think_disabled_rows
+            ]
+            if not available:
+                available = [idx for idx in range(batch_size) if idx not in think_disabled_rows]
+            if not available:
+                available = list(range(batch_size))
+            think_special_row = random.choice(available)
+            forced_think_rows.add(think_special_row)
         xb, yb, random_mask, think_labels, think_slot_mask = augment_training_batch(
             model,
             xb,
             yb,
             think_settings,
             undo_settings,
-            disable_context_rows=disable_rows,
+            disable_context_rows=context_special_rows,
             disable_think_rows=think_disabled_rows,
+            forced_think_rows=forced_think_rows,
         )
         logits, hidden_states, activation_store = model.forward_autoreg(
             xb,
@@ -2928,7 +2952,7 @@ def parse_args() -> argparse.Namespace:
         "--context-dropout-interval",
         type=int,
         default=1,
-        help="Apply context-disable dropout every N steps (0 disables)",
+        help="Every N steps create one no-context row and one single-step dropout row (0 disables)",
     )
     training_group.add_argument(
         "--reward-relu",
