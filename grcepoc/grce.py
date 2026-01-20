@@ -2790,6 +2790,14 @@ def parse_args() -> argparse.Namespace:
         help="Dimension of the recurrent GRCE context; use 0 to disable the channel.",
     )
     model_group.add_argument(
+        "--n-xctx",
+        type=int,
+        default=defaults.n_xctx,
+        help=(
+            "Dimension of the wide (layer-partitioned) context channel; requires n_xctx to be divisible by n_layer"
+        ),
+    )
+    model_group.add_argument(
         "--tokenizer-vocab",
         type=int,
         default=defaults.vocab_size,
@@ -2809,14 +2817,6 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=0,
         help="Enable undo pairs with up to N random+undo sequences per block",
-    )
-    model_group.add_argument(
-        "--n-xctx",
-        type=int,
-        default=0,
-        help=(
-            "Dimension of the wide (layer-partitioned) context channel; requires n_xctx to be divisible by n_layer"
-        ),
     )
     model_group.add_argument(
         "--tiny",
