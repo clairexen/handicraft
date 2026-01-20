@@ -12,7 +12,7 @@ import re
 
 import matplotlib.pyplot as plt
 
-STOP_WORDS = {"county", "census", "municipalit", "united states"}
+STOP_WORDS = {"county", "census", "municipalit", "united states", "is a commune"}
 
 
 def collect_word_counts(
