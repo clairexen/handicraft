@@ -1582,16 +1582,18 @@ class GRCEGPT(nn.Module):
                 "block_norms": [[] for _ in range(self.config.n_layer)],
                 "context_norms": [],
             }
+        base_context_mask = context_disabled_rows
+        base_context_mask_has = bool(base_context_mask.any().item())
+
         for t in range(T):
-            step_mask = None
+            xctx_step_mask = None
+            xctx_mask_has = False
             if context_dropout_positions is not None:
                 step_mask = context_dropout_positions == t
                 if step_mask.any():
                     context_dropout_positions[step_mask] = -1
-            if step_mask is not None and step_mask.any():
-                combined_context_mask = context_disabled_rows | step_mask
-            else:
-                combined_context_mask = context_disabled_rows
+                    xctx_step_mask = step_mask
+                    xctx_mask_has = True
             prefix = idx[:, : t + 1]
             token_ids = prefix[:, -1]
             tok_last = self.core.tok_emb(token_ids)
@@ -1623,18 +1625,30 @@ class GRCEGPT(nn.Module):
             token_input = tok_last + pos_emb
             block_biases = None
             if use_context:
-                mask_any = combined_context_mask.any()
                 for channel, state in zip(active_channels, context_states):
+                    chunk = channel.layer_chunk if channel.is_xctx else None
+                    channel_mask = base_context_mask
+                    channel_mask_has = base_context_mask_has
+                    xctx_len = None
+                    if channel.is_xctx and chunk is not None:
+                        xctx_len = chunk
+                        if xctx_mask_has:
+                            channel_mask = (
+                                (base_context_mask | xctx_step_mask)
+                                if channel_mask_has
+                                else xctx_step_mask
+                            )
+                            channel_mask_has = True
                     state_for_bias = state
-                    if mask_any:
+                    if channel_mask_has:
                         state_for_bias = state_for_bias.clone()
-                        state_for_bias[combined_context_mask] = 0
+                        state_for_bias[channel_mask] = 0
                     bias_vectors = channel.project(state_for_bias)
                     channel_biases: list[torch.Tensor] = []
                     for bias_vec in bias_vectors:
-                        if mask_any:
+                        if channel_mask_has:
                             bias_vec = bias_vec.clone()
-                            bias_vec[combined_context_mask] = 0
+                            bias_vec[channel_mask] = 0
                         full = torch.zeros(
                             B,
                             prefix.size(1),
@@ -1676,19 +1690,29 @@ class GRCEGPT(nn.Module):
                     else:
                         stop_grad = (t % span == 0)
                     prev_context = context_states[idx_ch]
-                    if combined_context_mask.any():
+                    channel_mask = base_context_mask
+                    channel_mask_has = base_context_mask_has
+                    chunk = channel.layer_chunk if channel.is_xctx else None
+                    if channel.is_xctx and xctx_mask_has:
+                        channel_mask = (
+                            (base_context_mask | xctx_step_mask)
+                            if channel_mask_has
+                            else xctx_step_mask
+                        )
+                        channel_mask_has = True
+                    if channel_mask_has:
                         prev_context = prev_context.clone()
-                        prev_context[combined_context_mask] = 0
+                        prev_context[channel_mask] = 0
                     new_state, raw_context = channel.update(
                         block_inputs,
                         prev_context=prev_context,
                         stop_grad=stop_grad,
                     )
-                    if combined_context_mask.any():
+                    if channel_mask_has:
                         new_state = new_state.clone()
-                        new_state[combined_context_mask] = 0
+                        new_state[channel_mask] = 0
                         raw_context = raw_context.clone()
-                        raw_context[combined_context_mask] = 0
+                        raw_context[channel_mask] = 0
                     context_states[idx_ch] = new_state
                     if activation_store is not None:
                         ctx_norms = torch.linalg.vector_norm(raw_context.detach(), dim=-1)
@@ -2135,7 +2159,6 @@ def train_model(
             context_disabled_mask[full_row] = True
             context_special_rows.add(full_row)
             puncture_row = pick_special_row(occupied=occupied_rows)
-            context_special_rows.add(puncture_row)
             drop_position = random.randrange(max(1, block_size))
             context_dropout_positions[puncture_row] = drop_position
             attention_disabled_mask = torch.zeros(batch_size, dtype=torch.bool, device=device)
@@ -2147,11 +2170,9 @@ def train_model(
             )
             att_off_row = pick_special_row(occupied=occupied_rows)
             attention_disabled_mask[att_off_row] = True
-            context_special_rows.add(att_off_row)
             att_puncture_row = pick_special_row(occupied=occupied_rows)
             att_drop_pos = random.randrange(max(1, block_size))
             attention_dropout_positions[att_puncture_row] = att_drop_pos
-            context_special_rows.add(att_puncture_row)
         think_disabled_rows = set()
         if think_enabled and batch_size > 0:
             think_disabled_rows.add(random.randrange(batch_size))
