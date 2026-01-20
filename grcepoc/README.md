@@ -1,6 +1,12 @@
-# GPT with Gradient-limited Recurrent Context Encoding (GRCE)
+# GPT with Gradient-limited Recurrent Context Encoding and Extended Context (GPT+GRCE+XCTX)
 
-This repo extends a tiny picoGPT-style language model with a recurrent context channel that keeps a lightweight “role/focus” state alongside the usual token stream. Training and sampling logic lives in `grce.py`.
+This repo extends a tiny picoGPT-style language model with two recurrent context channels: A lightweight low-bandwith “role/focus” state alongside the usual token stream (GRCE), and a high-bandwidth "short-term-memory"-style channel, to send messages forward in time (XCTX), parallel to the multi-head attention mechanism, that looks backward. "GPT+GRCE+XCTX" is pronounced "GPT with grace and extended context".
+
+This adds the following benefits:
+- The low-bandwith "GRCE" channel mostly adds stability, debugability, and interpretability.
+- The high-bandwith "XCTX" channel is meant to be functionally equivalent to the multi-head attention mechanism. It's a (simplistic and thus probably worse ;) recurrent re-implementation of the same functinality, that we can only learn because we use the transformer stack and its multi-head attention as "scaffolding". Instead of sending queries into the past we are shuting the things worth remembering for a little while into the future. We use a dropout-like mechanism during learning to encourage the network to learn that functionality, that is redundant within a token block. And then we use that learned functionality to both pass messages forward in time from one block to the next in inference, and prevent the network from doing weird things at the same time. The attention mechanism is great, when you know what you want to know from the past. Context is a way for the past to let the future know what to query.
+
+Training and sampling logic all lives in `grce.py`.
 
 ## How the context channel works
 1. **Per-position capture.** For every position we collect the inputs to each Transformer block before self-attention/FFN work on them. Those vectors are the only items allowed to leak information across time.
