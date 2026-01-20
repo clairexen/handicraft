@@ -13,9 +13,18 @@ import matplotlib.pyplot as plt
 
 LEGACY_TARGET_FIELDS = {
     "train_loss_learned": "train_target",
-    "train_loss_nogrce_learned": "train_target_nogrce",
+    "train_loss_nogrce_learned": "train_target_noctx",
+    "train_loss_noctx_learned": "train_target_noctx",
     "test_loss_learned": "test_target",
-    "test_loss_nogrce_learned": "test_target_nogrce",
+    "test_loss_nogrce_learned": "test_target_noctx",
+    "test_loss_noctx_learned": "test_target_noctx",
+}
+
+LEGACY_NOCTX_FIELDS = {
+    "train_loss_nogrce": "train_loss_noctx",
+    "train_target_nogrce": "train_target_noctx",
+    "test_loss_nogrce": "test_loss_noctx",
+    "test_target_nogrce": "test_target_noctx",
 }
 
 LEGACY_PLAIN_FIELDS = {
@@ -29,12 +38,12 @@ ALLOWED_FIELDS = {
     "step",
     "train_loss",
     "train_target",
-    "train_loss_nogrce",
-    "train_target_nogrce",
+    "train_loss_noctx",
+    "train_target_noctx",
     "test_loss",
     "test_target",
-    "test_loss_nogrce",
-    "test_target_nogrce",
+    "test_loss_noctx",
+    "test_target_noctx",
     "train_loss_plain",
     "test_loss_plain",
     "train_wall_seconds",
@@ -170,6 +179,7 @@ def normalize_entry(entry: Dict[str, float]) -> Dict[str, float]:
 
     apply_alias(LEGACY_TARGET_FIELDS)
     apply_alias(LEGACY_PLAIN_FIELDS)
+    apply_alias(LEGACY_NOCTX_FIELDS)
     filtered = {k: v for k, v in out.items() if k in ALLOWED_FIELDS}
     return filtered
 

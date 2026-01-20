@@ -14,9 +14,11 @@ import matplotlib.pyplot as plt
 
 LEGACY_TARGET_FIELDS = {
     "train_loss_learned": "train_target",
-    "train_loss_nogrce_learned": "train_target_nogrce",
+    "train_loss_nogrce_learned": "train_target_noctx",
+    "train_loss_noctx_learned": "train_target_noctx",
     "test_loss_learned": "test_target",
-    "test_loss_nogrce_learned": "test_target_nogrce",
+    "test_loss_nogrce_learned": "test_target_noctx",
+    "test_loss_noctx_learned": "test_target_noctx",
 }
 
 LEGACY_PLAIN_FIELDS = {
@@ -24,6 +26,13 @@ LEGACY_PLAIN_FIELDS = {
     "test_loss_nothink": "test_loss_plain",
     "train_loss_nothink_learned": "train_target",
     "test_loss_nothink_learned": "test_target",
+}
+
+LEGACY_NOCTX_FIELDS = {
+    "train_loss_nogrce": "train_loss_noctx",
+    "test_loss_nogrce": "test_loss_noctx",
+    "train_nogrce": "train_noctx",
+    "test_nogrce": "test_noctx",
 }
 
 
@@ -40,6 +49,7 @@ def normalize_history_entry(entry: Dict[str, float]) -> Dict[str, float]:
 
     apply_aliases(LEGACY_TARGET_FIELDS)
     apply_aliases(LEGACY_PLAIN_FIELDS)
+    apply_aliases(LEGACY_NOCTX_FIELDS)
     return normalized
 
 
@@ -49,8 +59,8 @@ class LossRecord:
     steps: List[int]
     train: List[float]
     test: List[float]
-    train_nogrce: Optional[List[float]] = None
-    test_nogrce: Optional[List[float]] = None
+    train_noctx: Optional[List[float]] = None
+    test_noctx: Optional[List[float]] = None
 
 
 def load_records(json_paths: Iterable[pathlib.Path]) -> List[LossRecord]:
@@ -84,8 +94,12 @@ def load_records(json_paths: Iterable[pathlib.Path]) -> List[LossRecord]:
             steps = [int(val) for val in steps_series]
         train = extract_series("train_loss") or []
         test = extract_series("test_loss") or []
-        train_ng = extract_series("train_loss_nogrce")
-        test_ng = extract_series("test_loss_nogrce")
+        train_ng = extract_series("train_loss_noctx")
+        if train_ng is None:
+            train_ng = extract_series("train_loss_nogrce")
+        test_ng = extract_series("test_loss_noctx")
+        if test_ng is None:
+            test_ng = extract_series("test_loss_nogrce")
         if not train and not test:
             continue
         records.append(
@@ -94,8 +108,8 @@ def load_records(json_paths: Iterable[pathlib.Path]) -> List[LossRecord]:
                 steps=steps,
                 train=[float(v) for v in train],
                 test=[float(v) for v in test],
-                train_nogrce=[float(v) for v in train_ng] if train_ng else None,
-                test_nogrce=[float(v) for v in test_ng] if test_ng else None,
+                train_noctx=[float(v) for v in train_ng] if train_ng else None,
+                test_noctx=[float(v) for v in test_ng] if test_ng else None,
             )
         )
     return records
@@ -119,14 +133,14 @@ def load_store(path: pathlib.Path) -> List[LossRecord]:
                 test=list(map(float, entry.get("test", [])))
                 if entry.get("test")
                 else [],
-                train_nogrce=(
-                    list(map(float, entry.get("train_nogrce", [])))
-                    if entry.get("train_nogrce")
+                train_noctx=(
+                    list(map(float, entry.get("train_noctx", []) or entry.get("train_nogrce", [])))
+                    if entry.get("train_noctx") or entry.get("train_nogrce")
                     else None
                 ),
-                test_nogrce=(
-                    list(map(float, entry.get("test_nogrce", [])))
-                    if entry.get("test_nogrce")
+                test_noctx=(
+                    list(map(float, entry.get("test_noctx", []) or entry.get("test_nogrce", [])))
+                    if entry.get("test_noctx") or entry.get("test_nogrce")
                     else None
                 ),
             )
@@ -140,7 +154,7 @@ def store_records(
     *,
     include_train: bool,
     include_test: bool,
-    include_nogrce: bool,
+    include_noctx: bool,
 ) -> None:
     payload = [
         {
@@ -149,13 +163,13 @@ def store_records(
             **({"train": rec.train} if include_train else {}),
             **({"test": rec.test} if include_test else {}),
             **(
-                {"train_nogrce": rec.train_nogrce}
-                if include_train and include_nogrce and rec.train_nogrce is not None
+                {"train_noctx": rec.train_noctx}
+                if include_train and include_noctx and rec.train_noctx is not None
                 else {}
             ),
             **(
-                {"test_nogrce": rec.test_nogrce}
-                if include_test and include_nogrce and rec.test_nogrce is not None
+                {"test_noctx": rec.test_noctx}
+                if include_test and include_noctx and rec.test_noctx is not None
                 else {}
             ),
         }
@@ -187,14 +201,14 @@ def parse_args() -> argparse.Namespace:
         help="load JSON file produced by --store (skips .pt loading)",
     )
     parser.add_argument(
-        "--nogrce",
+        "--noctx",
         action="store_true",
-        help="Display GRCE-disabled (nogrce) traces (hidden by default)",
+        help="Display context-disabled (noctx) traces (hidden by default)",
     )
     parser.add_argument(
         "--default-test",
         action="store_true",
-        help="When set, default view is test-only with nogrce traces hidden",
+        help="When set, default view is test-only with noctx traces hidden",
     )
     parser.add_argument(
         "--avg-span",
@@ -248,7 +262,7 @@ def main() -> None:
     if args.default_test:
         args.train = False
         args.train_and_test = False
-        args.nogrce = False
+        args.noctx = False
     if args.stored:
         records = load_store(args.stored)
     else:
@@ -288,8 +302,8 @@ def main() -> None:
                     steps=steps[:length],
                     train=train_avg or base.train,
                     test=test_avg or base.test,
-                    train_nogrce=None,
-                    test_nogrce=None,
+                    train_noctx=None,
+                    test_noctx=None,
                 )
             )
 
@@ -311,7 +325,7 @@ def main() -> None:
             args.store,
             include_train=show_train,
             include_test=show_test,
-            include_nogrce=args.nogrce,
+            include_noctx=args.noctx,
         )
         if args.store_only:
             return
@@ -339,8 +353,8 @@ def main() -> None:
         rec.scaled_steps = compute_scaled_steps(rec, is_think=is_think)
         rec.scaled_train = compute_scaled_series(rec.train, is_think=is_think)
         rec.scaled_test = compute_scaled_series(rec.test, is_think=is_think)
-        rec.scaled_train_nogrce = compute_scaled_series(rec.train_nogrce, is_think=is_think)
-        rec.scaled_test_nogrce = compute_scaled_series(rec.test_nogrce, is_think=is_think)
+        rec.scaled_train_noctx = compute_scaled_series(rec.train_noctx, is_think=is_think)
+        rec.scaled_test_noctx = compute_scaled_series(rec.test_noctx, is_think=is_think)
 
     steps_per_cycle = 100
     print(f"Loaded {len(records)} trace(s):")
@@ -383,7 +397,7 @@ def main() -> None:
             solid_style = ":"
         else:
             solid_style = "-"
-        nogrce_style = "-."
+        noctx_style = "-."
         line_width = 3.0 if is_think else 1.5
         if show_train and rec.train:
             train_values = rec.scaled_train
@@ -396,13 +410,13 @@ def main() -> None:
                 marker=None,
                 linewidth=line_width,
             )
-            if rec.train_nogrce and args.nogrce:
-                nogrce_values = rec.scaled_train_nogrce or rec.train_nogrce
-                nogrce_line, = ax.plot(
+            if rec.train_noctx and args.noctx:
+                noctx_values = rec.scaled_train_noctx or rec.train_noctx
+                noctx_line, = ax.plot(
                     rec.scaled_steps,
-                    nogrce_values,
-                    label=f"{label} train (nogrce)",
-                    linestyle=nogrce_style,
+                    noctx_values,
+                    label=f"{label} train (noctx)",
+                    linestyle=noctx_style,
                     color=base_color,
                     marker=None,
                     linewidth=line_width,
@@ -418,13 +432,13 @@ def main() -> None:
                 marker=None,
                 linewidth=line_width,
             )
-            if rec.test_nogrce and args.nogrce:
-                nogrce_test_values = rec.scaled_test_nogrce or rec.test_nogrce
-                nogrce_line, = ax.plot(
+            if rec.test_noctx and args.noctx:
+                noctx_test_values = rec.scaled_test_noctx or rec.test_noctx
+                noctx_line, = ax.plot(
                     rec.scaled_steps,
-                    nogrce_test_values,
-                    label=f"{label} test (nogrce)",
-                    linestyle=nogrce_style,
+                    noctx_test_values,
+                    label=f"{label} test (noctx)",
+                    linestyle=noctx_style,
                     color=base_color,
                     marker=None,
                     linewidth=line_width,

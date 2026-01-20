@@ -1763,7 +1763,7 @@ def train_model(
     prompt_tracker: PromptTracker | None = None,
     *,
     reward_relu: bool = False,
-    nogrce_interval: int = 1,
+    noctx_interval: int = 1,
     cycle_wall_start: float,
     base_wall_seconds: float,
     show_time: bool = False,
@@ -1803,13 +1803,13 @@ def train_model(
             prompt_queue.append(idx)
     show_think_columns = think_enabled
     show_target_headers = think_enabled or undo_enabled
-    nogrce_interval = max(0, int(nogrce_interval))
+    noctx_interval = max(0, int(noctx_interval))
     for step in range(1, steps + 1):
         xb, yb = dataset.get_batch("train", block_size, batch_size, device)
         current_step_index = total_steps
-        nogrce_active = nogrce_interval > 0 and current_step_index % nogrce_interval == 0
+        noctx_active = noctx_interval > 0 and current_step_index % noctx_interval == 0
         disable_rows: set[int] = set()
-        if nogrce_active:
+        if noctx_active:
             drop_target = 1
             drop_prob = min(1.0, drop_target / max(1, batch_size))
             for row_idx in range(batch_size):
@@ -1889,7 +1889,7 @@ def train_model(
                         dataset.get_batch(split, block_size, batch_size, device)
                         for _ in range(eval_iters)
                     ]
-                    for suffix, disable in (("", False), ("_nogrce", True)):
+                    for suffix, disable in (("", False), ("_noctx", True)):
                         ce_loss, learned_loss = evaluate_split(
                             model,
                             dataset,
@@ -2021,11 +2021,11 @@ def train_model(
             colored_sample = prefix_text + completion_text
             if not printed_header:
                 if show_target_headers:
-                    train_header = "train loss (target)  nogrce (target)"
-                    test_header = "test loss (target)  nogrce (target)"
+                    train_header = "train loss (target)  noctx (target)"
+                    test_header = "test loss (target)  noctx (target)"
                 else:
-                    train_header = "train loss  nogrce"
-                    test_header = "test loss  nogrce"
+                    train_header = "train loss  noctx"
+                    test_header = "test loss  noctx"
                 if show_think_columns:
                     train_header += "  plain"
                     test_header += "  plain"
@@ -2075,7 +2075,7 @@ def train_model(
 
             train_parts = [
                 format_metric("train"),
-                format_metric("train_nogrce"),
+                format_metric("train_noctx"),
             ]
             if show_think_columns:
                 train_parts.append(format_metric("train_nothink", include_target=False))
@@ -2083,7 +2083,7 @@ def train_model(
 
             test_parts = [
                 format_metric("test"),
-                format_metric("test_nogrce"),
+                format_metric("test_noctx"),
             ]
             if show_think_columns:
                 test_parts.append(format_metric("test_nothink", include_target=False))
@@ -2111,12 +2111,12 @@ def train_model(
                 "step": total_steps,
                 "train_loss": float(split_metrics["train"]["ce"]),
                 "train_target": float(split_metrics["train"]["learned"]),
-                "train_loss_nogrce": float(split_metrics["train_nogrce"]["ce"]),
-                "train_target_nogrce": float(split_metrics["train_nogrce"]["learned"]),
+                "train_loss_noctx": float(split_metrics["train_noctx"]["ce"]),
+                "train_target_noctx": float(split_metrics["train_noctx"]["learned"]),
                 "test_loss": float(split_metrics["test"]["ce"]),
                 "test_target": float(split_metrics["test"]["learned"]),
-                "test_loss_nogrce": float(split_metrics["test_nogrce"]["ce"]),
-                "test_target_nogrce": float(split_metrics["test_nogrce"]["learned"]),
+                "test_loss_noctx": float(split_metrics["test_noctx"]["ce"]),
+                "test_target_noctx": float(split_metrics["test_noctx"]["learned"]),
                 "train_wall_seconds": float(total_wall_seconds),
                 "unix_time": float(eval_now),
                 "train_cursor": int(dataset.positions.get("train", 0)),
@@ -2873,10 +2873,10 @@ def parse_args() -> argparse.Namespace:
         help="If >0, detach gradients after this Transformer layer (1-based index).",
     )
     training_group.add_argument(
-        "--nogrce-interval",
+        "--noctx-interval",
         type=int,
         default=1,
-        help="Apply GRCE-disable dropout every N steps (0 disables)",
+        help="Apply context-disable dropout every N steps (0 disables)",
     )
     training_group.add_argument(
         "--reward-relu",
@@ -3761,7 +3761,7 @@ def main() -> None:
                 undo_settings=undo_settings,
                 prompt_tracker=prompt_tracker,
                 reward_relu=reward_scale,
-                nogrce_interval=args.nogrce_interval,
+                noctx_interval=args.noctx_interval,
                 cycle_wall_start=cycle_wall,
                 base_wall_seconds=total_train_wall,
                 show_time=args.time,
