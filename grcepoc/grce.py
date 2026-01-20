@@ -3455,6 +3455,28 @@ def main() -> None:
         if test_text is None and test_bytes == 0:
             test_bytes = len(test_tokens)
 
+        train_token_count = int(train_tokens.numel())
+        test_token_count = int(test_tokens.numel())
+        print(
+            color_text(
+                f"Dataset size: {train_token_count:,} train tokens, {test_token_count:,} test tokens",
+                Colors.CYAN,
+            )
+        )
+        tok_summary = (
+            f"[tokenizer] wall={time.time()-tok_wall_start:.2f}s cpu={time.process_time()-tok_cpu_start:.2f}s\n"
+        )
+        print(tok_summary)
+
+        if selected_action == "init":
+            print(
+                color_text(
+                    "Tokenizer initialized and token caches updated; run 'train' to build a model.",
+                    Colors.GREEN,
+                )
+            )
+            return
+
         dataset = TextDataset(
             train_tokens=train_tokens,
             test_tokens=test_tokens,
@@ -3502,19 +3524,6 @@ def main() -> None:
             if selected_action == "print_test":
                 emit_range("Test", test_tokens, args.print_test_range)
             return
-
-        train_token_count = int(train_tokens.numel())
-        test_token_count = int(test_tokens.numel())
-        print(
-            color_text(
-                f"Dataset size: {train_token_count:,} train tokens, {test_token_count:,} test tokens",
-                Colors.CYAN,
-            )
-        )
-        tok_summary = (
-            f"[tokenizer] wall={time.time()-tok_wall_start:.2f}s cpu={time.process_time()-tok_cpu_start:.2f}s\n"
-        )
-        print(tok_summary)
 
         if args.n_xctx > 0 and args.n_xctx % max(1, args.n_layer) != 0:
             raise ValueError("--n-xctx must be divisible by --n-layer")
@@ -3572,27 +3581,6 @@ def main() -> None:
             f"Learned embedding vectors: {emb_vectors} "
             f"(token={tok_vecs}, position={pos_vecs}); params={emb_params:,}"
         )
-
-        if selected_action == "init":
-            target_path = model_path
-            target_path.parent.mkdir(parents=True, exist_ok=True)
-            if target_path.exists():
-                raise FileExistsError(
-                    f"Checkpoint {target_path} already exists; remove it or choose a different --model/--pt."
-                )
-            init_payload = {
-                "model": temp_model.state_dict(),
-                "dataset": dataset.state_dict(),
-                "total_steps": 0,
-                "loss_history": [],
-                "config": asdict(config),
-                "train_wall_seconds": 0.0,
-                "prompt_state": None,
-                "tokenizer_json": tokenizer_json,
-            }
-            torch.save(init_payload, target_path)
-            print(color_text(f"Initialized new checkpoint at {target_path}", Colors.GREEN))
-            return
 
         if selected_action == "reset":
             target_path = model_path
