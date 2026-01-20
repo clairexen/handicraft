@@ -1268,6 +1268,7 @@ class CausalSelfAttention(nn.Module):
         x: torch.Tensor,
         *,
         dropout_positions: torch.Tensor | None = None,
+        disable_rows: torch.Tensor | None = None,
     ) -> torch.Tensor:
         B, T, C = x.shape
         k_full = self.key(x)
@@ -1292,6 +1293,9 @@ class CausalSelfAttention(nn.Module):
         att = self.dropout(att)
         y = att @ v
         y = y.transpose(1, 2).contiguous().view(B, T, C)
+        if disable_rows is not None and disable_rows.any():
+            row_mask = (~disable_rows).view(-1, 1, 1).to(y.dtype)
+            y = y * row_mask
         return self.proj(y)
 
 
@@ -3276,6 +3280,8 @@ def parse_args() -> argparse.Namespace:
             args.n_embd = 32
         if not flag_present("--n-grce"):
             args.n_grce = 12
+        if not flag_present("--n-xctx"):
+            args.n_xctx = 48
         if not flag_present("--corpus"):
             args.corpus = "simplestwiki"
     return args
