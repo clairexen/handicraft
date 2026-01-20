@@ -56,6 +56,14 @@ class LossRecord:
     test_noctx: Optional[List[float]] = None
     train_noatt: Optional[List[float]] = None
     test_noatt: Optional[List[float]] = None
+    train_none: Optional[List[float]] = None
+    test_none: Optional[List[float]] = None
+    train_think: Optional[List[float]] = None
+    test_think: Optional[List[float]] = None
+    train_think2x: Optional[List[float]] = None
+    test_think2x: Optional[List[float]] = None
+    train_think3x: Optional[List[float]] = None
+    test_think3x: Optional[List[float]] = None
 
 
 def load_records(json_paths: Iterable[pathlib.Path]) -> List[LossRecord]:
@@ -97,6 +105,14 @@ def load_records(json_paths: Iterable[pathlib.Path]) -> List[LossRecord]:
             test_ng = extract_series("test_loss_nogrce")
         train_noatt = extract_series("train_loss_noatt")
         test_noatt = extract_series("test_loss_noatt")
+        train_none = extract_series("train_loss_none")
+        test_none = extract_series("test_loss_none")
+        train_think = extract_series("train_loss_think")
+        test_think = extract_series("test_loss_think")
+        train_think2x = extract_series("train_loss_think2x")
+        test_think2x = extract_series("test_loss_think2x")
+        train_think3x = extract_series("train_loss_think3x")
+        test_think3x = extract_series("test_loss_think3x")
         if not train and not test:
             continue
         records.append(
@@ -109,6 +125,14 @@ def load_records(json_paths: Iterable[pathlib.Path]) -> List[LossRecord]:
                 test_noctx=[float(v) for v in test_ng] if test_ng else None,
                 train_noatt=[float(v) for v in train_noatt] if train_noatt else None,
                 test_noatt=[float(v) for v in test_noatt] if test_noatt else None,
+                train_none=[float(v) for v in train_none] if train_none else None,
+                test_none=[float(v) for v in test_none] if test_none else None,
+                train_think=[float(v) for v in train_think] if train_think else None,
+                test_think=[float(v) for v in test_think] if test_think else None,
+                train_think2x=[float(v) for v in train_think2x] if train_think2x else None,
+                test_think2x=[float(v) for v in test_think2x] if test_think2x else None,
+                train_think3x=[float(v) for v in train_think3x] if train_think3x else None,
+                test_think3x=[float(v) for v in test_think3x] if test_think3x else None,
             )
         )
     return records
@@ -152,6 +176,46 @@ def load_store(path: pathlib.Path) -> List[LossRecord]:
                     if entry.get("test_noatt")
                     else None
                 ),
+                train_none=(
+                    list(map(float, entry.get("train_none", [])))
+                    if entry.get("train_none")
+                    else None
+                ),
+                test_none=(
+                    list(map(float, entry.get("test_none", [])))
+                    if entry.get("test_none")
+                    else None
+                ),
+                train_think=(
+                    list(map(float, entry.get("train_think", [])))
+                    if entry.get("train_think")
+                    else None
+                ),
+                test_think=(
+                    list(map(float, entry.get("test_think", [])))
+                    if entry.get("test_think")
+                    else None
+                ),
+                train_think2x=(
+                    list(map(float, entry.get("train_think2x", [])))
+                    if entry.get("train_think2x")
+                    else None
+                ),
+                test_think2x=(
+                    list(map(float, entry.get("test_think2x", [])))
+                    if entry.get("test_think2x")
+                    else None
+                ),
+                train_think3x=(
+                    list(map(float, entry.get("train_think3x", [])))
+                    if entry.get("train_think3x")
+                    else None
+                ),
+                test_think3x=(
+                    list(map(float, entry.get("test_think3x", [])))
+                    if entry.get("test_think3x")
+                    else None
+                ),
             )
         )
     return records
@@ -190,6 +254,46 @@ def store_records(
             **(
                 {"test_noatt": rec.test_noatt}
                 if include_test and include_noatt and rec.test_noatt is not None
+                else {}
+            ),
+            **(
+                {"train_none": rec.train_none}
+                if include_train and rec.train_none is not None
+                else {}
+            ),
+            **(
+                {"test_none": rec.test_none}
+                if include_test and rec.test_none is not None
+                else {}
+            ),
+            **(
+                {"train_think": rec.train_think}
+                if include_train and rec.train_think is not None
+                else {}
+            ),
+            **(
+                {"test_think": rec.test_think}
+                if include_test and rec.test_think is not None
+                else {}
+            ),
+            **(
+                {"train_think2x": rec.train_think2x}
+                if include_train and rec.train_think2x is not None
+                else {}
+            ),
+            **(
+                {"test_think2x": rec.test_think2x}
+                if include_test and rec.test_think2x is not None
+                else {}
+            ),
+            **(
+                {"train_think3x": rec.train_think3x}
+                if include_train and rec.train_think3x is not None
+                else {}
+            ),
+            **(
+                {"test_think3x": rec.test_think3x}
+                if include_test and rec.test_think3x is not None
                 else {}
             ),
         }

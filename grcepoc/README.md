@@ -115,7 +115,7 @@ Below are two quick sweeps you can adapt.
 	python3 grce.py --cycles $cy --n-grce 0
 	python3 grce.py --cycles $cy --tag span2 --detach-span 2
     done
-    ```
+	    ```
 
     ```bash
     # python hist.py --write-json-dir sweep1
@@ -162,4 +162,6 @@ Below are two quick sweeps you can adapt.
   This fits in RAM and exercises the context dropout path without a GPU.
 - **Detaching parts of the stack:** `--detach-layer K` severs gradients after Transformer layer `K` (1-based), letting you freeze the lower stack while training fresh layers on top.
 - **Context dropout:** `--context-dropout-interval N` (default `1`) reserves five diagnostic rows every `N` steps when a context channel is active—pure Transformer, context puncture, random-think (when `<think>` is enabled), attention-disabled, and attention-punctured—so the model continuously practices each failure mode.
+
+Each evaluation pass prints three loss groups when thinking is enabled: `normal` (full training workflow with whatever thinking/undo settings you chose), a trio of no-thinking diagnostics (`noctx`, `noatt`, `none` disable the XCTX channel, attention, or both while keeping GRCE enabled), and the `think/2x/3x` trio. The last set measures how well the learned thinking policy behaves when we (a) insert `<think>` tokens exactly where the base model predicted them, (b) force one `<think>` per token, or (c) force two `<think>` tokens per token. For those metrics we only score the final `<think>` position in each sequence (after masking out earlier `<think>` logits) and weight each contribution by the number of inserted steps so longer “reasoning chains” remain comparable to shorter ones. When thinking is disabled the third group is omitted.
 **Environment note:** always run tooling via `.venv/bin/python3` (and related entrypoints) so the local dependencies are available; the system python may lack the required packages, or there even may be no system python.

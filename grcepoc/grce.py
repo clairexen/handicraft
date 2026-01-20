@@ -1531,6 +1531,7 @@ class GRCEGPT(nn.Module):
         collect_relu_mask: bool = False,
         context_disabled_rows: torch.Tensor | None = None,
         context_dropout_positions: torch.Tensor | None = None,
+        disable_xctx: bool = False,
         attention_disabled_rows: torch.Tensor | None = None,
         attention_dropout_positions: torch.Tensor | None = None,
     ) -> Tuple[torch.Tensor, torch.Tensor | None, dict | None]:
@@ -1539,6 +1540,8 @@ class GRCEGPT(nn.Module):
         active_channels: list[GRCEContextChannel] = []
         if not disable_context:
             for channel in self.context_channels:
+                if channel.is_xctx and disable_xctx:
+                    continue
                 if channel.disabled:
                     continue
                 active_channels.append(channel)
@@ -1778,6 +1781,7 @@ def evaluate_split(
     iters: int,
     *,
     disable_context: bool = False,
+    disable_xctx: bool = False,
     disable_attention: bool = False,
     think_settings: ThinkSettings | None = None,
     undo_settings: UndoSettings | None = None,
@@ -1809,6 +1813,7 @@ def evaluate_split(
             aug_xb,
             disable_context=disable_context,
             think_token_id=think_token_id,
+            disable_xctx=disable_xctx,
             attention_disabled_rows=attention_disabled_rows,
         )
         logits_main = disable_think_logits(raw_logits.clone(), think_settings)
@@ -1830,6 +1835,197 @@ def evaluate_split(
         ce_losses.append(main_loss.item())
     ce_avg = sum(ce_losses) / len(ce_losses)
     return ce_avg
+
+
+def build_think_sequences(
+    inputs: torch.Tensor,
+    targets: torch.Tensor,
+    counts: torch.Tensor,
+    *,
+    think_token_id: int,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    B, T = inputs.shape
+    device = inputs.device
+    dtype = inputs.dtype
+    new_inputs = torch.empty_like(inputs)
+    new_targets = torch.empty_like(targets)
+    eval_targets = torch.full_like(targets, LOSS_IGNORE_INDEX)
+    eval_weights = torch.zeros(B, T, device=device, dtype=torch.float32)
+
+    limit = T + 1
+    counts = counts.to(device=device, dtype=torch.long)
+
+    for row in range(B):
+        seq_entries: list[dict] = []
+        base_targets = [int(val) for val in targets[row].tolist()]
+        for idx in range(T):
+            seq_entries.append(
+                {"token": int(inputs[row, idx].item()), "base_index": idx, "tag": "base"}
+            )
+        tail_token = int(targets[row, -1].item())
+        seq_entries.append({"token": tail_token, "base_index": None, "tag": "tail"})
+
+        def truncate() -> None:
+            if len(seq_entries) > limit:
+                del seq_entries[limit:]
+
+        for base_idx in range(T):
+            count = int(counts[row, base_idx].item())
+            if count <= 0:
+                continue
+            insert_pos = None
+            for pos, entry in enumerate(seq_entries):
+                if entry.get("base_index") == base_idx:
+                    insert_pos = pos + 1
+                    break
+            if insert_pos is None:
+                continue
+            for k in range(count):
+                seq_entries.insert(
+                    insert_pos + k,
+                    {
+                        "token": int(think_token_id),
+                        "tag": "think",
+                        "base_index": base_idx,
+                        "think_idx": k,
+                        "think_total": count,
+                    },
+                )
+                truncate()
+
+        while len(seq_entries) < limit:
+            seq_entries.append(seq_entries[-1])
+
+        row_tokens = torch.tensor(
+            [entry["token"] for entry in seq_entries],
+            dtype=dtype,
+            device=device,
+        )
+        new_inputs[row] = row_tokens[:-1]
+        new_targets[row] = row_tokens[1:]
+
+        for pos, entry in enumerate(seq_entries[:-1]):
+            if entry.get("tag") != "think":
+                continue
+            total = entry.get("think_total") or 1
+            idx_in_seq = entry.get("think_idx")
+            if idx_in_seq is None or idx_in_seq != total - 1:
+                continue
+            base_idx = entry.get("base_index")
+            if base_idx is None or base_idx >= len(base_targets):
+                continue
+            eval_targets[row, pos] = base_targets[base_idx]
+            eval_weights[row, pos] = float(total)
+
+    return new_inputs, new_targets, eval_targets, eval_weights
+
+
+def run_think_insertion_eval(
+    model: GRCEGPT,
+    inputs: torch.Tensor,
+    targets: torch.Tensor,
+    counts: torch.Tensor,
+    *,
+    think_token_id: int,
+) -> tuple[float, float]:
+    if counts.sum().item() <= 0:
+        return 0.0, 0.0
+    new_inputs, new_targets, eval_targets, eval_weights = build_think_sequences(
+        inputs,
+        targets,
+        counts,
+        think_token_id=think_token_id,
+    )
+    logits, _, _ = model.forward_autoreg(
+        new_inputs,
+        think_token_id=think_token_id,
+    )
+    think_guard = ThinkSettings(max_steps=1, token_id=think_token_id)
+    logits = disable_think_logits(logits, think_guard)
+    masked_targets = torch.where(
+        eval_weights > 0,
+        eval_targets,
+        torch.full_like(eval_targets, LOSS_IGNORE_INDEX),
+    )
+    loss_flat = F.cross_entropy(
+        logits.view(-1, logits.size(-1)),
+        masked_targets.view(-1),
+        reduction="none",
+        ignore_index=LOSS_IGNORE_INDEX,
+    )
+    weighted = loss_flat * eval_weights.view(-1)
+    total_weight = float(eval_weights.sum().item())
+    if total_weight <= 0:
+        return 0.0, 0.0
+    return float(weighted.sum().item()), total_weight
+
+
+def evaluate_think_modes(
+    model: GRCEGPT,
+    batches: list[tuple[torch.Tensor, torch.Tensor]],
+    *,
+    think_token_id: int,
+) -> dict[str, float]:
+    results: dict[str, float] = {}
+
+    def aggregate(batch_losses: list[tuple[float, float]]) -> float:
+        weight_sum = sum(weight for _, weight in batch_losses)
+        if weight_sum <= 0:
+            return 0.0
+        loss_sum = sum(loss for loss, _ in batch_losses)
+        return loss_sum / weight_sum
+
+    batch_losses: list[tuple[float, float]] = []
+    for xb, yb in batches:
+        logits, _, _ = model.forward_autoreg(
+            xb,
+            think_token_id=think_token_id,
+        )
+        preds = torch.argmax(logits, dim=-1)
+        counts = preds.eq(think_token_id).long()
+        counts = counts * (yb != LOSS_IGNORE_INDEX).long()
+        loss_sum, weight = run_think_insertion_eval(
+            model,
+            xb,
+            yb,
+            counts,
+            think_token_id=think_token_id,
+        )
+        if weight > 0:
+            batch_losses.append((loss_sum, weight))
+    results["think"] = aggregate(batch_losses)
+
+    const_batches: list[tuple[float, float]] = []
+    for xb, yb in batches:
+        counts = torch.ones_like(xb, dtype=torch.long)
+        counts = counts * (yb != LOSS_IGNORE_INDEX).long()
+        loss_sum, weight = run_think_insertion_eval(
+            model,
+            xb,
+            yb,
+            counts,
+            think_token_id=think_token_id,
+        )
+        if weight > 0:
+            const_batches.append((loss_sum, weight))
+    results["think2x"] = aggregate(const_batches)
+
+    triple_batches: list[tuple[float, float]] = []
+    for xb, yb in batches:
+        counts = torch.full_like(xb, 2, dtype=torch.long)
+        counts = counts * (yb != LOSS_IGNORE_INDEX).long()
+        loss_sum, weight = run_think_insertion_eval(
+            model,
+            xb,
+            yb,
+            counts,
+            think_token_id=think_token_id,
+        )
+        if weight > 0:
+            triple_batches.append((loss_sum, weight))
+    results["think3x"] = aggregate(triple_batches)
+
+    return results
 
 
 def train_model(
@@ -1913,8 +2109,7 @@ def train_model(
         choice = random.choice(available)
         occupied.add(choice)
         return choice
-    show_think_columns = think_enabled
-    show_target_headers = think_enabled or undo_enabled
+    show_think_columns = bool(think_enabled and tokenizer.think_id is not None)
     context_dropout_interval = max(0, int(context_dropout_interval))
     context_path_enabled = bool(model.context_channels)
     for step in range(1, steps + 1):
@@ -2040,37 +2235,15 @@ def train_model(
         if step == 1 or step % eval_interval == 0 or step == steps:
             model.eval()
             with torch.no_grad():
-                split_metrics: dict[str, dict[str, float]] = {}
+                split_metrics: dict[str, dict[str, float]] = {"train": {}, "test": {}}
                 cached_batches: dict[str, list[tuple[torch.Tensor, torch.Tensor]]] = {}
                 for split in ("train", "test"):
                     cached_batches[split] = [
                         dataset.get_batch(split, block_size, batch_size, device)
                         for _ in range(eval_iters)
                     ]
-                    for suffix, disable_ctx, disable_att in (
-                        ("", False, False),
-                        ("_noctx", True, False),
-                        ("_noatt", False, True),
-                    ):
-                        ce_loss = evaluate_split(
-                            model,
-                            dataset,
-                            device,
-                            block_size,
-                            batch_size,
-                            split,
-                            eval_iters,
-                            disable_context=disable_ctx,
-                            disable_attention=disable_att,
-                            think_settings=think_settings,
-                            undo_settings=undo_settings,
-                            batches=cached_batches[split],
-                        )
-                        split_metrics[f"{split}{suffix}"] = {
-                            "ce": float(ce_loss),
-                        }
-                    if think_settings is not None and think_settings.enabled:
-                        ce_loss = evaluate_split(
+                    split_metrics[split]["normal"] = float(
+                        evaluate_split(
                             model,
                             dataset,
                             device,
@@ -2079,13 +2252,70 @@ def train_model(
                             split,
                             eval_iters,
                             disable_context=False,
-                            think_settings=None,
-                            undo_settings=None,
+                            disable_xctx=False,
+                            disable_attention=False,
+                            think_settings=think_settings,
+                            undo_settings=undo_settings,
                             batches=cached_batches[split],
                         )
-                        split_metrics[f"{split}_nothink"] = {
-                            "ce": float(ce_loss),
-                        }
+                    )
+                    plain_kwargs = dict(
+                        think_settings=None,
+                        undo_settings=None,
+                        batches=cached_batches[split],
+                    )
+                    split_metrics[split]["noctx"] = float(
+                        evaluate_split(
+                            model,
+                            dataset,
+                            device,
+                            block_size,
+                            batch_size,
+                            split,
+                            eval_iters,
+                            disable_context=False,
+                            disable_xctx=True,
+                            disable_attention=False,
+                            **plain_kwargs,
+                        )
+                    )
+                    split_metrics[split]["noatt"] = float(
+                        evaluate_split(
+                            model,
+                            dataset,
+                            device,
+                            block_size,
+                            batch_size,
+                            split,
+                            eval_iters,
+                            disable_context=False,
+                            disable_xctx=False,
+                            disable_attention=True,
+                            **plain_kwargs,
+                        )
+                    )
+                    split_metrics[split]["none"] = float(
+                        evaluate_split(
+                            model,
+                            dataset,
+                            device,
+                            block_size,
+                            batch_size,
+                            split,
+                            eval_iters,
+                            disable_context=False,
+                            disable_xctx=True,
+                            disable_attention=True,
+                            **plain_kwargs,
+                        )
+                    )
+                    if show_think_columns and tokenizer.think_id is not None:
+                        think_modes = evaluate_think_modes(
+                            model,
+                            cached_batches[split],
+                            think_token_id=int(tokenizer.think_id),
+                        )
+                        split_metrics[split].update(think_modes)
             prompt_input = sample_prompt
             prompt_needs_boundary_flag = (
                 default_prompt_boundary and boundary_blocklist is not None
@@ -2181,18 +2411,24 @@ def train_model(
                 context_prefix=prompt_ids,
             )
             colored_sample = prefix_text + completion_text
+            normal_group = [("normal", "normal")]
+            diag_group = [("noctx", "noctx"), ("noatt", "noatt"), ("none", "none")]
+            think_group = [("think", "think"), ("2x", "think2x"), ("3x", "think3x")]
+
             if not printed_header:
-                train_header = "train loss  noctx  noatt"
-                test_header = "test loss  noctx  noatt"
-                if show_think_columns:
-                    train_header += "  nothink"
-                    test_header += "  nothink"
                 if prompt_tracker is not None:
                     random_only_count, solved_count, total_prompts = prompt_tracker.counts()
                 else:
                     total_prompts = len(PROMPT_GOALS)
                     random_only_count = 0
                     solved_count = 0
+                base_labels = [label for label, _ in normal_group + diag_group]
+                train_header = "train loss : " + " ".join(base_labels)
+                test_header = "test loss : " + " ".join(base_labels)
+                if show_think_columns:
+                    think_labels = [label for label, _ in think_group]
+                    train_header += " : " + " ".join(think_labels)
+                    test_header += " : " + " ".join(think_labels)
                 header_parts: List[str] = []
                 if show_time:
                     header_parts.append("time")
@@ -2206,27 +2442,30 @@ def train_model(
                 print(header_line)
                 printed_header = True
 
-            def format_metric(key: str) -> str:
-                metric = split_metrics[key]
-                ce_val = metric["ce"]
-                return f"{ce_val:.2f}"
+            def format_metric(split: str, key: str) -> str:
+                value = split_metrics.get(split, {}).get(key)
+                if value is None or math.isnan(value):
+                    return " -- "
+                return f"{value:.2f}"
 
             train_parts = [
-                format_metric("train"),
-                format_metric("train_noctx"),
-                format_metric("train_noatt"),
+                format_metric("train", key)
+                for _, key in normal_group + diag_group
             ]
             if show_think_columns:
-                train_parts.append(format_metric("train_nothink"))
+                train_parts.extend(
+                    format_metric("train", key) for _, key in think_group
+                )
             train_values = "  ".join(train_parts)
 
             test_parts = [
-                format_metric("test"),
-                format_metric("test_noctx"),
-                format_metric("test_noatt"),
+                format_metric("test", key)
+                for _, key in normal_group + diag_group
             ]
             if show_think_columns:
-                test_parts.append(format_metric("test_nothink"))
+                test_parts.extend(
+                    format_metric("test", key) for _, key in think_group
+                )
             test_values = "  ".join(test_parts)
             if prompt_tracker is not None:
                 random_only_count, solved_prompts, total_prompts = prompt_tracker.counts()
@@ -2249,20 +2488,26 @@ def train_model(
 
             record = {
                 "step": total_steps,
-                "train_loss": float(split_metrics["train"]["ce"]),
-                "train_loss_noctx": float(split_metrics["train_noctx"]["ce"]),
-                "train_loss_noatt": float(split_metrics["train_noatt"]["ce"]),
-                "test_loss": float(split_metrics["test"]["ce"]),
-                "test_loss_noctx": float(split_metrics["test_noctx"]["ce"]),
-                "test_loss_noatt": float(split_metrics["test_noatt"]["ce"]),
+                "train_loss": float(split_metrics["train"].get("normal", 0.0)),
+                "train_loss_noctx": float(split_metrics["train"].get("noctx", 0.0)),
+                "train_loss_noatt": float(split_metrics["train"].get("noatt", 0.0)),
+                "train_loss_none": float(split_metrics["train"].get("none", 0.0)),
+                "test_loss": float(split_metrics["test"].get("normal", 0.0)),
+                "test_loss_noctx": float(split_metrics["test"].get("noctx", 0.0)),
+                "test_loss_noatt": float(split_metrics["test"].get("noatt", 0.0)),
+                "test_loss_none": float(split_metrics["test"].get("none", 0.0)),
                 "train_wall_seconds": float(total_wall_seconds),
                 "unix_time": float(eval_now),
                 "train_cursor": int(dataset.positions.get("train", 0)),
                 "test_cursor": int(dataset.positions.get("test", 0)),
             }
-            if "train_nothink" in split_metrics:
-                record["train_loss_nothink"] = float(split_metrics["train_nothink"]["ce"])
-                record["test_loss_nothink"] = float(split_metrics["test_nothink"]["ce"])
+            if show_think_columns:
+                record["train_loss_think"] = float(split_metrics["train"].get("think", 0.0))
+                record["train_loss_think2x"] = float(split_metrics["train"].get("think2x", 0.0))
+                record["train_loss_think3x"] = float(split_metrics["train"].get("think3x", 0.0))
+                record["test_loss_think"] = float(split_metrics["test"].get("think", 0.0))
+                record["test_loss_think2x"] = float(split_metrics["test"].get("think2x", 0.0))
+                record["test_loss_think3x"] = float(split_metrics["test"].get("think3x", 0.0))
             history_updates.append(record)
     
     if reward_tracker is not None:
