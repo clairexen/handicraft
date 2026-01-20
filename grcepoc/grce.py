@@ -1853,7 +1853,7 @@ def build_think_sequences(
     eval_weights = torch.zeros(B, T, device=device, dtype=torch.float32)
 
     limit = T + 1
-    counts = counts.to(device=device, dtype=torch.long)
+    counts = counts.to(device=device, dtype=torch.long).clamp_min(0)
 
     for row in range(B):
         seq_entries: list[dict] = []
@@ -1869,8 +1869,9 @@ def build_think_sequences(
             if len(seq_entries) > limit:
                 del seq_entries[limit:]
 
+        base_counts = counts[row]
         for base_idx in range(T):
-            count = int(counts[row, base_idx].item())
+            count = int(base_counts[base_idx].item())
             if count <= 0:
                 continue
             insert_pos = None
@@ -1905,17 +1906,14 @@ def build_think_sequences(
         new_targets[row] = row_tokens[1:]
 
         for pos, entry in enumerate(seq_entries[:-1]):
-            if entry.get("tag") != "think":
-                continue
-            total = entry.get("think_total") or 1
-            idx_in_seq = entry.get("think_idx")
-            if idx_in_seq is None or idx_in_seq != total - 1:
+            if entry.get("tag") != "base":
                 continue
             base_idx = entry.get("base_index")
             if base_idx is None or base_idx >= len(base_targets):
                 continue
+            count = int(base_counts[base_idx].item())
             eval_targets[row, pos] = base_targets[base_idx]
-            eval_weights[row, pos] = float(total)
+            eval_weights[row, pos] = float(max(1, count + 1))
 
     return new_inputs, new_targets, eval_targets, eval_weights
 
@@ -1928,8 +1926,6 @@ def run_think_insertion_eval(
     *,
     think_token_id: int,
 ) -> tuple[float, float]:
-    if counts.sum().item() <= 0:
-        return 0.0, 0.0
     new_inputs, new_targets, eval_targets, eval_weights = build_think_sequences(
         inputs,
         targets,

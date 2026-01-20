@@ -513,11 +513,21 @@ def main() -> None:
         rec.is_think = is_think
         rec.scaled_steps = compute_scaled_steps(rec, is_think=is_think)
         rec.scaled_train = compute_scaled_series(rec.train, is_think=is_think)
+        rec.scaled_train_plain = compute_scaled_series(rec.train_plain, is_think=is_think)
         rec.scaled_test = compute_scaled_series(rec.test, is_think=is_think)
+        rec.scaled_test_plain = compute_scaled_series(rec.test_plain, is_think=is_think)
         rec.scaled_train_noctx = compute_scaled_series(rec.train_noctx, is_think=is_think)
         rec.scaled_test_noctx = compute_scaled_series(rec.test_noctx, is_think=is_think)
         rec.scaled_train_noatt = compute_scaled_series(rec.train_noatt, is_think=is_think)
         rec.scaled_test_noatt = compute_scaled_series(rec.test_noatt, is_think=is_think)
+        rec.scaled_train_none = compute_scaled_series(rec.train_none, is_think=is_think)
+        rec.scaled_test_none = compute_scaled_series(rec.test_none, is_think=is_think)
+        rec.scaled_train_think = compute_scaled_series(rec.train_think, is_think=is_think)
+        rec.scaled_test_think = compute_scaled_series(rec.test_think, is_think=is_think)
+        rec.scaled_train_think2x = compute_scaled_series(rec.train_think2x, is_think=is_think)
+        rec.scaled_test_think2x = compute_scaled_series(rec.test_think2x, is_think=is_think)
+        rec.scaled_train_think3x = compute_scaled_series(rec.train_think3x, is_think=is_think)
+        rec.scaled_test_think3x = compute_scaled_series(rec.test_think3x, is_think=is_think)
 
     steps_per_cycle = 100
     print(f"Loaded {len(records)} trace(s):")
