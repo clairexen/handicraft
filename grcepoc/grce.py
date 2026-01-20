@@ -843,7 +843,9 @@ def augment_training_batch(
             eligible_rows = [
                 row_idx
                 for row_idx in range(B)
-                if row_idx not in think_disabled_rows and row_idx not in forced_context_off
+                if row_idx not in think_disabled_rows
+                and row_idx not in forced_context_off
+                and row_idx not in forced_think_rows
             ]
             quota = min(seq_think_quota, len(eligible_rows))
             think_row_set = set(eligible_rows[:quota])
@@ -1261,13 +1263,31 @@ class CausalSelfAttention(nn.Module):
             "tril", torch.tril(torch.ones(config.block_size, config.block_size))
         )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        *,
+        dropout_positions: torch.Tensor | None = None,
+    ) -> torch.Tensor:
         B, T, C = x.shape
-        k = self.key(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
+        k_full = self.key(x)
         q = self.query(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
-        v = self.value(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
+        v_full = self.value(x)
+        atten_block_mask: torch.Tensor | None = None
+        if dropout_positions is not None:
+            valid = (dropout_positions >= 0).nonzero(as_tuple=False).flatten()
+            if valid.numel() > 0:
+                atten_block_mask = torch.zeros(B, T, T, dtype=torch.bool, device=x.device)
+                for b_idx in valid.tolist():
+                    pos = int(dropout_positions[b_idx].item())
+                    if 0 <= pos < T - 1:
+                        atten_block_mask[b_idx, pos + 1 :, pos] = True
+        k = k_full.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
+        v = v_full.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
         att = (q @ k.transpose(-2, -1)) / math.sqrt(k.size(-1))
         att = att.masked_fill(self.tril[:T, :T] == 0, float("-inf"))
+        if atten_block_mask is not None:
+            att = att.masked_fill(atten_block_mask[:, None, :, :], float("-inf"))
         att = F.softmax(att, dim=-1)
         att = self.dropout(att)
         y = att @ v
@@ -1306,9 +1326,22 @@ class Block(nn.Module):
         self.ff = FeedForward(config)
 
     def forward(
-        self, x: torch.Tensor, *, record_mask: bool = False
+        self,
+        x: torch.Tensor,
+        *,
+        record_mask: bool = False,
+        attention_disabled_rows: torch.Tensor | None = None,
+        attention_dropout_positions: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
-        x = x + self.attn(self.ln1(x))
+        attn_out = self.attn(
+            self.ln1(x),
+            disable_rows=attention_disabled_rows,
+            dropout_positions=attention_dropout_positions,
+        )
+        if attention_disabled_rows is not None and attention_disabled_rows.any():
+            mask = (~attention_disabled_rows).view(-1, 1, 1).to(attn_out.dtype)
+            attn_out = attn_out * mask
+        x = x + attn_out
         pre_ff = self.ln2(x)
         ff_out, mask = self.ff(pre_ff, record_mask=record_mask)
         x = x + ff_out
@@ -1335,12 +1368,20 @@ class GPTCore(nn.Module):
         block_biases: List[torch.Tensor] | None = None,
         *,
         record_relu_mask: bool = False,
+        attention_disabled_rows: torch.Tensor | None = None,
+        attention_dropout_positions: torch.Tensor | None = None,
     ) -> Tuple[torch.Tensor, torch.Tensor, List[torch.Tensor], List[torch.Tensor] | None]:
         B, T = idx.shape
         device = idx.device
         tok = self.tok_emb(idx)
         pos = self.pos_emb(torch.arange(T, device=device))
         x = self.drop(tok + pos)
+        if attention_disabled_rows is not None:
+            attention_disabled_rows = attention_disabled_rows.to(device=device, dtype=torch.bool)
+        else:
+            attention_disabled_rows = torch.zeros(B, dtype=torch.bool, device=device)
+        if attention_dropout_positions is not None:
+            attention_dropout_positions = attention_dropout_positions.to(device=device, dtype=torch.long)
         block_inputs: List[torch.Tensor] = []
         relu_masks: List[torch.Tensor | None] | None = None
         if record_relu_mask:
@@ -1349,7 +1390,12 @@ class GPTCore(nn.Module):
             if block_biases is not None:
                 x = x + block_biases[layer_idx]
             block_inputs.append(x[:, -1, :])
-            x, layer_mask = block(x, record_mask=record_relu_mask)
+            x, layer_mask = block(
+                x,
+                record_mask=record_relu_mask,
+                attention_disabled_rows=attention_disabled_rows,
+                attention_dropout_positions=attention_dropout_positions,
+            )
             if self.detach_layer > 0 and (layer_idx + 1) == self.detach_layer:
                 x = x.detach()
             if record_relu_mask and relu_masks is not None and layer_mask is not None:
@@ -1481,6 +1527,8 @@ class GRCEGPT(nn.Module):
         collect_relu_mask: bool = False,
         context_disabled_rows: torch.Tensor | None = None,
         context_dropout_positions: torch.Tensor | None = None,
+        attention_disabled_rows: torch.Tensor | None = None,
+        attention_dropout_positions: torch.Tensor | None = None,
     ) -> Tuple[torch.Tensor, torch.Tensor | None, dict | None]:
         B, T = idx.shape
         device = idx.device
@@ -1497,6 +1545,12 @@ class GRCEGPT(nn.Module):
             context_disabled_rows = torch.zeros(B, dtype=torch.bool, device=device)
         if context_dropout_positions is not None:
             context_dropout_positions = context_dropout_positions.to(device=device, dtype=torch.long).clone()
+        if attention_disabled_rows is not None:
+            attention_disabled_rows = attention_disabled_rows.to(device=device, dtype=torch.bool)
+        else:
+            attention_disabled_rows = torch.zeros(B, dtype=torch.bool, device=device)
+        if attention_dropout_positions is not None:
+            attention_dropout_positions = attention_dropout_positions.to(device=device, dtype=torch.long).clone()
         context_states: list[torch.Tensor] = []
         if use_context:
             for channel in active_channels:
@@ -1594,6 +1648,8 @@ class GRCEGPT(nn.Module):
                 prefix,
                 block_biases=block_biases,
                 record_relu_mask=collect_relu_mask,
+                attention_disabled_rows=attention_disabled_rows,
+                attention_dropout_positions=attention_dropout_positions,
             )
             if relu_activity is not None:
                 relu_activity.append(layer_masks)
@@ -1839,6 +1895,26 @@ def train_model(
             prompt_queue.insert(0, idx)
         else:
             prompt_queue.append(idx)
+
+    def pick_special_row(
+        *,
+        occupied: set[int],
+        disallowed: set[int] | None = None,
+    ) -> int:
+        if batch_size <= 0:
+            return 0
+        blocked = set(occupied)
+        if disallowed is not None:
+            blocked |= set(disallowed)
+        available = [idx for idx in range(batch_size) if idx not in blocked]
+        if not available:
+            if disallowed is not None and len(disallowed) < batch_size:
+                available = [idx for idx in range(batch_size) if idx not in disallowed]
+        if not available:
+            available = list(range(batch_size))
+        choice = random.choice(available)
+        occupied.add(choice)
+        return choice
     show_think_columns = think_enabled
     show_target_headers = think_enabled or undo_enabled
     context_dropout_interval = max(0, int(context_dropout_interval))
@@ -1852,9 +1928,12 @@ def train_model(
             and current_step_index % context_dropout_interval == 0
         )
         context_special_rows: set[int] = set()
+        occupied_rows: set[int] = set()
         context_disabled_mask: torch.Tensor | None = None
         context_dropout_positions: torch.Tensor | None = None
         puncture_row: int | None = None
+        attention_disabled_mask: torch.Tensor | None = None
+        attention_dropout_positions: torch.Tensor | None = None
         if context_dropout_active and batch_size > 0:
             context_disabled_mask = torch.zeros(batch_size, dtype=torch.bool, device=device)
             context_dropout_positions = torch.full(
@@ -1863,33 +1942,36 @@ def train_model(
                 dtype=torch.long,
                 device=device,
             )
-            all_rows = list(range(batch_size))
-            full_row = random.choice(all_rows)
+            full_row = pick_special_row(occupied=occupied_rows)
             context_disabled_mask[full_row] = True
             context_special_rows.add(full_row)
-            partial_candidates = [idx for idx in all_rows if idx != full_row]
-            partial_row = random.choice(partial_candidates) if partial_candidates else full_row
-            puncture_row = partial_row
+            puncture_row = pick_special_row(occupied=occupied_rows)
+            context_special_rows.add(puncture_row)
             drop_position = random.randrange(max(1, block_size))
-            context_dropout_positions[partial_row] = drop_position
+            context_dropout_positions[puncture_row] = drop_position
+            attention_disabled_mask = torch.zeros(batch_size, dtype=torch.bool, device=device)
+            attention_dropout_positions = torch.full(
+                (batch_size,),
+                -1,
+                dtype=torch.long,
+                device=device,
+            )
+            att_off_row = pick_special_row(occupied=occupied_rows)
+            attention_disabled_mask[att_off_row] = True
+            context_special_rows.add(att_off_row)
+            att_puncture_row = pick_special_row(occupied=occupied_rows)
+            att_drop_pos = random.randrange(max(1, block_size))
+            attention_dropout_positions[att_puncture_row] = att_drop_pos
+            context_special_rows.add(att_puncture_row)
         think_disabled_rows = set()
         if think_enabled and batch_size > 0:
             think_disabled_rows.add(random.randrange(batch_size))
         forced_think_rows: set[int] = set()
         if context_dropout_active and think_enabled and batch_size > 0:
-            excluded = set(context_special_rows)
-            if puncture_row is not None:
-                excluded.add(puncture_row)
-            available = [
-                idx
-                for idx in range(batch_size)
-                if idx not in excluded and idx not in think_disabled_rows
-            ]
-            if not available:
-                available = [idx for idx in range(batch_size) if idx not in think_disabled_rows]
-            if not available:
-                available = list(range(batch_size))
-            think_special_row = random.choice(available)
+            think_special_row = pick_special_row(
+                occupied=occupied_rows,
+                disallowed=think_disabled_rows,
+            )
             forced_think_rows.add(think_special_row)
         xb, yb, random_mask, think_labels, think_slot_mask = augment_training_batch(
             model,
@@ -1908,6 +1990,8 @@ def train_model(
             collect_relu_mask=reward_tracker is not None,
             context_disabled_rows=context_disabled_mask,
             context_dropout_positions=context_dropout_positions,
+            attention_disabled_rows=attention_disabled_mask,
+            attention_dropout_positions=attention_dropout_positions,
         )
         raw_logits = logits
         logits_main = disable_think_logits(raw_logits.clone(), think_settings)
@@ -2952,7 +3036,10 @@ def parse_args() -> argparse.Namespace:
         "--context-dropout-interval",
         type=int,
         default=1,
-        help="Every N steps create one no-context row and one single-step dropout row (0 disables)",
+        help=(
+            "Every N steps create no-context, context-punctured, random-think, attention-off, and "
+            "attention-punctured rows (0 disables)"
+        ),
     )
     training_group.add_argument(
         "--reward-relu",
