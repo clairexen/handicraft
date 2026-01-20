@@ -1604,8 +1604,10 @@ class GRCEGPT(nn.Module):
 def build_model_tag(config: ModelConfig) -> str:
     tag = (
         f"v{config.vocab_size}_bs{config.block_size}_emb{config.n_embd}_"
-        f"layers{config.n_layer}_heads{config.n_head}_ctx{config.n_grce}"
+        f"layers{config.n_layer}_heads{config.n_head}"
     )
+    if config.n_grce > 0:
+        tag += f"_grce{config.n_grce}"
     if config.n_xctx > 0:
         tag += f"_xctx{config.n_xctx}"
     return tag
