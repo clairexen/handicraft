@@ -395,8 +395,11 @@ class GPT2TokenizerWrapper:
         tokenizer.decoder = ByteLevelDecoder()
         byte_values = sorted(set(train_text.encode("utf-8")))
         initial_alphabet = [chr(b) for b in byte_values] or ByteLevel.alphabet()
+        # Reserve one additional slot beyond the requested vocab size to compensate
+        # for the underlying trainer implicitly injecting an end-of-input token.
+        trainer_vocab_size = vocab_size + 1
         trainer = BpeTrainer(
-            vocab_size=vocab_size,
+            vocab_size=trainer_vocab_size,
             min_frequency=2,
             special_tokens=[],
             initial_alphabet=initial_alphabet,
@@ -4482,6 +4485,14 @@ def main() -> None:
             target_vocab,
             pretrained_json=tokenizer_json,
         )
+        expected_vocab_size = args.tokenizer_vocab
+        actual_vocab_size = tokenizer.vocab_size
+        if actual_vocab_size != expected_vocab_size:
+            raise ValueError(
+                "Tokenizer size mismatch: expected "
+                f"{expected_vocab_size} tokens but found {actual_vocab_size}. "
+                "Delete the cached tokenizer and re-run 'init'."
+            )
         tokenizer_json = tokenizer_json or tokenizer_path.read_text(encoding="utf-8")
 
         newline_token_id = None
