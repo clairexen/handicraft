@@ -38,7 +38,7 @@ This means any layer at position N can send a context-related message to any lay
 
 `train loss` / `test loss` are the baseline metrics: we re-run the same batch configuration used during training (including thinking/undo insertions) with the cached recurrent state that was captured from the preceding block. No special rows are injected here so these losses track the exact workflow the optimizer sees.
 
-`special` duplicates the primary run but re-enables the special rows that context dropout would normally schedule (context disabled, context puncture, attention disabled, attention puncture, etc.). These rows aren’t purely diagnostic—they force the network to practice scenarios where important signals are missing so GRCE, XCTX, and attention learn to back each other up.
+`special` duplicates the primary run but re-enables the special rows that context dropout would normally schedule (context disabled, context puncture, attention disabled, attention puncture, etc.). Their purpose is to force the network to practice scenarios where important signals are missing so GRCE, XCTX, and attention learn to back each other up; they are not mere observers, they are active training constraints.
 
 `noprev` uses the exact same sequences as `train loss` but zeroes the injected GRCE/XCTX vectors so the block starts “from scratch.” It measures how much the model relies on the cross-block state and acts as a regression check for the prefill pipeline.
 
