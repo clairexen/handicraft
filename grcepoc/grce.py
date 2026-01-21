@@ -765,6 +765,7 @@ def compute_prefill_contexts(
 class SpecialRowMasks:
     context_special_rows: set[int]
     context_disabled_mask: torch.Tensor | None
+    xctx_disabled_mask: torch.Tensor | None
     context_dropout_positions: torch.Tensor | None
     attention_disabled_mask: torch.Tensor | None
     attention_dropout_positions: torch.Tensor | None
@@ -779,11 +780,13 @@ def build_special_row_masks(
     *,
     think_enabled: bool,
     context_enabled: bool,
+    xctx_enabled: bool,
 ) -> SpecialRowMasks:
     context_special_rows: set[int] = set()
     think_disabled_rows: set[int] = set()
     forced_think_rows: set[int] = set()
     context_disabled_mask: torch.Tensor | None = None
+    xctx_disabled_mask: torch.Tensor | None = None
     context_dropout_positions: torch.Tensor | None = None
     attention_disabled_mask: torch.Tensor | None = None
     attention_dropout_positions: torch.Tensor | None = None
@@ -791,6 +794,7 @@ def build_special_row_masks(
         return SpecialRowMasks(
             context_special_rows,
             context_disabled_mask,
+            xctx_disabled_mask,
             context_dropout_positions,
             attention_disabled_mask,
             attention_dropout_positions,
@@ -814,18 +818,24 @@ def build_special_row_masks(
     occupied_rows: set[int] = set()
     if context_enabled:
         context_disabled_mask = torch.zeros(batch_size, dtype=torch.bool, device=device)
+        full_off = pick_row(occupied_rows)
+        context_disabled_mask[full_off] = True
+        context_special_rows.add(full_off)
+    if xctx_enabled:
+        xctx_disabled_mask = torch.zeros(batch_size, dtype=torch.bool, device=device)
         context_dropout_positions = torch.full(
             (batch_size,),
             -1,
             dtype=torch.long,
             device=device,
         )
-        full_off = pick_row(occupied_rows)
-        context_disabled_mask[full_off] = True
-        context_special_rows.add(full_off)
+        no_xctx_row = pick_row(occupied_rows)
+        xctx_disabled_mask[no_xctx_row] = True
+        context_special_rows.add(no_xctx_row)
         puncture_row = pick_row(occupied_rows)
         drop_position = random.randrange(max(1, block_size))
         context_dropout_positions[puncture_row] = drop_position
+        context_special_rows.add(puncture_row)
         attention_disabled_mask = torch.zeros(batch_size, dtype=torch.bool, device=device)
         attention_dropout_positions = torch.full(
             (batch_size,),
@@ -835,20 +845,23 @@ def build_special_row_masks(
         )
         att_off = pick_row(occupied_rows)
         attention_disabled_mask[att_off] = True
+        context_special_rows.add(att_off)
         att_puncture = pick_row(occupied_rows)
         att_drop_position = random.randrange(max(1, block_size))
         attention_dropout_positions[att_puncture] = att_drop_position
+        context_special_rows.add(att_puncture)
 
     if think_enabled:
         think_disabled_rows.add(random.randrange(batch_size))
         candidates = [idx for idx in range(batch_size) if idx not in think_disabled_rows]
         if candidates:
-            forced_idx = random.choice(candidates)
+            forced_idx = pick_row(occupied_rows, disallowed=think_disabled_rows)
             forced_think_rows.add(forced_idx)
 
     return SpecialRowMasks(
         context_special_rows,
         context_disabled_mask,
+        xctx_disabled_mask,
         context_dropout_positions,
         attention_disabled_mask,
         attention_dropout_positions,
@@ -1145,18 +1158,22 @@ def augment_training_batch(
         think_token_val = int(think.token_id) if think is not None and think.token_id is not None else None
         if row_think_active and think_token_val is not None:
             if row_is_special:
-                random_count = random.randint(1, max(1, block_size - 1))
-                for _ in range(random_count):
-                    insert_pos = random.randint(0, len(seq_entries))
-                    seq_entries.insert(
-                        insert_pos,
-                        {
-                            "token": think_token_val,
-                            "tag": "think_random",
-                            "base_index": None,
-                        },
-                    )
-                    truncate_entries()
+                max_k = max(0, (3 * block_size) // 4)
+                k_val = random.randint(0, max_k)
+                prob = k_val / max(1, block_size)
+                expanded: list[dict] = []
+                for idx_entry, entry in enumerate(seq_entries):
+                    if idx_entry > 0 and random.random() < prob:
+                        expanded.append(
+                            {
+                                "token": think_token_val,
+                                "tag": "think_random",
+                                "base_index": None,
+                            }
+                        )
+                    expanded.append(entry)
+                seq_entries = expanded
+                truncate_entries()
             else:
                 R = sample_scaled_value()
                 H = sample_scaled_value()
@@ -1967,6 +1984,7 @@ class GRCEGPT(nn.Module):
         think_token_id: int | None = None,
         collect_relu_mask: bool = False,
         context_disabled_rows: torch.Tensor | None = None,
+        xctx_disabled_rows: torch.Tensor | None = None,
         context_dropout_positions: torch.Tensor | None = None,
         disable_xctx: bool = False,
         attention_disabled_rows: torch.Tensor | None = None,
@@ -1991,6 +2009,10 @@ class GRCEGPT(nn.Module):
             context_disabled_rows = context_disabled_rows.to(device=device, dtype=torch.bool)
         if context_disabled_rows is None or not use_context:
             context_disabled_rows = torch.zeros(B, dtype=torch.bool, device=device)
+        if xctx_disabled_rows is not None:
+            xctx_disabled_rows = xctx_disabled_rows.to(device=device, dtype=torch.bool)
+        if xctx_disabled_rows is None or not use_context:
+            xctx_disabled_rows = torch.zeros(B, dtype=torch.bool, device=device)
         if context_dropout_positions is not None:
             context_dropout_positions = context_dropout_positions.to(device=device, dtype=torch.long).clone()
         if attention_disabled_rows is not None:
@@ -2051,6 +2073,8 @@ class GRCEGPT(nn.Module):
             }
         base_context_mask = context_disabled_rows
         base_context_mask_has = bool(base_context_mask.any().item())
+        base_xctx_mask = xctx_disabled_rows
+        base_xctx_mask_has = bool(base_xctx_mask.any().item())
 
         for t in range(T):
             xctx_step_mask = None
@@ -2097,15 +2121,23 @@ class GRCEGPT(nn.Module):
                     channel_mask = base_context_mask
                     channel_mask_has = base_context_mask_has
                     xctx_len = None
-                    if channel.is_xctx and chunk is not None:
-                        xctx_len = chunk
-                        if xctx_mask_has:
+                    if channel.is_xctx:
+                        if base_xctx_mask_has:
                             channel_mask = (
-                                (base_context_mask | xctx_step_mask)
+                                (channel_mask | base_xctx_mask)
                                 if channel_mask_has
-                                else xctx_step_mask
+                                else base_xctx_mask
                             )
                             channel_mask_has = True
+                        if chunk is not None:
+                            xctx_len = chunk
+                            if xctx_mask_has:
+                                channel_mask = (
+                                    (channel_mask | xctx_step_mask)
+                                    if channel_mask_has
+                                    else xctx_step_mask
+                                )
+                                channel_mask_has = True
                     state_for_bias = state
                     if channel_mask_has:
                         state_for_bias = state_for_bias.clone()
@@ -2160,13 +2192,21 @@ class GRCEGPT(nn.Module):
                     channel_mask = base_context_mask
                     channel_mask_has = base_context_mask_has
                     chunk = channel.layer_chunk if channel.is_xctx else None
-                    if channel.is_xctx and xctx_mask_has:
-                        channel_mask = (
-                            (base_context_mask | xctx_step_mask)
-                            if channel_mask_has
-                            else xctx_step_mask
-                        )
-                        channel_mask_has = True
+                    if channel.is_xctx:
+                        if base_xctx_mask_has:
+                            channel_mask = (
+                                (channel_mask | base_xctx_mask)
+                                if channel_mask_has
+                                else base_xctx_mask
+                            )
+                            channel_mask_has = True
+                        if xctx_mask_has:
+                            channel_mask = (
+                                (channel_mask | xctx_step_mask)
+                                if channel_mask_has
+                                else xctx_step_mask
+                            )
+                            channel_mask_has = True
                     if channel_mask_has:
                         prev_context = prev_context.clone()
                         prev_context[channel_mask] = 0
@@ -2300,6 +2340,9 @@ def evaluate_split(
             batches.append((xb, yb))
     think_token_id = active_think_token_id(think_settings)
     context_path_enabled = bool(model.context_channels)
+    xctx_enabled = any(
+        getattr(channel, "is_xctx", False) for channel in getattr(model, "context_channels", [])
+    )
     think_enabled = think_settings is not None and think_settings.enabled
     for payload in batches:
         xb, yb = payload[:2]
@@ -2312,15 +2355,16 @@ def evaluate_split(
                 xb.device,
                 think_enabled=think_enabled,
                 context_enabled=context_path_enabled,
+                xctx_enabled=xctx_enabled,
             )
         context_special_rows = (
             special_masks.context_special_rows if special_masks is not None else None
         )
         think_disabled_rows = (
-            special_masks.think_disabled_rows if special_masks is not None else None
+            set(special_masks.think_disabled_rows) if special_masks is not None else None
         )
         forced_think_rows = (
-            special_masks.forced_think_rows if special_masks is not None else None
+            set(special_masks.forced_think_rows) if special_masks is not None else None
         )
         aug_xb, aug_yb, random_mask, _, think_slot_mask = augment_training_batch(
             model,
@@ -2346,9 +2390,11 @@ def evaluate_split(
         elif special_masks is not None:
             attention_dropout_positions = special_masks.attention_dropout_positions
         context_disabled_rows = None
+        xctx_disabled_rows = None
         context_dropout_positions = None
         if special_masks is not None:
             context_disabled_rows = special_masks.context_disabled_mask
+            xctx_disabled_rows = special_masks.xctx_disabled_mask
             context_dropout_positions = special_masks.context_dropout_positions
         raw_logits, _, _ = model.forward_autoreg(
             aug_xb,
@@ -2358,6 +2404,7 @@ def evaluate_split(
             attention_disabled_rows=attention_disabled_rows,
             attention_dropout_positions=attention_dropout_positions,
             context_disabled_rows=context_disabled_rows,
+            xctx_disabled_rows=xctx_disabled_rows,
             context_dropout_positions=context_dropout_positions,
             initial_context_raw=init_ctx,
         )
@@ -2658,25 +2705,6 @@ def train_model(
         else:
             prompt_queue.append(idx)
 
-    def pick_special_row(
-        *,
-        occupied: set[int],
-        disallowed: set[int] | None = None,
-    ) -> int:
-        if batch_size <= 0:
-            return 0
-        blocked = set(occupied)
-        if disallowed is not None:
-            blocked |= set(disallowed)
-        available = [idx for idx in range(batch_size) if idx not in blocked]
-        if not available:
-            if disallowed is not None and len(disallowed) < batch_size:
-                available = [idx for idx in range(batch_size) if idx not in disallowed]
-        if not available:
-            available = list(range(batch_size))
-        choice = random.choice(available)
-        occupied.add(choice)
-        return choice
     full_eval_stride = max(0, int(full_eval_stride))
     full_eval_enabled = full_eval_stride > 0
     show_think_columns = bool(
@@ -2686,6 +2714,9 @@ def train_model(
     show_test_details = bool(show_test_loss_details and full_eval_enabled)
     context_dropout_interval = max(0, int(context_dropout_interval))
     context_path_enabled = bool(model.context_channels)
+    xctx_enabled = any(
+        getattr(channel, "is_xctx", False) for channel in getattr(model, "context_channels", [])
+    )
     loop_wall_start = time.time()
     loop_cpu_start = time.process_time()
     eval_wall_total = 0.0
@@ -2707,48 +2738,32 @@ def train_model(
             and current_step_index % context_dropout_interval == 0
         )
         context_special_rows: set[int] = set()
-        occupied_rows: set[int] = set()
         context_disabled_mask: torch.Tensor | None = None
+        xctx_disabled_mask: torch.Tensor | None = None
         context_dropout_positions: torch.Tensor | None = None
-        puncture_row: int | None = None
         attention_disabled_mask: torch.Tensor | None = None
         attention_dropout_positions: torch.Tensor | None = None
-        if context_dropout_active and batch_size > 0:
-            context_disabled_mask = torch.zeros(batch_size, dtype=torch.bool, device=device)
-            context_dropout_positions = torch.full(
-                (batch_size,),
-                -1,
-                dtype=torch.long,
-                device=device,
-            )
-            full_row = pick_special_row(occupied=occupied_rows)
-            context_disabled_mask[full_row] = True
-            context_special_rows.add(full_row)
-            puncture_row = pick_special_row(occupied=occupied_rows)
-            drop_position = random.randrange(max(1, block_size))
-            context_dropout_positions[puncture_row] = drop_position
-            attention_disabled_mask = torch.zeros(batch_size, dtype=torch.bool, device=device)
-            attention_dropout_positions = torch.full(
-                (batch_size,),
-                -1,
-                dtype=torch.long,
-                device=device,
-            )
-            att_off_row = pick_special_row(occupied=occupied_rows)
-            attention_disabled_mask[att_off_row] = True
-            att_puncture_row = pick_special_row(occupied=occupied_rows)
-            att_drop_pos = random.randrange(max(1, block_size))
-            attention_dropout_positions[att_puncture_row] = att_drop_pos
-        think_disabled_rows = set()
-        if think_enabled and batch_size > 0:
-            think_disabled_rows.add(random.randrange(batch_size))
+        think_disabled_rows: set[int] = set()
         forced_think_rows: set[int] = set()
-        if context_dropout_active and think_enabled and batch_size > 0:
-            think_special_row = pick_special_row(
-                occupied=occupied_rows,
-                disallowed=think_disabled_rows,
+        if context_dropout_active:
+            special_masks = build_special_row_masks(
+                batch_size,
+                block_size,
+                device,
+                think_enabled=think_enabled,
+                context_enabled=context_path_enabled,
+                xctx_enabled=xctx_enabled,
             )
-            forced_think_rows.add(think_special_row)
+            context_special_rows = set(special_masks.context_special_rows)
+            context_disabled_mask = special_masks.context_disabled_mask
+            xctx_disabled_mask = special_masks.xctx_disabled_mask
+            context_dropout_positions = special_masks.context_dropout_positions
+            attention_disabled_mask = special_masks.attention_disabled_mask
+            attention_dropout_positions = special_masks.attention_dropout_positions
+            think_disabled_rows = set(special_masks.think_disabled_rows)
+            forced_think_rows = set(special_masks.forced_think_rows)
+        elif think_enabled and batch_size > 0:
+            think_disabled_rows.add(random.randrange(batch_size))
         xb, yb, random_mask, think_labels, think_slot_mask = augment_training_batch(
             model,
             xb,
@@ -2766,6 +2781,7 @@ def train_model(
             think_token_id=think_token_id,
             collect_relu_mask=reward_tracker is not None,
             context_disabled_rows=context_disabled_mask,
+            xctx_disabled_rows=xctx_disabled_mask,
             context_dropout_positions=context_dropout_positions,
             attention_disabled_rows=attention_disabled_mask,
             attention_dropout_positions=attention_dropout_positions,
@@ -3874,6 +3890,8 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         allow_abbrev=False,
     )
+    def flag_present(flag: str) -> bool:
+        return any(arg == flag or arg.startswith(f"{flag}=") for arg in raw_cli_args)
     generic = parser.add_argument_group("Generic options")
     generic.add_argument(
         "--corpus",
@@ -4006,8 +4024,8 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=1,
         help=(
-            "Every N steps create no-context, context-punctured, random-think, attention-off, and "
-            "attention-punctured rows (0 disables)"
+            "Every N steps create pure-Transformer, no-XCTX, punctured-XCTX, random-think, no-attention, "
+            "and attention-punctured rows (0 disables)"
         ),
     )
     training_group.add_argument(
@@ -4263,9 +4281,6 @@ def parse_args() -> argparse.Namespace:
             "\nPlease specify a command (train, report, test, size, print-train, print-test, init, or reset).\n",
         )
     if args.tiny:
-        def flag_present(flag: str) -> bool:
-            return any(arg == flag or arg.startswith(f"{flag}=") for arg in raw_cli_args)
-
         if not flag_present("--block-size"):
             args.block_size = 8
         if not flag_present("--batch-size"):
@@ -4311,6 +4326,23 @@ def parse_args() -> argparse.Namespace:
             if eval_full % interval != 0:
                 parser.error("--eval-full must be 0, 1, or a multiple of --eval-interval")
         args.eval_full = eval_full
+    if args.think == 0 and not flag_present("--think"):
+        context_channels_active = args.n_grce > 0 or args.n_xctx > 0
+        special_rows = 0
+        if context_channels_active:
+            special_rows += 1  # pure Transformer (GRCE+XCTX muted)
+        if args.n_xctx > 0:
+            special_rows += 4  # no-XCTX, punctured XCTX, no-attn, punct-attn
+        special_rows += 1  # random-think row we are about to enable
+        available = args.batch_size - special_rows
+        default_think = available // 2
+        if default_think < 1:
+            raise ValueError(
+                "Default thinking requires at least two non-special rows; "
+                f"batch-size {args.batch_size} minus {special_rows} special rows leaves {available}. "
+                "Increase --batch-size, disable context dropout, or explicitly pass --think 0."
+            )
+        args.think = default_think
     return args
 
 
