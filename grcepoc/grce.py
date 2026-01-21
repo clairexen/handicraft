@@ -1606,16 +1606,16 @@ class GRCEContextChannel(nn.Module):
                 [self._build_sampler(config.n_embd, self.context_dim) for _ in range(config.n_layer)]
             )
             if self.is_xctx:
-                self.context_mlp = None
-                self.context_fuse_norm = None
+                layers = max(1, config.n_layer)
+                mid = max(1, (4 * self.context_dim) // layers)
             else:
                 mid = 4 * self.context_dim
-                self.context_mlp = nn.Sequential(
-                    nn.Linear(self.context_dim, mid),
-                    nn.ReLU(),
-                    nn.Linear(mid, self.context_dim),
-                )
-                self.context_fuse_norm = nn.LayerNorm(self.context_dim)
+            self.context_fuse_norm = nn.LayerNorm(self.context_dim)
+            self.context_mlp = nn.Sequential(
+                nn.Linear(self.context_dim, mid),
+                nn.ReLU(),
+                nn.Linear(mid, self.context_dim),
+            )
             self.context_norm = nn.LayerNorm(self.context_dim)
             self.context_bias_gen = nn.ModuleList(
                 [self._build_bias(self.context_dim, config.n_embd) for _ in range(config.n_layer)]
@@ -1664,17 +1664,10 @@ class GRCEContextChannel(nn.Module):
             detach_prev = stop_grad and self.detach_context
             residual = prev_context.detach() if detach_prev else prev_context
             fused = fused + residual
-        if self.context_mlp is not None:
-            normed_fused = (
-                self.context_fuse_norm(fused)
-                if self.context_fuse_norm is not None
-                else fused
-            )
-            context = self.context_mlp(normed_fused)
-            if prev_context is not None:
-                context = context + residual
-        else:
-            context = fused
+        normed_fused = self.context_fuse_norm(fused)
+        context = self.context_mlp(normed_fused)
+        if prev_context is not None:
+            context = context + residual
         raw_context = context
         context = self.context_norm(context)
         return context, raw_context
