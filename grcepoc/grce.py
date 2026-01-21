@@ -489,6 +489,7 @@ class PromptTracker:
         self.status: list[int] = []  # 0=unsolved, 1=solved via sampling, 2=solved via argmax
         self._cache: dict[int, torch.Tensor] = {}
         self._expected_token_ids: dict[int, List[int]] = {}
+        self._queue: list[int] | None = None
         self.load_state(state)
 
     def load_state(self, state: dict | None) -> None:
@@ -513,11 +514,20 @@ class PromptTracker:
             if len(cleaned) != total:
                 cleaned.extend([0] * (total - len(cleaned)))
             self.status = cleaned
+        queue_state: list[int] | None = None
+        if state and isinstance(state.get("queue"), list):
+            queue_state = [
+                idx
+                for idx in (int(val) for val in state["queue"])
+                if 0 <= idx < total and self.status[idx] < 2
+            ]
+        self._queue = queue_state if queue_state else None
 
     def serialize(self) -> dict:
         return {
             "status": list(self.status),
             "completed": [val == 2 for val in self.status],
+            "queue": list(self._queue) if self._queue else None,
         }
 
     def next_goal(self) -> tuple[int | None, tuple[str, str] | None]:
@@ -576,6 +586,15 @@ class PromptTracker:
         if limit is not None:
             return indices[: max(0, int(limit))]
         return indices
+
+    def prompt_queue(self, *, reset: bool) -> list[int]:
+        if reset or self._queue is None:
+            self._queue = self.pending_indices()
+        else:
+            self._queue = [idx for idx in self._queue if self.status[idx] < 2]
+            if not self._queue:
+                self._queue = self.pending_indices()
+        return self._queue
 
     def counts(self) -> tuple[int, int, int]:
         random_or_better = sum(1 for val in self.status if val > 0)
@@ -2663,6 +2682,7 @@ def train_model(
     think_hard: bool,
     undo_settings: UndoSettings | None,
     prompt_tracker: PromptTracker | None = None,
+    reset_prompt_queue: bool = False,
     *,
     reward_relu: bool = False,
     context_dropout_interval: int = 1,
@@ -2694,7 +2714,7 @@ def train_model(
         else None
     )
     if prompt_tracker is not None:
-        prompt_queue: list[int] = prompt_tracker.pending_indices()
+        prompt_queue = prompt_tracker.prompt_queue(reset=reset_prompt_queue)
     else:
         prompt_queue = []
 
@@ -4039,6 +4059,14 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     training_group.add_argument(
+        "--reset-prompt-each-cycle",
+        action="store_true",
+        help=(
+            "Rebuild the prompt queue at the start of every training cycle; default keeps cycling "
+            "through prompts across cycles"
+        ),
+    )
+    training_group.add_argument(
         "--eval-interval",
         type=int,
         default=10,
@@ -5029,6 +5057,7 @@ def main() -> None:
                 think_hard=args.think_hard,
                 undo_settings=undo_settings,
                 prompt_tracker=prompt_tracker,
+                reset_prompt_queue=args.reset_prompt_each_cycle,
                 reward_relu=reward_scale,
                 context_dropout_interval=args.context_dropout_interval,
                 cycle_wall_start=cycle_wall,
