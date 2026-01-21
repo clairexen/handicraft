@@ -54,7 +54,10 @@ Remember: when the model computes logits for position N+1, it already synthesize
 Ignoring embeddings and other lower-order pieces, two terms dominate:
 
 - Position-domain Transformer stack: `~ 12 * n_layer * n_embd^2`
-- Time-domain GRCE network (only if `n_grce > 0`): `~ 2 * n_layer * n_embd * n_grce + 4 * n_grce^2`
+- Time-domain GRCE network (only if `n_grce > 0`): `~ n_layer * n_embd * n_grce + 8 * n_grce^2`
+- Time-domain XCTX network (only if `n_xctx > 0`): `~ n_layer * n_embd * n_xctx + 8 * n_xctx^2 / n_layer`
+
+For exact counts (including the XCTX channel and bias/sampler splits) run `python grce.py size [--check]` with your chosen hyperparameters—the report prints every contribution with its closed-form formula and can optionally instantiate a model to verify the arithmetic.
 
 Thinking about the stack from a geometric point of view helps explain why the recurrent shortcut is viable: attention “killed” classical recurrence by rotating the computation over depth, letting every position look backwards instead of pushing state forward. GRCE rotates a slim slice of that structure back into the time axis, but it keeps the same design philosophy—tight bottlenecks, shared samplers/decoders, and a single shared nonlinearity—so gradients never have to march through time. The heavy lifting still happens in the standard Transformer layers; the recurrent channels just recycle whatever features those layers already extracted.
 

@@ -1552,8 +1552,35 @@ def _compute_actual_counts(config: ModelConfig) -> dict[tuple[str, str], int]:
     return counts
 
 
+def _dominant_estimates(config: ModelConfig) -> list[tuple[str, int, str]]:
+    L = config.n_layer
+    E = config.n_embd
+    G = config.n_grce
+    X = config.n_xctx
+    estimates = [
+        ("transformer", 12 * L * E * E, "12 * n_layer * n_embd^2"),
+    ]
+    if G > 0:
+        estimates.append(
+            ("grce", L * E * G + 8 * G * G, "n_layer * n_embd * n_grce + 8*n_grce^2")
+        )
+    if X > 0:
+        estimates.append(
+            (
+                "xctx",
+                L * E * X + (8 * X * X) // max(1, L),
+                "n_layer * n_embd * n_xctx + 8*n_xctx^2 / n_layer",
+            )
+        )
+    return estimates
+
+
 def describe_model_size(
-    config: ModelConfig, block_size: int, *, check: bool = False
+    config: ModelConfig,
+    block_size: int,
+    *,
+    check: bool = False,
+    estimate: bool = False,
 ) -> None:
     geometry = _build_geometry(config, block_size)
     sections = _append_summary_section(_expected_sections(config, block_size))
@@ -1569,6 +1596,12 @@ def describe_model_size(
                 print(line)
             continue
         _print_section(title, items)
+
+    if estimate:
+        print()
+        print(color_text("Estimate using dominant terms", Colors.CYAN, bold=True))
+        for label, count, formula in _dominant_estimates(config):
+            print(f"  {label:<12} {count:>15,}  ({formula})")
 
     if check:
         expected_map = _flatten_expected(sections)
@@ -4071,6 +4104,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Instantiate the model and verify the analytic counts",
     )
+    size_parser.add_argument(
+        "--estimate",
+        action="store_true",
+        help="Append a dominant-term estimate section",
+    )
 
     init_parser = subparsers.add_parser(
         "init",
@@ -4424,7 +4462,12 @@ def main() -> None:
             detach_layer=max(-1, args.detach_layer),
         )
         if selected_action == "size":
-            describe_model_size(config, args.block_size, check=getattr(args, "check", False))
+            describe_model_size(
+                config,
+                args.block_size,
+                check=getattr(args, "check", False),
+                estimate=getattr(args, "estimate", False),
+            )
             return
         model_tag = build_model_tag(config)
         if args.think > 0:
