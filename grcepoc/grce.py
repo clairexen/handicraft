@@ -18,7 +18,7 @@ import re
 import shlex
 import sys
 import time
-from dataclasses import dataclass, field, asdict, fields
+from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from typing import Dict, List, Tuple, Sequence
 
@@ -1334,87 +1334,262 @@ class ModelConfig:
 MODEL_CONFIG_TEMPLATE = ModelConfig()
 
 
-def describe_model_size(config: ModelConfig) -> None:
-    model = GRCEGPT(config)
-    categories = {
-        "tokens": 0,
-        "positions": 0,
-        "core": 0,
-        "context": 0,
-    }
-    layer_counts = [0] * config.n_layer
-    context_parts = {
-        "samplers": 0,
-        "mlp": 0,
-        "bias": 0,
-        "norm": 0,
-    }
-    feature_defs = [
-        ("attn qkv", (".attn.key", ".attn.query", ".attn.value"), True),
-        ("attn proj", (".attn.proj",), True),
-        ("ffn fc1", (".ff.fc1",), False),
-        ("ffn fc2", (".ff.fc2",), False),
+def _linear_params(in_dim: int, out_dim: int) -> int:
+    return in_dim * out_dim + out_dim
+
+
+def _layernorm_params(dim: int) -> int:
+    return 2 * dim
+
+
+def _module_param_count(module: nn.Module) -> int:
+    return sum(p.numel() for p in module.parameters() if p.requires_grad)
+
+
+def _module_list_param_count(modules: nn.ModuleList) -> int:
+    return sum(_module_param_count(m) for m in modules)
+
+
+def _build_geometry(config: ModelConfig, block_size: int) -> list[tuple[str, str, int]]:
+    return [
+        ("V", "vocab size", config.vocab_size),
+        ("B", "block size", block_size),
+        ("L", "transformer layers", config.n_layer),
+        ("H", "attention heads", config.n_head),
+        ("E", "embedding width", config.n_embd),
+        ("G", "grce width", config.n_grce),
+        ("X", "xctx width", config.n_xctx),
     ]
-    feature_totals = {name: 0 for name, _, _ in feature_defs}
-    for name, param in model.named_parameters():
-        if not param.requires_grad:
-            continue
-        size = param.numel()
-        if name.startswith("core.tok_emb"):
-            categories["tokens"] += size
-        elif name.startswith("core.pos_emb"):
-            categories["positions"] += size
-        elif name.startswith("context"):
-            categories["context"] += size
-            if ".context_sampler" in name:
-                context_parts["samplers"] += size
-            elif ".context_mlp" in name:
-                context_parts["mlp"] += size
-            elif ".context_bias_gen" in name:
-                context_parts["bias"] += size
-            elif ".context_norm" in name:
-                context_parts["norm"] += size
-        else:
-            categories["core"] += size
-            if ".blocks." in name:
-                try:
-                    idx = int(name.split("blocks.")[1].split(".")[0])
-                    if 0 <= idx < len(layer_counts):
-                        layer_counts[idx] += size
-                except ValueError:
-                    pass
-            for feature_name, substrings, _ in feature_defs:
-                if any(sub in name for sub in substrings):
-                    feature_totals[feature_name] += size
-                    break
-    total = sum(categories.values())
-    print("\nGlobal resources:")
-    for label in ("tokens", "positions"):
-        mp = categories[label] / 1_000_000
-        print(f"  {label:8s}: {mp:6.3f} MP")
-    print("\nTransformer resources:")
-    stack_total = sum(layer_counts)
-    per_block_mp = stack_total / max(1, config.n_layer) / 1_000_000
-    per_head_mp = per_block_mp / max(1, config.n_head)
-    print(f"  per-block total : {per_block_mp:6.3f} MP")
-    print(f"  per-head total  : {per_head_mp:6.3f} MP")
-    for feature_name, _, has_head in feature_defs:
-        stack = feature_totals[feature_name]
-        block = stack / max(1, config.n_layer)
-        line = f"  {feature_name:12s}: {stack / 1_000_000:6.3f} MP : {block / 1_000_000:6.3f} MP"
-        if has_head:
-            head = block / max(1, config.n_head)
-            line += f" : {head / 1_000_000:6.3f} MP/head"
+
+
+def _expected_sections(config: ModelConfig, block_size: int) -> list[tuple[str, str, list[dict]]]:
+    V = config.vocab_size
+    B = block_size
+    L = max(1, config.n_layer)
+    H = max(1, config.n_head)
+    E = config.n_embd
+    G = config.n_grce
+    X = config.n_xctx
+
+    sections: list[tuple[str, str, list[dict]]] = []
+
+    global_items = [
+        {"label": "tokens", "count": V * E, "formula": "V * E"},
+        {"label": "positions", "count": B * E, "formula": "B * E"},
+    ]
+    sections.append(("global", "Global resources", global_items))
+
+    transformer_items = [
+        {
+            "label": "attn qkv",
+            "count": 3 * L * (E * E + E),
+            "formula": "3 * L * (E * E + E)",
+        },
+        {
+            "label": "attn proj",
+            "count": L * (E * E + E),
+            "formula": "L * (E * E + E)",
+        },
+        {
+            "label": "ffn fc1",
+            "count": L * (4 * E * E + 4 * E),
+            "formula": "L * (4*E*E + 4*E)",
+        },
+        {
+            "label": "ffn fc2",
+            "count": L * (4 * E * E + E),
+            "formula": "L * (4*E*E + E)",
+        },
+    ]
+    sections.append(("transformer", "Transformer resources", transformer_items))
+
+    if G > 0:
+        grce_items = [
+            {
+                "label": "samplers",
+                "count": config.n_layer * (2 * E + E * G + G),
+                "formula": "L * (2*E + E*G + G)",
+            },
+            {
+                "label": "mlp",
+                "count": 8 * G * G + 9 * G,
+                "formula": "8*G*G + 9*G",
+            },
+            {
+                "label": "bias",
+                "count": config.n_layer * (G * E + E),
+                "formula": "L * (G*E + E)",
+            },
+        ]
+    else:
+        grce_items = []
+    sections.append(("grce", "GRCE channel", grce_items))
+
+    if X > 0:
+        chunk = X // max(1, config.n_layer)
+        mid = max(1, (4 * X) // max(1, config.n_layer))
+        xctx_items = [
+            {
+                "label": "samplers",
+                "count": config.n_layer
+                * (2 * E + E * chunk + chunk + chunk * X + X),
+                "formula": "L * (2*E + E*(X/L) + (X/L) + (X/L)*X + X)",
+            },
+            {
+                "label": "mlp",
+                "count": 2 * X + (X * mid + mid) + (mid * X + X) + 2 * X,
+                "formula": "2*X + (X*M + M) + (M*X + X) + 2*X (M=4*X/L)",
+            },
+            {
+                "label": "bias",
+                "count": config.n_layer * (X * chunk + chunk + chunk * E + E),
+                "formula": "L * (X*(X/L) + (X/L) + (X/L)*E + E)",
+            },
+        ]
+    else:
+        xctx_items = []
+    sections.append(("xctx", "XCTX channel", xctx_items))
+
+    # Placeholder for summary, filled later
+    return sections
+
+
+def _append_summary_section(sections: list[tuple[str, str, list[dict]]]) -> list[tuple[str, str, list[dict]]]:
+    totals: dict[str, int] = {}
+    for key, _title, items in sections:
+        totals[key] = sum(item["count"] for item in items)
+    summary_items = [
+        {"label": "global", "count": totals.get("global", 0), "formula": ""},
+        {
+            "label": "transformer",
+            "count": totals.get("transformer", 0),
+            "formula": "",
+        },
+        {"label": "grce channel", "count": totals.get("grce", 0), "formula": ""},
+        {"label": "xctx channel", "count": totals.get("xctx", 0), "formula": ""},
+    ]
+    overall = sum(item["count"] for item in summary_items)
+    summary_items.append({"label": "total", "count": overall, "formula": ""})
+    sections.append(("summary", "Model parameter breakdown", summary_items))
+    return sections
+
+
+def _print_geometry(geometry: list[tuple[str, str, int]]) -> None:
+    print(color_text("Model geometry:", Colors.CYAN, bold=True))
+    for var, desc, value in geometry:
+        print(f"  {var} ({desc:<17s}): {value}")
+
+
+def _print_section(title: str, items: list[dict]) -> int:
+    print(color_text(title, Colors.CYAN, bold=True))
+    if not items:
+        print("  disabled")
+        return 0
+    total = 0
+    for entry in items:
+        label = entry["label"]
+        count = entry["count"]
+        formula = entry.get("formula", "")
+        total += count
+        line = f"  {label:<18} {count:>15,}"
+        if formula:
+            line += f"  ({formula})"
         print(line)
-    print("\nGRCE resource breakdown:")
-    for label, size in context_parts.items():
-        print(f"  {label:10s}: {size / 1_000_000:.3f} MP")
-    print("\nModel parameter breakdown:")
-    for label, size in categories.items():
-        pct = (size / total * 100) if total else 0
-        print(f"  {label:12s}: {size / 1_000_000:.3f} MP ({pct:5.1f}%)")
-    if total:
-        print(f"  total        : {total / 1_000_000:.3f} MP")
+    print(f"  {'total':<18} {total:>15,}")
+    return total
+
+
+def _flatten_expected(sections: list[tuple[str, str, list[dict]]]) -> dict[tuple[str, str], int]:
+    mapping: dict[tuple[str, str], int] = {}
+    for key, _title, items in sections:
+        if key == "summary":
+            continue
+        for entry in items:
+            mapping[(key, entry["label"])] = entry["count"]
+    return mapping
+
+
+def _compute_actual_counts(config: ModelConfig) -> dict[tuple[str, str], int]:
+    model = GRCEGPT(config)
+    counts: dict[tuple[str, str], int] = {}
+
+    counts[("global", "tokens")] = _module_param_count(model.core.tok_emb)
+    counts[("global", "positions")] = _module_param_count(model.core.pos_emb)
+
+    attn_qkv = 0
+    attn_proj = 0
+    ffn_fc1 = 0
+    ffn_fc2 = 0
+    for block in model.core.blocks:
+        attn_qkv += sum(
+            _module_param_count(getattr(block.attn, attr))
+            for attr in ("key", "query", "value")
+        )
+        attn_proj += _module_param_count(block.attn.proj)
+        ffn_fc1 += _module_param_count(block.ff.fc1)
+        ffn_fc2 += _module_param_count(block.ff.fc2)
+    counts[("transformer", "attn qkv")] = attn_qkv
+    counts[("transformer", "attn proj")] = attn_proj
+    counts[("transformer", "ffn fc1")] = ffn_fc1
+    counts[("transformer", "ffn fc2")] = ffn_fc2
+
+    for channel in model.context_channels:
+        if channel.disabled:
+            continue
+        key = "xctx" if channel.is_xctx else "grce"
+        sampler_count = _module_list_param_count(channel.pre_norms) + _module_list_param_count(
+            channel.context_sampler
+        )
+        mlp_count = (
+            _module_param_count(channel.context_fuse_norm)
+            + _module_param_count(channel.context_mlp)
+            + _module_param_count(channel.context_norm)
+        )
+        bias_count = _module_list_param_count(channel.context_bias_gen)
+        counts[(key, "samplers")] = counts.get((key, "samplers"), 0) + sampler_count
+        counts[(key, "mlp")] = counts.get((key, "mlp"), 0) + mlp_count
+        counts[(key, "bias")] = counts.get((key, "bias"), 0) + bias_count
+    return counts
+
+
+def describe_model_size(
+    config: ModelConfig, block_size: int, *, check: bool = False
+) -> None:
+    geometry = _build_geometry(config, block_size)
+    sections = _append_summary_section(_expected_sections(config, block_size))
+    _print_geometry(geometry)
+    for idx, (key, title, items) in enumerate(sections):
+        print()
+        if key == "summary":
+            print(color_text(title, Colors.CYAN, bold=True))
+            for entry in items:
+                label = entry["label"]
+                count = entry["count"]
+                line = f"  {label:<18} {count:>15,}"
+                print(line)
+            continue
+        _print_section(title, items)
+
+    if check:
+        expected_map = _flatten_expected(sections)
+        actual_map = _compute_actual_counts(config)
+        mismatches: list[tuple[str, str, int, int]] = []
+        for (key, label), expected in expected_map.items():
+            actual = actual_map.get((key, label), 0)
+            if expected != actual:
+                mismatches.append((key, label, expected, actual))
+        if mismatches:
+            print(color_text("\n[size --check] mismatches detected:", Colors.RED, bold=True))
+            for key, label, expected, actual in mismatches:
+                print(
+                    f"  {key}:{label} expected {expected:,} but model has {actual:,}"
+                )
+        else:
+            print(
+                color_text(
+                    "\n[size --check] analytic counts match instantiated model", Colors.GREEN
+                )
+            )
 
 
 class CausalSelfAttention(nn.Module):
@@ -3891,6 +4066,11 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     size_parser.set_defaults(command="size")
+    size_parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Instantiate the model and verify the analytic counts",
+    )
 
     init_parser = subparsers.add_parser(
         "init",
@@ -4244,10 +4424,7 @@ def main() -> None:
             detach_layer=max(-1, args.detach_layer),
         )
         if selected_action == "size":
-            print(color_text("Model geometry:", Colors.CYAN, bold=True))
-            for cfg_field in fields(ModelConfig):
-                print(f"  {cfg_field.name}: {getattr(config, cfg_field.name)}")
-            describe_model_size(config)
+            describe_model_size(config, args.block_size, check=getattr(args, "check", False))
             return
         model_tag = build_model_tag(config)
         if args.think > 0:
