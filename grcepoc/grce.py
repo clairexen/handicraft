@@ -2574,7 +2574,7 @@ def train_model(
     boundary_blocklist: Sequence[int] | None = None,
     show_train_loss_details: bool = False,
     show_test_loss_details: bool = True,
-    simple_eval: bool = False,
+    full_eval_stride: int = 1,
 ) -> Tuple[int, List[Dict[str, float]], float, float, float, float]:
     optim = torch.optim.AdamW(model.parameters(), lr=3e-4)
     total_steps = start_step
@@ -2626,11 +2626,13 @@ def train_model(
         choice = random.choice(available)
         occupied.add(choice)
         return choice
+    full_eval_stride = max(0, int(full_eval_stride))
+    full_eval_enabled = full_eval_stride > 0
     show_think_columns = bool(
-        think_enabled and tokenizer.think_id is not None and not simple_eval
+        full_eval_enabled and think_enabled and tokenizer.think_id is not None
     )
-    show_train_details = bool(show_train_loss_details and not simple_eval)
-    show_test_details = bool(show_test_loss_details and not simple_eval)
+    show_train_details = bool(show_train_loss_details and full_eval_enabled)
+    show_test_details = bool(show_test_loss_details and full_eval_enabled)
     context_dropout_interval = max(0, int(context_dropout_interval))
     context_path_enabled = bool(model.context_channels)
     loop_wall_start = time.time()
@@ -2769,6 +2771,9 @@ def train_model(
                     reward_tracker.maybe_apply()
 
         if step == 1 or step % eval_interval == 0 or step == steps:
+            full_eval_now = full_eval_enabled and (
+                full_eval_stride > 0 and total_steps % full_eval_stride == 0
+            )
             eval_wall_block = time.time()
             eval_cpu_block = time.process_time()
             model.eval()
@@ -2812,7 +2817,7 @@ def train_model(
                             batches=base_batches,
                         )
                     )
-                    if simple_eval:
+                    if not full_eval_now:
                         continue
                     split_metrics[split]["with_think_special"] = float(
                         evaluate_split(
@@ -2918,7 +2923,7 @@ def train_model(
                             **plain_kwargs,
                         )
                     )
-                    if show_think_columns and tokenizer.think_id is not None:
+                    if show_think_columns and full_eval_now:
                         think_modes = evaluate_think_modes(
                             model,
                             cached_batches[split],
@@ -3138,7 +3143,7 @@ def train_model(
                 "train_cursor": int(dataset.positions.get("train", 0)),
                 "test_cursor": int(dataset.positions.get("test", 0)),
             }
-            if not simple_eval:
+            if full_eval_now:
                 record.update(
                     {
                         "train_loss_special": float(
@@ -3175,7 +3180,7 @@ def train_model(
                         ),
                     }
                 )
-            if show_think_columns:
+            if show_think_columns and full_eval_now:
                 record["train_loss_think"] = float(split_metrics["train"].get("think", 0.0))
                 record["train_loss_think2x"] = float(split_metrics["train"].get("think2x", 0.0))
                 record["train_loss_think3x"] = float(split_metrics["train"].get("think3x", 0.0))
@@ -3978,8 +3983,20 @@ def parse_args() -> argparse.Namespace:
     training_group.add_argument(
         "--eval-iters",
         type=int,
-        default=5,
+        default=2,
         help="How many mini-batches to average for evaluation losses.",
+    )
+    training_group.add_argument(
+        "--eval-full",
+        type=int,
+        default=-1,
+        help=(
+            "How often to run the expensive evaluation variants: default -1 runs them once per cycle; 0 "
+            "disables them entirely; 1 runs them on every evaluation (the same cadence as --eval-interval); "
+            "positive values >1 must be multiples of --eval-interval; negative values schedule evenly spaced "
+            "full evals within each cycle (e.g., -1 means once at the end of a cycle, -2 means twice per cycle) "
+            "and require --steps to be divisible by the absolute value so the cadence lines up."
+        ),
     )
 
 
@@ -4052,13 +4069,6 @@ def parse_args() -> argparse.Namespace:
         "--no-test-loss-details",
         action="store_true",
         help="Collapse the test loss group down to a single column in the live log",
-    )
-    logging_group.add_argument(
-        "--simple-eval",
-        action="store_true",
-        help=(
-            "Skip the extra evaluation passes and only populate the primary train/test loss columns"
-        ),
     )
 
     import_group = parser.add_argument_group("Checkpoint import/export")
@@ -4201,10 +4211,7 @@ def parse_args() -> argparse.Namespace:
     reset_parser.set_defaults(command="reset")
 
     args = parser.parse_args()
-    if getattr(args, "simple_eval", False):
-        if getattr(args, "train_loss_details", False):
-            parser.error("--simple-eval cannot be combined with --train-loss-details")
-        args.no_test_loss_details = True
+    raw_eval_full = getattr(args, "eval_full", None)
     if args.command is None:
         parser.print_help()
         parser.exit(
@@ -4233,8 +4240,33 @@ def parse_args() -> argparse.Namespace:
             args.steps = 2
         if not flag_present("--cycles"):
             args.cycles = 1
+        if not flag_present("--eval-interval"):
+            args.eval_interval = 1
         if not flag_present("--corpus"):
             args.corpus = "simplestwiki"
+    if raw_eval_full is not None:
+        try:
+            eval_full_value = int(raw_eval_full)
+        except (TypeError, ValueError):
+            parser.error("--eval-full must be an integer")
+        eval_full = eval_full_value
+        if eval_full < 0:
+            if args.steps <= 0:
+                parser.error("--eval-full negative values require --steps > 0")
+            offset = abs(eval_full)
+            if args.steps % offset != 0:
+                parser.error("--eval-full -N requires --steps to be divisible by N")
+            eval_full = args.steps // offset
+        eval_full = max(0, eval_full)
+        if eval_full == 0:
+            if getattr(args, "train_loss_details", False):
+                parser.error("--eval-full 0 cannot be combined with --train-loss-details")
+            args.no_test_loss_details = True
+        elif eval_full != 1:
+            interval = max(1, args.eval_interval)
+            if eval_full % interval != 0:
+                parser.error("--eval-full must be 0, 1, or a multiple of --eval-interval")
+        args.eval_full = eval_full
     return args
 
 
@@ -4792,7 +4824,6 @@ def main() -> None:
                 boundary_blocklist=boundary_blocklist,
                 show_train_loss_details=args.train_loss_details,
                 show_test_loss_details=not args.no_test_loss_details,
-                simple_eval=args.simple_eval,
             )
             return
 
@@ -4916,7 +4947,7 @@ def main() -> None:
                 boundary_blocklist=boundary_blocklist,
                 show_train_loss_details=args.train_loss_details,
                 show_test_loss_details=not args.no_test_loss_details,
-                simple_eval=args.simple_eval,
+                full_eval_stride=args.eval_full,
             )
             loss_history.extend(updates)
 
