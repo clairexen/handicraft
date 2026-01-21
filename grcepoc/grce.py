@@ -2574,7 +2574,8 @@ def train_model(
     boundary_blocklist: Sequence[int] | None = None,
     show_train_loss_details: bool = False,
     show_test_loss_details: bool = True,
-) -> Tuple[int, List[Dict[str, float]]]:
+    simple_eval: bool = False,
+) -> Tuple[int, List[Dict[str, float]], float, float, float, float]:
     optim = torch.optim.AdamW(model.parameters(), lr=3e-4)
     total_steps = start_step
     history_updates: List[Dict[str, float]] = []
@@ -2625,11 +2626,17 @@ def train_model(
         choice = random.choice(available)
         occupied.add(choice)
         return choice
-    show_think_columns = bool(think_enabled and tokenizer.think_id is not None)
-    show_train_details = bool(show_train_loss_details)
-    show_test_details = bool(show_test_loss_details)
+    show_think_columns = bool(
+        think_enabled and tokenizer.think_id is not None and not simple_eval
+    )
+    show_train_details = bool(show_train_loss_details and not simple_eval)
+    show_test_details = bool(show_test_loss_details and not simple_eval)
     context_dropout_interval = max(0, int(context_dropout_interval))
     context_path_enabled = bool(model.context_channels)
+    loop_wall_start = time.time()
+    loop_cpu_start = time.process_time()
+    eval_wall_total = 0.0
+    eval_cpu_total = 0.0
     for step in range(1, steps + 1):
         batch_payload = dataset.get_batch(
             "train",
@@ -2762,6 +2769,8 @@ def train_model(
                     reward_tracker.maybe_apply()
 
         if step == 1 or step % eval_interval == 0 or step == steps:
+            eval_wall_block = time.time()
+            eval_cpu_block = time.process_time()
             model.eval()
             with torch.no_grad():
                 split_metrics: dict[str, dict[str, float]] = {"train": {}, "test": {}}
@@ -2803,6 +2812,8 @@ def train_model(
                             batches=base_batches,
                         )
                     )
+                    if simple_eval:
+                        continue
                     split_metrics[split]["with_think_special"] = float(
                         evaluate_split(
                             model,
@@ -2914,6 +2925,10 @@ def train_model(
                             think_token_id=int(tokenizer.think_id),
                         )
                         split_metrics[split].update(think_modes)
+            block_wall = time.time() - eval_wall_block
+            block_cpu = time.process_time() - eval_cpu_block
+            eval_wall_total += block_wall
+            eval_cpu_total += block_cpu
             prompt_input = sample_prompt
             prompt_needs_boundary_flag = (
                 default_prompt_boundary and boundary_blocklist is not None
@@ -3117,32 +3132,49 @@ def train_model(
             record = {
                 "step": total_steps,
                 "train_loss": float(split_metrics["train"].get("with_think", 0.0)),
-                "train_loss_special": float(
-                    split_metrics["train"].get("with_think_special", 0.0)
-                ),
-                "train_loss_noprev": float(
-                    split_metrics["train"].get("with_think_noprev", 0.0)
-                ),
-                "train_loss_plain": float(split_metrics["train"].get("plain", 0.0)),
-                "train_loss_noctx": float(split_metrics["train"].get("plain_noctx", 0.0)),
-                "train_loss_noatt": float(split_metrics["train"].get("plain_noatt", 0.0)),
-                "train_loss_none": float(split_metrics["train"].get("plain_none", 0.0)),
                 "test_loss": float(split_metrics["test"].get("with_think", 0.0)),
-                "test_loss_special": float(
-                    split_metrics["test"].get("with_think_special", 0.0)
-                ),
-                "test_loss_noprev": float(
-                    split_metrics["test"].get("with_think_noprev", 0.0)
-                ),
-                "test_loss_plain": float(split_metrics["test"].get("plain", 0.0)),
-                "test_loss_noctx": float(split_metrics["test"].get("plain_noctx", 0.0)),
-                "test_loss_noatt": float(split_metrics["test"].get("plain_noatt", 0.0)),
-                "test_loss_none": float(split_metrics["test"].get("plain_none", 0.0)),
                 "train_wall_seconds": float(total_wall_seconds),
                 "unix_time": float(eval_now),
                 "train_cursor": int(dataset.positions.get("train", 0)),
                 "test_cursor": int(dataset.positions.get("test", 0)),
             }
+            if not simple_eval:
+                record.update(
+                    {
+                        "train_loss_special": float(
+                            split_metrics["train"].get("with_think_special", 0.0)
+                        ),
+                        "train_loss_noprev": float(
+                            split_metrics["train"].get("with_think_noprev", 0.0)
+                        ),
+                        "train_loss_plain": float(split_metrics["train"].get("plain", 0.0)),
+                        "train_loss_noctx": float(
+                            split_metrics["train"].get("plain_noctx", 0.0)
+                        ),
+                        "train_loss_noatt": float(
+                            split_metrics["train"].get("plain_noatt", 0.0)
+                        ),
+                        "train_loss_none": float(
+                            split_metrics["train"].get("plain_none", 0.0)
+                        ),
+                        "test_loss_special": float(
+                            split_metrics["test"].get("with_think_special", 0.0)
+                        ),
+                        "test_loss_noprev": float(
+                            split_metrics["test"].get("with_think_noprev", 0.0)
+                        ),
+                        "test_loss_plain": float(split_metrics["test"].get("plain", 0.0)),
+                        "test_loss_noctx": float(
+                            split_metrics["test"].get("plain_noctx", 0.0)
+                        ),
+                        "test_loss_noatt": float(
+                            split_metrics["test"].get("plain_noatt", 0.0)
+                        ),
+                        "test_loss_none": float(
+                            split_metrics["test"].get("plain_none", 0.0)
+                        ),
+                    }
+                )
             if show_think_columns:
                 record["train_loss_think"] = float(split_metrics["train"].get("think", 0.0))
                 record["train_loss_think2x"] = float(split_metrics["train"].get("think2x", 0.0))
@@ -3154,7 +3186,16 @@ def train_model(
     
     if reward_tracker is not None:
         reward_tracker.finalize()
-    return total_steps, history_updates
+    loop_wall_total = time.time() - loop_wall_start
+    loop_cpu_total = time.process_time() - loop_cpu_start
+    return (
+        total_steps,
+        history_updates,
+        loop_wall_total,
+        loop_cpu_total,
+        eval_wall_total,
+        eval_cpu_total,
+    )
 
 
 def run_report_mode(
@@ -4012,6 +4053,13 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Collapse the test loss group down to a single column in the live log",
     )
+    logging_group.add_argument(
+        "--simple-eval",
+        action="store_true",
+        help=(
+            "Skip the extra evaluation passes and only populate the primary train/test loss columns"
+        ),
+    )
 
     import_group = parser.add_argument_group("Checkpoint import/export")
     import_group.add_argument(
@@ -4153,6 +4201,10 @@ def parse_args() -> argparse.Namespace:
     reset_parser.set_defaults(command="reset")
 
     args = parser.parse_args()
+    if getattr(args, "simple_eval", False):
+        if getattr(args, "train_loss_details", False):
+            parser.error("--simple-eval cannot be combined with --train-loss-details")
+        args.no_test_loss_details = True
     if args.command is None:
         parser.print_help()
         parser.exit(
@@ -4740,6 +4792,7 @@ def main() -> None:
                 boundary_blocklist=boundary_blocklist,
                 show_train_loss_details=args.train_loss_details,
                 show_test_loss_details=not args.no_test_loss_details,
+                simple_eval=args.simple_eval,
             )
             return
 
@@ -4758,9 +4811,12 @@ def main() -> None:
         reward_scale = 0.0
         if args.reward_relu > 0:
             reward_scale = 10 ** (-float(args.reward_relu))
+        acc_train_wall = 0.0
+        acc_train_cpu = 0.0
+        acc_eval_wall = 0.0
+        acc_eval_cpu = 0.0
         for cycle in range(1, args.cycles + 1):
             cycle_wall = time.time()
-            cycle_cpu = time.process_time()
             tags = ["GPT"]
             plus_tags: list[str] = []
             minus_tags: list[str] = []
@@ -4822,7 +4878,14 @@ def main() -> None:
                 )
             )
 
-            total_steps, updates = train_model(
+            (
+                total_steps,
+                updates,
+                cycle_wall_elapsed,
+                cycle_cpu_elapsed,
+                eval_wall_total,
+                eval_cpu_total,
+            ) = train_model(
                 model,
                 dataset,
                 device,
@@ -4853,15 +4916,21 @@ def main() -> None:
                 boundary_blocklist=boundary_blocklist,
                 show_train_loss_details=args.train_loss_details,
                 show_test_loss_details=not args.no_test_loss_details,
+                simple_eval=args.simple_eval,
             )
             loss_history.extend(updates)
 
-            train_wall = time.time() - cycle_wall
-            train_cpu = time.process_time() - cycle_cpu
+            train_wall = cycle_wall_elapsed
+            train_cpu = cycle_cpu_elapsed
+            eval_wall = eval_wall_total
+            eval_cpu = eval_cpu_total
+            pure_train_wall = max(0.0, train_wall - eval_wall)
+            pure_train_cpu = max(0.0, train_cpu - eval_cpu)
+            acc_train_wall += pure_train_wall
+            acc_train_cpu += pure_train_cpu
+            acc_eval_wall += eval_wall
+            acc_eval_cpu += eval_cpu
             total_train_wall += train_wall
-
-            save_wall_start = time.time()
-            save_cpu_start = time.process_time()
             torch.save(
                 {
                     "model": model.state_dict(),
@@ -4879,13 +4948,18 @@ def main() -> None:
                 log_file.flush()
             if ansi_file is not None:
                 ansi_file.flush()
-            save_wall = time.time() - save_wall_start
-            save_cpu = time.process_time() - save_cpu_start
             print(
                 color_text(
                     f"[cycle {cycle}] total steps: {total_steps}; "
-                    f"time spent: wall={train_wall:.2f}s cpu={train_cpu:.2f}s; "
-                    f"writing model: wall={save_wall:.2f}s cpu={save_cpu:.2f}s",
+                    f"train: wall={pure_train_wall:.2f}s cpu={pure_train_cpu:.2f}s; "
+                    f"eval: wall={eval_wall:.2f}s cpu={eval_cpu:.2f}s; model updated.",
+                    Colors.CYAN,
+                )
+            )
+            print(
+                color_text(
+                    f"[cumulative] train: wall={acc_train_wall:.2f}s cpu={acc_train_cpu:.2f}s; "
+                    f"eval: wall={acc_eval_wall:.2f}s cpu={acc_eval_cpu:.2f}s",
                     Colors.CYAN,
                 )
             )
