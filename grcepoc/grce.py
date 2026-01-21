@@ -115,17 +115,19 @@ ASCII_LETTERS = set(string.ascii_letters)
 ASCII_LOWERCASE = set(string.ascii_lowercase)
 
 PROMPT_GOALS = [
-    ("ice is", " cold"),
-    ("fire is", " hot"),
     ("one plus one is", " two"),
+    ("fire is hot and ice is", " cold"),
+    ("the opposite of up is", " down"),
+    ("ice is cold and  fire is", " hot"),
     ("the first letter of the alphabet is", " a"),
     ("the first letter of the alphabet is the letter", " a"),
     ("the color of a red apple is", " red"),
-    ("the opposite of hot is", " cold"),
-    ("water freezes at", " 0"),
     ("the sun rises in the", " east"),
+    ("the sun sets in the", " west"),
     ("earth's satellite is the", " moon"),
-    ("a baby cat is called a", " kitten"),
+    ("a baby dog is called a puppy and a baby cat is called a", " kitten"),
+    ("a baby cat is called a kitten and a baby dog is called a", " puppy"),
+    ("celsius is based on the freezing and boiling points of water. water freezes at", " 0"),
 ]
 
 
