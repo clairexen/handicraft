@@ -4987,10 +4987,20 @@ def main() -> None:
                     Colors.CYAN,
                 )
             )
+            def ratio_text(num: float, denom: float) -> str:
+                if denom <= 0:
+                    if num <= 0:
+                        return "0.0"
+                    return "inf"
+                return f"{num / denom:.1f}"
+
+            wall_ratio = ratio_text(acc_train_wall, acc_eval_wall)
+            cpu_ratio = ratio_text(acc_train_cpu, acc_eval_cpu)
             print(
                 color_text(
                     f"[cumulative] train: wall={acc_train_wall:.2f}s cpu={acc_train_cpu:.2f}s; "
-                    f"eval: wall={acc_eval_wall:.2f}s cpu={acc_eval_cpu:.2f}s",
+                    f"eval: wall={acc_eval_wall:.2f}s cpu={acc_eval_cpu:.2f}s; "
+                    f"train/eval: wall={wall_ratio} cpu={cpu_ratio}",
                     Colors.CYAN,
                 )
             )
