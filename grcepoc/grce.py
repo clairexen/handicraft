@@ -493,7 +493,25 @@ class PromptTracker:
         self.load_state(state)
 
     def load_state(self, state: dict | None) -> None:
-        total = len(PROMPT_GOALS)
+        self._cache.clear()
+        self._expected_token_ids.clear()
+        prompts_state = state.get("prompts") if isinstance(state, dict) else None
+        prompt_entries: list[tuple[str, str]] = []
+        if isinstance(prompts_state, list):
+            for entry in prompts_state:
+                prompt_text = None
+                expected_text = None
+                if isinstance(entry, dict):
+                    prompt_text = entry.get("prompt")
+                    expected_text = entry.get("expected")
+                elif isinstance(entry, (list, tuple)) and len(entry) >= 2:
+                    prompt_text, expected_text = entry[0], entry[1]
+                if isinstance(prompt_text, str) and isinstance(expected_text, str):
+                    prompt_entries.append((prompt_text, expected_text))
+        self.prompts = (
+            prompt_entries if prompt_entries else [(p, e) for p, e in PROMPT_GOALS]
+        )
+        total = len(self.prompts)
         raw_status: list[int] | None = None
         if state and isinstance(state.get("status"), list):
             raw_status = state.get("status")
@@ -528,22 +546,25 @@ class PromptTracker:
             "status": list(self.status),
             "completed": [val == 2 for val in self.status],
             "queue": list(self._queue) if self._queue else None,
+            "prompts": [
+                {"prompt": prompt, "expected": expected} for prompt, expected in self.prompts
+            ],
         }
 
     def next_goal(self) -> tuple[int | None, tuple[str, str] | None]:
         for idx, val in enumerate(self.status):
             if val < 2:
-                return idx, PROMPT_GOALS[idx]
+                return idx, self.prompts[idx]
         return None, None
 
     def prompt_tensor(self, idx: int, device: torch.device) -> torch.Tensor:
         if idx not in self._cache:
-            tensor = self.tokenizer.encode(PROMPT_GOALS[idx][0]).unsqueeze(0)
+            tensor = self.tokenizer.encode(self.prompts[idx][0]).unsqueeze(0)
             self._cache[idx] = tensor
         return self._cache[idx].to(device)
 
     def expected_text(self, idx: int) -> str:
-        return PROMPT_GOALS[idx][1]
+        return self.prompts[idx][1]
     
     def expected_token_ids(self, idx: int) -> List[int]:
         if idx not in self._expected_token_ids:
@@ -559,7 +580,7 @@ class PromptTracker:
     def mark_if_satisfied(
         self, idx: int, completion_ids: List[int], *, used_argmax: bool
     ) -> tuple[bool, int, int]:
-        if idx is None or idx < 0 or idx >= len(PROMPT_GOALS):
+        if idx is None or idx < 0 or idx >= len(self.prompts):
             return False, 0, 0
         prev = self.status[idx]
         expected_ids = self.expected_token_ids(idx)
@@ -579,7 +600,11 @@ class PromptTracker:
         return sum(1 for val in self.status if val < 2)
 
     def is_completed(self, idx: int | None) -> bool:
-        return idx is None or self.status[idx] == 2
+        if idx is None:
+            return True
+        if idx < 0 or idx >= len(self.status):
+            return True
+        return self.status[idx] == 2
 
     def pending_indices(self, limit: int | None = None) -> List[int]:
         indices = [i for i, val in enumerate(self.status) if val < 2]
@@ -3027,7 +3052,7 @@ def train_model(
                 if prompt_queue:
                     current_prompt_idx = prompt_queue.pop(0)
                     prompt_input = prompt_tracker.prompt_tensor(current_prompt_idx, device)
-                    prompt_text = PROMPT_GOALS[current_prompt_idx][0]
+                    prompt_text = prompt_tracker.prompts[current_prompt_idx][0]
                     prompt_needs_boundary_flag = (
                         boundary_blocklist is not None
                         and prompt_needs_boundary(prompt_text)
@@ -3073,7 +3098,7 @@ def train_model(
                 )
                 if matched and new_state > prev_state:
                     expected = prompt_tracker.expected_text(current_prompt_idx)
-                    prompt_text = PROMPT_GOALS[current_prompt_idx][0]
+                    prompt_text = prompt_tracker.prompts[current_prompt_idx][0]
                     if new_state == 2:
                         mode = "argmax"
                         print(
@@ -4726,9 +4751,14 @@ def main() -> None:
             if not target_path.exists():
                 raise FileNotFoundError(f"Checkpoint {target_path} not found")
             payload = torch.load(target_path, map_location="cpu", weights_only=False)
+            default_prompts = [
+                {"prompt": prompt, "expected": expected} for prompt, expected in PROMPT_GOALS
+            ]
             empty_state = {
-                "status": [0] * len(PROMPT_GOALS),
-                "completed": [False] * len(PROMPT_GOALS),
+                "status": [0] * len(default_prompts),
+                "completed": [False] * len(default_prompts),
+                "queue": None,
+                "prompts": default_prompts,
             }
             payload["prompt_state"] = empty_state
             torch.save(payload, target_path)
@@ -4822,18 +4852,21 @@ def main() -> None:
                         Colors.YELLOW,
                     )
                 )
-                if prompt_tracker.remaining() < len(PROMPT_GOALS):
+                prompt_total = len(prompt_tracker.prompts)
+                if prompt_tracker.remaining() < prompt_total:
                     solved_argmax = [
                         idx for idx, state in enumerate(prompt_tracker.status) if state == 2
                     ]
                     solved_random_only = [
                         idx for idx, state in enumerate(prompt_tracker.status) if state == 1
                     ]
-                    total_prompts = len(PROMPT_GOALS)
                     if solved_random_only:
                         lines = []
                         for idx in solved_random_only:
-                            text, expected = PROMPT_GOALS[idx]
+                            if 0 <= idx < prompt_total:
+                                text, expected = prompt_tracker.prompts[idx]
+                            else:
+                                continue
                             lines.append(
                                 color_text(
                                     f"#{idx + 1}: '{text}' -> '{expected}'",
@@ -4843,7 +4876,7 @@ def main() -> None:
                         print(
                             "\n"
                             + color_text(
-                                f"Random-only prompts ({len(solved_random_only)}/{total_prompts}):",
+                                f"Random-only prompts ({len(solved_random_only)}/{prompt_total}):",
                                 Colors.YELLOW,
                                 bold=True,
                             )
@@ -4853,7 +4886,10 @@ def main() -> None:
                     if solved_argmax:
                         lines = []
                         for idx in solved_argmax:
-                            text, expected = PROMPT_GOALS[idx]
+                            if 0 <= idx < prompt_total:
+                                text, expected = prompt_tracker.prompts[idx]
+                            else:
+                                continue
                             lines.append(
                                 color_text(
                                     f"#{idx + 1}: '{text}' -> '{expected}'",
