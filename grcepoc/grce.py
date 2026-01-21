@@ -3068,7 +3068,7 @@ def train_model(
             def format_train_line() -> str:
                 if not show_train_details:
                     return format_metric("train", "with_think")
-                primary_group = "  ".join(
+                primary_group = " ".join(
                     format_metric("train", key)
                     for key in (
                         "with_think",
@@ -3076,13 +3076,13 @@ def train_model(
                         "with_think_noprev",
                     )
                 )
-                diag_vals = "  ".join(
+                diag_vals = " ".join(
                     format_metric("train", key)
                     for key in ("plain", "plain_noctx", "plain_noatt", "plain_none")
                 )
                 parts = [primary_group, diag_vals]
                 if show_think_columns:
-                    think_vals = "  ".join(
+                    think_vals = " ".join(
                         format_metric("train", key)
                         for key in ("think", "think2x", "think3x")
                     )
@@ -3092,7 +3092,7 @@ def train_model(
             def format_test_line() -> str:
                 if not show_test_details:
                     return format_metric("test", "with_think")
-                primary_group = "  ".join(
+                primary_group = " ".join(
                     format_metric("test", key)
                     for key in (
                         "with_think",
@@ -3100,13 +3100,13 @@ def train_model(
                         "with_think_noprev",
                     )
                 )
-                diag_vals = "  ".join(
+                diag_vals = " ".join(
                     format_metric("test", key)
                     for key in ("plain", "plain_noctx", "plain_noatt", "plain_none")
                 )
                 parts = [primary_group, diag_vals]
                 if show_think_columns:
-                    think_vals = "  ".join(
+                    think_vals = " ".join(
                         format_metric("test", key)
                         for key in ("think", "think2x", "think3x")
                     )
