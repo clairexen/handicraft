@@ -12,8 +12,8 @@ import re
 
 import matplotlib.pyplot as plt
 
-STOP_WORDS = {"county", "census", "municipalit", "united states", "is a commune"}
-
+STOP_WORDS = {"county", "census", "municipalit", "united states", "a comm?une",
+              "a member", "member of", "american", "the first", "list of", "type of"}
 
 def collect_word_counts(
     lines: list[str], *, word_re: re.Pattern[str]
