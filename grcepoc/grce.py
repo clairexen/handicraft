@@ -527,6 +527,7 @@ class TextDataset:
         default_factory=lambda: {"train": 0, "test": 0}
     )
     chunks: Dict[str, torch.Tensor] = field(default_factory=dict)
+    chunk_offsets: Dict[str, int] = field(default_factory=dict)
 
     def state_dict(self) -> Dict[str, Dict[str, int]]:
         return {
@@ -560,6 +561,7 @@ class TextDataset:
         self.positions[split] = (start + total_chars) % len(source)
         self._byte_segments(split, parts_text)
         self.chunks[split] = chunk
+        self.chunk_offsets[split] = start % len(source)
 
     def get_batch(
         self,
@@ -567,12 +569,17 @@ class TextDataset:
         block_size: int,
         batch_size: int,
         device: torch.device,
+        *,
+        return_prefill: bool = False,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         chunk = self.chunks.get(split)
         if chunk is None:
             raise RuntimeError(
                 f"No cached chunk for split {split}. Call prepare_cycle first."
             )
+        chunk_offset = self.chunk_offsets.get(split)
+        if chunk_offset is None:
+            raise RuntimeError(f"Missing chunk offset for split {split}")
         span = block_size + 1
         if len(chunk) <= span:
             raise ValueError(
@@ -584,7 +591,20 @@ class TextDataset:
         stacked = torch.stack(windows)
         x = stacked[:, :-1].contiguous().to(device)
         y = stacked[:, 1:].contiguous().to(device)
-        return x, y
+        if not return_prefill:
+            return x, y
+        tokens = self.train_tokens if split == "train" else self.test_tokens
+        total = len(tokens)
+        if total == 0:
+            raise ValueError(f"No tokens in split {split}")
+        prefill_rows = []
+        for start in ix.tolist():
+            abs_start = (chunk_offset + start) % total
+            pre_start = abs_start - block_size
+            span_tokens = self.looped_slice(split, pre_start, block_size)
+            prefill_rows.append(span_tokens)
+        prefill = torch.stack(prefill_rows).to(device)
+        return x, y, prefill
 
     def _slice_with_wrap(
         self,
@@ -609,6 +629,32 @@ class TextDataset:
         chunk = torch.cat(parts) if len(parts) > 1 else parts[0]
         return chunk.contiguous(), texts
 
+    def looped_slice(
+        self,
+        split: str,
+        start: int,
+        length: int,
+    ) -> torch.Tensor:
+        if length <= 0:
+            return torch.empty(0, dtype=self.train_tokens.dtype)
+        tokens = self.train_tokens if split == "train" else self.test_tokens
+        total = len(tokens)
+        if total == 0:
+            raise ValueError(f"No tokens available for split {split!r}")
+        start = start % total
+        remaining = length
+        pieces: list[torch.Tensor] = []
+        pos = start
+        while remaining > 0:
+            take = min(remaining, total - pos)
+            if take == 0:
+                pos = 0
+                continue
+            pieces.append(tokens[pos : pos + take])
+            remaining -= take
+            pos = (pos + take) % total
+        return torch.cat(pieces).contiguous()
+
     def _byte_segments(self, split: str, parts_text: list[str]) -> list[tuple[int, int]]:
         segments = []
         byte_pos = self.byte_positions[split]
@@ -632,6 +678,30 @@ class TextDataset:
             segments.append((start, end))
         self.byte_positions[split] = byte_pos % total_bytes
         return segments
+
+
+def compute_prefill_contexts(
+    model: GRCEGPT,
+    prefill_tokens: torch.Tensor,
+    *,
+    think_token_id: int | None,
+) -> list[torch.Tensor] | None:
+    if prefill_tokens.numel() == 0:
+        return None
+    if not model.context_channels:
+        return None
+    with torch.no_grad():
+        _, _, extras = model.forward_autoreg(
+            prefill_tokens,
+            think_token_id=think_token_id,
+            record_final_context=True,
+        )
+    if not extras:
+        return None
+    final_contexts = extras.get("final_context_raw")
+    if not final_contexts:
+        return None
+    return [ctx.detach() if ctx is not None else None for ctx in final_contexts]
 
 
 @dataclass
@@ -792,6 +862,7 @@ def augment_training_batch(
     disable_context_rows: set[int] | None = None,
     disable_think_rows: set[int] | None = None,
     forced_think_rows: set[int] | None = None,
+    initial_context_raw: list[torch.Tensor] | None = None,
 ) -> tuple[
     torch.Tensor,
     torch.Tensor,
@@ -825,6 +896,7 @@ def augment_training_batch(
             full_logits, _, _ = model.forward_autoreg(
                 inputs,
                 think_token_id=think_token_id,
+                initial_context_raw=initial_context_raw,
             )
     if prev_mode and need_logits:
         model.train()
@@ -1534,6 +1606,8 @@ class GRCEGPT(nn.Module):
         disable_xctx: bool = False,
         attention_disabled_rows: torch.Tensor | None = None,
         attention_dropout_positions: torch.Tensor | None = None,
+        initial_context_raw: list[torch.Tensor] | None = None,
+        record_final_context: bool = False,
     ) -> Tuple[torch.Tensor, torch.Tensor | None, dict | None]:
         B, T = idx.shape
         device = idx.device
@@ -1562,6 +1636,24 @@ class GRCEGPT(nn.Module):
         if use_context:
             for channel in active_channels:
                 context_states.append(torch.zeros(B, channel.context_dim, device=device))
+            if initial_context_raw is not None:
+                if len(initial_context_raw) != len(active_channels):
+                    raise ValueError(
+                        "initial_context_raw must match number of active context channels"
+                    )
+                for idx_ch, (channel, init_raw) in enumerate(
+                    zip(active_channels, initial_context_raw)
+                ):
+                    if init_raw is None:
+                        continue
+                    if init_raw.device != device:
+                        init_raw = init_raw.to(device)
+                    expected = (B, channel.context_dim)
+                    if init_raw.shape != expected:
+                        raise ValueError(
+                            f"initial context shape {init_raw.shape} does not match {expected}"
+                        )
+                    context_states[idx_ch] = channel.context_norm(init_raw)
         logits_steps = []
         hidden_steps = []
         pos_counters = torch.zeros(B, dtype=torch.long, device=device)
@@ -1577,6 +1669,9 @@ class GRCEGPT(nn.Module):
         activation_store: dict | None = None
         need_store = capture_activations or collect_relu_mask
         relu_activity: list[list[torch.Tensor | None]] | None = [] if collect_relu_mask else None
+        final_context_raw: list[torch.Tensor | None] | None = (
+            [None for _ in active_channels] if (record_final_context and use_context) else None
+        )
         if capture_activations:
             activation_store = {
                 "block_norms": [[] for _ in range(self.config.n_layer)],
@@ -1714,6 +1809,8 @@ class GRCEGPT(nn.Module):
                         raw_context = raw_context.clone()
                         raw_context[channel_mask] = 0
                     context_states[idx_ch] = new_state
+                    if final_context_raw is not None:
+                        final_context_raw[idx_ch] = raw_context.detach()
                     if activation_store is not None:
                         ctx_norms = torch.linalg.vector_norm(raw_context.detach(), dim=-1)
                         activation_store["context_norms"].extend(ctx_norms.cpu().tolist())
@@ -1726,6 +1823,12 @@ class GRCEGPT(nn.Module):
                 activation_store = {}
             if activation_store is not None:
                 activation_store.setdefault("relu_activity", relu_activity)
+        if final_context_raw is not None:
+            if activation_store is None:
+                activation_store = {}
+            activation_store["final_context_raw"] = [
+                ctx.clone() if ctx is not None else None for ctx in final_context_raw
+            ]
         return logits, hidden, activation_store
 
 
@@ -1809,15 +1912,32 @@ def evaluate_split(
     disable_attention: bool = False,
     think_settings: ThinkSettings | None = None,
     undo_settings: UndoSettings | None = None,
-    batches: list[tuple[torch.Tensor, torch.Tensor]] | None = None,
+    batches: list[tuple[torch.Tensor, torch.Tensor, list[torch.Tensor] | None]] | None = None,
 ) -> float:
     ce_losses = []
     if batches is None:
-        batches = [
-            dataset.get_batch(split, block_size, batch_size, device) for _ in range(iters)
-        ]
+        batches = []
+        for _ in range(iters):
+            xb, yb, prefill = dataset.get_batch(
+                split,
+                block_size,
+                batch_size,
+                device,
+                return_prefill=True,
+            )
+            init_ctx = compute_prefill_contexts(
+                model,
+                prefill,
+                think_token_id=active_think_token_id(think_settings),
+            )
+            batches.append((xb, yb, init_ctx))
     think_token_id = active_think_token_id(think_settings)
-    for xb, yb in batches:
+    for payload in batches:
+        if len(payload) == 3:
+            xb, yb, init_ctx = payload
+        else:
+            xb, yb = payload[:2]
+            init_ctx = None
         aug_xb, aug_yb, random_mask, _, think_slot_mask = augment_training_batch(
             model,
             xb,
@@ -1827,6 +1947,7 @@ def evaluate_split(
             disable_context_rows=None,
             disable_think_rows=None,
             forced_think_rows=None,
+            initial_context_raw=init_ctx,
         )
         attention_disabled_rows = None
         if disable_attention:
@@ -1839,6 +1960,7 @@ def evaluate_split(
             think_token_id=think_token_id,
             disable_xctx=disable_xctx,
             attention_disabled_rows=attention_disabled_rows,
+            initial_context_raw=init_ctx,
         )
         logits_main = disable_think_logits(raw_logits.clone(), think_settings)
         logits_main = apply_think_slot_mask(logits_main, think_slot_mask, think_settings)
@@ -1949,6 +2071,7 @@ def run_think_insertion_eval(
     counts: torch.Tensor,
     *,
     think_token_id: int,
+    initial_context_raw: list[torch.Tensor] | None = None,
 ) -> tuple[float, float]:
     new_inputs, new_targets, eval_targets, eval_weights = build_think_sequences(
         inputs,
@@ -1959,6 +2082,7 @@ def run_think_insertion_eval(
     logits, _, _ = model.forward_autoreg(
         new_inputs,
         think_token_id=think_token_id,
+        initial_context_raw=initial_context_raw,
     )
     think_guard = ThinkSettings(max_steps=1, token_id=think_token_id)
     logits = disable_think_logits(logits, think_guard)
@@ -1982,7 +2106,7 @@ def run_think_insertion_eval(
 
 def evaluate_think_modes(
     model: GRCEGPT,
-    batches: list[tuple[torch.Tensor, torch.Tensor]],
+    batches: list[tuple[torch.Tensor, torch.Tensor, list[torch.Tensor] | None]],
     *,
     think_token_id: int,
 ) -> dict[str, float]:
@@ -1996,10 +2120,16 @@ def evaluate_think_modes(
         return loss_sum / weight_sum
 
     batch_losses: list[tuple[float, float]] = []
-    for xb, yb in batches:
+    for payload in batches:
+        if len(payload) == 3:
+            xb, yb, init_ctx = payload
+        else:
+            xb, yb = payload[:2]
+            init_ctx = None
         logits, _, _ = model.forward_autoreg(
             xb,
             think_token_id=think_token_id,
+            initial_context_raw=init_ctx,
         )
         preds = torch.argmax(logits, dim=-1)
         counts = preds.eq(think_token_id).long()
@@ -2010,13 +2140,19 @@ def evaluate_think_modes(
             yb,
             counts,
             think_token_id=think_token_id,
+            initial_context_raw=init_ctx,
         )
         if weight > 0:
             batch_losses.append((loss_sum, weight))
     results["think"] = aggregate(batch_losses)
 
     const_batches: list[tuple[float, float]] = []
-    for xb, yb in batches:
+    for payload in batches:
+        if len(payload) == 3:
+            xb, yb, init_ctx = payload
+        else:
+            xb, yb = payload[:2]
+            init_ctx = None
         counts = torch.ones_like(xb, dtype=torch.long)
         counts = counts * (yb != LOSS_IGNORE_INDEX).long()
         loss_sum, weight = run_think_insertion_eval(
@@ -2025,13 +2161,19 @@ def evaluate_think_modes(
             yb,
             counts,
             think_token_id=think_token_id,
+            initial_context_raw=init_ctx,
         )
         if weight > 0:
             const_batches.append((loss_sum, weight))
     results["think2x"] = aggregate(const_batches)
 
     triple_batches: list[tuple[float, float]] = []
-    for xb, yb in batches:
+    for payload in batches:
+        if len(payload) == 3:
+            xb, yb, init_ctx = payload
+        else:
+            xb, yb = payload[:2]
+            init_ctx = None
         counts = torch.full_like(xb, 2, dtype=torch.long)
         counts = counts * (yb != LOSS_IGNORE_INDEX).long()
         loss_sum, weight = run_think_insertion_eval(
@@ -2040,6 +2182,7 @@ def evaluate_think_modes(
             yb,
             counts,
             think_token_id=think_token_id,
+            initial_context_raw=init_ctx,
         )
         if weight > 0:
             triple_batches.append((loss_sum, weight))
@@ -2133,7 +2276,19 @@ def train_model(
     context_dropout_interval = max(0, int(context_dropout_interval))
     context_path_enabled = bool(model.context_channels)
     for step in range(1, steps + 1):
-        xb, yb = dataset.get_batch("train", block_size, batch_size, device)
+        batch_payload = dataset.get_batch(
+            "train",
+            block_size,
+            batch_size,
+            device,
+            return_prefill=True,
+        )
+        xb, yb, prefill_tokens = batch_payload
+        initial_contexts = compute_prefill_contexts(
+            model,
+            prefill_tokens,
+            think_token_id=think_token_id,
+        )
         current_step_index = total_steps
         context_dropout_active = (
             context_path_enabled
@@ -2192,6 +2347,7 @@ def train_model(
             disable_context_rows=context_special_rows,
             disable_think_rows=think_disabled_rows,
             forced_think_rows=forced_think_rows,
+            initial_context_raw=initial_contexts,
         )
         logits, hidden_states, activation_store = model.forward_autoreg(
             xb,
@@ -2202,6 +2358,7 @@ def train_model(
             context_dropout_positions=context_dropout_positions,
             attention_disabled_rows=attention_disabled_mask,
             attention_dropout_positions=attention_dropout_positions,
+            initial_context_raw=initial_contexts,
         )
         raw_logits = logits
         logits_main = disable_think_logits(raw_logits.clone(), think_settings)
@@ -2253,12 +2410,26 @@ def train_model(
             model.eval()
             with torch.no_grad():
                 split_metrics: dict[str, dict[str, float]] = {"train": {}, "test": {}}
-                cached_batches: dict[str, list[tuple[torch.Tensor, torch.Tensor]]] = {}
+                cached_batches: dict[
+                    str, list[tuple[torch.Tensor, torch.Tensor, list[torch.Tensor] | None]]
+                ] = {}
                 for split in ("train", "test"):
-                    cached_batches[split] = [
-                        dataset.get_batch(split, block_size, batch_size, device)
-                        for _ in range(eval_iters)
-                    ]
+                    cached_batches[split] = []
+                    for _ in range(eval_iters):
+                        cached_batch = dataset.get_batch(
+                            split,
+                            block_size,
+                            batch_size,
+                            device,
+                            return_prefill=True,
+                        )
+                        bx, by, prefill = cached_batch
+                        init_ctx = compute_prefill_contexts(
+                            model,
+                            prefill,
+                            think_token_id=think_token_id,
+                        )
+                        cached_batches[split].append((bx, by, init_ctx))
                     split_metrics[split]["with_think"] = float(
                         evaluate_split(
                             model,
@@ -2638,11 +2809,23 @@ def run_test_slice(
     noun_detector = None
     if underline_tokens:
         noun_detector = NounExpectationDetector(model, tokenizer, think_token_id)
+    prefill_tokens = None
+    if block_size > 0:
+        pre_slice = dataset.looped_slice("test", start - block_size, block_size)
+        prefill_tokens = pre_slice.to(model_device).unsqueeze(0)
+    initial_contexts = None
+    if prefill_tokens is not None:
+        initial_contexts = compute_prefill_contexts(
+            model,
+            prefill_tokens,
+            think_token_id=think_token_id,
+        )
     with torch.no_grad():
         logits, _, activations = model.forward_autoreg(
             seq,
             capture_activations=True,
             think_token_id=think_token_id,
+            initial_context_raw=initial_contexts,
         )
     preds = logits.argmax(dim=-1).squeeze(0).tolist()
     correct_mask = [False] * len(indices)
