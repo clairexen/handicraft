@@ -2360,6 +2360,8 @@ def train_model(
     underline_tokens: bool = False,
     default_prompt_boundary: bool = False,
     boundary_blocklist: Sequence[int] | None = None,
+    show_train_loss_details: bool = False,
+    show_test_loss_details: bool = True,
 ) -> Tuple[int, List[Dict[str, float]]]:
     optim = torch.optim.AdamW(model.parameters(), lr=3e-4)
     total_steps = start_step
@@ -2412,6 +2414,8 @@ def train_model(
         occupied.add(choice)
         return choice
     show_think_columns = bool(think_enabled and tokenizer.think_id is not None)
+    show_train_details = bool(show_train_loss_details)
+    show_test_details = bool(show_test_loss_details)
     context_dropout_interval = max(0, int(context_dropout_interval))
     context_path_enabled = bool(model.context_channels)
     for step in range(1, steps + 1):
@@ -2800,11 +2804,16 @@ def train_model(
                     total_prompts = len(PROMPT_GOALS)
                     random_only_count = 0
                     solved_count = 0
-                train_header = "train loss special noprev : normal noctx noatt none"
-                test_header = "test loss special noprev : normal noctx noatt none"
-                if show_think_columns:
-                    train_header += " : think 2x 3x"
-                    test_header += " : think 2x 3x"
+                train_header = "train loss"
+                if show_train_details:
+                    train_header += " special noprev : normal noctx noatt none"
+                    if show_think_columns:
+                        train_header += " : think 2x 3x"
+                test_header = "test loss"
+                if show_test_details:
+                    test_header += " special noprev : normal noctx noatt none"
+                    if show_think_columns:
+                        test_header += " : think 2x 3x"
                 header_parts: List[str] = []
                 if show_time:
                     header_parts.append("time")
@@ -2824,9 +2833,11 @@ def train_model(
                     return " -- "
                 return f"{value:.2f}"
 
-            def format_line(split: str) -> str:
+            def format_train_line() -> str:
+                if not show_train_details:
+                    return format_metric("train", "with_think")
                 primary_group = "  ".join(
-                    format_metric(split, key)
+                    format_metric("train", key)
                     for key in (
                         "with_think",
                         "with_think_special",
@@ -2834,20 +2845,44 @@ def train_model(
                     )
                 )
                 diag_vals = "  ".join(
-                    format_metric(split, key)
+                    format_metric("train", key)
                     for key in ("plain", "plain_noctx", "plain_noatt", "plain_none")
                 )
                 parts = [primary_group, diag_vals]
                 if show_think_columns:
                     think_vals = "  ".join(
-                        format_metric(split, key)
+                        format_metric("train", key)
                         for key in ("think", "think2x", "think3x")
                     )
                     parts.append(think_vals)
                 return " : ".join(parts)
 
-            train_values = format_line("train")
-            test_values = format_line("test")
+            def format_test_line() -> str:
+                if not show_test_details:
+                    return format_metric("test", "with_think")
+                primary_group = "  ".join(
+                    format_metric("test", key)
+                    for key in (
+                        "with_think",
+                        "with_think_special",
+                        "with_think_noprev",
+                    )
+                )
+                diag_vals = "  ".join(
+                    format_metric("test", key)
+                    for key in ("plain", "plain_noctx", "plain_noatt", "plain_none")
+                )
+                parts = [primary_group, diag_vals]
+                if show_think_columns:
+                    think_vals = "  ".join(
+                        format_metric("test", key)
+                        for key in ("think", "think2x", "think3x")
+                    )
+                    parts.append(think_vals)
+                return " : ".join(parts)
+
+            train_values = format_train_line()
+            test_values = format_test_line()
             if prompt_tracker is not None:
                 random_only_count, solved_prompts, total_prompts = prompt_tracker.counts()
             else:
@@ -3533,7 +3568,9 @@ def parse_args() -> argparse.Namespace:
     defaults = MODEL_CONFIG_TEMPLATE
     raw_cli_args = sys.argv[1:]
     parser = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.ArgumentDefaultsHelpFormatter
+        description=__doc__,
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        allow_abbrev=False,
     )
     generic = parser.add_argument_group("Generic options")
     generic.add_argument(
@@ -3752,6 +3789,16 @@ def parse_args() -> argparse.Namespace:
         "--no-ansi",
         action="store_true",
         help="Suppress the parallel .ansi log (which preserves ANSI colors)",
+    )
+    logging_group.add_argument(
+        "--train-loss-details",
+        action="store_true",
+        help="Show the special/noprev columns for train loss in the live log",
+    )
+    logging_group.add_argument(
+        "--no-test-loss-details",
+        action="store_true",
+        help="Collapse the test loss group down to a single column in the live log",
     )
 
     import_group = parser.add_argument_group("Checkpoint import/export")
@@ -4467,6 +4514,8 @@ def main() -> None:
                 underline_tokens=args.underline,
                 default_prompt_boundary=default_prompt_boundary,
                 boundary_blocklist=boundary_blocklist,
+                show_train_loss_details=args.train_loss_details,
+                show_test_loss_details=not args.no_test_loss_details,
             )
             return
 
@@ -4578,6 +4627,8 @@ def main() -> None:
                 underline_tokens=args.underline,
                 default_prompt_boundary=default_prompt_boundary,
                 boundary_blocklist=boundary_blocklist,
+                show_train_loss_details=args.train_loss_details,
+                show_test_loss_details=not args.no_test_loss_details,
             )
             loss_history.extend(updates)
 
