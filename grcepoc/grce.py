@@ -3071,17 +3071,27 @@ def train_model(
                     completion_ids,
                     used_argmax=use_argmax_completion,
                 )
-                if matched and new_state == 2 and prev_state != 2:
+                if matched and new_state > prev_state:
                     expected = prompt_tracker.expected_text(current_prompt_idx)
                     prompt_text = PROMPT_GOALS[current_prompt_idx][0]
-                    mode = "argmax" if use_argmax_completion else "random"
-                    print(
-                        color_text(
-                            f"Prompt #{current_prompt_idx + 1} satisfied ({mode}): {prompt_text} (expected '{expected}')",
-                            Colors.YELLOW,
-                            bold=True,
+                    if new_state == 2:
+                        mode = "argmax"
+                        print(
+                            color_text(
+                                f"Prompt #{current_prompt_idx + 1} satisfied ({mode}): {prompt_text} (expected '{expected}')",
+                                Colors.YELLOW,
+                                bold=True,
+                            )
                         )
-                    )
+                    else:
+                        mode = "sample"
+                        print(
+                            color_text(
+                                f"Prompt #{current_prompt_idx + 1} satisfied ({mode}): {prompt_text} (expected '{expected}')",
+                                Colors.YELLOW,
+                                bold=False,
+                            )
+                        )
                 if new_state < 2:
                     front_requeue = new_state == 1 and prev_state == 0
                     enqueue_prompt(
