@@ -1607,6 +1607,7 @@ class GRCEContextChannel(nn.Module):
             )
             if self.is_xctx:
                 self.context_mlp = None
+                self.context_fuse_norm = None
             else:
                 mid = 4 * self.context_dim
                 self.context_mlp = nn.Sequential(
@@ -1614,6 +1615,7 @@ class GRCEContextChannel(nn.Module):
                     nn.ReLU(),
                     nn.Linear(mid, self.context_dim),
                 )
+                self.context_fuse_norm = nn.LayerNorm(self.context_dim)
             self.context_norm = nn.LayerNorm(self.context_dim)
             self.context_bias_gen = nn.ModuleList(
                 [self._build_bias(self.context_dim, config.n_embd) for _ in range(config.n_layer)]
@@ -1663,7 +1665,12 @@ class GRCEContextChannel(nn.Module):
             residual = prev_context.detach() if detach_prev else prev_context
             fused = fused + residual
         if self.context_mlp is not None:
-            context = self.context_mlp(fused)
+            normed_fused = (
+                self.context_fuse_norm(fused)
+                if self.context_fuse_norm is not None
+                else fused
+            )
+            context = self.context_mlp(normed_fused)
             if prev_context is not None:
                 context = context + residual
         else:
