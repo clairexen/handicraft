@@ -641,8 +641,6 @@ class TextDataset:
         block_size: int,
         batch_size: int,
         device: torch.device,
-        *,
-        return_prefill: bool = False,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         chunk = self.chunks.get(split)
         if chunk is None:
@@ -663,20 +661,7 @@ class TextDataset:
         stacked = torch.stack(windows)
         x = stacked[:, :-1].contiguous().to(device)
         y = stacked[:, 1:].contiguous().to(device)
-        if not return_prefill:
-            return x, y
-        tokens = self.train_tokens if split == "train" else self.test_tokens
-        total = len(tokens)
-        if total == 0:
-            raise ValueError(f"No tokens in split {split}")
-        prefill_rows = []
-        for start in ix.tolist():
-            abs_start = (chunk_offset + start) % total
-            pre_start = abs_start - block_size
-            span_tokens = self.looped_slice(split, pre_start, block_size)
-            prefill_rows.append(span_tokens)
-        prefill = torch.stack(prefill_rows).to(device)
-        return x, y, prefill
+        return x, y
 
     def _slice_with_wrap(
         self,
@@ -2299,35 +2284,26 @@ def evaluate_split(
     disable_attention: bool = False,
     think_settings: ThinkSettings | None = None,
     undo_settings: UndoSettings | None = None,
-    batches: list[tuple[torch.Tensor, torch.Tensor, list[torch.Tensor] | None]] | None = None,
+    batches: list[tuple[torch.Tensor, torch.Tensor]] | None = None,
     use_special_rows: bool = False,
 ) -> float:
     ce_losses = []
     if batches is None:
         batches = []
         for _ in range(iters):
-            xb, yb, prefill = dataset.get_batch(
+            xb, yb = dataset.get_batch(
                 split,
                 block_size,
                 batch_size,
                 device,
-                return_prefill=True,
             )
-            init_ctx = compute_prefill_contexts(
-                model,
-                prefill,
-                think_token_id=active_think_token_id(think_settings),
-            )
-            batches.append((xb, yb, init_ctx))
+            batches.append((xb, yb))
     think_token_id = active_think_token_id(think_settings)
     context_path_enabled = bool(model.context_channels)
     think_enabled = think_settings is not None and think_settings.enabled
     for payload in batches:
-        if len(payload) == 3:
-            xb, yb, init_ctx = payload
-        else:
-            xb, yb = payload[:2]
-            init_ctx = None
+        xb, yb = payload[:2]
+        init_ctx = None
         special_masks: SpecialRowMasks | None = None
         if use_special_rows:
             special_masks = build_special_row_masks(
@@ -2529,7 +2505,10 @@ def run_think_insertion_eval(
 
 def evaluate_think_modes(
     model: GRCEGPT,
-    batches: list[tuple[torch.Tensor, torch.Tensor, list[torch.Tensor] | None]],
+    batches: list[
+        tuple[torch.Tensor, torch.Tensor]
+        | tuple[torch.Tensor, torch.Tensor, list[torch.Tensor] | None]
+    ],
     *,
     think_token_id: int,
 ) -> dict[str, float]:
@@ -2719,14 +2698,8 @@ def train_model(
             block_size,
             batch_size,
             device,
-            return_prefill=True,
         )
-        xb, yb, prefill_tokens = batch_payload
-        initial_contexts = compute_prefill_contexts(
-            model,
-            prefill_tokens,
-            think_token_id=think_token_id,
-        )
+        xb, yb = batch_payload
         current_step_index = total_steps
         context_dropout_active = (
             context_path_enabled
@@ -2785,7 +2758,7 @@ def train_model(
             disable_context_rows=context_special_rows,
             disable_think_rows=think_disabled_rows,
             forced_think_rows=forced_think_rows,
-            initial_context_raw=initial_contexts,
+            initial_context_raw=None,
         )
         logits, hidden_states, activation_store = model.forward_autoreg(
             xb,
@@ -2796,7 +2769,7 @@ def train_model(
             context_dropout_positions=context_dropout_positions,
             attention_disabled_rows=attention_disabled_mask,
             attention_dropout_positions=attention_dropout_positions,
-            initial_context_raw=initial_contexts,
+            initial_context_raw=None,
         )
         raw_logits = logits
         logits_main = disable_think_logits(raw_logits.clone(), think_settings)
@@ -2856,7 +2829,7 @@ def train_model(
             with torch.no_grad():
                 split_metrics: dict[str, dict[str, float]] = {"train": {}, "test": {}}
                 cached_batches: dict[
-                    str, list[tuple[torch.Tensor, torch.Tensor, list[torch.Tensor] | None]]
+                    str, list[tuple[torch.Tensor, torch.Tensor]]
                 ] = {}
                 for split in ("train", "test"):
                     cached_batches[split] = []
@@ -2866,15 +2839,9 @@ def train_model(
                             block_size,
                             batch_size,
                             device,
-                            return_prefill=True,
                         )
-                        bx, by, prefill = cached_batch
-                        init_ctx = compute_prefill_contexts(
-                            model,
-                            prefill,
-                            think_token_id=think_token_id,
-                        )
-                        cached_batches[split].append((bx, by, init_ctx))
+                        bx, by = cached_batch
+                        cached_batches[split].append((bx, by))
                     base_batches = cached_batches[split]
                     split_metrics[split]["with_think"] = float(
                         evaluate_split(
@@ -2913,10 +2880,7 @@ def train_model(
                             use_special_rows=True,
                         )
                     )
-                    noprev_batches = [
-                        (bx, by, None)
-                        for (bx, by, _ctx) in base_batches
-                    ]
+                    noprev_batches = list(base_batches)
                     split_metrics[split]["with_think_noprev"] = float(
                         evaluate_split(
                             model,
@@ -5083,7 +5047,7 @@ def main() -> None:
                 color_text(
                     f"[cycle {cycle}] train: wall={pure_train_wall:.2f}s cpu={pure_train_cpu:.2f}s; "
                     f"eval: wall={eval_wall:.2f}s cpu={eval_cpu:.2f}s; "
-                    f"pre-eval ratio: wall={preeval_wall_ratio:.1f} cpu={preeval_cpu_ratio:.1f}; model updated.",
+                    f"pre-eval ratio: wall={preeval_wall_ratio:.2f} cpu={preeval_cpu_ratio:.2f}; model updated.",
                     Colors.CYAN,
                 )
             )
