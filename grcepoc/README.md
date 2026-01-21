@@ -54,8 +54,8 @@ Remember: when the model computes logits for position N+1, it already synthesize
 Ignoring embeddings and other lower-order pieces, two terms dominate:
 
 - Position-domain Transformer stack: `~ 12 * n_layer * n_embd^2`
-- Time-domain GRCE network (only if `n_grce > 0`): `~ n_layer * n_embd * n_grce + 8 * n_grce^2`
-- Time-domain XCTX network (only if `n_xctx > 0`): `~ n_layer * n_embd * n_xctx + 8 * n_xctx^2 / n_layer`
+- Time-domain GRCE network (only if `n_grce > 0`): `~ 2 * n_layer * n_embd * n_grce + 8 * n_grce^2`
+- Time-domain XCTX network (only if `n_xctx > 0`): `~ 2 * n_embd * n_xctx + 2 * n_xctx^2 + 8 * n_xctx^2 / n_layer`
 
 For exact counts (including the XCTX channel and bias/sampler splits) run `python grce.py size [--check]` with your chosen hyperparameters—the report prints every contribution with its closed-form formula and can optionally instantiate a model to verify the arithmetic.
 

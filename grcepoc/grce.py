@@ -1562,14 +1562,18 @@ def _dominant_estimates(config: ModelConfig) -> list[tuple[str, int, str]]:
     ]
     if G > 0:
         estimates.append(
-            ("grce", L * E * G + 8 * G * G, "n_layer * n_embd * n_grce + 8*n_grce^2")
+            (
+                "grce",
+                2 * L * E * G + 8 * G * G,
+                "2 * n_layer * n_embd * n_grce + 8*n_grce^2",
+            )
         )
     if X > 0:
         estimates.append(
             (
                 "xctx",
-                L * E * X + (8 * X * X) // max(1, L),
-                "n_layer * n_embd * n_xctx + 8*n_xctx^2 / n_layer",
+                2 * E * X + 2 * X * X + (8 * X * X) // max(1, L),
+                "2 * n_embd * n_xctx + 2*n_xctx^2 + 8*n_xctx^2 / n_layer",
             )
         )
     return estimates
