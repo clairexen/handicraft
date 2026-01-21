@@ -3010,54 +3010,54 @@ def train_model(
             block_cpu = time.process_time() - eval_cpu_block
             eval_wall_total += block_wall
             eval_cpu_total += block_cpu
-        preeval_wall_total += time.time() - preeval_wall_block
-        preeval_cpu_total += time.process_time() - preeval_cpu_block
-        prompt_input = sample_prompt
-        prompt_needs_boundary_flag = (
-            default_prompt_boundary and boundary_blocklist is not None
-        )
-        current_prompt_idx = None
-        use_argmax_completion = random.random() < 0.5
-        sampling_strategy = "argmax" if use_argmax_completion else "sample"
-        if prompt_tracker is not None:
-            while prompt_queue and prompt_tracker.is_completed(prompt_queue[0]):
-                prompt_queue.pop(0)
-            if prompt_queue:
-                current_prompt_idx = prompt_queue.pop(0)
-                prompt_input = prompt_tracker.prompt_tensor(current_prompt_idx, device)
-                prompt_text = PROMPT_GOALS[current_prompt_idx][0]
-                prompt_needs_boundary_flag = (
-                    boundary_blocklist is not None
-                    and prompt_needs_boundary(prompt_text)
-                )
-                state_val = prompt_tracker.state(current_prompt_idx)
-                if state_val == 1:
-                    use_argmax_completion = True
+            preeval_wall_total += time.time() - preeval_wall_block
+            preeval_cpu_total += time.process_time() - preeval_cpu_block
+            prompt_input = sample_prompt
+            prompt_needs_boundary_flag = (
+                default_prompt_boundary and boundary_blocklist is not None
+            )
+            current_prompt_idx = None
+            use_argmax_completion = random.random() < 0.5
+            sampling_strategy = "argmax" if use_argmax_completion else "sample"
+            if prompt_tracker is not None:
+                while prompt_queue and prompt_tracker.is_completed(prompt_queue[0]):
+                    prompt_queue.pop(0)
+                if prompt_queue:
+                    current_prompt_idx = prompt_queue.pop(0)
+                    prompt_input = prompt_tracker.prompt_tensor(current_prompt_idx, device)
+                    prompt_text = PROMPT_GOALS[current_prompt_idx][0]
+                    prompt_needs_boundary_flag = (
+                        boundary_blocklist is not None
+                        and prompt_needs_boundary(prompt_text)
+                    )
+                    state_val = prompt_tracker.state(current_prompt_idx)
+                    if state_val == 1:
+                        use_argmax_completion = True
+                    else:
+                        use_argmax_completion = random.random() < 0.5
+                    sampling_strategy = (
+                        "argmax" if use_argmax_completion else "sample"
+                    )
                 else:
                     use_argmax_completion = random.random() < 0.5
-                sampling_strategy = (
-                    "argmax" if use_argmax_completion else "sample"
-                )
-            else:
-                use_argmax_completion = random.random() < 0.5
-                sampling_strategy = (
-                    "argmax" if use_argmax_completion else "sample"
-                )
+                    sampling_strategy = (
+                        "argmax" if use_argmax_completion else "sample"
+                    )
             sample_tokens, prompt_len = generate(
                 model,
                 prompt_input.clone(),
                 sample_chars,
                 suppress_newlines=suppress_newlines,
-                    newline_token_id=newline_token_id,
-                    think_settings=think_settings,
-                    suppress_think=suppress_think_output,
-                    suppress_think_prompt=suppress_think_prompt,
-                    think_hard=think_hard,
-                    first_token_blocklist=(
-                        boundary_blocklist if prompt_needs_boundary_flag else None
-                    ),
-                    sampling_strategy=sampling_strategy,
-                )
+                newline_token_id=newline_token_id,
+                think_settings=think_settings,
+                suppress_think=suppress_think_output,
+                suppress_think_prompt=suppress_think_prompt,
+                think_hard=think_hard,
+                first_token_blocklist=(
+                    boundary_blocklist if prompt_needs_boundary_flag else None
+                ),
+                sampling_strategy=sampling_strategy,
+            )
             model.train()
             sample_ids = sample_tokens[0].detach().cpu().tolist()
             prompt_ids = sample_ids[:prompt_len]
