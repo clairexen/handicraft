@@ -2333,7 +2333,12 @@ def expand_prompt_with_thinking(
     inserted = 0
     pos = 0
     max_insertions = max(0, think.max_steps)
-    while pos < idx.size(1) and inserted < max_insertions:
+    max_positions = int(model.config.block_size)
+    while (
+        pos < idx.size(1)
+        and inserted < max_insertions
+        and idx.size(1) < max_positions
+    ):
         prefix = idx[:, : pos + 1]
         logits, _, _ = model.forward_autoreg(
             prefix,
@@ -2346,6 +2351,8 @@ def expand_prompt_with_thinking(
             idx = torch.cat((idx[:, : pos + 1], think_tok, idx[:, pos + 1 :]), dim=1)
             inserted += 1
             pos += 1
+            if idx.size(1) >= max_positions:
+                break
             continue
         pos += 1
     return idx
