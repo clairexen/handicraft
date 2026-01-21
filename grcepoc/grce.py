@@ -33,11 +33,76 @@ from tokenizers.pre_tokenizers import ByteLevel
 from tokenizers.processors import ByteLevel as ByteLevelProcessor
 from tokenizers.trainers import BpeTrainer
 
-HF_CACHE_DIR = pathlib.Path(".cache_transformers")
-HF_CACHE_DIR.mkdir(exist_ok=True)
-os.environ.setdefault("HF_HOME", str(HF_CACHE_DIR.resolve()))
+# Local GPT2 tokenizer adapter (no huggingface dependency)
+class GPT2TokenizerFast:
+    def __init__(self, tokenizer_file=None, tokenizer_object=None):
+        if tokenizer_file is not None:
+            self._tokenizer = Tokenizer.from_file(tokenizer_file)
+        elif tokenizer_object is not None:
+            self._tokenizer = tokenizer_object
+        else:
+            raise ValueError("Either tokenizer_file or tokenizer_object must be provided")
+        self._extra_special_tokens: list[str] = []
 
-from transformers import GPT2TokenizerFast
+    @property
+    def unk_token(self) -> str:
+        return "<|unk|>"
+
+    def _normalize_special_tokens(self, tokens):
+        if isinstance(tokens, dict):
+            tokens = tokens.get("additional_special_tokens", []) or []
+        if isinstance(tokens, str):
+            tokens = [tokens]
+        return list(tokens or [])
+
+    def add_special_tokens(self, tokens):
+        entries = self._normalize_special_tokens(tokens)
+        added = []
+        for tok in entries:
+            if tok not in self._extra_special_tokens:
+                self._extra_special_tokens.append(tok)
+                added.append(tok)
+        if added:
+            self._tokenizer.add_special_tokens(added)
+        return len(entries)
+
+    def get_vocab_size(self) -> int:
+        return self._tokenizer.get_vocab_size()
+
+    def __len__(self) -> int:
+        return self.get_vocab_size()
+
+    @property
+    def all_special_ids(self) -> list[int]:
+        ids: list[int] = []
+        for token in self._extra_special_tokens:
+            tok_id = self._tokenizer.token_to_id(token)
+            if tok_id is not None:
+                ids.append(tok_id)
+        return ids
+
+    def convert_tokens_to_ids(self, token: str) -> int | None:
+        return self._tokenizer.token_to_id(token)
+
+    def encode(self, text: str, add_special_tokens: bool = True) -> list[int]:
+        encoding = self._tokenizer.encode(text, add_special_tokens=add_special_tokens)
+        return encoding.ids
+
+    def decode(
+        self,
+        ids: list[int] | torch.Tensor,
+        *,
+        clean_up_tokenization_spaces: bool = True,
+        skip_special_tokens: bool = False,
+    ) -> str:
+        if isinstance(ids, torch.Tensor):
+            ids = ids.tolist()
+        return self._tokenizer.decode(ids, skip_special_tokens=skip_special_tokens)
+
+    def save_pretrained(self, path: str) -> None:
+        os.makedirs(path, exist_ok=True)
+        file = os.path.join(path, "tokenizer.json")
+        self._tokenizer.save(file)
 
 FANCY_SPACE = "\u2423"  # Open Box symbol for visible spaces
 FANCY_ENTER = "\u23CE"  # Return symbol for visible newlines
@@ -274,7 +339,11 @@ class GPT2TokenizerWrapper:
         vocab_size: int,
         pretrained_json: str | None = None,
     ) -> None:
-        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        if not cache_path.parent.exists():
+            try:
+                cache_path.parent.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                pass
         self.cache_path = cache_path
         self.pretrained_json = pretrained_json
         self.extra_special_tokens: list[str] = list(self.EXTRA_SPECIAL_TOKENS)
@@ -284,7 +353,7 @@ class GPT2TokenizerWrapper:
             vocab_size,
             self.extra_special_tokens,
         )
-        self.vocab_size = len(self.tokenizer)
+        self.vocab_size = self.tokenizer.get_vocab_size()
         self.special_ids = set(self.tokenizer.all_special_ids)
         self.think_id = self.tokenizer.convert_tokens_to_ids(THINK_TOKEN)
         if self.think_id is None:
@@ -2639,6 +2708,8 @@ def train_model(
     loop_cpu_start = time.process_time()
     eval_wall_total = 0.0
     eval_cpu_total = 0.0
+    preeval_wall_total = 0.0
+    preeval_cpu_total = 0.0
     for step in range(1, steps + 1):
         batch_payload = dataset.get_batch(
             "train",
@@ -2770,6 +2841,8 @@ def train_model(
                     )
                     reward_tracker.maybe_apply()
 
+        preeval_wall_block = time.time()
+        preeval_cpu_block = time.process_time()
         if step == 1 or step % eval_interval == 0 or step == steps:
             full_eval_now = full_eval_enabled and (
                 full_eval_stride > 0 and total_steps % full_eval_stride == 0
@@ -2934,37 +3007,39 @@ def train_model(
             block_cpu = time.process_time() - eval_cpu_block
             eval_wall_total += block_wall
             eval_cpu_total += block_cpu
-            prompt_input = sample_prompt
-            prompt_needs_boundary_flag = (
-                default_prompt_boundary and boundary_blocklist is not None
-            )
-            current_prompt_idx = None
-            use_argmax_completion = random.random() < 0.5
-            sampling_strategy = "argmax" if use_argmax_completion else "sample"
-            if prompt_tracker is not None:
-                while prompt_queue and prompt_tracker.is_completed(prompt_queue[0]):
-                    prompt_queue.pop(0)
-                if prompt_queue:
-                    current_prompt_idx = prompt_queue.pop(0)
-                    prompt_input = prompt_tracker.prompt_tensor(current_prompt_idx, device)
-                    prompt_text = PROMPT_GOALS[current_prompt_idx][0]
-                    prompt_needs_boundary_flag = (
-                        boundary_blocklist is not None
-                        and prompt_needs_boundary(prompt_text)
-                    )
-                    state_val = prompt_tracker.state(current_prompt_idx)
-                    if state_val == 1:
-                        use_argmax_completion = True
-                    else:
-                        use_argmax_completion = random.random() < 0.5
-                    sampling_strategy = (
-                        "argmax" if use_argmax_completion else "sample"
-                    )
+        preeval_wall_total += time.time() - preeval_wall_block
+        preeval_cpu_total += time.process_time() - preeval_cpu_block
+        prompt_input = sample_prompt
+        prompt_needs_boundary_flag = (
+            default_prompt_boundary and boundary_blocklist is not None
+        )
+        current_prompt_idx = None
+        use_argmax_completion = random.random() < 0.5
+        sampling_strategy = "argmax" if use_argmax_completion else "sample"
+        if prompt_tracker is not None:
+            while prompt_queue and prompt_tracker.is_completed(prompt_queue[0]):
+                prompt_queue.pop(0)
+            if prompt_queue:
+                current_prompt_idx = prompt_queue.pop(0)
+                prompt_input = prompt_tracker.prompt_tensor(current_prompt_idx, device)
+                prompt_text = PROMPT_GOALS[current_prompt_idx][0]
+                prompt_needs_boundary_flag = (
+                    boundary_blocklist is not None
+                    and prompt_needs_boundary(prompt_text)
+                )
+                state_val = prompt_tracker.state(current_prompt_idx)
+                if state_val == 1:
+                    use_argmax_completion = True
                 else:
                     use_argmax_completion = random.random() < 0.5
-                    sampling_strategy = (
-                        "argmax" if use_argmax_completion else "sample"
-                    )
+                sampling_strategy = (
+                    "argmax" if use_argmax_completion else "sample"
+                )
+            else:
+                use_argmax_completion = random.random() < 0.5
+                sampling_strategy = (
+                    "argmax" if use_argmax_completion else "sample"
+                )
             sample_tokens, prompt_len = generate(
                 model,
                 prompt_input.clone(),
@@ -3200,6 +3275,8 @@ def train_model(
         loop_cpu_total,
         eval_wall_total,
         eval_cpu_total,
+        preeval_wall_total,
+        preeval_cpu_total,
     )
 
 
@@ -4354,7 +4431,11 @@ def main() -> None:
         train_path = data_dir / f"{args.corpus}-train.txt.gz"
         test_path = data_dir / f"{args.corpus}-test.txt.gz"
         model_dir = pathlib.Path(args.model)
-        model_dir.mkdir(parents=True, exist_ok=True)
+        if not model_dir.exists():
+            try:
+                model_dir.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                pass
 
         must_build_tokenizer = selected_action == "init"
         train_cache_path = data_dir / f"{args.corpus}_tokens_train_{args.tokenizer_vocab}.pt"
@@ -4916,6 +4997,8 @@ def main() -> None:
                 cycle_cpu_elapsed,
                 eval_wall_total,
                 eval_cpu_total,
+                preeval_wall_total,
+                preeval_cpu_total,
             ) = train_model(
                 model,
                 dataset,
@@ -4957,6 +5040,12 @@ def main() -> None:
             eval_cpu = eval_cpu_total
             pure_train_wall = max(0.0, train_wall - eval_wall)
             pure_train_cpu = max(0.0, train_cpu - eval_cpu)
+            preeval_wall_ratio = (
+                preeval_wall_total / train_wall if train_wall > 0 else 0.0
+            )
+            preeval_cpu_ratio = (
+                preeval_cpu_total / train_cpu if train_cpu > 0 else 0.0
+            )
             acc_train_wall += pure_train_wall
             acc_train_cpu += pure_train_cpu
             acc_eval_wall += eval_wall
@@ -4981,9 +5070,9 @@ def main() -> None:
                 ansi_file.flush()
             print(
                 color_text(
-                    f"[cycle {cycle}] total steps: {total_steps}; "
-                    f"train: wall={pure_train_wall:.2f}s cpu={pure_train_cpu:.2f}s; "
-                    f"eval: wall={eval_wall:.2f}s cpu={eval_cpu:.2f}s; model updated.",
+                    f"[cycle {cycle}] train: wall={pure_train_wall:.2f}s cpu={pure_train_cpu:.2f}s; "
+                    f"eval: wall={eval_wall:.2f}s cpu={eval_cpu:.2f}s; "
+                    f"pre-eval ratio: wall={preeval_wall_ratio:.1f} cpu={preeval_cpu_ratio:.1f}; model updated.",
                     Colors.CYAN,
                 )
             )
