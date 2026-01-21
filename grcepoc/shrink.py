@@ -84,8 +84,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--strip",
         type=float,
-        default=5.0,
-        help="Percentage of lines to remove per iteration (default 5%%)",
+        default=3.0,
+        help="Percentage of lines to remove per iteration (default 3%%)",
     )
     parser.add_argument(
         "--stop",
