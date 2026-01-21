@@ -24,6 +24,8 @@ Think of it this way: the original “Attention Is All You Need” insight was t
 
 The extended context (XCTX) variant follows the same sampler, residual, and per-layer bias workflow, but it removes the intermediate MLP entirely. XCTX simply sums the projected messages (plus the optional residual context), performs a LayerNorm, and feeds that normalized vector directly into the bias generators. That keeps the signal high-bandwidth while still constraining it to `n_xctx` scalars.
 
+One way to view this geometry is that attention “killed” classic recurrence by rotating the computation over depth and letting every position look backward. GRCE rotates a slim slice of that structure back into the time axis, but it keeps the Transformer philosophy—tight bottlenecks, shared emitters/decoders, and a single shared nonlinear mix—so gradients never have to walk through time. The heavy lifting stays inside the per-token Transformer blocks; the recurrent shortcut simply recycles whatever features those blocks already distilled.
+
 ## Sequence boundaries and recurrent prefill
 
 The corpus is stored with a trailing record separator so it is always safe to treat it as a looped scroll. All low-level slice helpers accept windows that cross the file boundary (even negative offsets) and quietly wrap the indices. Every sampled batch therefore knows both its `(block_size + 1)` training window and the `block_size` tokens that immediately preceded it in the corpus.
@@ -32,7 +34,17 @@ Before running the “real” block we feed that preceding window through the mo
 
 This means any layer at position N can send a context-related message to any layer at position N+1, and the training signal never has to cross the position boundary: by the time we emit the message, the previous stack has already computed everything it needs to predict the next token. In practice (see the sweeps in this repo), even `--detach-span 1`—which suppresses cross-position gradients entirely—matches the default span: the channel just learns how to sample the information that already exists inside the previous position’s layers.
 
-One way to view this is: attention killed recurrence by rotating the computation over depth and letting every position look backwards. GRCE rotates part of that structure back, but with the same philosophy—keep the bottleneck tight, use learned linear emitters/decoders, and place the only nonlinear mixing in a single shared layer. The result is a recurrent path that is just as easy to train as the rest of the Transformer because gradients never have to walk through time.
+## Losses reported during training
+
+`train loss` / `test loss` are the baseline metrics: we re-run the same batch configuration used during training (including thinking/undo insertions) with the cached recurrent state that was captured from the preceding block. No special rows are injected here so these losses track the exact workflow the optimizer sees.
+
+`special` duplicates the primary run but re-enables the special rows that context dropout would normally schedule (context disabled, context puncture, attention disabled, attention puncture, etc.). These rows aren’t purely diagnostic—they force the network to practice scenarios where important signals are missing so GRCE, XCTX, and attention learn to back each other up.
+
+`noprev` uses the exact same sequences as `train loss` but zeroes the injected GRCE/XCTX vectors so the block starts “from scratch.” It measures how much the model relies on the cross-block state and acts as a regression check for the prefill pipeline.
+
+`normal` is the first of the classic diagnostic quartet and simply denotes the plain Transformer run (context enabled, attention enabled). The other three columns—`noctx`, `noatt`, and `none`—disable the XCTX channel, attention, or both while leaving GRCE untouched, letting you verify that the recurrent paths continue to add value.
+
+When thinking tokens are enabled, we append the `think`, `2x`, and `3x` trio. `think` evaluates a completion where `<think>` tokens are inserted exactly where the current model predicts them; `2x` and `3x` force one or two `<think>` tokens per base token, respectively, while only scoring the final `<think>` in each block (short chains weigh the same as long ones).
 
 ## Parameter count (dominant terms)
 Remember: when the model computes logits for position N+1, it already synthesized every feature it needs about the prefix—that’s what autoregressive prediction is. GRCE simply taps into that already-available context and moves it forward; it does not have to learn new facts across the boundary. That’s why gradients from position N+1 flowing back into position N via the GRCE channel are largely unnecessary: the previous stack has already computed the relevant summary while predicting the token. Training just has to learn which latent features to sample and forward through the n_grce bottleneck.
@@ -41,6 +53,8 @@ Ignoring embeddings and other lower-order pieces, two terms dominate:
 
 - Position-domain Transformer stack: `~ 12 * n_layer * n_embd^2`
 - Time-domain GRCE network (only if `n_grce > 0`): `~ 2 * n_layer * n_embd * n_grce + 4 * n_grce^2`
+
+Thinking about the stack from a geometric point of view helps explain why the recurrent shortcut is viable: attention “killed” classical recurrence by rotating the computation over depth, letting every position look backwards instead of pushing state forward. GRCE rotates a slim slice of that structure back into the time axis, but it keeps the same design philosophy—tight bottlenecks, shared samplers/decoders, and a single shared nonlinearity—so gradients never have to march through time. The heavy lifting still happens in the standard Transformer layers; the recurrent channels just recycle whatever features those layers already extracted.
 
 ## Think tokens
 

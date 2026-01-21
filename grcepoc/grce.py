@@ -705,6 +705,102 @@ def compute_prefill_contexts(
 
 
 @dataclass
+class SpecialRowMasks:
+    context_special_rows: set[int]
+    context_disabled_mask: torch.Tensor | None
+    context_dropout_positions: torch.Tensor | None
+    attention_disabled_mask: torch.Tensor | None
+    attention_dropout_positions: torch.Tensor | None
+    think_disabled_rows: set[int]
+    forced_think_rows: set[int]
+
+
+def build_special_row_masks(
+    batch_size: int,
+    block_size: int,
+    device: torch.device,
+    *,
+    think_enabled: bool,
+    context_enabled: bool,
+) -> SpecialRowMasks:
+    context_special_rows: set[int] = set()
+    think_disabled_rows: set[int] = set()
+    forced_think_rows: set[int] = set()
+    context_disabled_mask: torch.Tensor | None = None
+    context_dropout_positions: torch.Tensor | None = None
+    attention_disabled_mask: torch.Tensor | None = None
+    attention_dropout_positions: torch.Tensor | None = None
+    if batch_size <= 0:
+        return SpecialRowMasks(
+            context_special_rows,
+            context_disabled_mask,
+            context_dropout_positions,
+            attention_disabled_mask,
+            attention_dropout_positions,
+            think_disabled_rows,
+            forced_think_rows,
+        )
+
+    def pick_row(
+        occupied: set[int], disallowed: set[int] | None = None
+    ) -> int:
+        blocked = set(occupied)
+        if disallowed:
+            blocked |= set(disallowed)
+        available = [idx for idx in range(batch_size) if idx not in blocked]
+        if not available:
+            available = list(range(batch_size))
+        choice = random.choice(available)
+        occupied.add(choice)
+        return choice
+
+    occupied_rows: set[int] = set()
+    if context_enabled:
+        context_disabled_mask = torch.zeros(batch_size, dtype=torch.bool, device=device)
+        context_dropout_positions = torch.full(
+            (batch_size,),
+            -1,
+            dtype=torch.long,
+            device=device,
+        )
+        full_off = pick_row(occupied_rows)
+        context_disabled_mask[full_off] = True
+        context_special_rows.add(full_off)
+        puncture_row = pick_row(occupied_rows)
+        drop_position = random.randrange(max(1, block_size))
+        context_dropout_positions[puncture_row] = drop_position
+        attention_disabled_mask = torch.zeros(batch_size, dtype=torch.bool, device=device)
+        attention_dropout_positions = torch.full(
+            (batch_size,),
+            -1,
+            dtype=torch.long,
+            device=device,
+        )
+        att_off = pick_row(occupied_rows)
+        attention_disabled_mask[att_off] = True
+        att_puncture = pick_row(occupied_rows)
+        att_drop_position = random.randrange(max(1, block_size))
+        attention_dropout_positions[att_puncture] = att_drop_position
+
+    if think_enabled:
+        think_disabled_rows.add(random.randrange(batch_size))
+        candidates = [idx for idx in range(batch_size) if idx not in think_disabled_rows]
+        if candidates:
+            forced_idx = random.choice(candidates)
+            forced_think_rows.add(forced_idx)
+
+    return SpecialRowMasks(
+        context_special_rows,
+        context_disabled_mask,
+        context_dropout_positions,
+        attention_disabled_mask,
+        attention_dropout_positions,
+        think_disabled_rows,
+        forced_think_rows,
+    )
+
+
+@dataclass
 class ThinkSettings:
     max_steps: int = 0
     token_id: int | None = None
@@ -1612,13 +1708,15 @@ class GRCEGPT(nn.Module):
         B, T = idx.shape
         device = idx.device
         active_channels: list[GRCEContextChannel] = []
+        active_indices: list[int] = []
         if not disable_context:
-            for channel in self.context_channels:
+            for ch_idx, channel in enumerate(self.context_channels):
                 if channel.is_xctx and disable_xctx:
                     continue
                 if channel.disabled:
                     continue
                 active_channels.append(channel)
+                active_indices.append(ch_idx)
         use_context = bool(active_channels)
         if context_disabled_rows is not None:
             context_disabled_rows = context_disabled_rows.to(device=device, dtype=torch.bool)
@@ -1633,16 +1731,21 @@ class GRCEGPT(nn.Module):
         if attention_dropout_positions is not None:
             attention_dropout_positions = attention_dropout_positions.to(device=device, dtype=torch.long).clone()
         context_states: list[torch.Tensor] = []
+        effective_initial_context: list[torch.Tensor] | None = None
         if use_context:
             for channel in active_channels:
                 context_states.append(torch.zeros(B, channel.context_dim, device=device))
             if initial_context_raw is not None:
-                if len(initial_context_raw) != len(active_channels):
+                source = initial_context_raw
+                if len(source) == len(self.context_channels) and active_indices:
+                    source = [source[i] for i in active_indices]
+                if len(source) != len(active_channels):
                     raise ValueError(
                         "initial_context_raw must match number of active context channels"
                     )
+                effective_initial_context = source
                 for idx_ch, (channel, init_raw) in enumerate(
-                    zip(active_channels, initial_context_raw)
+                    zip(active_channels, effective_initial_context)
                 ):
                     if init_raw is None:
                         continue
@@ -1913,6 +2016,7 @@ def evaluate_split(
     think_settings: ThinkSettings | None = None,
     undo_settings: UndoSettings | None = None,
     batches: list[tuple[torch.Tensor, torch.Tensor, list[torch.Tensor] | None]] | None = None,
+    use_special_rows: bool = False,
 ) -> float:
     ce_losses = []
     if batches is None:
@@ -1932,21 +2036,41 @@ def evaluate_split(
             )
             batches.append((xb, yb, init_ctx))
     think_token_id = active_think_token_id(think_settings)
+    context_path_enabled = bool(model.context_channels)
+    think_enabled = think_settings is not None and think_settings.enabled
     for payload in batches:
         if len(payload) == 3:
             xb, yb, init_ctx = payload
         else:
             xb, yb = payload[:2]
             init_ctx = None
+        special_masks: SpecialRowMasks | None = None
+        if use_special_rows:
+            special_masks = build_special_row_masks(
+                xb.size(0),
+                block_size,
+                xb.device,
+                think_enabled=think_enabled,
+                context_enabled=context_path_enabled,
+            )
+        context_special_rows = (
+            special_masks.context_special_rows if special_masks is not None else None
+        )
+        think_disabled_rows = (
+            special_masks.think_disabled_rows if special_masks is not None else None
+        )
+        forced_think_rows = (
+            special_masks.forced_think_rows if special_masks is not None else None
+        )
         aug_xb, aug_yb, random_mask, _, think_slot_mask = augment_training_batch(
             model,
             xb,
             yb,
             think_settings,
             undo_settings,
-            disable_context_rows=None,
-            disable_think_rows=None,
-            forced_think_rows=None,
+            disable_context_rows=context_special_rows,
+            disable_think_rows=think_disabled_rows,
+            forced_think_rows=forced_think_rows,
             initial_context_raw=init_ctx,
         )
         attention_disabled_rows = None
@@ -1954,12 +2078,27 @@ def evaluate_split(
             attention_disabled_rows = torch.ones(
                 aug_xb.size(0), dtype=torch.bool, device=device
             )
+        elif special_masks is not None:
+            attention_disabled_rows = special_masks.attention_disabled_mask
+        attention_dropout_positions = None
+        if disable_attention:
+            attention_dropout_positions = attention_disabled_rows
+        elif special_masks is not None:
+            attention_dropout_positions = special_masks.attention_dropout_positions
+        context_disabled_rows = None
+        context_dropout_positions = None
+        if special_masks is not None:
+            context_disabled_rows = special_masks.context_disabled_mask
+            context_dropout_positions = special_masks.context_dropout_positions
         raw_logits, _, _ = model.forward_autoreg(
             aug_xb,
             disable_context=disable_context,
             think_token_id=think_token_id,
             disable_xctx=disable_xctx,
             attention_disabled_rows=attention_disabled_rows,
+            attention_dropout_positions=attention_dropout_positions,
+            context_disabled_rows=context_disabled_rows,
+            context_dropout_positions=context_dropout_positions,
             initial_context_raw=init_ctx,
         )
         logits_main = disable_think_logits(raw_logits.clone(), think_settings)
@@ -2430,6 +2569,7 @@ def train_model(
                             think_token_id=think_token_id,
                         )
                         cached_batches[split].append((bx, by, init_ctx))
+                    base_batches = cached_batches[split]
                     split_metrics[split]["with_think"] = float(
                         evaluate_split(
                             model,
@@ -2444,7 +2584,46 @@ def train_model(
                             disable_attention=False,
                             think_settings=think_settings,
                             undo_settings=undo_settings,
-                            batches=cached_batches[split],
+                            batches=base_batches,
+                        )
+                    )
+                    split_metrics[split]["with_think_special"] = float(
+                        evaluate_split(
+                            model,
+                            dataset,
+                            device,
+                            block_size,
+                            batch_size,
+                            split,
+                            eval_iters,
+                            disable_context=False,
+                            disable_xctx=False,
+                            disable_attention=False,
+                            think_settings=think_settings,
+                            undo_settings=undo_settings,
+                            batches=base_batches,
+                            use_special_rows=True,
+                        )
+                    )
+                    noprev_batches = [
+                        (bx, by, None)
+                        for (bx, by, _ctx) in base_batches
+                    ]
+                    split_metrics[split]["with_think_noprev"] = float(
+                        evaluate_split(
+                            model,
+                            dataset,
+                            device,
+                            block_size,
+                            batch_size,
+                            split,
+                            eval_iters,
+                            disable_context=False,
+                            disable_xctx=False,
+                            disable_attention=False,
+                            think_settings=think_settings,
+                            undo_settings=undo_settings,
+                            batches=noprev_batches,
                         )
                     )
                     plain_kwargs = dict(
@@ -2621,8 +2800,8 @@ def train_model(
                     total_prompts = len(PROMPT_GOALS)
                     random_only_count = 0
                     solved_count = 0
-                train_header = "train loss : normal noctx noatt none"
-                test_header = "test loss : normal noctx noatt none"
+                train_header = "train loss special noprev : normal noctx noatt none"
+                test_header = "test loss special noprev : normal noctx noatt none"
                 if show_think_columns:
                     train_header += " : think 2x 3x"
                     test_header += " : think 2x 3x"
@@ -2646,12 +2825,19 @@ def train_model(
                 return f"{value:.2f}"
 
             def format_line(split: str) -> str:
-                primary = format_metric(split, "with_think")
+                primary_group = "  ".join(
+                    format_metric(split, key)
+                    for key in (
+                        "with_think",
+                        "with_think_special",
+                        "with_think_noprev",
+                    )
+                )
                 diag_vals = "  ".join(
                     format_metric(split, key)
                     for key in ("plain", "plain_noctx", "plain_noatt", "plain_none")
                 )
-                parts = [primary, diag_vals]
+                parts = [primary_group, diag_vals]
                 if show_think_columns:
                     think_vals = "  ".join(
                         format_metric(split, key)
@@ -2684,11 +2870,23 @@ def train_model(
             record = {
                 "step": total_steps,
                 "train_loss": float(split_metrics["train"].get("with_think", 0.0)),
+                "train_loss_special": float(
+                    split_metrics["train"].get("with_think_special", 0.0)
+                ),
+                "train_loss_noprev": float(
+                    split_metrics["train"].get("with_think_noprev", 0.0)
+                ),
                 "train_loss_plain": float(split_metrics["train"].get("plain", 0.0)),
                 "train_loss_noctx": float(split_metrics["train"].get("plain_noctx", 0.0)),
                 "train_loss_noatt": float(split_metrics["train"].get("plain_noatt", 0.0)),
                 "train_loss_none": float(split_metrics["train"].get("plain_none", 0.0)),
                 "test_loss": float(split_metrics["test"].get("with_think", 0.0)),
+                "test_loss_special": float(
+                    split_metrics["test"].get("with_think_special", 0.0)
+                ),
+                "test_loss_noprev": float(
+                    split_metrics["test"].get("with_think_noprev", 0.0)
+                ),
                 "test_loss_plain": float(split_metrics["test"].get("plain", 0.0)),
                 "test_loss_noctx": float(split_metrics["test"].get("plain_noctx", 0.0)),
                 "test_loss_noatt": float(split_metrics["test"].get("plain_noatt", 0.0)),
