@@ -5861,9 +5861,21 @@ def grce_main(args: argparse.Namespace) -> int:
             test_span = int(test_chunk.size(0)) if test_chunk is not None else 0
             train_range = format_range(train_start, train_span)
             test_range = format_range(test_start, test_span)
+            print()
+            pod_path = pathlib.Path(".podname")
+            if pod_path.exists():
+                pod_label = pod_path.read_text(encoding="utf-8").strip()
+                if pod_label:
+                    print(
+                        color_text(
+                            f"Running on remote pod {pod_label}.",
+                            Colors.RED,
+                            bold=True,
+                        )
+                    )
             print(
                 color_text(
-                    f"\nDataset: train tokens {train_range}, test tokens {test_range}",
+                    f"Dataset: train tokens {train_range}, test tokens {test_range}",
                     Colors.CYAN,
                 )
             )
@@ -5952,10 +5964,6 @@ def grce_main(args: argparse.Namespace) -> int:
                 },
                 model_path,
             )
-            if log_file is not None:
-                log_file.flush()
-            if ansi_file is not None:
-                ansi_file.flush()
             cycle_part = color_text(f"[cycle {cycle}]", Colors.CYAN)
             train_part = color_text(
                 f" train: wall={pure_train_wall:.2f}s cpu={pure_train_cpu:.2f}s;",
@@ -5994,6 +6002,10 @@ def grce_main(args: argparse.Namespace) -> int:
                 Colors.CYAN,
             )
             print(cumulative_part + cum_train_part + cum_eval_part + ratio_text)
+            if log_file is not None:
+                log_file.flush()
+            if ansi_file is not None:
+                ansi_file.flush()
 
     except KeyboardInterrupt:
         if args.debug_interrupt:
