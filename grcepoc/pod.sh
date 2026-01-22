@@ -39,6 +39,7 @@ SSH_OPTS+=("-o" "StrictHostKeyChecking=no" "-o" "UserKnownHostsFile=/dev/null")
 RSYNC_SSH=("$SSH_BIN" "${SSH_OPTS[@]}")
 RSYNC_COMMON=(-avz --no-perms --no-owner --no-group)
 LOCAL_MODEL_DIR="$ROOT_DIR/model_pod$((LINE_INDEX + 1))"
+POD_NAME="grce_pod$((LINE_INDEX + 1))"
 
 join_cmd() {
     local IFS=" "
@@ -54,7 +55,7 @@ open_shell() {
 }
 
 pod_init() {
-        run_ssh "set -ex; mkdir -p $REMOTE_DIR/data $REMOTE_DIR/model; apt update; apt install -y rsync; pip install tokenizers transformers"
+        run_ssh "set -ex; mkdir -p $REMOTE_DIR/data $REMOTE_DIR/model; echo $POD_NAME > $REMOTE_DIR/.podname; apt update; apt install -y rsync; pip install tokenizers transformers"
 }
 
 rsync_update() {
