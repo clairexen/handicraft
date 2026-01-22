@@ -14,11 +14,13 @@ for x in 1 2 3; do python shrink.py --test; done
 gzip --rsyncable -9 < shrink-test.txt > data/simplestwiki-test.txt.gz
 
 rm -f shrink-{train,test}.{txt,png}
-rm -vf data/simple{r,st}wiki_tokens_{test,train}_2000.pt
+rm -vf data/simple{r,st}wiki_tokens_{test,train}_{2000,200}.pt
 
 # rm -vf data/simple{r,st}wiki_vocab_2000.json
 # python grce.py corpus --init-tokenizer
 # cp -v data/simple{r,st}wiki_vocab_2000.json
+
+# rm -vf data/simplestwiki_vocab_200.json
 # python grce.py --tiny corpus --init-tokenizer
 
 exit 0
