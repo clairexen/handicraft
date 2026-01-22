@@ -2400,6 +2400,7 @@ class CausalSelfAttention(nn.Module):
         *,
         dropout_positions: torch.Tensor | None = None,
         disable_rows: torch.Tensor | None = None,
+        full_attention: bool = False,
     ) -> torch.Tensor:
         B, T, C = x.shape
         k_full = self.key(x)
@@ -2417,7 +2418,8 @@ class CausalSelfAttention(nn.Module):
         k = k_full.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
         v = v_full.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
         att = (q @ k.transpose(-2, -1)) / math.sqrt(k.size(-1))
-        att = att.masked_fill(self.tril[:T, :T] == 0, float("-inf"))
+        if not full_attention:
+            att = att.masked_fill(self.tril[:T, :T] == 0, float("-inf"))
         if atten_block_mask is not None:
             att = att.masked_fill(atten_block_mask[:, None, :, :], float("-inf"))
         att = F.softmax(att, dim=-1)
@@ -2467,11 +2469,13 @@ class Block(nn.Module):
         record_mask: bool = False,
         attention_disabled_rows: torch.Tensor | None = None,
         attention_dropout_positions: torch.Tensor | None = None,
+        full_attention: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
         attn_out = self.attn(
             self.ln1(x),
             disable_rows=attention_disabled_rows,
             dropout_positions=attention_dropout_positions,
+            full_attention=full_attention,
         )
         if attention_disabled_rows is not None and attention_disabled_rows.any():
             mask = (~attention_disabled_rows).view(-1, 1, 1).to(attn_out.dtype)
@@ -2505,6 +2509,8 @@ class GPTCore(nn.Module):
         record_relu_mask: bool = False,
         attention_disabled_rows: torch.Tensor | None = None,
         attention_dropout_positions: torch.Tensor | None = None,
+        full_attention: bool = False,
+        target_position: int | None = None,
     ) -> Tuple[torch.Tensor, torch.Tensor, List[torch.Tensor], List[torch.Tensor] | None]:
         B, T = idx.shape
         device = idx.device
@@ -2521,15 +2527,18 @@ class GPTCore(nn.Module):
         relu_masks: List[torch.Tensor | None] | None = None
         if record_relu_mask:
             relu_masks = [None] * len(self.blocks)
+        target_idx = target_position if target_position is not None else (T - 1)
+        target_idx = max(0, min(T - 1, int(target_idx)))
         for layer_idx, block in enumerate(self.blocks):
             if block_biases is not None:
                 x = x + block_biases[layer_idx]
-            block_inputs.append(x[:, -1, :])
+            block_inputs.append(x[:, target_idx, :])
             x, layer_mask = block(
                 x,
                 record_mask=record_relu_mask,
                 attention_disabled_rows=attention_disabled_rows,
                 attention_dropout_positions=attention_dropout_positions,
+                full_attention=full_attention,
             )
             if self.detach_layer > 0 and (layer_idx + 1) == self.detach_layer:
                 x = x.detach()
@@ -2668,6 +2677,7 @@ class GRCEGPT(nn.Module):
         attention_dropout_positions: torch.Tensor | None = None,
         initial_context_raw: list[torch.Tensor] | None = None,
         record_final_context: bool = False,
+        encoder_mode: bool = False,
     ) -> Tuple[torch.Tensor, torch.Tensor | None, dict | None]:
         B, T = idx.shape
         device = idx.device
@@ -2762,8 +2772,13 @@ class GRCEGPT(nn.Module):
                     context_dropout_positions[step_mask] = -1
                     xctx_step_mask = step_mask
                     xctx_mask_has = True
-            prefix = idx[:, : t + 1]
-            token_ids = prefix[:, -1]
+            if encoder_mode:
+                prefix = idx
+                target_pos = min(prefix.size(1) - 1, t)
+            else:
+                prefix = idx[:, : t + 1]
+                target_pos = prefix.size(1) - 1
+            token_ids = prefix[:, target_pos]
             tok_last = self.core.tok_emb(token_ids)
             think_mask = None
             if think_token_id is not None:
@@ -2832,7 +2847,7 @@ class GRCEGPT(nn.Module):
                             device=device,
                             dtype=bias_vec.dtype,
                         )
-                        full[:, -1, :] = bias_vec
+                        full[:, target_pos, :] = bias_vec
                         channel_biases.append(full)
                     if block_biases is None:
                         block_biases = channel_biases
@@ -2847,6 +2862,8 @@ class GRCEGPT(nn.Module):
                 record_relu_mask=collect_relu_mask,
                 attention_disabled_rows=attention_disabled_rows,
                 attention_dropout_positions=attention_dropout_positions,
+                full_attention=encoder_mode,
+                target_position=target_pos,
             )
             if relu_activity is not None:
                 relu_activity.append(layer_masks)
@@ -2903,8 +2920,8 @@ class GRCEGPT(nn.Module):
                     if activation_store is not None:
                         ctx_norms = torch.linalg.vector_norm(raw_context.detach(), dim=-1)
                         activation_store["context_norms"].extend(ctx_norms.cpu().tolist())
-            logits_steps.append(logits[:, -1:, :])
-            hidden_steps.append(hidden_layer[:, -1:, :])
+            logits_steps.append(logits[:, target_pos : target_pos + 1, :])
+            hidden_steps.append(hidden_layer[:, target_pos : target_pos + 1, :])
         logits = torch.cat(logits_steps, dim=1)
         hidden = torch.cat(hidden_steps, dim=1)
         if relu_activity is not None:
@@ -3010,6 +3027,7 @@ def evaluate_split(
     undo_settings: UndoSettings | None = None,
     batches: list[tuple[torch.Tensor, torch.Tensor]] | None = None,
     use_special_rows: bool = False,
+    encoder_mode: bool = False,
 ) -> float:
     ce_losses = []
     if batches is None:
@@ -3091,6 +3109,7 @@ def evaluate_split(
             xctx_disabled_rows=xctx_disabled_rows,
             context_dropout_positions=context_dropout_positions,
             initial_context_raw=init_ctx,
+            encoder_mode=encoder_mode,
         )
         logits_main = disable_think_logits(raw_logits.clone(), think_settings)
         logits_main = apply_think_slot_mask(logits_main, think_slot_mask, think_settings)
@@ -3658,6 +3677,22 @@ def train_model(
                             **plain_kwargs,
                         )
                     )
+                    split_metrics[split]["encode"] = float(
+                        evaluate_split(
+                            model,
+                            dataset,
+                            device,
+                            block_size,
+                            batch_size,
+                            split,
+                            eval_iters,
+                            disable_context=False,
+                            disable_xctx=False,
+                            disable_attention=False,
+                            encoder_mode=True,
+                            **plain_kwargs,
+                        )
+                    )
                     if show_think_columns and full_eval_now:
                         think_modes = evaluate_think_modes(
                             model,
@@ -3786,12 +3821,12 @@ def train_model(
                     solved_count = 0
                 train_header = "train loss"
                 if show_train_details:
-                    train_header += " noprev : plain normal noctx noatt none"
+                    train_header += " noprev : plain normal noctx noatt none encode"
                     if show_think_columns:
                         train_header += " : think 2x 3x"
                 test_header = "test loss"
                 if show_test_details:
-                    test_header += " noprev : plain normal noctx noatt none"
+                    test_header += " noprev : plain normal noctx noatt none encode"
                     if show_think_columns:
                         test_header += " : think 2x 3x"
                 header_parts: List[str] = []
@@ -3822,7 +3857,7 @@ def train_model(
                 )
                 diag_vals = " ".join(
                     format_metric("train", key)
-                    for key in ("plain", "normal", "noctx", "noatt", "none")
+                    for key in ("plain", "normal", "noctx", "noatt", "none", "encode")
                 )
                 parts = [primary_group, diag_vals]
                 if show_think_columns and long_log_now:
@@ -3842,7 +3877,7 @@ def train_model(
                 )
                 diag_vals = " ".join(
                     format_metric("test", key)
-                    for key in ("plain", "normal", "noctx", "noatt", "none")
+                    for key in ("plain", "normal", "noctx", "noatt", "none", "encode")
                 )
                 parts = [primary_group, diag_vals]
                 if show_think_columns and long_log_now:
@@ -3905,6 +3940,9 @@ def train_model(
                         "train_loss_none": float(
                             split_metrics["train"].get("none", 0.0)
                         ),
+                        "train_loss_encode": float(
+                            split_metrics["train"].get("encode", 0.0)
+                        ),
                         "test_loss_target": float(
                             split_metrics["test"].get("target", 0.0)
                         ),
@@ -3923,6 +3961,9 @@ def train_model(
                         ),
                         "test_loss_none": float(
                             split_metrics["test"].get("none", 0.0)
+                        ),
+                        "test_loss_encode": float(
+                            split_metrics["test"].get("encode", 0.0)
                         ),
                     }
                 )

@@ -73,6 +73,8 @@ class LossRecord:
     test_noatt: Optional[List[float]] = None
     train_none: Optional[List[float]] = None
     test_none: Optional[List[float]] = None
+    train_encode: Optional[List[float]] = None
+    test_encode: Optional[List[float]] = None
     train_think: Optional[List[float]] = None
     test_think: Optional[List[float]] = None
     train_think2x: Optional[List[float]] = None
@@ -138,6 +140,8 @@ def load_records(json_paths: Iterable[pathlib.Path]) -> List[LossRecord]:
         test_noatt = extract_series("test_loss_noatt")
         train_none = extract_series("train_loss_none")
         test_none = extract_series("test_loss_none")
+        train_encode = extract_series("train_loss_encode")
+        test_encode = extract_series("test_loss_encode")
         train_think = extract_series("train_loss_think")
         test_think = extract_series("test_loss_think")
         train_think2x = extract_series("train_loss_think2x")
@@ -168,6 +172,8 @@ def load_records(json_paths: Iterable[pathlib.Path]) -> List[LossRecord]:
                 test_noatt=[float(v) for v in test_noatt] if test_noatt else None,
                 train_none=[float(v) for v in train_none] if train_none else None,
                 test_none=[float(v) for v in test_none] if test_none else None,
+                train_encode=[float(v) for v in train_encode] if train_encode else None,
+                test_encode=[float(v) for v in test_encode] if test_encode else None,
                 train_think=[float(v) for v in train_think] if train_think else None,
                 test_think=[float(v) for v in test_think] if test_think else None,
                 train_think2x=[float(v) for v in train_think2x] if train_think2x else None,
@@ -270,6 +276,16 @@ def load_store(path: pathlib.Path) -> List[LossRecord]:
                 test_none=(
                     list(map(float, normalized_entry.get("test_none", [])))
                     if normalized_entry.get("test_none")
+                    else None
+                ),
+                train_encode=(
+                    list(map(float, normalized_entry.get("train_encode", [])))
+                    if normalized_entry.get("train_encode")
+                    else None
+                ),
+                test_encode=(
+                    list(map(float, normalized_entry.get("test_encode", [])))
+                    if normalized_entry.get("test_encode")
                     else None
                 ),
                 train_think=(
@@ -380,6 +396,16 @@ def store_records(
             **(
                 {"test_none": rec.test_none}
                 if include_test and rec.test_none is not None
+                else {}
+            ),
+            **(
+                {"train_encode": rec.train_encode}
+                if include_train and rec.train_encode is not None
+                else {}
+            ),
+            **(
+                {"test_encode": rec.test_encode}
+                if include_test and rec.test_encode is not None
                 else {}
             ),
             **(
@@ -618,6 +644,12 @@ def main() -> None:
         rec.scaled_test_noatt = compute_scaled_series(rec.test_noatt, is_think=is_think)
         rec.scaled_train_none = compute_scaled_series(rec.train_none, is_think=is_think)
         rec.scaled_test_none = compute_scaled_series(rec.test_none, is_think=is_think)
+        rec.scaled_train_encode = compute_scaled_series(
+            rec.train_encode, is_think=is_think
+        )
+        rec.scaled_test_encode = compute_scaled_series(
+            rec.test_encode, is_think=is_think
+        )
         rec.scaled_train_think = compute_scaled_series(rec.train_think, is_think=is_think)
         rec.scaled_test_think = compute_scaled_series(rec.test_think, is_think=is_think)
         rec.scaled_train_think2x = compute_scaled_series(rec.train_think2x, is_think=is_think)
