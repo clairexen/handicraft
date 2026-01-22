@@ -4298,8 +4298,6 @@ def parse_args() -> argparse.Namespace:
         command=None,
         report_count=None,
         test_start=None,
-        print_train_range=None,
-        print_test_range=None,
     )
 
     train_parser = subparsers.add_parser(
@@ -4355,36 +4353,30 @@ def parse_args() -> argparse.Namespace:
         help="Append a dominant-term estimate section",
     )
 
-    init_parser = subparsers.add_parser(
-        "init",
-        help="Create a fresh checkpoint (and tokenizer if missing) without training",
+    corpus_parser = subparsers.add_parser(
+        "corpus",
+        help="Manage tokenizer and cached corpora",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    init_parser.set_defaults(command="init")
-
-    print_train_parser = subparsers.add_parser(
-        "print-train",
-        help="Print a START-END token range from the train split and exit",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    corpus_parser.add_argument(
+        "--init",
+        action="store_true",
+        dest="corpus_init",
+        help="Build tokenizer and regenerate cached token files",
     )
-    print_train_parser.add_argument(
-        "print_train_range",
-        type=str,
-        help="Range to print, in START-END form",
+    corpus_parser.add_argument(
+        "--print-train",
+        dest="corpus_print_train",
+        metavar="START-END",
+        help="Print a START-END token range from the train split",
     )
-    print_train_parser.set_defaults(command="print_train")
-
-    print_test_parser = subparsers.add_parser(
-        "print-test",
-        help="Print a START-END token range from the test split and exit",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    corpus_parser.add_argument(
+        "--print-test",
+        dest="corpus_print_test",
+        metavar="START-END",
+        help="Print a START-END token range from the test split",
     )
-    print_test_parser.add_argument(
-        "print_test_range",
-        type=str,
-        help="Range to print, in START-END form",
-    )
-    print_test_parser.set_defaults(command="print_test")
+    corpus_parser.set_defaults(command="corpus")
 
     prompt_parser = subparsers.add_parser(
         "prompts",
@@ -4433,8 +4425,16 @@ def parse_args() -> argparse.Namespace:
         parser.print_help()
         parser.exit(
             1,
-            "\nPlease specify a command (train, report, test, size, print-train, print-test, init, or prompts).\n",
+            "\nPlease specify a command (train, report, test, size, corpus, or prompts).\n",
         )
+    if args.command == "corpus":
+        has_corpus_action = bool(
+            getattr(args, "corpus_init", False)
+            or getattr(args, "corpus_print_train", None)
+            or getattr(args, "corpus_print_test", None)
+        )
+        if not has_corpus_action:
+            parser.error("corpus command requires --init and/or --print-* options")
     if args.tiny:
         if not flag_present("--block-size"):
             args.block_size = 8
@@ -4542,7 +4542,10 @@ def main() -> None:
             raise ValueError("--pt is only supported for inference/debug commands")
         if args.import_model:
             raise ValueError("--pt cannot be combined with --import-model")
-        if selected_action != "init":
+        skip_checkpoint_load = (
+            selected_action == "corpus" and getattr(args, "corpus_init", False)
+        )
+        if not skip_checkpoint_load:
             if not args.pt.exists():
                 raise FileNotFoundError(f"Checkpoint {args.pt} not found")
             checkpoint_override_payload = torch.load(
@@ -4591,7 +4594,9 @@ def main() -> None:
             except OSError:
                 pass
 
-        must_build_tokenizer = selected_action == "init"
+        must_build_tokenizer = (
+            selected_action == "corpus" and getattr(args, "corpus_init", False)
+        )
         train_cache_path = data_dir / f"{args.corpus}_tokens_train_{args.tokenizer_vocab}.pt"
         test_cache_path = data_dir / f"{args.corpus}_tokens_test_{args.tokenizer_vocab}.pt"
 
@@ -4603,11 +4608,11 @@ def main() -> None:
             full_test_text = None
             if not train_cache_path.exists():
                 raise FileNotFoundError(
-                    f"Train token cache {train_cache_path} not found; run 'init' first."
+                    f"Train token cache {train_cache_path} not found; run 'corpus --init' first."
                 )
             if not test_cache_path.exists():
                 raise FileNotFoundError(
-                    f"Test token cache {test_cache_path} not found; run 'init' first."
+                    f"Test token cache {test_cache_path} not found; run 'corpus --init' first."
                 )
 
         tokenizer_key = f"{args.corpus}_vocab_{args.tokenizer_vocab}"
@@ -4618,7 +4623,7 @@ def main() -> None:
                 tokenizer_json = tokenizer_path.read_text(encoding="utf-8")
             elif not must_build_tokenizer:
                 raise FileNotFoundError(
-                    f"Tokenizer cache {tokenizer_path} not found; run 'init' first or supply --pt."
+                    f"Tokenizer cache {tokenizer_path} not found; run 'corpus --init' first or supply --pt."
                 )
         print(color_text(f"Tokenizer: {tokenizer_path}", Colors.BLUE))
         tok_wall_start = time.time()
@@ -4642,7 +4647,7 @@ def main() -> None:
             raise ValueError(
                 "Tokenizer size mismatch: expected "
                 f"{expected_vocab_size} tokens but found {actual_vocab_size}. "
-                "Delete the cached tokenizer and re-run 'init'."
+                "Delete the cached tokenizer and re-run 'corpus --init'."
             )
         tokenizer_json = tokenizer_json or tokenizer_path.read_text(encoding="utf-8")
 
@@ -4720,15 +4725,6 @@ def main() -> None:
         )
         print(tok_summary)
 
-        if selected_action == "init":
-            print(
-                color_text(
-                    "Tokenizer initialized and token caches updated; run 'train' to build a model.",
-                    Colors.GREEN,
-                )
-            )
-            return
-
         dataset = TextDataset(
             train_tokens=train_tokens,
             test_tokens=test_tokens,
@@ -4740,41 +4736,52 @@ def main() -> None:
             test_path=test_path,
         )
 
-        if selected_action in {"print_train", "print_test"}:
-            def emit_range(label: str, tokens: torch.Tensor, spec: str) -> None:
-                start, end = parse_range_arg(spec)
-                total = int(tokens.numel())
-                if total == 0:
-                    print(color_text(f"{label} corpus is empty", Colors.MAGENTA))
-                    return
-                if start < 0 or end < 0 or start >= total or end >= total:
-                    raise ValueError(
-                        f"{label} range {start}-{end} is outside 0-{total - 1}"
-                    )
-                subset = tokens[start : end + 1].tolist()
+        def emit_range(label: str, tokens: torch.Tensor, spec: str) -> None:
+            start, end = parse_range_arg(spec)
+            total = int(tokens.numel())
+            if total == 0:
+                print(color_text(f"{label} corpus is empty", Colors.MAGENTA))
+                return
+            if start < 0 or end < 0 or start >= total or end >= total:
+                raise ValueError(f"{label} range {start}-{end} is outside 0-{total - 1}")
+            subset = tokens[start : end + 1].tolist()
+            print(
+                color_text(
+                    f"{label} tokens {start}-{end} (count {len(subset)}):",
+                    Colors.CYAN,
+                )
+            )
+            chunk_size = 128
+            for offset in range(0, len(subset), chunk_size):
+                chunk_tokens = subset[offset : offset + chunk_size]
+                colored = color_tokens(
+                    tokenizer,
+                    chunk_tokens,
+                    [Colors.MAGENTA, Colors.GREEN],
+                    bold=False,
+                    think_token_id=tokenizer.think_id,
+                    undo_token_id=tokenizer.undo_id,
+                )
+                print(colored)
+
+        if selected_action == "corpus":
+            actions_done = False
+            if getattr(args, "corpus_init", False):
                 print(
                     color_text(
-                        f"{label} tokens {start}-{end} (count {len(subset)}):",
-                        Colors.CYAN,
+                        "Tokenizer initialized and token caches updated; run 'train' to build a model.",
+                        Colors.GREEN,
                     )
                 )
-                chunk_size = 128
-                for offset in range(0, len(subset), chunk_size):
-                    chunk_tokens = subset[offset : offset + chunk_size]
-                    colored = color_tokens(
-                        tokenizer,
-                        chunk_tokens,
-                        [Colors.MAGENTA, Colors.GREEN],
-                        bold=False,
-                        think_token_id=tokenizer.think_id,
-                        undo_token_id=tokenizer.undo_id,
-                    )
-                    print(colored)
-
-            if selected_action == "print_train":
-                emit_range("Train", train_tokens, args.print_train_range)
-            if selected_action == "print_test":
-                emit_range("Test", test_tokens, args.print_test_range)
+                actions_done = True
+            if getattr(args, "corpus_print_train", None):
+                emit_range("Train", train_tokens, args.corpus_print_train)
+                actions_done = True
+            if getattr(args, "corpus_print_test", None):
+                emit_range("Test", test_tokens, args.corpus_print_test)
+                actions_done = True
+            if not actions_done:
+                print(color_text("No corpus action selected", Colors.YELLOW))
             return
 
         if args.n_xctx > 0 and args.n_xctx % max(1, args.n_layer) != 0:
@@ -4929,25 +4936,6 @@ def main() -> None:
             f"Learned embedding vectors: {emb_vectors} "
             f"(token={tok_vecs}, position={pos_vecs}); params={emb_params:,}"
         )
-
-        if selected_action == "reset":
-            target_path = model_path
-            if not target_path.exists():
-                raise FileNotFoundError(f"Checkpoint {target_path} not found")
-            payload = torch.load(target_path, map_location="cpu", weights_only=False)
-            default_prompts = [
-                {"prompt": prompt, "expected": expected} for prompt, expected in PROMPT_GOALS
-            ]
-            empty_state = {
-                "status": [0] * len(default_prompts),
-                "completed": [False] * len(default_prompts),
-                "queue": None,
-                "prompts": default_prompts,
-            }
-            payload["prompt_state"] = empty_state
-            torch.save(payload, target_path)
-            print(color_text(f"Reset prompt tracking in {target_path}", Colors.GREEN))
-            return
 
         cmdline = " ".join(shlex.quote(arg) for arg in sys.argv)
         timestamp = datetime.now(timezone.utc).isoformat()

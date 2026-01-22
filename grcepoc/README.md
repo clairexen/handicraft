@@ -118,9 +118,9 @@ Key switches:
 - `report -n N` (or `report --count N`) loads the latest checkpoint and prints `N` prompt completions without running another training cycle.
 - `test --start N` dumps `block_size` tokens from the test split starting at cursor `N`; if the model supports thinking tokens it also runs the model over that window and inserts predicted `<think>` tokens in-line so you can inspect where the network wants to branch into reasoning mode.
 - `size` prints the configured model’s parameter breakdown (respecting the usual geometry flags) and exits.
-- `print-train START-END` / `print-test START-END` emit token ranges from the respective corpus splits so you can debug the raw data without kicking off a training run.
-- `init` builds (or refreshes) the tokenizer cache if needed and writes a brand-new checkpoint with zeroed training counters so you can stage experiments or clone configs without running a cycle.
-- `--pt some_checkpoint.pt` lets you run any of the non-training commands directly against an explicit checkpoint file; all geometry parameters are lifted from the file so you don’t have to mirror the original CLI flags (and with `init` it simply names the destination checkpoint).
+- `corpus --print-train START-END` / `corpus --print-test START-END` emit token ranges from the respective corpus splits so you can debug the raw data without kicking off a training run.
+- `corpus --init` builds (or refreshes) the tokenizer cache if needed and writes a brand-new checkpoint with zeroed training counters so you can stage experiments or clone configs without running a cycle.
+- `--pt some_checkpoint.pt` lets you run any of the non-training commands directly against an explicit checkpoint file; all geometry parameters are lifted from the file so you don’t have to mirror the original CLI flags (and with `corpus --init` it simply names the destination checkpoint).
 - `--no-newlines` keeps the sampler from emitting newline tokens so completions stay on one line.
 You can reproduce the sweeps below; notice how even the `--detach-span 1` run (which detaches the recurrent gradients entirely) tracks all other spans almost perfectly, confirming that the channel only needs to learn what to sample, not how to backpropagate across positions.
 
