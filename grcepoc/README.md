@@ -43,7 +43,7 @@ Training and evaluation revolve around *row types*—deterministic ways of mutat
 
 - **`plain`** – disables both GRCE and XCTX entirely so the GPT core behaves like a pure Transformer. Used as one of the stress rows and for the dedicated “plain” evaluation column.
 - **`normal`** – the baseline path: GRCE, XCTX, and attention all enabled with the standard causal mask.
-- **`encode`** – identical to `normal` except we run the Transformer in encoder mode (no causal masking) to measure the gap between bidirectional and autoregressive attention.
+- **`encode`** – identical to `plain` in that both GRCE and XCTX are disabled, but we run the Transformer in encoder mode (no causal mask) so every token can attend bidirectionally before the final position predicts the first token beyond the block.
 - **`noxctx` / `puxctx`** – remove the wide XCTX signal either for the entire row (`noxctx`) or by puncturing it at a single random timestep (`puxctx`) while GRCE remains active.
 - **`noattn` / `puattn`** – shut attention off entirely (`noattn`) or mask a single timestep’s ability to transmit forward (`puattn`) so the recurrent channels have to carry the load.
 - **`rdthink`** – the random-think row that litters the sequence with `<think>` tokens even when the base model would not have inserted them, forcing it to handle arbitrary reasoning detours.
@@ -78,7 +78,7 @@ When a row becomes `trthink`, we mutate the token sequence *after* all other tra
 The live log and checkpoint history capture three groups of losses:
 
 1. **Training target (`target`) and no-prefill (`noprev`).** `target` is the exact loss the optimizer just saw, including thinking/undo insertions and the cached prefill state for GRCE/XCTX. `noprev` replays the same sequences but zeros the cached context vectors so each block starts “from scratch”; it is a regression test for the prefill plumbing and measures how much the model leans on recurrent state.
-2. **Row-type diagnostics.** For each structural ablation we run an entire evaluation batch composed solely of that row type and log the resulting CE: `plain`, `normal`, `noxctx`, `noattn`, `none`, `encode`, etc. These are the same transformations described above—they are just executed one-at-a-time over the cached evaluation batches so you can read the columns as direct probes of each fault mode.
+2. **Row-type diagnostics.** For each structural ablation we run an entire evaluation batch composed solely of that row type and log the resulting CE: `plain`, `normal`, `noxctx`, `noattn`, `none`, `encode`, etc. These are the same transformations described above—they are just executed one-at-a-time over the cached evaluation batches so you can read the columns as direct probes of each fault mode. The `encode` column in particular disables both GRCE and XCTX (like `plain`), switches attention into encoder mode, and only scores the final position (scaled by `block_size`) so its magnitude is comparable to the causal columns.
 3. **Think-mode probes.** When `<think>` is enabled we append the `think`, `2x`, and `3x` columns. Each column reruns the evaluation batches with a forced reasoning strategy (exact predictions, one planner per token, two planners per token) and only scores the final planner in each chain so long reasoning bursts weigh the same as short detours.
 
 Taken together, the first group tracks what the optimizer optimizes, the second group shows how robust the model is to each structural ablation, and the third group makes the reasoning pipeline visible.

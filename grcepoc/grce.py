@@ -3307,6 +3307,11 @@ def evaluate_split(
         logits_main = disable_think_logits(raw_logits.clone(), think_settings)
         logits_main = apply_think_slot_mask(logits_main, think_slot_mask, think_settings)
         loss_targets = build_loss_targets(aug_yb, think_settings, random_mask)
+        if encoder_mode:
+            keep_mask = torch.zeros_like(loss_targets, dtype=torch.bool)
+            keep_mask[:, -1] = True
+            mask_val = torch.full_like(loss_targets, LOSS_IGNORE_INDEX)
+            loss_targets = torch.where(keep_mask, loss_targets, mask_val)
         logits_flat = logits_main.view(-1, logits_main.size(-1))
         per_token = F.cross_entropy(
             logits_flat,
@@ -3320,6 +3325,8 @@ def evaluate_split(
             main_loss = per_token.sum() * 0
         else:
             main_loss = per_token.sum() / denom
+            if encoder_mode:
+                main_loss = main_loss * block_size
         ce_losses.append(main_loss.item())
     ce_avg = sum(ce_losses) / len(ce_losses)
     return ce_avg
@@ -3878,8 +3885,8 @@ def train_model(
                             batch_size,
                             split,
                             eval_iters,
-                            disable_context=False,
-                            disable_xctx=False,
+                            disable_context=True,
+                            disable_xctx=True,
                             disable_attention=False,
                             encoder_mode=True,
                             **plain_kwargs,
