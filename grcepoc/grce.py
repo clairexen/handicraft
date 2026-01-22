@@ -3366,8 +3366,6 @@ def evaluate_split(
             main_loss = per_token.sum() * 0
         else:
             main_loss = per_token.sum() / denom
-            if encoder_mode:
-                main_loss = main_loss * block_size
         ce_losses.append(main_loss.item())
     ce_avg = sum(ce_losses) / len(ce_losses)
     return ce_avg
@@ -3828,7 +3826,7 @@ def train_model(
             if denom_enc == 0:
                 encode_loss = per_token_enc.sum() * 0
             else:
-                encode_loss = (per_token_enc.sum() / denom_enc) * block_size
+                encode_loss = per_token_enc.sum() / denom_enc
             total_loss = encode_loss if total_loss is None else total_loss + encode_loss
 
         if total_loss is None:
