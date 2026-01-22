@@ -49,17 +49,19 @@ run_ssh() {
     "$SSH_BIN" "${SSH_OPTS[@]}" "$REMOTE_HOST" "$@"
 }
 
-ensure_remote_dirs() {
-    run_ssh "mkdir -p $REMOTE_DIR $REMOTE_DIR/model"
+open_shell() {
+    "$SSH_BIN" "${SSH_OPTS[@]}" "$REMOTE_HOST"
+}
+
+pod_init() {
+        run_ssh "set -ex; mkdir -p $REMOTE_DIR/data $REMOTE_DIR/model; apt update; apt install -y rsync; pip install tokenizers transformers"
 }
 
 rsync_update() {
-    # ensure_remote_dirs
     rsync "${RSYNC_COMMON[@]}" -e "$(join_cmd "${RSYNC_SSH[@]}")" "$ROOT_DIR/grce.py" "${REMOTE_HOST}:${REMOTE_DIR}/"
 }
 
 rsync_put() {
-    ensure_remote_dirs
     rsync_update
     if [[ -d "$ROOT_DIR/data" ]]; then
         rsync "${RSYNC_COMMON[@]}" -e "$(join_cmd "${RSYNC_SSH[@]}")" "$ROOT_DIR/data/" "${REMOTE_HOST}:${REMOTE_DIR}/data/"
@@ -69,8 +71,6 @@ rsync_put() {
 }
 
 rsync_push() {
-    ensure_remote_dirs
-    rsync_update
     if [[ -d "$LOCAL_MODEL_DIR" ]]; then
         rsync "${RSYNC_COMMON[@]}" -e "$(join_cmd "${RSYNC_SSH[@]}")" "$LOCAL_MODEL_DIR/" "${REMOTE_HOST}:${REMOTE_DIR}/model/"
     else
@@ -83,21 +83,18 @@ rsync_pull() {
     rsync "${RSYNC_COMMON[@]}" -e "$(join_cmd "${RSYNC_SSH[@]}")" "${REMOTE_HOST}:${REMOTE_DIR}/model/" "$LOCAL_MODEL_DIR/"
 }
 
-open_shell() {
-    "$SSH_BIN" "${SSH_OPTS[@]}" "$REMOTE_HOST"
-}
-
 case "${1:-}" in
-    init)
-        ensure_remote_dirs
-        rsync_update
-        ;;
     go)
-        ensure_remote_dirs
-        run_ssh "apt update && apt install -y rsync"
-        run_ssh "cd $REMOTE_DIR && pip install tokenizers transformers"
-        rsync_update
-        open_shell
+        pod_init
+        rsync_put
+        rsync_push
+	open_shell
+        ;;
+    init)
+        pod_init
+        ;;
+    shell)
+	open_shell
         ;;
     update)
         rsync_update
@@ -110,10 +107,6 @@ case "${1:-}" in
         ;;
     pull)
         rsync_pull
-        ;;
-    shell)
-        ensure_remote_dirs
-        open_shell
         ;;
     *)
         echo "Usage: bash pod.sh [CFG] {init|go|update|put|push|pull|shell}" >&2
