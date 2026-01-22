@@ -1,11 +1,34 @@
-"""GRCE proof-of-concept. Most of it is written by ChatGPT/Codex. I told
-it to base it loosely the picoGPT.
+"""GRCE proof-of-concept.
 
-This script keeps the picoGPT spirit of being small and hackable while
-adding the Gradient-limited Recurrent Context Encoding (GRCE) channel described in
-the README. It trains a tiny GPT-style tokenizer-backed Transformer on the bundled
-Simple English Wikipedia split and shows how the recurrent context vector can
-be integrated with a configurable gradient-limiting constraint across time.
+This module combines a picoGPT-style Transformer with Gradient-limited
+Recurrent Context Encoding (GRCE) and XCTX channels. It exposes the full CLI,
+training loop, evaluation utilities, and reporting helpers used by the
+``grce.py`` entry point. Key entities:
+
+* :class:`ModelConfig` – dataclass that defines the model geometry and feeds
+  into tokenizer/model builders, :func:`describe_model_size`, and
+  :func:`grce_main`.
+* :func:`grce_cli_args` – constructs the CLI parser; invoked at startup and by
+  external tooling to mirror the binary interface. Its result is consumed by
+  :func:`grce_main`.
+* :func:`train_model` – the main training loop used by :func:`grce_main`. It
+  orchestrates batch augmentation, diagnostics, and logging.
+* :func:`augment_training_batch` – mutates minibatches according to the row
+  types before the model sees them. Called by :func:`train_model` and
+  :func:`evaluate_split`.
+* :func:`evaluate_split` – runs the expensive evaluation variants whenever
+  :func:`train_model` or the CLI requests diagnostics.
+* :func:`describe_model_size` – backs the ``size`` subcommand by combining
+  :class:`ModelConfig` metadata with :func:`compute_row_type_counts`.
+
+Call tree (simplified)::
+
+    grce_cli_args
+        └── grce_main
+            ├── train_model
+            │     ├── augment_training_batch
+            │     └── evaluate_split
+            └── describe_model_size
 """
 from __future__ import annotations
 
@@ -40,6 +63,12 @@ from dataclasses import dataclass
 
 @dataclass
 class ModelConfig:
+    """Holds the GRCE/XCTX model geometry.
+
+    Instances are created in :func:`grce_cli_args` and threaded through the
+    tokenizer builder, :func:`describe_model_size`, and :func:`grce_main`.
+    """
+
     vocab_size: int = 2000  # GPT-2 base supports ~50k merges; we stay small for the PoC.
     block_size: int = 64    # GPT-2 base uses 1024 tokens.
     n_layer: int = 12       # GPT-2 base uses 12 layers.
@@ -57,7 +86,12 @@ MODEL_CONFIG_TEMPLATE = ModelConfig()
 
 
 def compute_row_type_counts(batch_size: int) -> dict[str, int]:
-    """Compute the configured row-type counts for a batch."""
+    """Return the deterministic row-type counts for a batch size.
+
+    :func:`describe_model_size` and :func:`train_model` call this helper to
+    translate `n_total` into the per-row counts described in the README, which
+    in turn drives :func:`build_row_type_template`.
+    """
     total = max(0, int(batch_size))
     if total == 0:
         return {
@@ -113,6 +147,12 @@ def build_row_type_template(
     context_enabled: bool,
     xctx_enabled: bool,
 ) -> list[str]:
+    """Expand row counts into a shuffled template for a batch.
+
+    :func:`train_model` calls this helper before mask creation so every batch
+    follows the README-specified composition.
+    """
+
     template: list[str] = []
 
     def allocate(name: str, supported: bool) -> None:
@@ -154,6 +194,12 @@ def build_row_type_masks(
     context_enabled: bool,
     xctx_enabled: bool,
 ) -> SpecialRowMasks:
+    """Create the per-row masks for a row template.
+
+    The returned :class:`SpecialRowMasks` structure is consumed by
+    :func:`train_model` and :func:`augment_training_batch` to disable GRCE,
+    XCTX, or attention and to force thinking behavior on specific rows.
+    """
     batch_size = len(row_types)
     context_special_rows: set[int] = set()
     context_disabled_mask = (
@@ -257,6 +303,12 @@ def parse_range_arg(value: str) -> tuple[int, int]:
 
 
 def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    """Parse CLI arguments and return the populated namespace.
+
+    Used by the ``if __name__ == '__main__'`` entry point and by tooling that
+    wants to mirror the CLI behavior without invoking the binary. The result
+    is passed directly to :func:`grce_main`.
+    """
     defaults = MODEL_CONFIG_TEMPLATE
     if argv is None:
         raw_cli_args = sys.argv[1:]
@@ -805,6 +857,12 @@ from tokenizers.trainers import BpeTrainer
 
 # Local GPT2 tokenizer adapter (no huggingface dependency)
 class GPT2TokenizerFast:
+    """Lightweight adapter around ``tokenizers.Tokenizer`` used by GRCE.
+
+    Instances are created in :func:`grce_main` to build tokenizers without the
+    full Hugging Face dependency and are consumed via
+    :class:`GPT2TokenizerWrapper`.
+    """
     def __init__(self, tokenizer_file=None, tokenizer_object=None):
         if tokenizer_file is not None:
             self._tokenizer = Tokenizer.from_file(tokenizer_file)
@@ -1901,6 +1959,12 @@ def augment_training_batch(
     torch.Tensor | None,
     torch.Tensor | None,
 ]:
+    """Mutate a minibatch according to the active row types.
+
+    Invoked by both :func:`train_model` and :func:`evaluate_split` to insert
+    `<think>` tokens, apply undo fillers (currently disabled), and produce the
+    auxiliary masks used by loss computation.
+    """
     think_enabled = think is not None and think.enabled
     think_token_id = active_think_token_id(think)
     forced_context_off = disable_context_rows or set()
@@ -2570,6 +2634,12 @@ def describe_model_size(
     estimate: bool = False,
     print_row_table: bool = False,
 ) -> None:
+    """Emit the ``size`` subcommand report.
+
+    When ``print_row_table`` is set this prints only the row-type table used by
+    README documentation; otherwise it prints the standard parameter breakdown
+    based on :class:`ModelConfig`. Called exclusively from :func:`grce_main`.
+    """
     if print_row_table:
         _print_row_type_table([12, 16, 24, 32, 48, 64])
         return
@@ -3268,6 +3338,12 @@ def evaluate_split(
     use_special_rows: bool = False,
     encoder_mode: bool = False,
 ) -> float:
+    """Run a diagnostic evaluation for the requested split.
+
+    Called from :func:`train_model` during scheduled evaluations and from
+    :func:`grce_main` when the CLI requests reporting. It reuses
+    :func:`augment_training_batch` to mirror the training-time mutations.
+    """
     ce_losses = []
     if batches is None:
         batches = []
@@ -3623,6 +3699,12 @@ def train_model(
     full_eval_stride: int = 1,
     force_full_eval_first: bool = True,
 ) -> Tuple[int, List[Dict[str, float]], float, float, float, float]:
+    """Run the main training loop for a cycle.
+
+    Called exclusively by :func:`grce_main`. Manages batching,
+    :func:`augment_training_batch`, optimizer steps, periodic calls to
+    :func:`evaluate_split`, and logging/metric collection.
+    """
     optim = torch.optim.AdamW(model.parameters(), lr=3e-4)
     total_steps = start_step
     history_updates: List[Dict[str, float]] = []
@@ -4953,6 +5035,12 @@ import signal
 import traceback
 
 def grce_main(args: argparse.Namespace) -> int:
+    """Dispatch the CLI command selected by :func:`grce_cli_args`.
+
+    Handles corpus management, training/reporting flow, and subcommands such
+    as ``size``. When running training it constructs the model/tokenizer and
+    calls :func:`train_model`.
+    """
     context_dropout_interval = 1
 
     def parse_layer_list(value: str, flag: str) -> list[int]:
