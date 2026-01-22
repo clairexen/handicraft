@@ -4244,12 +4244,12 @@ def train_model(
                     solved_count = 0
                 train_header = "train loss"
                 if show_train_details:
-                    train_header += " noprev : plain normal - noctx noatt none - encode"
+                    train_header += " noprev : plain encode normal - noctx noatt none"
                     if show_think_columns:
                         train_header += " : think 2x 3x"
                 test_header = "test loss"
                 if show_test_details:
-                    test_header += " noprev : plain normal - noctx noatt none - encode"
+                    test_header += " noprev : plain encode normal - noctx noatt none"
                     if show_think_columns:
                         test_header += " : think 2x 3x"
                 header_parts: List[str] = []
@@ -4279,11 +4279,9 @@ def train_model(
                     for key in ("target", "noprev")
                 )
                 diag_vals = " ".join(
-                    [format_metric("train", key) for key in ("plain", "normal")]
+                    [format_metric("train", key) for key in ("plain", "encode", "normal")]
                     + ["-"]
                     + [format_metric("train", key) for key in ("noctx", "noatt", "none")]
-                    + ["-"]
-                    + [format_metric("train", "encode")]
                 )
                 parts = [primary_group, diag_vals]
                 if show_think_columns and long_log_now:
@@ -4302,11 +4300,9 @@ def train_model(
                     for key in ("target", "noprev")
                 )
                 diag_vals = " ".join(
-                    [format_metric("test", key) for key in ("plain", "normal")]
+                    [format_metric("test", key) for key in ("plain", "encode", "normal")]
                     + ["-"]
                     + [format_metric("test", key) for key in ("noctx", "noatt", "none")]
-                    + ["-"]
-                    + [format_metric("test", "encode")]
                 )
                 parts = [primary_group, diag_vals]
                 if show_think_columns and long_log_now:
