@@ -62,7 +62,7 @@ Let `n_total` be the batch size. Each batch is a fixed mixture of row types:
 - `n_rdthink := 1`
 - `n_trthink := max(1, (n_total - 8) // 4 - (n_think + n_think2x + n_think3x))`
 - `n_normal := max(1, n_total - (n_plain + n_trthink + n_noxctx + n_puxctx + n_noattn + n_puattn + n_rdthink + n_encode + n_think + n_think2x + n_think3x))`
-- `n_encode := 0`
+- `n_encode := 1`
 - `n_think := 1`
 - `n_think2x := 1`
 - `n_think3x := 1`

@@ -85,7 +85,7 @@ def compute_row_type_counts(batch_size: int) -> dict[str, int]:
         "n_rdthink": 1,
         "n_trthink": 0,
         "n_normal": 0,
-        "n_encode": 0,
+        "n_encode": 1,
         "n_think": 1,
         "n_think2x": 1,
         "n_think3x": 1,
@@ -133,7 +133,7 @@ def build_row_type_template(
     allocate("think", think_enabled)
     allocate("think2x", think_enabled)
     allocate("think3x", think_enabled)
-    allocate("encode", False)
+    allocate("encode", True)
     normal_count = max(0, int(row_counts.get("n_normal", 0)))
     template.extend(["normal"] * normal_count)
     if len(template) > batch_size:
@@ -174,10 +174,10 @@ def build_row_type_masks(
         return tensor
 
     for idx, row_type in enumerate(row_types):
-        if row_type == "plain" and context_enabled and context_disabled_mask is not None:
+        if row_type in {"plain", "encode"} and context_enabled and context_disabled_mask is not None:
             context_disabled_mask[idx] = True
             context_special_rows.add(idx)
-        elif row_type == "noxctx" and xctx_enabled and xctx_disabled_mask is not None:
+        elif row_type in {"noxctx", "encode"} and xctx_enabled and xctx_disabled_mask is not None:
             xctx_disabled_mask[idx] = True
             context_special_rows.add(idx)
         elif row_type == "puxctx" and xctx_enabled:
@@ -202,7 +202,7 @@ def build_row_type_masks(
         elif row_type == "rdthink" and think_enabled:
             forced_think_rows.add(idx)
             context_special_rows.add(idx)
-        if think_enabled and row_type not in {"trthink", "rdthink", "think2x", "think3x"}:
+        if think_enabled and row_type not in {"trthink", "think", "rdthink", "think2x", "think3x"}:
             think_disabled_rows.add(idx)
 
     if context_disabled_mask is not None and not context_disabled_mask.any():
@@ -3675,45 +3675,139 @@ def train_model(
             initial_context_raw=None,
             row_types=row_types,
         )
-        logits, hidden_states, activation_store = model.forward_autoreg(
-            xb,
-            targets=yb,
-            think_token_id=think_token_id,
-            collect_relu_mask=reward_tracker is not None,
-            context_disabled_rows=context_disabled_mask,
-            xctx_disabled_rows=xctx_disabled_mask,
-            context_dropout_positions=context_dropout_positions,
-            attention_disabled_rows=attention_disabled_mask,
-            attention_dropout_positions=attention_dropout_positions,
-            encoder_mode=False,
-        )
-        raw_logits = logits
-        logits_main = disable_think_logits(raw_logits.clone(), think_settings)
-        logits_main = apply_think_slot_mask(logits_main, think_slot_mask, think_settings)
-        loss_targets = build_loss_targets(yb, think_settings, random_mask)
-        logits_flat = logits_main.view(-1, logits_main.size(-1))
-        token_loss_flat = F.cross_entropy(
-            logits_flat,
-            loss_targets.view(-1),
-            reduction="none",
-            ignore_index=LOSS_IGNORE_INDEX,
-        )
-        token_losses = token_loss_flat.view_as(loss_targets)
-        valid_mask = loss_targets != LOSS_IGNORE_INDEX
-        denom = valid_mask.sum().item()
-        if denom == 0:
-            main_loss = token_loss_flat.sum() * 0
-        else:
-            main_loss = token_loss_flat.sum() / denom
-        align_loss = compute_think_alignment_loss(
-            model,
-            raw_logits,
-            xb,
-            loss_targets,
-            token_losses.detach(),
-            think_settings,
-        )
-        loss = main_loss + align_loss
+        encode_indices = [idx for idx, t in enumerate(row_types) if t == "encode"]
+        encode_index_tensor = torch.tensor(encode_indices, dtype=torch.long, device=xb.device)
+        main_index_tensor = torch.arange(batch_size, device=xb.device)
+        if encode_index_tensor.numel() > 0:
+            mask = torch.ones(batch_size, dtype=torch.bool, device=xb.device)
+            mask[encode_index_tensor] = False
+            main_index_tensor = torch.nonzero(mask, as_tuple=False).squeeze(1)
+
+        def select_rows(tensor: torch.Tensor | None, index: torch.Tensor) -> torch.Tensor | None:
+            if tensor is None:
+                return None
+            if index.numel() == tensor.size(0):
+                return tensor
+            if index.numel() == 0:
+                return None
+            return tensor.index_select(0, index)
+
+        total_loss = None
+        token_losses = None
+        valid_mask = None
+        raw_logits = None
+        loss_targets_main = None
+        xb_main = None
+        main_loss = torch.tensor(0.0, device=device)
+        activation_store = None
+        hidden_states = None
+        if main_index_tensor.numel() > 0:
+            xb_main = xb.index_select(0, main_index_tensor)
+            yb_main = yb.index_select(0, main_index_tensor)
+            random_mask_main = select_rows(random_mask, main_index_tensor)
+            think_labels_main = select_rows(think_labels, main_index_tensor)
+            think_slot_mask_main = select_rows(think_slot_mask, main_index_tensor)
+            context_disabled_mask_main = select_rows(context_disabled_mask, main_index_tensor)
+            xctx_disabled_mask_main = select_rows(xctx_disabled_mask, main_index_tensor)
+            context_dropout_positions_main = select_rows(context_dropout_positions, main_index_tensor)
+            attention_disabled_mask_main = select_rows(attention_disabled_mask, main_index_tensor)
+            attention_dropout_positions_main = select_rows(attention_dropout_positions, main_index_tensor)
+            logits_main, hidden_states, activation_store = model.forward_autoreg(
+                xb_main,
+                targets=yb_main,
+                think_token_id=think_token_id,
+                collect_relu_mask=reward_tracker is not None,
+                context_disabled_rows=context_disabled_mask_main,
+                xctx_disabled_rows=xctx_disabled_mask_main,
+                context_dropout_positions=context_dropout_positions_main,
+                attention_disabled_rows=attention_disabled_mask_main,
+                attention_dropout_positions=attention_dropout_positions_main,
+                encoder_mode=False,
+            )
+            raw_logits_main = logits_main
+            logits_main_adj = disable_think_logits(raw_logits_main.clone(), think_settings)
+            logits_main_adj = apply_think_slot_mask(
+                logits_main_adj, think_slot_mask_main, think_settings
+            )
+            loss_targets_main = build_loss_targets(yb_main, think_settings, random_mask_main)
+            logits_flat = logits_main_adj.view(-1, logits_main_adj.size(-1))
+            token_loss_flat = F.cross_entropy(
+                logits_flat,
+                loss_targets_main.view(-1),
+                reduction="none",
+                ignore_index=LOSS_IGNORE_INDEX,
+            )
+            per_token_main = token_loss_flat.view_as(loss_targets_main)
+            valid_mask_main = loss_targets_main != LOSS_IGNORE_INDEX
+            denom_main = valid_mask_main.sum().item()
+            if denom_main == 0:
+                main_loss = per_token_main.sum() * 0
+            else:
+                main_loss = per_token_main.sum() / denom_main
+            total_loss = main_loss
+            token_losses = per_token_main
+            valid_mask = valid_mask_main
+            raw_logits = raw_logits_main
+            loss_targets_main = loss_targets_main
+
+        encode_loss = None
+        if encode_index_tensor.numel() > 0:
+            xb_enc = xb.index_select(0, encode_index_tensor)
+            yb_enc = yb.index_select(0, encode_index_tensor)
+            logits_enc, _, _ = model.forward_autoreg(
+                xb_enc,
+                targets=yb_enc,
+                think_token_id=None,
+                collect_relu_mask=False,
+                disable_context=True,
+                disable_xctx=True,
+                context_disabled_rows=None,
+                xctx_disabled_rows=None,
+                context_dropout_positions=None,
+                attention_disabled_rows=None,
+                attention_dropout_positions=None,
+                encoder_mode=True,
+            )
+            loss_targets_enc = build_loss_targets(yb_enc, None, None)
+            if loss_targets_enc.numel() > 0:
+                mask = torch.full_like(loss_targets_enc, LOSS_IGNORE_INDEX)
+                keep = torch.zeros_like(loss_targets_enc, dtype=torch.bool)
+                keep[:, -1] = True
+                loss_targets_enc = torch.where(keep, loss_targets_enc, mask)
+            logits_flat_enc = logits_enc.view(-1, logits_enc.size(-1))
+            token_loss_flat_enc = F.cross_entropy(
+                logits_flat_enc,
+                loss_targets_enc.view(-1),
+                reduction="none",
+                ignore_index=LOSS_IGNORE_INDEX,
+            )
+            per_token_enc = token_loss_flat_enc.view_as(loss_targets_enc)
+            valid_mask_enc = loss_targets_enc != LOSS_IGNORE_INDEX
+            denom_enc = valid_mask_enc.sum().item()
+            if denom_enc == 0:
+                encode_loss = per_token_enc.sum() * 0
+            else:
+                encode_loss = (per_token_enc.sum() / denom_enc) * block_size
+            total_loss = encode_loss if total_loss is None else total_loss + encode_loss
+
+        if total_loss is None:
+            total_loss = torch.tensor(0.0, device=device, requires_grad=True)
+        align_loss = torch.tensor(0.0, device=device)
+        if (
+            raw_logits is not None
+            and loss_targets_main is not None
+            and token_losses is not None
+            and xb_main is not None
+        ):
+            align_loss = compute_think_alignment_loss(
+                model,
+                raw_logits,
+                xb_main,
+                loss_targets_main,
+                token_losses.detach(),
+                think_settings,
+            )
+        loss = total_loss + align_loss
         optim.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -3724,7 +3818,7 @@ def train_model(
             relu_activity = None
             if activation_store is not None:
                 relu_activity = activation_store.get("relu_activity")
-            if relu_activity is not None:
+            if relu_activity is not None and token_losses is not None and valid_mask is not None:
                 with torch.no_grad():
                     reward_tracker.record_batch(
                         relu_activity,
