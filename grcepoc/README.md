@@ -47,18 +47,31 @@ Training and evaluation revolve around *row types*—deterministic ways of mutat
 - **`noxctx` / `puxctx`** – remove the wide XCTX signal either for the entire row (`noxctx`) or by puncturing it at a single random timestep (`puxctx`) while GRCE remains active.
 - **`noattn` / `puattn`** – shut attention off entirely (`noattn`) or mask a single timestep’s ability to transmit forward (`puattn`) so the recurrent channels have to carry the load.
 - **`rdthink`** – the random-think row that litters the sequence with `<think>` tokens even when the base model would not have inserted them, forcing it to handle arbitrary reasoning detours.
-- **`trthink`** – the family of thinking rows scheduled every batch. These rows draw repeat/target/tail budgets and exercise the `<think>` token insertion logic used during training.
+- **`trthink`** – the family of thinking rows scheduled every batch. These rows draw repeat/target/tail budgets, insert `<think>` tokens according to those budgets, and label each inserted planner with its target token.
 - **`think` / `think2x` / `think3x`** – evaluation-only passes that clamp the reasoning strategy: `think` inserts `<think>` exactly where the model predicted it; `think2x`/`think3x` force one or two `<think>` tokens per base token, only scoring the final planner in each chain.
 
 ### How these row types shape a training batch
 
-Every optimization step starts from the raw dataset window, then applies the following augmentations:
+Let `n_total` be the batch size. Each batch is a fixed mixture of row types:
 
-1. **Undo fillers (optional).** If `--undo` is active we splice random filler/`<undo>` pairs into each sequence.
-2. **Special rows.** Because context dropout is always enabled when GRCE/XCTX exist, every batch reserves six slots—`plain`, `noxctx`, `puxctx`, `noattn`, `puattn`, and `rdthink`—so the network constantly rehearses those degradations. All remaining rows are `normal` unless we override them in later steps.
-3. **Thinking rows.** Roughly half of the non-special rows become `trthink` rows: we sample repeat/target/tail budgets, insert `<think>` tokens according to those budgets, and label each inserted planner with its target token. At least one row stays plain `normal` so the optimizer never loses sight of baseline behavior.
+- `n_plain := 1`
+- `n_noxctx := 1`
+- `n_puxctx := 1`
+- `n_noattn := 1`
+- `n_puattn := 1`
+- `n_rdthink := 1`
+- `n_trthink := floor((n_total - n_plain - n_noxctx - n_puxctx - n_noattn - n_puattn - n_rdthink)/2)` (half of the remaining rows become thinking rows)
+- `n_normal := n_total - (n_plain + n_noxctx + n_puxctx + n_noattn + n_puattn + n_rdthink + n_trthink)`
+- `n_encode := 0`
+- `n_think := 0`
+- `n_think2x := 0`
+- `n_think3x := 0`
 
-This mixture is important: GRCE learns to hand off work to XCTX when the wide channel is available, attention learns to back-stop the recurrent paths, and the `<think>` insertion logic is exercised even when the base model would not voluntarily use it.
+That means every batch carries exactly one copy of each structural ablation (pure transformer, no-XCTX, punctured-XCTX, no-attention, punctured-attention, random-think) plus a healthy mix of `normal` and `trthink` rows. The ordering varies per batch because we randomly assign row indices when building the masks, but the counts above remain fixed.
+
+Thinking rows (`trthink`) receive the extra `<think>` insertions described earlier; `normal` rows remain untouched so the optimizer keeps seeing baseline sequences. Finally, if `--undo` is active we annotate a subset of rows (sampled uniformly from the current batch) with undo filler pairs *before* we apply any of the row-specific transformations. Undo insertion therefore happens first in the pipeline, but we describe it last here because the row-type composition is the more important mental model.
+
+When a row becomes `trthink`, we mutate the token sequence *after* all other transformations: we sample the repeat (`R`), targeted insert (`T`), and tail (`H`) budgets, splice the requested `<think>` tokens, and maintain per-slot targets so the labels still point at the correct next token even though reasoning detours were inserted.
 
 ### Loss reporting
 
