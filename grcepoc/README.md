@@ -54,14 +54,14 @@ Training and evaluation revolve around *row types*—deterministic ways of mutat
 
 Let `n_total` be the batch size. Each batch is a fixed mixture of row types:
 
-- `n_plain := max(1, (n_total - 8) // 2 - (n_trthink + n_think + n_think2x + n_think3x))`
+- `n_plain := max(1, (n_total - 9) // 2 - (n_trthink + 3))`
 - `n_noxctx := 1`
 - `n_puxctx := 1`
 - `n_noattn := 1`
 - `n_puattn := 1`
 - `n_rdthink := 1`
-- `n_trthink := max(1, (n_total - 8) // 4 - (n_think + n_think2x + n_think3x))`
-- `n_normal := max(1, n_total - (n_plain + n_trthink + n_noxctx + n_puxctx + n_noattn + n_puattn + n_rdthink + n_encode + n_think + n_think2x + n_think3x))`
+- `n_trthink := max(1, (n_total - 9) // 4 - 3)`
+- `n_normal := max(1, n_total - 9) - (n_plain + n_trthink + 3)`
 - `n_encode := 1`
 - `n_think := 1`
 - `n_think2x := 1`

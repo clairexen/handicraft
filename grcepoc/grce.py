@@ -90,12 +90,12 @@ def compute_row_type_counts(batch_size: int) -> dict[str, int]:
         "n_think2x": 1,
         "n_think3x": 1,
     }
-    think_eval_total = counts["n_think"] + counts["n_think2x"] + counts["n_think3x"]
-    residual = max(0, total - 8)
-    counts["n_trthink"] = max(1, residual // 4 - think_eval_total)
-    counts["n_plain"] = max(1, residual // 2 - (counts["n_trthink"] + think_eval_total))
-    fixed_without_normal = sum(counts.values())
-    counts["n_normal"] = max(1, total - fixed_without_normal)
+    think_fixed = counts["n_think"] + counts["n_think2x"] + counts["n_think3x"]
+    base = max(0, total - 9)
+    counts["n_trthink"] = max(1, base // 4 - 3)
+    counts["n_plain"] = max(1, base // 2 - (counts["n_trthink"] + think_fixed))
+    normal_base = max(1, total - 9) - (counts["n_plain"] + counts["n_trthink"] + think_fixed)
+    counts["n_normal"] = max(1, normal_base)
     counts["n_total"] = total
     row_sum = sum(value for key, value in counts.items() if key.startswith("n_") and key != "n_total")
     if row_sum > total:
@@ -620,6 +620,11 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--estimate",
         action="store_true",
         help="Append a dominant-term estimate section",
+    )
+    size_parser.add_argument(
+        "--print-row-table",
+        action="store_true",
+        help="Print the n_* row-type table for common batch sizes and exit",
     )
 
     corpus_parser = subparsers.add_parser(
@@ -2519,6 +2524,38 @@ def _print_batch_geometry(row_counts: dict[str, int]) -> None:
         print(f"  {key:<12} {value:>10}")
 
 
+def _print_row_type_table(columns: Sequence[int]) -> None:
+    order = [
+        "n_plain",
+        "n_noxctx",
+        "n_puxctx",
+        "n_noattn",
+        "n_puattn",
+        "n_rdthink",
+        "n_trthink",
+        "n_normal",
+        "n_encode",
+        "n_think",
+        "n_think2x",
+        "n_think3x",
+        "n_total",
+    ]
+    print(color_text("Row type table", Colors.CYAN, bold=True))
+    header = "row_type".ljust(15)
+    for total in columns:
+        header += f"{total:>10}"
+    print(header)
+    for name in order:
+        line = name.ljust(15)
+        for total in columns:
+            counts = compute_row_type_counts(total)
+            value = counts.get(name, 0)
+            if name == "n_total":
+                value = total
+            line += f"{value:>10}"
+        print(line)
+
+
 def describe_model_size(
     config: ModelConfig,
     block_size: int,
@@ -2526,7 +2563,11 @@ def describe_model_size(
     *,
     check: bool = False,
     estimate: bool = False,
+    print_row_table: bool = False,
 ) -> None:
+    if print_row_table:
+        _print_row_type_table([12, 16, 24, 32, 48, 64])
+        return
     row_counts = compute_row_type_counts(batch_size)
     _print_batch_geometry(row_counts)
     print()
@@ -5252,6 +5293,7 @@ def grce_main(args: argparse.Namespace) -> int:
                 args.batch_size,
                 check=getattr(args, "check", False),
                 estimate=getattr(args, "estimate", False),
+                print_row_table=getattr(args, "print_row_table", False),
             )
             return
         model_tag = build_model_tag(config)
