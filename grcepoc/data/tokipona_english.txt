@@ -1,0 +1,68 @@
+# A small toki pona <-> english corpus. Lines with '#' as first char are ignored.
+# Articles are separated by a '----' line. Within an article each sentence
+# is split in two lines. The first line is a toki pona sentence, and the second
+# line is its english translation. Sentences are seperated by a blank line.
+# English vocabulary can be used within the toki pona sentences by enclosing
+# them is square brakets, and vice versa. (this file is 7-bit ASCII only!)
+
+toki pona la, ante toki pi [hungry] li ni: (wile moku).
+In toki pona, the translation of "hungry" is "want to eat".
+
+----
+
+mi pilin pona.
+I feel good.
+
+sina wile moku.
+You want to eat.
+
+jan li toki.
+A person speaks.
+
+mi kama sona.
+I learn.
+
+suno li suli.
+The sun is big.
+
+kili li pona.
+Fruit is good.
+
+mi lukin e tomo.
+I see a building.
+
+sina moku e kili.
+You eat fruit.
+
+jan lili li musi.
+Children play.
+
+mi wile lape.
+I want to sleep.
+
+----
+
+[bigotry] li ni:
+[bigotry] is this:
+
+jan li lukin ike e jan ante tan ni: jan ante li sama ala ona.
+A person judges other people because those people are not the same as them.
+
+ona li wile ala sona e jan ante.
+They do not want to know other people.
+
+ona li wile ala kama sona tan jan ante.
+They do not want to learn from other people.
+
+tan ni la ona li pana e pilin ike tawa jan ante.
+Because of this, they give bad feelings to other people.
+
+ni li pona ala. ni li pakala.
+This is not good. This is harmful.
+
+ni ale li [bigotry].
+All of this is [bigotry].
+
+----
+
+# FIXME: Add 5 similar complex definitions
