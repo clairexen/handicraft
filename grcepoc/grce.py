@@ -438,6 +438,11 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "and require --steps to be divisible by the absolute value so the cadence lines up."
         ),
     )
+    training_group.add_argument(
+        "--no-full-eval-first",
+        action="store_true",
+        help="Disable the default behavior of forcing the first evaluation in a cycle to be full",
+    )
 
 
     sampling_group = parser.add_argument_group("Sampling & reporting")
@@ -3651,6 +3656,7 @@ def train_model(
 
     full_eval_stride = max(0, int(full_eval_stride))
     full_eval_enabled = full_eval_stride > 0
+    force_full_eval = not bool(getattr(args, 'no_full_eval_first', False))
     show_think_columns = bool(
         full_eval_enabled and think_enabled and tokenizer.think_id is not None
     )
@@ -3869,9 +3875,12 @@ def train_model(
         preeval_wall_block = time.time()
         preeval_cpu_block = time.process_time()
         if step == 1 or step % eval_interval == 0 or step == steps:
-            full_eval_now = full_eval_enabled and (
-                full_eval_stride > 0 and total_steps % full_eval_stride == 0
-            )
+            if force_full_eval and step == 1:
+                full_eval_now = True
+            else:
+                full_eval_now = full_eval_enabled and (
+                    full_eval_stride > 0 and total_steps % full_eval_stride == 0
+                )
             eval_wall_block = time.time()
             eval_cpu_block = time.process_time()
             model.eval()
