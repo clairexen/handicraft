@@ -243,15 +243,6 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="If >0, detach gradients after this Transformer layer (1-based index).",
     )
     training_group.add_argument(
-        "--context-dropout-interval",
-        type=int,
-        default=1,
-        help=(
-            "Every N steps create pure-Transformer, no-XCTX, punctured-XCTX, random-think, no-attention, "
-            "and attention-punctured rows (0 disables)"
-        ),
-    )
-    training_group.add_argument(
         "--reward-relu",
         type=float,
         default=0.0,
@@ -3357,7 +3348,6 @@ def train_model(
     reset_prompt_queue: bool = False,
     *,
     reward_relu: bool = False,
-    context_dropout_interval: int = 1,
     cycle_wall_start: float,
     base_wall_seconds: float,
     show_time: bool = False,
@@ -3408,7 +3398,7 @@ def train_model(
     )
     show_train_details = bool(show_train_loss_details and full_eval_enabled)
     show_test_details = bool(show_test_loss_details and full_eval_enabled)
-    context_dropout_interval = max(0, int(context_dropout_interval))
+    context_dropout_interval = 1
     context_path_enabled = bool(model.context_channels)
     xctx_enabled = any(
         getattr(channel, "is_xctx", False) for channel in getattr(model, "context_channels", [])
@@ -3428,11 +3418,7 @@ def train_model(
         )
         xb, yb = batch_payload
         current_step_index = total_steps
-        context_dropout_active = (
-            context_path_enabled
-            and context_dropout_interval > 0
-            and current_step_index % context_dropout_interval == 0
-        )
+        context_dropout_active = context_path_enabled
         context_special_rows: set[int] = set()
         context_disabled_mask: torch.Tensor | None = None
         xctx_disabled_mask: torch.Tensor | None = None
@@ -3555,7 +3541,7 @@ def train_model(
                         bx, by = cached_batch
                         cached_batches[split].append((bx, by))
                     base_batches = cached_batches[split]
-                    split_metrics[split]["with_think"] = float(
+                    split_metrics[split]["target"] = float(
                         evaluate_split(
                             model,
                             dataset,
@@ -3574,26 +3560,8 @@ def train_model(
                     )
                     if not full_eval_now:
                         continue
-                    split_metrics[split]["with_think_special"] = float(
-                        evaluate_split(
-                            model,
-                            dataset,
-                            device,
-                            block_size,
-                            batch_size,
-                            split,
-                            eval_iters,
-                            disable_context=False,
-                            disable_xctx=False,
-                            disable_attention=False,
-                            think_settings=think_settings,
-                            undo_settings=undo_settings,
-                            batches=base_batches,
-                            use_special_rows=True,
-                        )
-                    )
                     noprev_batches = list(base_batches)
-                    split_metrics[split]["with_think_noprev"] = float(
+                    split_metrics[split]["noprev"] = float(
                         evaluate_split(
                             model,
                             dataset,
@@ -3818,12 +3786,12 @@ def train_model(
                     solved_count = 0
                 train_header = "train loss"
                 if show_train_details:
-                    train_header += " special noprev : plain normal noctx noatt none"
+                    train_header += " noprev : plain normal noctx noatt none"
                     if show_think_columns:
                         train_header += " : think 2x 3x"
                 test_header = "test loss"
                 if show_test_details:
-                    test_header += " special noprev : plain normal noctx noatt none"
+                    test_header += " noprev : plain normal noctx noatt none"
                     if show_think_columns:
                         test_header += " : think 2x 3x"
                 header_parts: List[str] = []
@@ -3847,14 +3815,10 @@ def train_model(
 
             def format_train_line() -> str:
                 if not show_train_details or not long_log_now:
-                    return format_metric("train", "with_think")
+                    return format_metric("train", "target")
                 primary_group = " ".join(
                     format_metric("train", key)
-                    for key in (
-                        "with_think",
-                        "with_think_special",
-                        "with_think_noprev",
-                    )
+                    for key in ("target", "noprev")
                 )
                 diag_vals = " ".join(
                     format_metric("train", key)
@@ -3871,14 +3835,10 @@ def train_model(
 
             def format_test_line() -> str:
                 if not show_test_details or not long_log_now:
-                    return format_metric("test", "with_think")
+                    return format_metric("test", "target")
                 primary_group = " ".join(
                     format_metric("test", key)
-                    for key in (
-                        "with_think",
-                        "with_think_special",
-                        "with_think_noprev",
-                    )
+                    for key in ("target", "noprev")
                 )
                 diag_vals = " ".join(
                     format_metric("test", key)
@@ -3916,8 +3876,8 @@ def train_model(
 
             record = {
                 "step": total_steps,
-                "train_loss": float(split_metrics["train"].get("with_think", 0.0)),
-                "test_loss": float(split_metrics["test"].get("with_think", 0.0)),
+                "train_loss": float(split_metrics["train"].get("target", 0.0)),
+                "test_loss": float(split_metrics["test"].get("target", 0.0)),
                 "train_wall_seconds": float(total_wall_seconds),
                 "unix_time": float(eval_now),
                 "train_cursor": int(dataset.positions.get("train", 0)),
@@ -3926,11 +3886,11 @@ def train_model(
             if full_eval_now:
                 record.update(
                     {
-                        "train_loss_special": float(
-                            split_metrics["train"].get("with_think_special", 0.0)
+                        "train_loss_target": float(
+                            split_metrics["train"].get("target", 0.0)
                         ),
                         "train_loss_noprev": float(
-                            split_metrics["train"].get("with_think_noprev", 0.0)
+                            split_metrics["train"].get("noprev", 0.0)
                         ),
                         "train_loss_plain": float(split_metrics["train"].get("plain", 0.0)),
                         "train_loss_normal": float(
@@ -3945,11 +3905,11 @@ def train_model(
                         "train_loss_none": float(
                             split_metrics["train"].get("none", 0.0)
                         ),
-                        "test_loss_special": float(
-                            split_metrics["test"].get("with_think_special", 0.0)
+                        "test_loss_target": float(
+                            split_metrics["test"].get("target", 0.0)
                         ),
                         "test_loss_noprev": float(
-                            split_metrics["test"].get("with_think_noprev", 0.0)
+                            split_metrics["test"].get("noprev", 0.0)
                         ),
                         "test_loss_plain": float(split_metrics["test"].get("plain", 0.0)),
                         "test_loss_normal": float(
@@ -4605,6 +4565,8 @@ import signal
 import traceback
 
 def grce_main(args: argparse.Namespace) -> int:
+    context_dropout_interval = 1
+
     def parse_layer_list(value: str, flag: str) -> list[int]:
         if not value:
             return []
@@ -5455,8 +5417,7 @@ def grce_main(args: argparse.Namespace) -> int:
                 prompt_tracker=prompt_tracker,
                 reset_prompt_queue=args.reset_prompt_each_cycle,
                 reward_relu=reward_scale,
-                context_dropout_interval=args.context_dropout_interval,
-                cycle_wall_start=cycle_wall,
+                                cycle_wall_start=cycle_wall,
                 base_wall_seconds=total_train_wall,
                 show_time=args.time,
                 underline_tokens=args.underline,
