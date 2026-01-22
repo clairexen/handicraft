@@ -12,7 +12,12 @@ import re
 import matplotlib.pyplot as plt
 
 
-LEGACY_TARGET_FIELDS = {}
+LEGACY_TARGET_FIELDS = {
+    "train_loss_target": "train",
+    "test_loss_target": "test",
+    "train_loss_noprev": "train_noprev",
+    "test_loss_noprev": "test_noprev",
+}
 
 LEGACY_NOTHINK_FIELDS = {
     "train_loss_nothink": "train_plain",
@@ -56,6 +61,8 @@ class LossRecord:
     steps: List[int]
     train: List[float]
     test: List[float]
+    train_noprev: Optional[List[float]] = None
+    test_noprev: Optional[List[float]] = None
     train_plain: Optional[List[float]] = None
     test_plain: Optional[List[float]] = None
     train_normal: Optional[List[float]] = None
@@ -107,8 +114,16 @@ def load_records(json_paths: Iterable[pathlib.Path]) -> List[LossRecord]:
             steps = list(range(1, len(data) + 1))
         else:
             steps = [int(val) for val in steps_series]
-        train = extract_series("train_loss") or []
-        test = extract_series("test_loss") or []
+        train_series = extract_series("train_loss_target")
+        if train_series is None:
+            train_series = extract_series("train_loss")
+        test_series = extract_series("test_loss_target")
+        if test_series is None:
+            test_series = extract_series("test_loss")
+        train = train_series or []
+        test = test_series or []
+        train_noprev = extract_series("train_loss_noprev")
+        test_noprev = extract_series("test_loss_noprev")
         train_ng = extract_series("train_loss_noctx")
         if train_ng is None:
             train_ng = extract_series("train_loss_nogrce")
@@ -137,6 +152,12 @@ def load_records(json_paths: Iterable[pathlib.Path]) -> List[LossRecord]:
                 steps=steps,
                 train=[float(v) for v in train],
                 test=[float(v) for v in test],
+                train_noprev=[float(v) for v in train_noprev]
+                if train_noprev
+                else None,
+                test_noprev=[float(v) for v in test_noprev]
+                if test_noprev
+                else None,
                 train_plain=[float(v) for v in train_plain] if train_plain else None,
                 test_plain=[float(v) for v in test_plain] if test_plain else None,
                 train_normal=[float(v) for v in train_normal] if train_normal else None,
@@ -174,6 +195,11 @@ def load_store(path: pathlib.Path) -> List[LossRecord]:
                 train=list(map(float, normalized_entry.get("train", [])))
                 if normalized_entry.get("train")
                 else [],
+                train_noprev=(
+                    list(map(float, normalized_entry.get("train_noprev", [])))
+                    if normalized_entry.get("train_noprev")
+                    else None
+                ),
                 train_plain=(
                     list(map(float, normalized_entry.get("train_plain", [])))
                     if normalized_entry.get("train_plain")
@@ -187,6 +213,11 @@ def load_store(path: pathlib.Path) -> List[LossRecord]:
                 test=list(map(float, normalized_entry.get("test", [])))
                 if normalized_entry.get("test")
                 else [],
+                test_noprev=(
+                    list(map(float, normalized_entry.get("test_noprev", [])))
+                    if normalized_entry.get("test_noprev")
+                    else None
+                ),
                 test_plain=(
                     list(map(float, normalized_entry.get("test_plain", [])))
                     if normalized_entry.get("test_plain")
@@ -291,6 +322,16 @@ def store_records(
             "steps": rec.steps,
             **({"train": rec.train} if include_train else {}),
             **({"test": rec.test} if include_test else {}),
+            **(
+                {"train_noprev": rec.train_noprev}
+                if include_train and rec.train_noprev is not None
+                else {}
+            ),
+            **(
+                {"test_noprev": rec.test_noprev}
+                if include_test and rec.test_noprev is not None
+                else {}
+            ),
             **(
                 {"train_noctx": rec.train_noctx}
                 if include_train and include_noctx and rec.train_noctx is not None
@@ -562,9 +603,15 @@ def main() -> None:
         rec.scaled_train = compute_scaled_series(rec.train, is_think=is_think)
         rec.scaled_train_plain = compute_scaled_series(rec.train_plain, is_think=is_think)
         rec.scaled_train_normal = compute_scaled_series(rec.train_normal, is_think=is_think)
+        rec.scaled_train_noprev = compute_scaled_series(
+            rec.train_noprev, is_think=is_think
+        )
         rec.scaled_test = compute_scaled_series(rec.test, is_think=is_think)
         rec.scaled_test_plain = compute_scaled_series(rec.test_plain, is_think=is_think)
         rec.scaled_test_normal = compute_scaled_series(rec.test_normal, is_think=is_think)
+        rec.scaled_test_noprev = compute_scaled_series(
+            rec.test_noprev, is_think=is_think
+        )
         rec.scaled_train_noctx = compute_scaled_series(rec.train_noctx, is_think=is_think)
         rec.scaled_test_noctx = compute_scaled_series(rec.test_noctx, is_think=is_think)
         rec.scaled_train_noatt = compute_scaled_series(rec.train_noatt, is_think=is_think)
