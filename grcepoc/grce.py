@@ -349,7 +349,7 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--undo",
         type=int,
         default=0,
-        help="Enable undo pairs with up to N random+undo sequences per block",
+        help="(Temporarily disabled)",
     )
     model_group.add_argument(
         "--tiny",
@@ -1895,8 +1895,8 @@ def augment_training_batch(
     forced_context_off = disable_context_rows or set()
     forced_think_rows = forced_think_rows or set()
     think_disabled_rows = disable_think_rows or set()
-    undo_enabled = undo is not None and undo.enabled
-    if not think_enabled and not undo_enabled:
+    undo_enabled = False
+    if not think_enabled:
         return inputs, targets, None, None, None
     B, block_size = inputs.shape
     device = inputs.device
@@ -1905,8 +1905,7 @@ def augment_training_batch(
     random_mask = None
     think_labels = None
     think_slot_mask = None
-    if undo_enabled:
-        random_mask = torch.zeros_like(inputs, dtype=torch.bool, device=device)
+    random_mask = None
     full_logits = None
     prev_mode = model.training
     need_logits = think_enabled or undo_enabled
@@ -1964,7 +1963,7 @@ def augment_training_batch(
                 elif row in think_row_set:
                     row_think_active = True
         max_insert_budget = block_size - 1
-        undo_cap = undo.max_pairs if undo_enabled else 0
+        undo_cap = 0
         remaining_budget = max_insert_budget
         undo_cap = min(undo_cap, remaining_budget // 2)
         undo_pairs = random.randint(0, undo_cap) if undo_cap > 0 else 0
@@ -4855,9 +4854,11 @@ def grce_main(args: argparse.Namespace) -> int:
         raise ValueError(
             "Prompt contains thinking tokens but --no-think was specified. Remove them or omit --no-think."
         )
-    if args.undo == 0 and UNDO_TOKEN in args.prompt:
+    if args.undo:
+        raise ValueError("--undo support temporarily removed/disabled")
+    if UNDO_TOKEN in args.prompt:
         raise ValueError(
-            "Prompt contains undo tokens but --undo is 0. Remove them or enable --undo."
+            "Prompt contains undo tokens but undo support is temporarily disabled. Remove them."
         )
     torch.manual_seed(42)
     random.seed(42)
