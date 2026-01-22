@@ -4419,13 +4419,20 @@ def parse_args() -> argparse.Namespace:
     )
     prompt_parser.set_defaults(command="prompts")
 
+    create_parser = subparsers.add_parser(
+        "create",
+        help="Create a new checkpoint with random weights and exit",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    create_parser.set_defaults(command="create")
+
     args = parser.parse_args()
     raw_eval_full = getattr(args, "eval_full", None)
     if args.command is None:
         parser.print_help()
         parser.exit(
             1,
-            "\nPlease specify a command (train, report, test, size, corpus, or prompts).\n",
+            "\nPlease specify a command (train, report, test, size, corpus, create, or prompts).\n",
         )
     if args.command == "corpus":
         has_corpus_action = bool(
@@ -4435,6 +4442,8 @@ def parse_args() -> argparse.Namespace:
         )
         if not has_corpus_action:
             parser.error("corpus command requires --init and/or --print-* options")
+    if args.command == "create" and args.pt:
+        parser.error("--pt cannot be combined with the create command")
     if args.tiny:
         if not flag_present("--block-size"):
             args.block_size = 8
@@ -4543,7 +4552,8 @@ def main() -> None:
         if args.import_model:
             raise ValueError("--pt cannot be combined with --import-model")
         skip_checkpoint_load = (
-            selected_action == "corpus" and getattr(args, "corpus_init", False)
+            (selected_action == "corpus" and getattr(args, "corpus_init", False))
+            or selected_action == "create"
         )
         if not skip_checkpoint_load:
             if not args.pt.exists():
@@ -4599,6 +4609,12 @@ def main() -> None:
         )
         train_cache_path = data_dir / f"{args.corpus}_tokens_train_{args.tokenizer_vocab}.pt"
         test_cache_path = data_dir / f"{args.corpus}_tokens_test_{args.tokenizer_vocab}.pt"
+        need_corpus_for_create = False
+        if selected_action == "create":
+            need_corpus_for_create = (
+                not train_cache_path.exists() or not test_cache_path.exists()
+            )
+        must_build_tokenizer = must_build_tokenizer or need_corpus_for_create
 
         if must_build_tokenizer:
             full_train_text = load_text_file(train_path)
@@ -4617,6 +4633,8 @@ def main() -> None:
 
         tokenizer_key = f"{args.corpus}_vocab_{args.tokenizer_vocab}"
         tokenizer_path = data_dir / f"{tokenizer_key}.json"
+        if selected_action == "create" and not tokenizer_path.exists():
+            must_build_tokenizer = True
         tokenizer_json = checkpoint_override_tokenizer_json
         if tokenizer_json is None:
             if tokenizer_path.exists():
@@ -4827,6 +4845,15 @@ def main() -> None:
             log_path = model_dir / f"{prefix}{model_tag}.log"
         print(color_text(f"Model: {model_path}", Colors.CYAN))
         print(color_text(f"Logfile: {log_path}", Colors.BLUE))
+        requires_checkpoint = selected_action in {"train", "report", "test"}
+        if selected_action == "create" and model_path.exists():
+            raise FileExistsError(
+                f"Checkpoint {model_path} already exists; delete it or pick a new --model directory."
+            )
+        if requires_checkpoint and not model_path.exists():
+            raise FileNotFoundError(
+                f"Checkpoint {model_path} not found; run 'create' first to initialize it."
+            )
 
         if selected_action == "prompts":
             target_path = Path(args.target) if args.target else model_path
@@ -5137,6 +5164,25 @@ def main() -> None:
                 color_text(
                     f"[import] total steps: {total_steps}; time spent: wall={import_wall:.2f}s cpu={import_cpu:.2f}s; writing model: wall={write_wall:.2f}s cpu={write_cpu:.2f}s",
                     Colors.CYAN,
+                )
+            )
+            return
+        if selected_action == "create":
+            checkpoint_payload = {
+                "model": model.state_dict(),
+                "dataset": dataset.state_dict(),
+                "total_steps": 0,
+                "loss_history": [],
+                "config": asdict(config),
+                "train_wall_seconds": 0.0,
+                "prompt_state": prompt_tracker.serialize(),
+                "tokenizer_json": tokenizer_json,
+            }
+            torch.save(checkpoint_payload, model_path)
+            print(
+                color_text(
+                    f"Created new checkpoint at {model_path}; run 'train' to begin training.",
+                    Colors.GREEN,
                 )
             )
             return
