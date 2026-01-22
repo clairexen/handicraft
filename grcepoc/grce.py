@@ -3621,6 +3621,7 @@ def train_model(
     show_test_loss_details: bool = True,
     long_loss_log: bool = False,
     full_eval_stride: int = 1,
+    force_full_eval_first: bool = True,
 ) -> Tuple[int, List[Dict[str, float]], float, float, float, float]:
     optim = torch.optim.AdamW(model.parameters(), lr=3e-4)
     total_steps = start_step
@@ -3656,7 +3657,7 @@ def train_model(
 
     full_eval_stride = max(0, int(full_eval_stride))
     full_eval_enabled = full_eval_stride > 0
-    force_full_eval = not bool(getattr(args, 'no_full_eval_first', False))
+    force_full_eval = bool(force_full_eval_first)
     show_think_columns = bool(
         full_eval_enabled and think_enabled and tokenizer.think_id is not None
     )
@@ -3875,12 +3876,11 @@ def train_model(
         preeval_wall_block = time.time()
         preeval_cpu_block = time.process_time()
         if step == 1 or step % eval_interval == 0 or step == steps:
+            full_eval_now = full_eval_enabled and (
+                full_eval_stride > 0 and total_steps % full_eval_stride == 0
+            )
             if force_full_eval and step == 1:
                 full_eval_now = True
-            else:
-                full_eval_now = full_eval_enabled and (
-                    full_eval_stride > 0 and total_steps % full_eval_stride == 0
-                )
             eval_wall_block = time.time()
             eval_cpu_block = time.process_time()
             model.eval()
@@ -5303,6 +5303,7 @@ def grce_main(args: argparse.Namespace) -> int:
                 print_row_table=getattr(args, "print_row_table", False),
             )
             return
+            return
         model_tag = build_model_tag(config)
         if args.think > 0:
             model_tag += "_think"
@@ -5819,6 +5820,7 @@ def grce_main(args: argparse.Namespace) -> int:
                 show_test_loss_details=not args.no_test_loss_details,
                 long_loss_log=args.long_loss_log,
                 full_eval_stride=args.eval_full,
+                force_full_eval_first=not args.no_full_eval_first,
             )
             loss_history.extend(updates)
 
