@@ -4235,6 +4235,9 @@ def train_model(
             )
             colored_sample = prefix_text + completion_text
             long_log_now = bool(long_log_force or full_eval_now)
+            sample_prefix = ""
+            if not full_eval_now and not long_log_force:
+                sample_prefix = color_text(f"{sampling_strategy}:", Colors.YELLOW) + " "
             if not printed_header:
                 if prompt_tracker is not None:
                     random_only_count, solved_count, total_prompts = prompt_tracker.counts()
@@ -4259,7 +4262,7 @@ def train_model(
                 header_parts.append(color_text(train_header, Colors.MAGENTA))
                 header_parts.append(color_text(test_header, Colors.GREEN))
                 header_line = " | ".join(header_parts) + color_text(
-                    f" | sample ({random_only_count}/{solved_count}/{total_prompts})",
+                    f" | sample/argmax ({random_only_count}/{solved_count}/{total_prompts})",
                     Colors.YELLOW,
                 )
                 print(header_line)
@@ -4328,7 +4331,7 @@ def train_model(
             line_parts.append(color_text(f"{total_steps}", Colors.CYAN))
             line_parts.append(color_text(train_values, Colors.MAGENTA))
             line_parts.append(color_text(test_values, Colors.GREEN))
-            line = " | ".join(line_parts) + " | " + colored_sample
+            line = " | ".join(line_parts) + " | " + sample_prefix + colored_sample
             print(line)
             eval_now = time.time()
             cycle_wall_elapsed = max(0.0, eval_now - cycle_wall_start)
