@@ -5370,31 +5370,44 @@ def main() -> None:
                 log_file.flush()
             if ansi_file is not None:
                 ansi_file.flush()
-            print(
-                color_text(
-                    f"[cycle {cycle}] train: wall={pure_train_wall:.2f}s cpu={pure_train_cpu:.2f}s; "
-                    f"eval: wall={eval_wall:.2f}s cpu={eval_cpu:.2f}s; "
-                    f"pre-eval ratio: wall={preeval_wall_ratio:.2f} cpu={preeval_cpu_ratio:.2f}; model updated.",
-                    Colors.CYAN,
-                )
+            cycle_part = color_text(f"[cycle {cycle}]", Colors.CYAN)
+            train_part = color_text(
+                f" train: wall={pure_train_wall:.2f}s cpu={pure_train_cpu:.2f}s;",
+                Colors.MAGENTA,
             )
+            eval_part = color_text(
+                f" eval: wall={eval_wall:.2f}s cpu={eval_cpu:.2f}s;",
+                Colors.GREEN,
+            )
+            ratio_part = color_text(
+                f" train-pre-eval/train-total: wall={preeval_wall_ratio:.2f} cpu={preeval_cpu_ratio:.2f};",
+                Colors.CYAN,
+            )
+            updated_part = color_text(" model updated.", Colors.YELLOW)
+            print(cycle_part + train_part + eval_part + ratio_part + updated_part)
             def ratio_text(num: float, denom: float) -> str:
                 if denom <= 0:
                     if num <= 0:
                         return "0.0"
                     return "inf"
-                return f"{num / denom:.1f}"
+                return f"{num / denom:.2f}"
 
             wall_ratio = ratio_text(acc_train_wall, acc_eval_wall)
             cpu_ratio = ratio_text(acc_train_cpu, acc_eval_cpu)
-            print(
-                color_text(
-                    f"[cumulative] train: wall={acc_train_wall:.2f}s cpu={acc_train_cpu:.2f}s; "
-                    f"eval: wall={acc_eval_wall:.2f}s cpu={acc_eval_cpu:.2f}s; "
-                    f"train/eval: wall={wall_ratio} cpu={cpu_ratio}",
-                    Colors.CYAN,
-                )
+            cumulative_part = color_text("[cumulative]", Colors.CYAN)
+            cum_train_part = color_text(
+                f" train: wall={acc_train_wall:.2f}s cpu={acc_train_cpu:.2f}s;",
+                Colors.MAGENTA,
             )
+            cum_eval_part = color_text(
+                f" eval: wall={acc_eval_wall:.2f}s cpu={acc_eval_cpu:.2f}s;",
+                Colors.GREEN,
+            )
+            ratio_text = color_text(
+                f" train/eval: wall={wall_ratio} cpu={cpu_ratio}",
+                Colors.CYAN,
+            )
+            print(cumulative_part + cum_train_part + cum_eval_part + ratio_text)
 
     except KeyboardInterrupt:
         if args.debug_interrupt:
