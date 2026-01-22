@@ -56,6 +56,53 @@ class ModelConfig:
 MODEL_CONFIG_TEMPLATE = ModelConfig()
 
 
+def compute_row_type_counts(batch_size: int) -> dict[str, int]:
+    """Compute the configured row-type counts for a batch."""
+    total = max(0, int(batch_size))
+    if total == 0:
+        return {
+            "n_plain": 0,
+            "n_noxctx": 0,
+            "n_puxctx": 0,
+            "n_noattn": 0,
+            "n_puattn": 0,
+            "n_rdthink": 0,
+            "n_trthink": 0,
+            "n_normal": 0,
+            "n_encode": 0,
+            "n_think": 0,
+            "n_think2x": 0,
+            "n_think3x": 0,
+            "n_total": 0,
+        }
+
+    counts: dict[str, int] = {
+        "n_plain": 0,
+        "n_noxctx": 1,
+        "n_puxctx": 1,
+        "n_noattn": 1,
+        "n_puattn": 1,
+        "n_rdthink": 1,
+        "n_encode": 1,
+        "n_think": 1,
+        "n_think2x": 1,
+        "n_think3x": 1,
+    }
+    think_eval_total = counts["n_think"] + counts["n_think2x"] + counts["n_think3x"]
+    residual = max(0, total - 8)
+    counts["n_trthink"] = max(1, residual // 4 - think_eval_total)
+    counts["n_plain"] = max(1, residual // 2 - (counts["n_trthink"] + think_eval_total))
+    fixed_without_normal = sum(counts.values())
+    counts["n_normal"] = max(1, total - fixed_without_normal)
+    counts["n_total"] = total
+    row_sum = sum(value for key, value in counts.items() if key.startswith("n_") and key != "n_total")
+    if row_sum > total:
+        raise ValueError(
+            f"Row-type composition overflows batch size: sum={row_sum} exceeds n_total={total}"
+        )
+    return counts
+
+
 # -----------------------------------------------------------------------------
 # GRCE CLI Argument Parser
 # -----------------------------------------------------------------------------
@@ -565,9 +612,9 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         parser.error("--pt cannot be combined with the create command")
     if args.tiny:
         if not flag_present("--block-size"):
-            args.block_size = 8
+            args.block_size = 6
         if not flag_present("--batch-size"):
-            args.batch_size = 8
+            args.batch_size = 12
         if not flag_present("--n-layer"):
             args.n_layer = 3
         if not flag_present("--n-head"):
@@ -577,7 +624,9 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         if not flag_present("--n-grce"):
             args.n_grce = 4
         if not flag_present("--n-xctx"):
-            args.n_xctx = 12
+            args.n_xctx = 9
+        if not flag_present("--tokenizer-vocab"):
+            args.tokenizer_vocab = 200
         if not flag_present("--steps"):
             args.steps = 2
         if not flag_present("--cycles"):
@@ -2330,13 +2379,39 @@ def _dominant_estimates(config: ModelConfig) -> list[tuple[str, int, str]]:
     return estimates
 
 
+def _print_batch_geometry(row_counts: dict[str, int]) -> None:
+    order = [
+        "n_plain",
+        "n_noxctx",
+        "n_puxctx",
+        "n_noattn",
+        "n_puattn",
+        "n_rdthink",
+        "n_trthink",
+        "n_normal",
+        "n_encode",
+        "n_think",
+        "n_think2x",
+        "n_think3x",
+        "n_total",
+    ]
+    print(color_text("Batch geometry:", Colors.CYAN, bold=True))
+    for key in order:
+        value = row_counts.get(key, 0)
+        print(f"  {key:<12} {value:>10}")
+
+
 def describe_model_size(
     config: ModelConfig,
     block_size: int,
+    batch_size: int,
     *,
     check: bool = False,
     estimate: bool = False,
 ) -> None:
+    row_counts = compute_row_type_counts(batch_size)
+    _print_batch_geometry(row_counts)
+    print()
     geometry = _build_geometry(config, block_size)
     sections = _append_summary_section(_expected_sections(config, block_size))
     _print_geometry(geometry)
@@ -4954,6 +5029,7 @@ def grce_main(args: argparse.Namespace) -> int:
             describe_model_size(
                 config,
                 args.block_size,
+                args.batch_size,
                 check=getattr(args, "check", False),
                 estimate=getattr(args, "estimate", False),
             )

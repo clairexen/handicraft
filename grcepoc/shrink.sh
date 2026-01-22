@@ -19,5 +19,6 @@ rm -vf data/simple{r,st}wiki_tokens_{test,train}_2000.pt
 # rm -vf data/simple{r,st}wiki_vocab_2000.json
 # python grce.py corpus --init-tokenizer
 # cp -v data/simple{r,st}wiki_vocab_2000.json
+# python grce.py --tiny corpus --init-tokenizer
 
 exit 0

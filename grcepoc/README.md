@@ -54,18 +54,18 @@ Training and evaluation revolve around *row types*—deterministic ways of mutat
 
 Let `n_total` be the batch size. Each batch is a fixed mixture of row types:
 
-- `n_plain := 1`
+- `n_plain := max(1, (n_total - 8) // 2 - (n_trthink + n_think + n_think2x + n_think3x)))`
 - `n_noxctx := 1`
 - `n_puxctx := 1`
 - `n_noattn := 1`
 - `n_puattn := 1`
 - `n_rdthink := 1`
-- `n_trthink := floor((n_total - n_plain - n_noxctx - n_puxctx - n_noattn - n_puattn - n_rdthink)/2)` (half of the remaining rows become thinking rows)
-- `n_normal := n_total - (n_plain + n_noxctx + n_puxctx + n_noattn + n_puattn + n_rdthink + n_trthink)`
-- `n_encode := 0`
-- `n_think := 0`
-- `n_think2x := 0`
-- `n_think3x := 0`
+- `n_trthink := max(1, (n_total - 8) // 4 - (n_think + n_think2x + n_think3x))`
+- `n_normal := max(1, n_total - (n_plain + n_trthink)`
+- `n_encode := 1`
+- `n_think := 1`
+- `n_think2x := 1`
+- `n_think3x := 1`
 
 That means every batch carries exactly one copy of each structural ablation (pure transformer, no-XCTX, punctured-XCTX, no-attention, punctured-attention, random-think) plus a healthy mix of `normal` and `trthink` rows. The ordering varies per batch because we randomly assign row indices when building the masks, but the counts above remain fixed.
 
