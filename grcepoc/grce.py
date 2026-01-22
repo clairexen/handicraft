@@ -16,8 +16,10 @@ import pathlib
 import random
 import re
 import shlex
+import signal
 import sys
 import time
+import traceback
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from typing import Dict, List, Tuple, Sequence
@@ -4280,6 +4282,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Always include the detailed loss columns in the live log even when data is missing",
     )
+    logging_group.add_argument(
+        "--timeout",
+        type=float,
+        default=0.0,
+        help="Exit after N seconds using a timer (0 disables the timeout)",
+    )
 
     import_group = parser.add_argument_group("Checkpoint import/export")
     import_group.add_argument(
@@ -4560,6 +4568,37 @@ def main() -> None:
         )
     torch.manual_seed(42)
     random.seed(42)
+
+    class TimeoutAlarm(Exception):
+        pass
+
+    timeout_seconds = max(0.0, float(getattr(args, "timeout", 0.0)))
+    timeout_method: str | None = None
+    prev_sigalrm_handler = None
+
+    def cancel_timeout() -> None:
+        nonlocal timeout_method, prev_sigalrm_handler
+        if timeout_method == "setitimer":
+            signal.setitimer(signal.ITIMER_REAL, 0.0)
+        elif timeout_method == "alarm":
+            signal.alarm(0)
+        if timeout_method is not None:
+            handler = prev_sigalrm_handler or signal.SIG_DFL
+            signal.signal(signal.SIGALRM, handler)
+        timeout_method = None
+        prev_sigalrm_handler = None
+
+    if timeout_seconds > 0:
+        def handle_timeout(signum: int, frame: object) -> None:
+            raise TimeoutAlarm()
+
+        prev_sigalrm_handler = signal.signal(signal.SIGALRM, handle_timeout)
+        try:
+            signal.setitimer(signal.ITIMER_REAL, timeout_seconds)
+            timeout_method = "setitimer"
+        except AttributeError:
+            timeout_method = "alarm"
+            signal.alarm(max(1, int(math.ceil(timeout_seconds))))
 
     selected_action = args.command
 
@@ -5441,9 +5480,15 @@ def main() -> None:
     except KeyboardInterrupt:
         if args.debug_interrupt:
             raise
-        print(color_text("Interrupted by user; exiting cleanly.", Colors.MAGENTA))
+        traceback.print_exc()
+        print(color_text("Interrupted by user; exiting cleanly.", Colors.RED, bold=True))
+    except TimeoutAlarm:
+        traceback.print_exc()
+        print(color_text("Timeout; exiting cleanly.", Colors.RED, bold=True))
 
     finally:
+        if timeout_method is not None:
+            cancel_timeout()
         sys.stdout.flush()
         sys.stderr.flush()
         sys.stdout = orig_stdout
