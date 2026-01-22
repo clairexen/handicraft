@@ -110,7 +110,7 @@ case "${1:-}" in
         rsync_pull
         ;;
     monitor)
-        tail -f model_pod*/*.ansi
+        tail -F model_pod*/*.ansi
         ;;
     loop)
         while true; do
