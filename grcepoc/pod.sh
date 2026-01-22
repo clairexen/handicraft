@@ -108,8 +108,23 @@ case "${1:-}" in
     pull)
         rsync_pull
         ;;
+    monitor)
+        tail -f model_pod*/*.ansi
+        ;;
+    loop)
+        while true; do
+		echo
+		echo "----------------------------"
+		date
+		echo "----------------------------"
+		for pod_dir in model_pod[0-9]*; do
+			echo; ( set -ex; bash pod.sh "${pod_dir#model_pod}" pull; )
+		done
+		echo; ( set -ex; sleep 600; )
+	done
+        ;;
     *)
-        echo "Usage: bash pod.sh [CFG] {init|go|update|put|push|pull|shell}" >&2
+        echo "Usage: bash pod.sh [CFG] {go|init|shell|update|put|push|pull|monitor|loop}" >&2
         exit 1
         ;;
 esac
