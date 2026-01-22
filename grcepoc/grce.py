@@ -5118,7 +5118,7 @@ def main() -> None:
                         print(
                             "\n"
                             + color_text(
-                                f"Argmax-satisfied prompts ({len(solved_argmax)}/{total_prompts}):",
+                                f"Argmax-satisfied prompts ({len(solved_argmax)}/{prompt_total}):",
                                 Colors.GREEN,
                                 bold=True,
                             )
