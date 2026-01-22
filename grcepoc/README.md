@@ -48,7 +48,7 @@ Training and evaluation revolve around *row types*—deterministic ways of mutat
 - **`noattn` / `puattn`** – shut attention off entirely (`noattn`) or mask a single timestep’s ability to transmit forward (`puattn`) so the recurrent channels have to carry the load.
 - **`rdthink`** – the random-think row that litters the sequence with `<think>` tokens even when the base model would not have inserted them, forcing it to handle arbitrary reasoning detours.
 - **`trthink`** – the family of thinking rows scheduled every batch. These rows draw repeat/target/tail budgets, insert `<think>` tokens according to those budgets, and label each inserted planner with its target token.
-- **`think` / `think2x` / `think3x`** – evaluation-only passes that clamp the reasoning strategy: `think` inserts `<think>` exactly where the model predicted it; `think2x`/`think3x` force one or two `<think>` tokens per base token, only scoring the final planner in each chain.
+- **`think` / `think2x` / `think3x`** – `think` inserts `<think>` exactly where the model predicted it (used during eval); `think2x`/`think3x` force one or two `<think>` tokens per base token, only scoring the final planner in each chain, and we keep exactly one row of each style in every training batch so the optimizer practices the deterministic reasoning cadence as well.
 
 ### How these row types shape a training batch
 
@@ -64,8 +64,8 @@ Let `n_total` be the batch size. Each batch is a fixed mixture of row types:
 - `n_normal := max(1, n_total - (n_plain + n_trthink + n_noxctx + n_puxctx + n_noattn + n_puattn + n_rdthink + n_encode + n_think + n_think2x + n_think3x))`
 - `n_encode := 0`
 - `n_think := 0`
-- `n_think2x := 0`
-- `n_think3x := 0`
+- `n_think2x := 1`
+- `n_think3x := 1`
 
 That means every batch carries exactly one copy of each structural ablation (pure transformer, no-XCTX, punctured-XCTX, no-attention, punctured-attention, random-think) plus a healthy mix of `normal` and `trthink` rows. The ordering varies per batch because we randomly assign row indices when building the masks, but the counts above remain fixed.
 

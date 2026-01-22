@@ -87,8 +87,8 @@ def compute_row_type_counts(batch_size: int) -> dict[str, int]:
         "n_normal": 0,
         "n_encode": 0,
         "n_think": 0,
-        "n_think2x": 0,
-        "n_think3x": 0,
+        "n_think2x": 1,
+        "n_think3x": 1,
     }
     think_eval_total = counts["n_think"] + counts["n_think2x"] + counts["n_think3x"]
     residual = max(0, total - 8)
@@ -130,16 +130,15 @@ def build_row_type_template(
     allocate("puattn", True)
     allocate("rdthink", think_enabled)
     allocate("trthink", think_enabled)
-    # evaluation-only rows; skip during training even if counts are non-zero
-    # (they will be absorbed into the normal remainder)
-    remaining = batch_size - len(template)
-    if remaining < 0:
+    allocate("think2x", think_enabled)
+    allocate("think3x", think_enabled)
+    allocate("encode", False)
+    normal_count = max(0, int(row_counts.get("n_normal", 0)))
+    template.extend(["normal"] * normal_count)
+    if len(template) > batch_size:
         raise ValueError(
             f"Row-type template exceeded batch size: built {len(template)} entries for n_total={batch_size}"
         )
-    expected_normal = max(0, int(row_counts.get("n_normal", 0)))
-    normal_slots = remaining if remaining != expected_normal else expected_normal
-    template.extend(["normal"] * normal_slots)
     if len(template) < batch_size:
         template.extend(["normal"] * (batch_size - len(template)))
     return template
@@ -202,7 +201,7 @@ def build_row_type_masks(
         elif row_type == "rdthink" and think_enabled:
             forced_think_rows.add(idx)
             context_special_rows.add(idx)
-        if think_enabled and row_type not in {"trthink", "rdthink"}:
+        if think_enabled and row_type not in {"trthink", "rdthink", "think2x", "think3x"}:
             think_disabled_rows.add(idx)
 
     if context_disabled_mask is not None and not context_disabled_mask.any():
@@ -1883,6 +1882,7 @@ def augment_training_batch(
     disable_think_rows: set[int] | None = None,
     forced_think_rows: set[int] | None = None,
     initial_context_raw: list[torch.Tensor] | None = None,
+    row_types: Sequence[str] | None = None,
 ) -> tuple[
     torch.Tensor,
     torch.Tensor,
@@ -1926,10 +1926,9 @@ def augment_training_batch(
         think_slot_mask = torch.zeros_like(inputs, dtype=torch.bool, device=device)
         if full_logits is not None and think is not None and think.token_id is not None:
             think_scores = full_logits[..., think.token_id]
-    seq_think_quota = 0
     think_row_set: set[int] = set()
     special_think_rows: set[int] = set(forced_think_rows)
-    if think_enabled and think is not None:
+    if row_types is None and think_enabled and think is not None:
         seq_think_quota = max(0, int(think.max_steps))
         if seq_think_quota > 0:
             eligible_rows = [
@@ -1947,14 +1946,23 @@ def augment_training_batch(
         u = random.random()
         return int((u * u * block_size) / 4)
 
+    think_row_types = {"trthink", "rdthink", "think2x", "think3x"}
     for row in range(B):
+        row_type = None
+        if row_types is not None and row < len(row_types):
+            row_type = row_types[row]
         row_is_special = row in special_think_rows
         row_think_active = False
         if think_enabled and think is not None and think.token_id is not None:
-            if row_is_special:
-                row_think_active = True
-            elif row in think_row_set:
-                row_think_active = True
+            if row_type is not None:
+                row_think_active = row_type in think_row_types
+                if row_type == "rdthink":
+                    row_is_special = True
+            else:
+                if row_is_special:
+                    row_think_active = True
+                elif row in think_row_set:
+                    row_think_active = True
         max_insert_budget = block_size - 1
         undo_cap = undo.max_pairs if undo_enabled else 0
         remaining_budget = max_insert_budget
@@ -2011,7 +2019,34 @@ def augment_training_batch(
 
         think_token_val = int(think.token_id) if think is not None and think.token_id is not None else None
         if row_think_active and think_token_val is not None:
-            if row_is_special:
+            if row_type == "think2x":
+                expanded: list[dict] = []
+                for entry in seq_entries:
+                    expanded.append(entry)
+                    expanded.append(
+                        {
+                            "token": think_token_val,
+                            "tag": "think_forced",
+                            "base_index": entry.get("base_index"),
+                        }
+                    )
+                seq_entries = expanded
+                truncate_entries()
+            elif row_type == "think3x":
+                expanded = []
+                for entry in seq_entries:
+                    expanded.append(entry)
+                    for _ in range(2):
+                        expanded.append(
+                            {
+                                "token": think_token_val,
+                                "tag": "think_forced",
+                                "base_index": entry.get("base_index"),
+                            }
+                        )
+                seq_entries = expanded
+                truncate_entries()
+            elif row_is_special:
                 max_k = max(0, (3 * block_size) // 4)
                 k_val = random.randint(0, max_k)
                 prob = k_val / max(1, block_size)
@@ -3658,6 +3693,7 @@ def train_model(
             disable_think_rows=think_disabled_rows,
             forced_think_rows=forced_think_rows,
             initial_context_raw=None,
+            row_types=row_types,
         )
         logits, hidden_states, activation_store = model.forward_autoreg(
             xb,
