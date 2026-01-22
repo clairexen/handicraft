@@ -5511,17 +5511,28 @@ def grce_main(args: argparse.Namespace) -> int:
                             )
                         )
             return
-        temp_model = GRCEGPT(config)
-        non_emb_params = sum(
-            p.numel()
-            for name, p in temp_model.named_parameters()
-            if p.requires_grad and "tok_emb" not in name and "pos_emb" not in name
+        sections = _append_summary_section(
+            _expected_sections(config, config.block_size)
         )
-        print(f"Trainable model params (excl. embeddings): {non_emb_params:,}")
-        tok_vecs = temp_model.core.tok_emb.num_embeddings
-        pos_vecs = temp_model.core.pos_emb.num_embeddings
+        summary_items: list[dict] | None = None
+        for key, _title, items in sections:
+            if key == "summary":
+                summary_items = items
+                break
+        if summary_items is None:
+            summary_items = []
+        summary_counts = {entry["label"]: entry["count"] for entry in summary_items}
+        total_params = summary_counts.get("total", 0)
+        embedding_params = summary_counts.get("global", 0)
+        non_emb_params = total_params - embedding_params
+        print(
+            f"Trainable model params: {total_params:,}; "
+            f"excl. embeddings: {non_emb_params:,}"
+        )
+        tok_vecs = config.vocab_size
+        pos_vecs = config.block_size
         emb_vectors = tok_vecs + pos_vecs
-        emb_params = temp_model.core.tok_emb.weight.numel() + temp_model.core.pos_emb.weight.numel()
+        emb_params = embedding_params
         print(
             f"Learned embedding vectors: {emb_vectors} "
             f"(token={tok_vecs}, position={pos_vecs}); params={emb_params:,}"
