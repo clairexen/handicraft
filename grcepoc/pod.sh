@@ -26,6 +26,16 @@ if [[ $LINE_INDEX -lt 0 || $LINE_INDEX -ge ${#SSH_LINES[@]} ]]; then
     exit 1
 fi
 
+if [[ "${SSH_LINES[$LINE_INDEX]}" = "true" ]]; then
+    echo "SSH config line $((LINE_INDEX + 1)) in $SSH_FILE is set to 'true'" >&2
+    exit 0
+fi
+
+if [[ "${SSH_LINES[$LINE_INDEX]}" = "false" ]]; then
+    echo "SSH config line $((LINE_INDEX + 1)) in $SSH_FILE is set to 'false'" >&2
+    exit 1
+fi
+
 read -r -a SSH_ARGS <<< "${SSH_LINES[$LINE_INDEX]}"
 if [[ "${#SSH_ARGS[@]}" -lt 2 ]]; then
     echo "Invalid SSH config line $((LINE_INDEX + 1)) in $SSH_FILE" >&2
