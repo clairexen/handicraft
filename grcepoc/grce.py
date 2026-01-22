@@ -2793,12 +2793,14 @@ def train_model(
     boundary_blocklist: Sequence[int] | None = None,
     show_train_loss_details: bool = False,
     show_test_loss_details: bool = True,
+    long_loss_log: bool = False,
     full_eval_stride: int = 1,
 ) -> Tuple[int, List[Dict[str, float]], float, float, float, float]:
     optim = torch.optim.AdamW(model.parameters(), lr=3e-4)
     total_steps = start_step
     history_updates: List[Dict[str, float]] = []
     printed_header = False
+    long_log_force = bool(long_loss_log)
     think_enabled = think_settings is not None and think_settings.enabled
     undo_enabled = undo_settings is not None and undo_settings.enabled
     think_token_id = active_think_token_id(think_settings)
@@ -3218,6 +3220,7 @@ def train_model(
                 context_prefix=prompt_ids,
             )
             colored_sample = prefix_text + completion_text
+            long_log_now = bool(long_log_force or full_eval_now)
             if not printed_header:
                 if prompt_tracker is not None:
                     random_only_count, solved_count, total_prompts = prompt_tracker.counts()
@@ -3255,7 +3258,7 @@ def train_model(
                 return f"{value:.2f}"
 
             def format_train_line() -> str:
-                if not show_train_details:
+                if not show_train_details or not long_log_now:
                     return format_metric("train", "with_think")
                 primary_group = " ".join(
                     format_metric("train", key)
@@ -3270,7 +3273,7 @@ def train_model(
                     for key in ("plain", "plain_noctx", "plain_noatt", "plain_none")
                 )
                 parts = [primary_group, diag_vals]
-                if show_think_columns:
+                if show_think_columns and long_log_now:
                     think_vals = " ".join(
                         format_metric("train", key)
                         for key in ("think", "think2x", "think3x")
@@ -3279,7 +3282,7 @@ def train_model(
                 return " : ".join(parts)
 
             def format_test_line() -> str:
-                if not show_test_details:
+                if not show_test_details or not long_log_now:
                     return format_metric("test", "with_think")
                 primary_group = " ".join(
                     format_metric("test", key)
@@ -3294,7 +3297,7 @@ def train_model(
                     for key in ("plain", "plain_noctx", "plain_noatt", "plain_none")
                 )
                 parts = [primary_group, diag_vals]
-                if show_think_columns:
+                if show_think_columns and long_log_now:
                     think_vals = " ".join(
                         format_metric("test", key)
                         for key in ("think", "think2x", "think3x")
@@ -4271,6 +4274,11 @@ def parse_args() -> argparse.Namespace:
         "--no-test-loss-details",
         action="store_true",
         help="Collapse the test loss group down to a single column in the live log",
+    )
+    logging_group.add_argument(
+        "--long-loss-log",
+        action="store_true",
+        help="Always include the detailed loss columns in the live log even when data is missing",
     )
 
     import_group = parser.add_argument_group("Checkpoint import/export")
@@ -5352,6 +5360,7 @@ def main() -> None:
                 boundary_blocklist=boundary_blocklist,
                 show_train_loss_details=args.train_loss_details,
                 show_test_loss_details=not args.no_test_loss_details,
+                long_loss_log=args.long_loss_log,
                 full_eval_stride=args.eval_full,
             )
             loss_history.extend(updates)
