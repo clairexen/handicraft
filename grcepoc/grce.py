@@ -4018,9 +4018,14 @@ def parse_range_arg(value: str) -> tuple[int, int]:
         raise ValueError(f"Range end {end} is smaller than start {start}.")
     return start, end
 
-def parse_args() -> argparse.Namespace:
+def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     defaults = MODEL_CONFIG_TEMPLATE
-    raw_cli_args = sys.argv[1:]
+    if argv is None:
+        raw_cli_args = sys.argv[1:]
+    elif argv is sys.argv:
+        raw_cli_args = list(argv[1:])
+    else:
+        raw_cli_args = list(argv)
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -4538,8 +4543,7 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def main() -> None:
-    args = parse_args()
+def grce_main(args: argparse.Namespace) -> int:
     def parse_layer_list(value: str, flag: str) -> list[int]:
         if not value:
             return []
@@ -5498,6 +5502,9 @@ def main() -> None:
         if ansi_file is not None:
             ansi_file.close()
 
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    cli_args = grce_cli_args(sys.argv)
+    sys.exit(grce_main(cli_args))
