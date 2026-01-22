@@ -63,7 +63,7 @@ Thinking about the stack from a geometric point of view helps explain why the re
 
 ## Think tokens
 
-`--think N` means “activate thinking on exactly `N` sequences per batch” in training. The training loop first evaluates the untouched batch to collect logits, then chooses the first `N` eligible rows (plus one extra when context dropout fires). For each chosen row we sample three non-negative integers `R`, `T`, and `H` by drawing `u ~ U[0,1)`, squaring it, multiplying by `block_size/4`, and flooring. These act as simple compute budgets:
+Thinking is enabled by default: the training loop evaluates the untouched batch to collect logits, then automatically schedules a fixed number of thinking rows (roughly half of the non-special sequences in each batch). The count depends on `batch_size`, whether GRCE/XCTX are active, and the reserved dropout rows. Pass `--no-think` to disable the workflow entirely. For each chosen row we sample three non-negative integers `R`, `T`, and `H` by drawing `u ~ U[0,1)`, squaring it, multiplying by `block_size/4`, and flooring. These act as simple compute budgets:
 
 1. **Repeat phase (`R`).** After every base token we insert `R` `<think>` tokens, truncating any overflow. When `R>0` this dramatically shrinks the effective context and forces the model to reuse the same slot multiple times.
 2. **Targeted inserts (`T`).** We look at the logits we saved earlier and insert `T` more `<think>` tokens, sampling positions proportionally to their probability of emitting `<think>`. This gives the model practice placing thought where it already “wants” it.
@@ -108,7 +108,7 @@ When you picture the network this way, debugging becomes simpler: norm spikes me
 Call `grce.py --help` for the full CLI.
 
 Key switches:
-- `--think N` enables the above thinking-token workflow (set `--no-think` to keep sampling clean while still training with thinking tokens). Think tokens (and undo tokens) always live in the tokenizer/embedding space, so you can import/export checkpoints between think/non-think runs without remapping vocabularies. One row per batch is automatically left in “plain” mode so the model keeps a steady diet of non-thinking updates.
+- `--no-think` disables the thinking-token workflow entirely. Without this flag the number of thinking rows is computed automatically from the batch geometry, and one row per batch is always left in “plain” mode so the model keeps a steady diet of non-thinking updates. Use `--no-think-output` if you only want to suppress `<think>` tokens during sampling without disabling the underlying training behavior. Think tokens (and undo tokens) always live in the tokenizer/embedding space, so you can import/export checkpoints between think/non-think runs without remapping vocabularies.
 - `--reward-relu VALUE` enables an experimental auxiliary update that periodically inspects the top/bottom 25% token predictions per sequence: active neurons that helped the good predictions and inactive neurons that hurt the bad ones accumulate credit, and at scheduled checkpoints the union of those counts is used to select roughly the top 20% of neurons for a tiny bias boost. The increment is `10^{-VALUE} * std(bias_vector)` (VALUE ≤ 0 disables the mechanism), so every nudge is relative to the layer’s own bias magnitude while letting you specify the multiplier in log10 form. Updates fire mid-cycle and at the end, and no extra state needs to be saved in checkpoints.
 - `--corpus NAME` chooses which `<NAME>-train.txt.gz` / `<NAME>-test.txt.gz` split to load from the `--data DIR` directory (default `data/`).
 - `--model DIR` selects where checkpoints, logs, and tokenizer caches live (default `model/`).
@@ -161,13 +161,13 @@ Below are two quick sweeps you can adapt.
     done'
     ```
 
-3. **Think vs non-think.** Compares the base model to a run with thinking tokens enabled.
+3. **Think vs non-think.** Compares the base model to a run with thinking tokens disabled.
 
     ```bash
     time bash -exc '
     for cy in 2 3 5 10 10 20 20 30; do
 	python3 grce.py --cycles $cy
-	python3 grce.py --cycles $cy --think 10
+	python3 grce.py --cycles $cy --no-think
     done'
     ```
 

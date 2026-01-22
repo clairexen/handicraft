@@ -149,6 +149,24 @@ def empty_prompt_state(entries: list[tuple[str, str]] | None = None) -> dict:
         "prompts": serialized,
     }
 
+def compute_default_think_sequences(args: argparse.Namespace) -> int:
+    context_channels_active = args.n_grce > 0 or args.n_xctx > 0
+    special_rows = 0
+    if context_channels_active:
+        special_rows += 1  # pure Transformer row when context exists
+    if args.n_xctx > 0:
+        special_rows += 4  # no-XCTX, punctured XCTX, no-attn, punct-attn
+    special_rows += 1  # random-think row
+    available = args.batch_size - special_rows
+    default_think = available // 2
+    if default_think < 1:
+        raise ValueError(
+            "Default thinking requires at least two non-special rows; "
+            f"batch-size {args.batch_size} minus {special_rows} special rows leaves {available}. "
+            "Increase --batch-size, disable context dropout, or pass --no-think."
+        )
+    return default_think
+
 
 def build_prompt_state(
     entries: list[tuple[str, str]], statuses: list[int] | None = None
@@ -4072,12 +4090,12 @@ def parse_args() -> argparse.Namespace:
         help="Total vocabulary size for the GPT-2 style tokenizer (including special tokens)",
     )
     model_group.add_argument(
-        "--think",
-        type=int,
-        default=0,
+        "--no-think",
+        dest="disable_think",
+        action="store_true",
         help=(
-            "Enable think mode for N sequences per training batch (and permit up to N "
-            "thinking insertions during sampling); adds the <think> special token"
+            "Disable thinking tokens entirely. By default the number of thinking rows is "
+            "computed automatically from batch size and special-row requirements."
         ),
     )
     model_group.add_argument(
@@ -4202,7 +4220,8 @@ def parse_args() -> argparse.Namespace:
         help="During sampling/reporting, avoid emitting newline tokens",
     )
     sampling_group.add_argument(
-        "--no-think",
+        "--no-think-output",
+        dest="no_think_output",
         action="store_true",
         help="During sampling/reporting, suppress thinking tokens entirely",
     )
@@ -4359,10 +4378,16 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     corpus_parser.add_argument(
+        "--init-tokenizer",
+        action="store_true",
+        dest="corpus_init_tokenizer",
+        help="Train or refresh the tokenizer JSON for this corpus",
+    )
+    corpus_parser.add_argument(
         "--init",
         action="store_true",
         dest="corpus_init",
-        help="Build tokenizer and regenerate cached token files",
+        help="Regenerate the cached token files (requires an existing tokenizer JSON)",
     )
     corpus_parser.add_argument(
         "--print-train",
@@ -4490,23 +4515,10 @@ def parse_args() -> argparse.Namespace:
             if eval_full % interval != 0:
                 parser.error("--eval-full must be 0, 1, or a multiple of --eval-interval")
         args.eval_full = eval_full
-    if args.think == 0 and not flag_present("--think"):
-        context_channels_active = args.n_grce > 0 or args.n_xctx > 0
-        special_rows = 0
-        if context_channels_active:
-            special_rows += 1  # pure Transformer (GRCE+XCTX muted)
-        if args.n_xctx > 0:
-            special_rows += 4  # no-XCTX, punctured XCTX, no-attn, punct-attn
-        special_rows += 1  # random-think row we are about to enable
-        available = args.batch_size - special_rows
-        default_think = available // 2
-        if default_think < 1:
-            raise ValueError(
-                "Default thinking requires at least two non-special rows; "
-                f"batch-size {args.batch_size} minus {special_rows} special rows leaves {available}. "
-                "Increase --batch-size, disable context dropout, or explicitly pass --think 0."
-            )
-        args.think = default_think
+    if getattr(args, "disable_think", False):
+        args.think = 0
+    else:
+        args.think = compute_default_think_sequences(args)
     return args
 
 
@@ -4532,7 +4544,7 @@ def main() -> None:
     args.prompt = args.prompt.replace(UNDO_SYMBOL, UNDO_TOKEN)
     if args.think == 0 and THINK_TOKEN in args.prompt:
         raise ValueError(
-            "Prompt contains thinking tokens but --think is 0. Remove them or enable --think."
+            "Prompt contains thinking tokens but --no-think was specified. Remove them or omit --no-think."
         )
     if args.undo == 0 and UNDO_TOKEN in args.prompt:
         raise ValueError(
@@ -4827,7 +4839,7 @@ def main() -> None:
             return
         model_tag = build_model_tag(config)
         if args.think > 0:
-            model_tag += f"_think{args.think}"
+            model_tag += "_think"
         if args.undo > 0:
             model_tag += f"_undo{args.undo}"
         for extra_tag in args.tag:
@@ -5206,7 +5218,7 @@ def main() -> None:
                 suppress_newlines=args.no_newlines,
                 newline_token_id=newline_token_id,
                 think_settings=think_settings,
-                suppress_think=args.no_think,
+                suppress_think=args.no_think_output,
                 suppress_think_prompt=args.no_think_prompt,
                 think_hard=args.think_hard,
                 underline_tokens=args.underline,
@@ -5324,7 +5336,7 @@ def main() -> None:
                 suppress_newlines=args.no_newlines,
                 newline_token_id=newline_token_id,
                 think_settings=think_settings,
-                suppress_think_output=args.no_think,
+                suppress_think_output=args.no_think_output,
                 suppress_think_prompt=args.no_think_prompt,
                 think_hard=args.think_hard,
                 undo_settings=undo_settings,

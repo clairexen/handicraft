@@ -386,13 +386,13 @@ def parse_args() -> argparse.Namespace:
         "--think-xscale",
         type=float,
         default=1.0,
-        help="Scale the X-axis of traces whose model name includes _thinkN by this factor",
+        help="Scale the X-axis of traces whose model name includes _think by this factor",
     )
     parser.add_argument(
         "--think-yscale",
         type=float,
         default=1.0,
-        help="Scale the Y-axis of traces whose model name includes _thinkN by this factor",
+        help="Scale the Y-axis of traces whose model name includes _think by this factor",
     )
     parser.add_argument(
         "--json-dir",
@@ -492,7 +492,7 @@ def main() -> None:
             return
 
     steps_per_cycle = 100
-    think_pattern = re.compile(r"_think\d+")
+    think_pattern = re.compile(r"_think(?:\d+|_|$)")
 
     def compute_scaled_steps(rec: LossRecord, *, is_think: bool) -> List[float]:
         if args.think_xscale != 1.0 and is_think:
