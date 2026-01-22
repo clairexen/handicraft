@@ -86,7 +86,7 @@ def compute_row_type_counts(batch_size: int) -> dict[str, int]:
         "n_trthink": 0,
         "n_normal": 0,
         "n_encode": 0,
-        "n_think": 0,
+        "n_think": 1,
         "n_think2x": 1,
         "n_think3x": 1,
     }
@@ -130,6 +130,7 @@ def build_row_type_template(
     allocate("puattn", True)
     allocate("rdthink", think_enabled)
     allocate("trthink", think_enabled)
+    allocate("think", think_enabled)
     allocate("think2x", think_enabled)
     allocate("think3x", think_enabled)
     allocate("encode", False)
@@ -1945,7 +1946,11 @@ def augment_training_batch(
         u = random.random()
         return int((u * u * block_size) / 4)
 
-    think_row_types = {"trthink", "rdthink", "think2x", "think3x"}
+    def sample_think_target_value() -> int:
+        u = random.random()
+        return int((u * u * block_size) / 2)
+
+    think_row_types = {"trthink", "think", "rdthink", "think2x", "think3x"}
     for row in range(B):
         row_type = None
         if row_types is not None and row < len(row_types):
@@ -1985,35 +1990,6 @@ def augment_training_batch(
             if len(seq_entries) > limit:
                 del seq_entries[limit:]
 
-        if undo_enabled and undo_pairs > 0:
-            row_logits = full_logits[row] if full_logits is not None else None
-            for _ in range(undo_pairs):
-                insert_limit = max(0, len(seq_entries) - 1)
-                insert_pos = random.randint(0, insert_limit)
-                base_idx = seq_entries[insert_pos]["base_index"]
-                if row_logits is None:
-                    raise ValueError("Undo logits unavailable during augmentation")
-                prob_vec = row_logits[-1] if base_idx is None else row_logits[base_idx]
-                probs = F.softmax(prob_vec, dim=-1)
-                true_token = int(seq_entries[insert_pos]["token"])
-                probs = probs.clone()
-                probs[true_token] = 0.0
-                probs = probs / probs.sum()
-                filler = int(torch.multinomial(probs, num_samples=1).item())
-                insert_limit = max(0, len(seq_entries) - 1)
-                insert_pos = random.randint(0, insert_limit)
-                seq_entries.insert(
-                    insert_pos,
-                    {"token": filler, "tag": "undo_filler", "base_index": None},
-                )
-                seq_entries.insert(
-                    insert_pos + 1,
-                    {
-                        "token": int(undo.token_id),
-                        "tag": "undo_marker",
-                        "base_index": None,
-                    },
-                )
         truncate_entries()
 
         think_token_val = int(think.token_id) if think is not None and think.token_id is not None else None
@@ -2063,14 +2039,18 @@ def augment_training_batch(
                 seq_entries = expanded
                 truncate_entries()
             else:
-                R = sample_scaled_value()
-                H = sample_scaled_value()
-                T = sample_scaled_value()
-                if R > 0:
+                repeat_budget = sample_scaled_value()
+                tail_budget = sample_scaled_value()
+                target_budget = sample_scaled_value()
+                if row_type == "think":
+                    repeat_budget = 0
+                    tail_budget = 0
+                    target_budget = sample_think_target_value()
+                if repeat_budget > 0:
                     expanded: list[dict] = []
                     for entry in seq_entries:
                         expanded.append(entry)
-                        for _ in range(R):
+                        for _ in range(repeat_budget):
                             expanded.append(
                                 {
                                     "token": think_token_val,
@@ -2080,8 +2060,8 @@ def augment_training_batch(
                             )
                     seq_entries = expanded
                     truncate_entries()
-                if T > 0 and think_scores is not None:
-                    for _ in range(T):
+                if target_budget > 0 and think_scores is not None:
+                    for _ in range(target_budget):
                         base_positions = [
                             (idx, entry)
                             for idx, entry in enumerate(seq_entries)
@@ -2110,8 +2090,8 @@ def augment_training_batch(
                             },
                         )
                         truncate_entries()
-                if H > 0:
-                    for _ in range(H):
+                if tail_budget > 0:
+                    for _ in range(tail_budget):
                         if len(seq_entries) >= block_size:
                             seq_entries.pop()
                         last_base = None
@@ -2142,12 +2122,6 @@ def augment_training_batch(
         )
         new_inputs[row] = seq_tensor[:-1]
         new_targets[row] = seq_tensor[1:]
-        if random_mask is not None:
-            for idx, entry in enumerate(seq_entries[:-1]):
-                if entry.get("tag") == "undo_filler":
-                    target_idx = idx - 1
-                    if 0 <= target_idx < block_size:
-                        random_mask[row, target_idx] = True
         if think_labels is not None and think_token_val is not None:
             for idx in range(block_size):
                 if int(new_inputs[row, idx].item()) == think_token_val:
