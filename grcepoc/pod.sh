@@ -110,7 +110,7 @@ case "${1:-}" in
         rsync_pull
         ;;
     monitor)
-        tail -F model_pod*/*.ansi
+        tail -n 20 -f model_pod*/.monitor.*.ansi
         ;;
     loop)
         while true; do
@@ -120,8 +120,26 @@ case "${1:-}" in
 		echo "----------------------------"
 		for pod_dir in model_pod[0-9]*; do
 			echo; ( set -ex; bash pod.sh "${pod_dir#model_pod}" pull; )
+			for ansi_file in $pod_dir/*.ansi; do
+				sed -re 's/Running on remote pod/Monitoring remote pod/' \
+					< $ansi_file > $pod_dir/.new_monitor.${ansi_file#$pod_dir/}
+				new_monitor="$pod_dir/.new_monitor.${ansi_file#$pod_dir/}"
+				monitor="$pod_dir/.monitor.${ansi_file#$pod_dir/}"
+				# Keep .monitor files growing by only appending the new suffix
+				if [[ -f "$monitor" ]]; then
+					monitor_size=$(wc -c < "$monitor")
+					if cmp -n "$monitor_size" "$monitor" "$new_monitor" >/dev/null 2>&1; then
+						tail -c "+$((monitor_size + 1))" "$new_monitor" >> "$monitor"
+					else
+						cp "$new_monitor" "$monitor"
+					fi
+				else
+					cp "$new_monitor" "$monitor"
+				fi
+				rm "$new_monitor"
+			done
 		done
-		echo; ( set -ex; sleep 600; )
+		echo; ( set -ex; sleep 300; )
 	done
         ;;
     *)
