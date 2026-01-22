@@ -20,12 +20,15 @@ LEGACY_SPECIAL_FIELDS = {
     "test_loss_plain": "test_loss_plain",
     "train_loss_nothink": "train_loss_plain",
     "test_loss_nothink": "test_loss_plain",
+    "train_loss_plain_normal": "train_loss_normal",
+    "test_loss_plain_normal": "test_loss_normal",
 }
 
 ALLOWED_FIELDS = {
     "step",
     "train_loss",
     "train_loss_plain",
+    "train_loss_normal",
     "train_loss_noctx",
     "train_loss_noatt",
     "train_loss_none",
@@ -34,6 +37,7 @@ ALLOWED_FIELDS = {
     "train_loss_think3x",
     "test_loss",
     "test_loss_plain",
+    "test_loss_normal",
     "test_loss_noctx",
     "test_loss_noatt",
     "test_loss_none",

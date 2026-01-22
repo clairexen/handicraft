@@ -3624,13 +3624,28 @@ def train_model(
                             batch_size,
                             split,
                             eval_iters,
+                            disable_context=True,
+                            disable_xctx=True,
+                            disable_attention=False,
+                            **plain_kwargs,
+                        )
+                    )
+                    split_metrics[split]["normal"] = float(
+                        evaluate_split(
+                            model,
+                            dataset,
+                            device,
+                            block_size,
+                            batch_size,
+                            split,
+                            eval_iters,
                             disable_context=False,
                             disable_xctx=False,
                             disable_attention=False,
                             **plain_kwargs,
                         )
                     )
-                    split_metrics[split]["plain_noctx"] = float(
+                    split_metrics[split]["noctx"] = float(
                         evaluate_split(
                             model,
                             dataset,
@@ -3645,7 +3660,7 @@ def train_model(
                             **plain_kwargs,
                         )
                     )
-                    split_metrics[split]["plain_noatt"] = float(
+                    split_metrics[split]["noatt"] = float(
                         evaluate_split(
                             model,
                             dataset,
@@ -3660,7 +3675,7 @@ def train_model(
                             **plain_kwargs,
                         )
                     )
-                    split_metrics[split]["plain_none"] = float(
+                    split_metrics[split]["none"] = float(
                         evaluate_split(
                             model,
                             dataset,
@@ -3803,12 +3818,12 @@ def train_model(
                     solved_count = 0
                 train_header = "train loss"
                 if show_train_details:
-                    train_header += " special noprev : normal noctx noatt none"
+                    train_header += " special noprev : plain normal noctx noatt none"
                     if show_think_columns:
                         train_header += " : think 2x 3x"
                 test_header = "test loss"
                 if show_test_details:
-                    test_header += " special noprev : normal noctx noatt none"
+                    test_header += " special noprev : plain normal noctx noatt none"
                     if show_think_columns:
                         test_header += " : think 2x 3x"
                 header_parts: List[str] = []
@@ -3843,7 +3858,7 @@ def train_model(
                 )
                 diag_vals = " ".join(
                     format_metric("train", key)
-                    for key in ("plain", "plain_noctx", "plain_noatt", "plain_none")
+                    for key in ("plain", "normal", "noctx", "noatt", "none")
                 )
                 parts = [primary_group, diag_vals]
                 if show_think_columns and long_log_now:
@@ -3867,7 +3882,7 @@ def train_model(
                 )
                 diag_vals = " ".join(
                     format_metric("test", key)
-                    for key in ("plain", "plain_noctx", "plain_noatt", "plain_none")
+                    for key in ("plain", "normal", "noctx", "noatt", "none")
                 )
                 parts = [primary_group, diag_vals]
                 if show_think_columns and long_log_now:
@@ -3918,14 +3933,17 @@ def train_model(
                             split_metrics["train"].get("with_think_noprev", 0.0)
                         ),
                         "train_loss_plain": float(split_metrics["train"].get("plain", 0.0)),
+                        "train_loss_normal": float(
+                            split_metrics["train"].get("normal", 0.0)
+                        ),
                         "train_loss_noctx": float(
-                            split_metrics["train"].get("plain_noctx", 0.0)
+                            split_metrics["train"].get("noctx", 0.0)
                         ),
                         "train_loss_noatt": float(
-                            split_metrics["train"].get("plain_noatt", 0.0)
+                            split_metrics["train"].get("noatt", 0.0)
                         ),
                         "train_loss_none": float(
-                            split_metrics["train"].get("plain_none", 0.0)
+                            split_metrics["train"].get("none", 0.0)
                         ),
                         "test_loss_special": float(
                             split_metrics["test"].get("with_think_special", 0.0)
@@ -3934,14 +3952,17 @@ def train_model(
                             split_metrics["test"].get("with_think_noprev", 0.0)
                         ),
                         "test_loss_plain": float(split_metrics["test"].get("plain", 0.0)),
+                        "test_loss_normal": float(
+                            split_metrics["test"].get("normal", 0.0)
+                        ),
                         "test_loss_noctx": float(
-                            split_metrics["test"].get("plain_noctx", 0.0)
+                            split_metrics["test"].get("noctx", 0.0)
                         ),
                         "test_loss_noatt": float(
-                            split_metrics["test"].get("plain_noatt", 0.0)
+                            split_metrics["test"].get("noatt", 0.0)
                         ),
                         "test_loss_none": float(
-                            split_metrics["test"].get("plain_none", 0.0)
+                            split_metrics["test"].get("none", 0.0)
                         ),
                     }
                 )

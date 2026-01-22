@@ -28,6 +28,8 @@ LEGACY_SPECIAL_FIELDS = {
     "test_nogrce": "test_noctx",
     "train_loss_noatt": "train_noatt",
     "test_loss_noatt": "test_noatt",
+    "train_loss_plain_normal": "train_normal",
+    "test_loss_plain_normal": "test_normal",
 }
 
 
@@ -56,6 +58,8 @@ class LossRecord:
     test: List[float]
     train_plain: Optional[List[float]] = None
     test_plain: Optional[List[float]] = None
+    train_normal: Optional[List[float]] = None
+    test_normal: Optional[List[float]] = None
     train_noctx: Optional[List[float]] = None
     test_noctx: Optional[List[float]] = None
     train_noatt: Optional[List[float]] = None
@@ -80,6 +84,10 @@ def load_records(json_paths: Iterable[pathlib.Path]) -> List[LossRecord]:
         columns = payload.get("columns", [])
         data = payload.get("data", [])
         column_index = {name: idx for idx, name in enumerate(columns)}
+        for mapping in (LEGACY_TARGET_FIELDS, LEGACY_NOTHINK_FIELDS, LEGACY_SPECIAL_FIELDS):
+            for legacy, new in mapping.items():
+                if legacy in column_index and new not in column_index:
+                    column_index[new] = column_index[legacy]
 
         def extract_series(field: str, *, as_int: bool = False) -> Optional[List[float | int]]:
             idx = column_index.get(field)
@@ -109,6 +117,8 @@ def load_records(json_paths: Iterable[pathlib.Path]) -> List[LossRecord]:
             test_ng = extract_series("test_loss_nogrce")
         train_plain = extract_series("train_loss_plain")
         test_plain = extract_series("test_loss_plain")
+        train_normal = extract_series("train_loss_normal")
+        test_normal = extract_series("test_loss_normal")
         train_noatt = extract_series("train_loss_noatt")
         test_noatt = extract_series("test_loss_noatt")
         train_none = extract_series("train_loss_none")
@@ -129,6 +139,8 @@ def load_records(json_paths: Iterable[pathlib.Path]) -> List[LossRecord]:
                 test=[float(v) for v in test],
                 train_plain=[float(v) for v in train_plain] if train_plain else None,
                 test_plain=[float(v) for v in test_plain] if test_plain else None,
+                train_normal=[float(v) for v in train_normal] if train_normal else None,
+                test_normal=[float(v) for v in test_normal] if test_normal else None,
                 train_noctx=[float(v) for v in train_ng] if train_ng else None,
                 test_noctx=[float(v) for v in test_ng] if test_ng else None,
                 train_noatt=[float(v) for v in train_noatt] if train_noatt else None,
@@ -154,84 +166,109 @@ def load_store(path: pathlib.Path) -> List[LossRecord]:
     entries = payload if isinstance(payload, list) else [payload]
     records: List[LossRecord] = []
     for entry in entries:
+        normalized_entry = normalize_history_entry(entry)
         records.append(
             LossRecord(
                 model_path=pathlib.Path(entry.get("model", path.name)),
                 steps=list(map(int, entry.get("steps", []))),
-                train=list(map(float, entry.get("train", [])))
-                if entry.get("train")
+                train=list(map(float, normalized_entry.get("train", [])))
+                if normalized_entry.get("train")
                 else [],
                 train_plain=(
-                    list(map(float, entry.get("train_plain", [])))
-                    if entry.get("train_plain")
+                    list(map(float, normalized_entry.get("train_plain", [])))
+                    if normalized_entry.get("train_plain")
                     else None
                 ),
-                test=list(map(float, entry.get("test", [])))
-                if entry.get("test")
+                train_normal=(
+                    list(map(float, normalized_entry.get("train_normal", [])))
+                    if normalized_entry.get("train_normal")
+                    else None
+                ),
+                test=list(map(float, normalized_entry.get("test", [])))
+                if normalized_entry.get("test")
                 else [],
                 test_plain=(
-                    list(map(float, entry.get("test_plain", [])))
-                    if entry.get("test_plain")
+                    list(map(float, normalized_entry.get("test_plain", [])))
+                    if normalized_entry.get("test_plain")
+                    else None
+                ),
+                test_normal=(
+                    list(map(float, normalized_entry.get("test_normal", [])))
+                    if normalized_entry.get("test_normal")
                     else None
                 ),
                 train_noctx=(
-                    list(map(float, entry.get("train_noctx", []) or entry.get("train_nogrce", [])))
-                    if entry.get("train_noctx") or entry.get("train_nogrce")
+                    list(
+                        map(
+                            float,
+                            normalized_entry.get("train_noctx", [])
+                            or normalized_entry.get("train_nogrce", []),
+                        )
+                    )
+                    if normalized_entry.get("train_noctx")
+                    or normalized_entry.get("train_nogrce")
                     else None
                 ),
                 test_noctx=(
-                    list(map(float, entry.get("test_noctx", []) or entry.get("test_nogrce", [])))
-                    if entry.get("test_noctx") or entry.get("test_nogrce")
+                    list(
+                        map(
+                            float,
+                            normalized_entry.get("test_noctx", [])
+                            or normalized_entry.get("test_nogrce", []),
+                        )
+                    )
+                    if normalized_entry.get("test_noctx")
+                    or normalized_entry.get("test_nogrce")
                     else None
                 ),
                 train_noatt=(
-                    list(map(float, entry.get("train_noatt", [])))
-                    if entry.get("train_noatt")
+                    list(map(float, normalized_entry.get("train_noatt", [])))
+                    if normalized_entry.get("train_noatt")
                     else None
                 ),
                 test_noatt=(
-                    list(map(float, entry.get("test_noatt", [])))
-                    if entry.get("test_noatt")
+                    list(map(float, normalized_entry.get("test_noatt", [])))
+                    if normalized_entry.get("test_noatt")
                     else None
                 ),
                 train_none=(
-                    list(map(float, entry.get("train_none", [])))
-                    if entry.get("train_none")
+                    list(map(float, normalized_entry.get("train_none", [])))
+                    if normalized_entry.get("train_none")
                     else None
                 ),
                 test_none=(
-                    list(map(float, entry.get("test_none", [])))
-                    if entry.get("test_none")
+                    list(map(float, normalized_entry.get("test_none", [])))
+                    if normalized_entry.get("test_none")
                     else None
                 ),
                 train_think=(
-                    list(map(float, entry.get("train_think", [])))
-                    if entry.get("train_think")
+                    list(map(float, normalized_entry.get("train_think", [])))
+                    if normalized_entry.get("train_think")
                     else None
                 ),
                 test_think=(
-                    list(map(float, entry.get("test_think", [])))
-                    if entry.get("test_think")
+                    list(map(float, normalized_entry.get("test_think", [])))
+                    if normalized_entry.get("test_think")
                     else None
                 ),
                 train_think2x=(
-                    list(map(float, entry.get("train_think2x", [])))
-                    if entry.get("train_think2x")
+                    list(map(float, normalized_entry.get("train_think2x", [])))
+                    if normalized_entry.get("train_think2x")
                     else None
                 ),
                 test_think2x=(
-                    list(map(float, entry.get("test_think2x", [])))
-                    if entry.get("test_think2x")
+                    list(map(float, normalized_entry.get("test_think2x", [])))
+                    if normalized_entry.get("test_think2x")
                     else None
                 ),
                 train_think3x=(
-                    list(map(float, entry.get("train_think3x", [])))
-                    if entry.get("train_think3x")
+                    list(map(float, normalized_entry.get("train_think3x", [])))
+                    if normalized_entry.get("train_think3x")
                     else None
                 ),
                 test_think3x=(
-                    list(map(float, entry.get("test_think3x", [])))
-                    if entry.get("test_think3x")
+                    list(map(float, normalized_entry.get("test_think3x", [])))
+                    if normalized_entry.get("test_think3x")
                     else None
                 ),
             )
@@ -282,6 +319,16 @@ def store_records(
             **(
                 {"test_plain": rec.test_plain}
                 if include_test and rec.test_plain is not None
+                else {}
+            ),
+            **(
+                {"train_normal": rec.train_normal}
+                if include_train and rec.train_normal is not None
+                else {}
+            ),
+            **(
+                {"test_normal": rec.test_normal}
+                if include_test and rec.test_normal is not None
                 else {}
             ),
             **(
@@ -514,8 +561,10 @@ def main() -> None:
         rec.scaled_steps = compute_scaled_steps(rec, is_think=is_think)
         rec.scaled_train = compute_scaled_series(rec.train, is_think=is_think)
         rec.scaled_train_plain = compute_scaled_series(rec.train_plain, is_think=is_think)
+        rec.scaled_train_normal = compute_scaled_series(rec.train_normal, is_think=is_think)
         rec.scaled_test = compute_scaled_series(rec.test, is_think=is_think)
         rec.scaled_test_plain = compute_scaled_series(rec.test_plain, is_think=is_think)
+        rec.scaled_test_normal = compute_scaled_series(rec.test_normal, is_think=is_think)
         rec.scaled_train_noctx = compute_scaled_series(rec.train_noctx, is_think=is_think)
         rec.scaled_test_noctx = compute_scaled_series(rec.test_noctx, is_think=is_think)
         rec.scaled_train_noatt = compute_scaled_series(rec.train_noatt, is_think=is_think)
