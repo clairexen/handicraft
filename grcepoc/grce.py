@@ -10,6 +10,29 @@ be integrated with a configurable gradient-limiting constraint across time.
 from __future__ import annotations
 
 # -----------------------------------------------------------------------------
+# File layout overview
+# -----------------------------------------------------------------------------
+# This module is intentionally split into seven large blocks so lightweight
+# tooling can inspect CLI options without importing PyTorch:
+#   1. GRCE Model Configuration  – dataclass definitions and static defaults.
+#   2. GRCE CLI Argument Parser  – argparse setup plus the first
+#      `if __name__ == "__main__"` which only parses CLI flags and exits for
+#      requests such as `--help` before heavy imports occur.
+#   3. GRCE Library Components   – tokenizer helpers, shared utilities, and
+#      support code that depends on PyTorch/tokenizers.
+#   4. Data Utilities            – dataset wrappers, prompt trackers, and
+#      corpus helpers.
+#   5. GRCE Model Components     – Transformer/GRCE modules built on torch.nn.
+#   6. Training / Generation Helpers – augmentation logic, evaluation helpers,
+#      and the optimizer/training loop.
+#   7. GRCE CLI Main Function    – end-to-end orchestration plus the second
+#      `if __name__ == "__main__"` which imports torch (while running block 3),
+#      executes `grce_main`, and returns an exit status.
+# The dual entry points are deliberate: parsing the CLI is “cheap” and resides
+# entirely above the heavy imports, while the final entry point performs the
+# full setup once we know we actually need to train/evaluate.
+
+# -----------------------------------------------------------------------------
 # GRCE Model Configuration
 # -----------------------------------------------------------------------------
 
