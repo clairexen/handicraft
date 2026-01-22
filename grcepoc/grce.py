@@ -4995,7 +4995,11 @@ def main() -> None:
             prompt_tokens = prompt_tokens.unsqueeze(0).to(device)
         except (AssertionError, RuntimeError) as exc:
             message = str(exc)
-            if "Torch not compiled with CUDA" in message:
+            if "Torch not compiled with CUDA" in message and args.device != "cpu":
+                if not args.tiny:
+                    raise RuntimeError(
+                        "CUDA requested but not available; rerun with --device cpu or --tiny."
+                    ) from exc
                 print(color_text("Torch not compiled with CUDA enabled; switching to CPU", Colors.RED, bold=True))
                 device = torch.device("cpu")
                 args.device = "cpu"
@@ -5009,6 +5013,10 @@ def main() -> None:
         except (AssertionError, RuntimeError) as exc:
             message = str(exc)
             if "Torch not compiled with CUDA" in message and args.device != "cpu":
+                if not args.tiny:
+                    raise RuntimeError(
+                        "CUDA requested but not available; rerun with --device cpu or --tiny."
+                    ) from exc
                 print(color_text("Torch not compiled with CUDA enabled; switching to CPU", Colors.RED, bold=True))
                 device = torch.device("cpu")
                 model = GRCEGPT(config).to(device)
