@@ -54,7 +54,7 @@ ensure_remote_dirs() {
 }
 
 rsync_update() {
-    ensure_remote_dirs
+    # ensure_remote_dirs
     rsync "${RSYNC_COMMON[@]}" -e "$(join_cmd "${RSYNC_SSH[@]}")" "$ROOT_DIR/grce.py" "${REMOTE_HOST}:${REMOTE_DIR}/"
 }
 
