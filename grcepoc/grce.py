@@ -9,6 +9,34 @@ be integrated with a configurable gradient-limiting constraint across time.
 """
 from __future__ import annotations
 
+# -----------------------------------------------------------------------------
+# GRCE Model Configuration
+# -----------------------------------------------------------------------------
+
+from dataclasses import dataclass
+
+@dataclass
+class ModelConfig:
+    vocab_size: int = 2000  # GPT-2 base supports ~50k merges; we stay small for the PoC.
+    block_size: int = 64    # GPT-2 base uses 1024 tokens.
+    n_layer: int = 12       # GPT-2 base uses 12 layers.
+    n_head: int = 8         # GPT-2 base uses 12 attention heads.
+    n_embd: int = 128       # GPT-2 base uses 768 embedding dims.
+    n_grce: int = 64        # Narrow GRCE context dims.
+    n_xctx: int = 384       # Wide XCTX context dims.
+    dropout: float = 0.05
+    detach_span: int = 0    # Detach gradients every N positions (0 disables detaching).
+    detach_context: bool = True  # Whether to detach recurring context when span triggers.
+    detach_layer: int = -1       # Layer index (1-based) after which to detach Transformer grads.
+
+
+MODEL_CONFIG_TEMPLATE = ModelConfig()
+
+
+# -----------------------------------------------------------------------------
+# GRCE CLI Argument Parser
+# -----------------------------------------------------------------------------
+
 import argparse
 import math
 import os
@@ -16,13 +44,570 @@ import pathlib
 import random
 import re
 import shlex
-import signal
 import sys
 import time
-import traceback
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from typing import Dict, List, Tuple, Sequence
+
+def parse_range_arg(value: str) -> tuple[int, int]:
+    parts = value.replace(" ", "").split("-", 1)
+    if len(parts) != 2:
+        raise ValueError(f"Invalid range '{value}'. Expected format START-END.")
+    start, end = int(parts[0]), int(parts[1])
+    if end < start:
+        raise ValueError(f"Range end {end} is smaller than start {start}.")
+    return start, end
+
+def compute_default_think_sequences(args: argparse.Namespace) -> int:
+    context_channels_active = args.n_grce > 0 or args.n_xctx > 0
+    special_rows = 0
+    if context_channels_active:
+        special_rows += 1  # pure Transformer row when context exists
+    if args.n_xctx > 0:
+        special_rows += 4  # no-XCTX, punctured XCTX, no-attn, punct-attn
+    special_rows += 1  # random-think row
+    available = args.batch_size - special_rows
+    default_think = available // 2
+    if default_think < 1:
+        raise ValueError(
+            "Default thinking requires at least two non-special rows; "
+            f"batch-size {args.batch_size} minus {special_rows} special rows leaves {available}. "
+            "Increase --batch-size, disable context dropout, or pass --no-think."
+        )
+    return default_think
+
+def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    defaults = MODEL_CONFIG_TEMPLATE
+    if argv is None:
+        raw_cli_args = sys.argv[1:]
+    elif argv is sys.argv:
+        raw_cli_args = list(argv[1:])
+    else:
+        raw_cli_args = list(argv)
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        allow_abbrev=False,
+    )
+    def flag_present(flag: str) -> bool:
+        return any(arg == flag or arg.startswith(f"{flag}=") for arg in raw_cli_args)
+    generic = parser.add_argument_group("Generic options")
+    generic.add_argument(
+        "--corpus",
+        type=str,
+        default="simplerwiki",
+        help="Dataset base name; expects data/<name>-train.txt.gz and ...-test.txt.gz.",
+    )
+    generic.add_argument(
+        "--data",
+        type=str,
+        default="data",
+        help="Directory containing <corpus>-train.txt.gz and <corpus>-test.txt.gz",
+    )
+    generic.add_argument("--device", type=str, default="cuda", help="cpu or cuda")
+    generic.add_argument(
+        "--model",
+        type=str,
+        default="model",
+        help="Directory where checkpoints/logs/tokenizers are stored",
+    )
+
+    model_group = parser.add_argument_group("Model configuration")
+    model_group.add_argument(
+        "--block-size",
+        type=int,
+        default=defaults.block_size,
+        help="Number of tokens per training sample",
+    )
+    model_group.add_argument(
+        "--n-layer",
+        type=int,
+        default=defaults.n_layer,
+        help="Number of transformer blocks (GPT-2 base uses 12).",
+    )
+    model_group.add_argument(
+        "--n-head",
+        type=int,
+        default=defaults.n_head,
+        help="Number of attention heads per block (GPT-2 base uses 12).",
+    )
+    model_group.add_argument(
+        "--n-embd",
+        type=int,
+        default=defaults.n_embd,
+        help="Embedding/hidden dimension (GPT-2 base uses 768).",
+    )
+    model_group.add_argument(
+        "--n-grce",
+        type=int,
+        default=defaults.n_grce,
+        help="Dimension of the recurrent GRCE context; use 0 to disable the channel.",
+    )
+    model_group.add_argument(
+        "--n-xctx",
+        type=int,
+        default=defaults.n_xctx,
+        help=(
+            "Dimension of the wide (layer-partitioned) context channel; requires n_xctx to be divisible by n_layer"
+        ),
+    )
+    model_group.add_argument(
+        "--tokenizer-vocab",
+        type=int,
+        default=defaults.vocab_size,
+        help="Total vocabulary size for the GPT-2 style tokenizer (including special tokens)",
+    )
+    model_group.add_argument(
+        "--no-think",
+        dest="disable_think",
+        action="store_true",
+        help=(
+            "Disable thinking tokens entirely. By default the number of thinking rows is "
+            "computed automatically from batch size and special-row requirements."
+        ),
+    )
+    model_group.add_argument(
+        "--undo",
+        type=int,
+        default=0,
+        help="Enable undo pairs with up to N random+undo sequences per block",
+    )
+    model_group.add_argument(
+        "--tiny",
+        action="store_true",
+        help=(
+            "Shortcut for --batch-size 8 --block-size 8 --n-layer 3 --n-head 2 "
+            "--n-embd 8 --n-grce 4 --n-xctx 12 --steps 2 --cycles 1"
+        ),
+    )
+
+    training_group = parser.add_argument_group("Training schedule")
+    training_group.add_argument("--steps", type=int, default=100, help="Training steps per cycle")
+    training_group.add_argument(
+        "--cycles",
+        type=int,
+        default=100,
+        help="Repeat the full training/eval/update cycle N times.",
+    )
+    training_group.add_argument(
+        "--batch-size",
+        type=int,
+        default=32,
+        help="Number of sequences per optimization step.",
+    )
+    training_group.add_argument(
+        "--detach-span",
+        type=int,
+        default=0,
+        help="Detach GRCE context gradients every N positions (0 disables detaching).",
+    )
+    training_group.add_argument(
+        "--no-detach-ctx",
+        action="store_true",
+        help="Keep gradients through the recurrent GRCE context even when spans trigger",
+    )
+    training_group.add_argument(
+        "--dropout",
+        type=float,
+        default=defaults.dropout,
+        help="Dropout probability inside attention/FFN blocks.",
+    )
+    training_group.add_argument(
+        "--detach-layer",
+        type=int,
+        default=-1,
+        help="If >0, detach gradients after this Transformer layer (1-based index).",
+    )
+    training_group.add_argument(
+        "--context-dropout-interval",
+        type=int,
+        default=1,
+        help=(
+            "Every N steps create pure-Transformer, no-XCTX, punctured-XCTX, random-think, no-attention, "
+            "and attention-punctured rows (0 disables)"
+        ),
+    )
+    training_group.add_argument(
+        "--reward-relu",
+        type=float,
+        default=0.0,
+        help=(
+            "Enable experimental ReLU reward updates with scale=10^{-value} (value<=0 disables)"
+        ),
+    )
+    training_group.add_argument(
+        "--reset-prompt-each-cycle",
+        action="store_true",
+        help=(
+            "Rebuild the prompt queue at the start of every training cycle; default keeps cycling "
+            "through prompts across cycles"
+        ),
+    )
+    training_group.add_argument(
+        "--eval-interval",
+        type=int,
+        default=10,
+        help="How often to run train/test evaluation steps.",
+    )
+    training_group.add_argument(
+        "--eval-iters",
+        type=int,
+        default=2,
+        help="How many mini-batches to average for evaluation losses.",
+    )
+    training_group.add_argument(
+        "--eval-full",
+        type=int,
+        default=-1,
+        help=(
+            "How often to run the expensive evaluation variants: default -1 runs them once per cycle; 0 "
+            "disables them entirely; 1 runs them on every evaluation (the same cadence as --eval-interval); "
+            "positive values >1 must be multiples of --eval-interval; negative values schedule evenly spaced "
+            "full evals within each cycle (e.g., -1 means once at the end of a cycle, -2 means twice per cycle) "
+            "and require --steps to be divisible by the absolute value so the cadence lines up."
+        ),
+    )
+
+
+    sampling_group = parser.add_argument_group("Sampling & reporting")
+    sampling_group.add_argument(
+        "--prompt",
+        type=str,
+        default="ai will",
+        help="Prompt used for generation",
+    )
+    sampling_group.add_argument(
+        "--generate",
+        type=int,
+        default=10,
+        help="Number of new tokens to sample after training",
+    )
+    sampling_group.add_argument(
+        "--no-newlines",
+        action="store_true",
+        help="During sampling/reporting, avoid emitting newline tokens",
+    )
+    sampling_group.add_argument(
+        "--no-think-output",
+        dest="no_think_output",
+        action="store_true",
+        help="During sampling/reporting, suppress thinking tokens entirely",
+    )
+    sampling_group.add_argument(
+        "--no-think-prompt",
+        action="store_true",
+        help="Do not insert thinking tokens inside the prompt during sampling/reporting",
+    )
+    sampling_group.add_argument(
+        "--think-hard",
+        action="store_true",
+        help="While processing the prompt, insert thinking tokens after every mispredicted token",
+    )
+    sampling_group.add_argument(
+        "--no-boundary",
+        action="store_true",
+        help="Allow completions to continue immediately after the prompt without enforcing a word boundary",
+    )
+    sampling_group.add_argument(
+        "--underline",
+        action="store_true",
+        help="Underline console tokens when the pronoun detector strongly expects a pronoun",
+    )
+
+    logging_group = parser.add_argument_group("Logging & diagnostics")
+    logging_group.add_argument(
+        "--time",
+        action="store_true",
+        help="Prefix training progress logs with local HH:MM timestamps",
+    )
+    logging_group.add_argument(
+        "--debug-interrupt",
+        action="store_true",
+        help="If set, re-raise KeyboardInterrupt with a full stack trace.",
+    )
+    logging_group.add_argument(
+        "--no-ansi",
+        action="store_true",
+        help="Suppress the parallel .ansi log (which preserves ANSI colors)",
+    )
+    logging_group.add_argument(
+        "--train-loss-details",
+        action="store_true",
+        help="Show the special/noprev columns for train loss in the live log",
+    )
+    logging_group.add_argument(
+        "--no-test-loss-details",
+        action="store_true",
+        help="Collapse the test loss group down to a single column in the live log",
+    )
+    logging_group.add_argument(
+        "--long-loss-log",
+        action="store_true",
+        help="Always include the detailed loss columns in the live log even when data is missing",
+    )
+    logging_group.add_argument(
+        "--timeout",
+        type=float,
+        default=0.0,
+        help="Exit after N seconds using a timer (0 disables the timeout)",
+    )
+
+    import_group = parser.add_argument_group("Checkpoint import/export")
+    import_group.add_argument(
+        "--tag",
+        action="append",
+        default=[],
+        help="Append an extra _TAG suffix to the model name (can be repeated)",
+    )
+    import_group.add_argument(
+        "--import-model",
+        type=pathlib.Path,
+        help="Initialize from another checkpoint when creating a new model",
+    )
+    import_group.add_argument(
+        "--trim-model",
+        action="store_true",
+        help="Allow importing into a smaller model by dropping overflow",
+    )
+    import_group.add_argument(
+        "--drop-layers",
+        type=str,
+        default="",
+        help="Comma-separated layer numbers (1-indexed) to remove during import",
+    )
+    import_group.add_argument(
+        "--add-layers",
+        type=str,
+        default="",
+        help="Comma-separated layer numbers (1-indexed) to insert during import",
+    )
+    import_group.add_argument(
+        "--pt",
+        type=pathlib.Path,
+        help="Load an explicit checkpoint file for inference/debugging commands",
+    )
+    subparsers = parser.add_subparsers(
+        dest="command",
+        title="commands",
+        metavar="COMMAND",
+        help="Action to perform",
+    )
+    parser.set_defaults(
+        command=None,
+        report_count=None,
+        test_start=None,
+    )
+
+    train_parser = subparsers.add_parser(
+        "train",
+        help="Run the standard training loop",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    train_parser.set_defaults(command="train")
+
+    report_parser = subparsers.add_parser(
+        "report",
+        help="Skip training and generate completions",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    report_parser.set_defaults(command="report")
+    report_parser.add_argument(
+        "-n",
+        "--count",
+        dest="report_count",
+        type=int,
+        default=10,
+        help="How many completions to generate",
+    )
+
+    test_parser = subparsers.add_parser(
+        "test",
+        help="Print block_size tokens from the test corpus",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    test_parser.set_defaults(command="test")
+    test_parser.add_argument(
+        "--start",
+        dest="test_start",
+        type=int,
+        default=0,
+        help="Cursor offset within the test corpus to begin printing",
+    )
+
+    size_parser = subparsers.add_parser(
+        "size",
+        help="Print parameter breakdown for the configured model and exit",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    size_parser.set_defaults(command="size")
+    size_parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Instantiate the model and verify the analytic counts",
+    )
+    size_parser.add_argument(
+        "--estimate",
+        action="store_true",
+        help="Append a dominant-term estimate section",
+    )
+
+    corpus_parser = subparsers.add_parser(
+        "corpus",
+        help="Manage tokenizer and cached corpora",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    corpus_parser.add_argument(
+        "--init-tokenizer",
+        action="store_true",
+        dest="corpus_init_tokenizer",
+        help="Train or refresh the tokenizer JSON for this corpus",
+    )
+    corpus_parser.add_argument(
+        "--init",
+        action="store_true",
+        dest="corpus_init",
+        help="Regenerate the cached token files (requires an existing tokenizer JSON)",
+    )
+    corpus_parser.add_argument(
+        "--print-train",
+        dest="corpus_print_train",
+        metavar="START-END",
+        help="Print a START-END token range from the train split",
+    )
+    corpus_parser.add_argument(
+        "--print-test",
+        dest="corpus_print_test",
+        metavar="START-END",
+        help="Print a START-END token range from the test split",
+    )
+    corpus_parser.set_defaults(command="corpus")
+
+    prompt_parser = subparsers.add_parser(
+        "prompts",
+        help="Inspect or modify the prompt-tracking metadata stored in a checkpoint",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    prompt_parser.add_argument(
+        "target",
+        nargs="?",
+        default=None,
+        help="Optional checkpoint path (defaults to the model path selected by global flags)",
+    )
+    prompt_parser.add_argument(
+        "--list",
+        action="store_true",
+        help="List the stored prompts and exit",
+    )
+    prompt_parser.add_argument(
+        "--reset",
+        action="store_true",
+        help="Reset prompts and statuses to the defaults hard-coded in grce.py",
+    )
+    prompt_parser.add_argument(
+        "--clear",
+        action="store_true",
+        help="Remove all stored prompts and reset statuses",
+    )
+    prompt_parser.add_argument(
+        "--add",
+        nargs=2,
+        metavar=("PROMPT", "EXPECTED"),
+        help="Append a new prompt/expected pair",
+    )
+    prompt_parser.add_argument(
+        "--remove",
+        type=int,
+        action="append",
+        default=[],
+        help="Remove the prompt at index N (can be repeated)",
+    )
+    prompt_parser.set_defaults(command="prompts")
+
+    create_parser = subparsers.add_parser(
+        "create",
+        help="Create a new checkpoint with random weights and exit",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    create_parser.set_defaults(command="create")
+
+    args = parser.parse_args()
+    raw_eval_full = getattr(args, "eval_full", None)
+    if args.command is None:
+        parser.print_help()
+        parser.exit(
+            1,
+            "\nPlease specify a command (train, report, test, size, corpus, create, or prompts).\n",
+        )
+    if args.command == "corpus":
+        has_corpus_action = bool(
+            getattr(args, "corpus_init", False)
+            or getattr(args, "corpus_print_train", None)
+            or getattr(args, "corpus_print_test", None)
+        )
+        if not has_corpus_action:
+            parser.error("corpus command requires --init and/or --print-* options")
+    if args.command == "create" and args.pt:
+        parser.error("--pt cannot be combined with the create command")
+    if args.tiny:
+        if not flag_present("--block-size"):
+            args.block_size = 8
+        if not flag_present("--batch-size"):
+            args.batch_size = 8
+        if not flag_present("--n-layer"):
+            args.n_layer = 3
+        if not flag_present("--n-head"):
+            args.n_head = 2
+        if not flag_present("--n-embd"):
+            args.n_embd = 8
+        if not flag_present("--n-grce"):
+            args.n_grce = 4
+        if not flag_present("--n-xctx"):
+            args.n_xctx = 12
+        if not flag_present("--steps"):
+            args.steps = 2
+        if not flag_present("--cycles"):
+            args.cycles = 1
+        if not flag_present("--eval-interval"):
+            args.eval_interval = 1
+        if not flag_present("--corpus"):
+            args.corpus = "simplestwiki"
+    if raw_eval_full is not None:
+        try:
+            eval_full_value = int(raw_eval_full)
+        except (TypeError, ValueError):
+            parser.error("--eval-full must be an integer")
+        eval_full = eval_full_value
+        if eval_full < 0:
+            if args.steps <= 0:
+                parser.error("--eval-full negative values require --steps > 0")
+            offset = abs(eval_full)
+            if args.steps % offset != 0:
+                parser.error("--eval-full -N requires --steps to be divisible by N")
+            eval_full = args.steps // offset
+        eval_full = max(0, eval_full)
+        if eval_full == 0:
+            if getattr(args, "train_loss_details", False):
+                parser.error("--eval-full 0 cannot be combined with --train-loss-details")
+            args.no_test_loss_details = True
+        elif eval_full != 1:
+            interval = max(1, args.eval_interval)
+            if eval_full % interval != 0:
+                parser.error("--eval-full must be 0, 1, or a multiple of --eval-interval")
+        args.eval_full = eval_full
+    if getattr(args, "disable_think", False):
+        args.think = 0
+    else:
+        args.think = compute_default_think_sequences(args)
+    return args
+
+if __name__ == "__main__":
+    cli_args = grce_cli_args(sys.argv)
+
+
+# -----------------------------------------------------------------------------
+# GRCE Library Components
+# -----------------------------------------------------------------------------
 
 import torch
 import torch.nn as nn
@@ -151,25 +736,6 @@ def empty_prompt_state(entries: list[tuple[str, str]] | None = None) -> dict:
         "prompts": serialized,
     }
 
-def compute_default_think_sequences(args: argparse.Namespace) -> int:
-    context_channels_active = args.n_grce > 0 or args.n_xctx > 0
-    special_rows = 0
-    if context_channels_active:
-        special_rows += 1  # pure Transformer row when context exists
-    if args.n_xctx > 0:
-        special_rows += 4  # no-XCTX, punctured XCTX, no-attn, punct-attn
-    special_rows += 1  # random-think row
-    available = args.batch_size - special_rows
-    default_think = available // 2
-    if default_think < 1:
-        raise ValueError(
-            "Default thinking requires at least two non-special rows; "
-            f"batch-size {args.batch_size} minus {special_rows} special rows leaves {available}. "
-            "Increase --batch-size, disable context dropout, or pass --no-think."
-        )
-    return default_think
-
-
 def build_prompt_state(
     entries: list[tuple[str, str]], statuses: list[int] | None = None
 ) -> dict:
@@ -228,7 +794,7 @@ def _restrict_bpe_training_text(text: str) -> str:
 
 
 # -----------------------------------------------------------------------------
-# Data utilities (borrow the spirit of picoGPT's Shakespeare example)
+# Data Utilities
 # -----------------------------------------------------------------------------
 
 
@@ -1501,26 +2067,8 @@ def load_or_prepare_tokens(
 
 
 # -----------------------------------------------------------------------------
-# Model components (picoGPT-style Transformer blocks + GRCE channel)
+# GRCE Model Components
 # -----------------------------------------------------------------------------
-
-
-@dataclass
-class ModelConfig:
-    vocab_size: int = 2000  # GPT-2 base supports ~50k merges; we stay small for the PoC.
-    block_size: int = 64    # GPT-2 base uses 1024 tokens.
-    n_layer: int = 12       # GPT-2 base uses 12 layers.
-    n_head: int = 8         # GPT-2 base uses 12 attention heads.
-    n_embd: int = 128       # GPT-2 base uses 768 embedding dims.
-    n_grce: int = 64        # Narrow GRCE context dims.
-    n_xctx: int = 384       # Wide XCTX context dims.
-    dropout: float = 0.05
-    detach_span: int = 0    # Detach gradients every N positions (0 disables detaching).
-    detach_context: bool = True  # Whether to detach recurring context when span triggers.
-    detach_layer: int = -1       # Layer index (1-based) after which to detach Transformer grads.
-
-
-MODEL_CONFIG_TEMPLATE = ModelConfig()
 
 
 def _linear_params(in_dim: int, out_dim: int) -> int:
@@ -2428,7 +2976,7 @@ def expand_prompt_with_thinking(
 
 
 # -----------------------------------------------------------------------------
-# Training / generation helpers
+# Training / Generation Helpers
 # -----------------------------------------------------------------------------
 
 
@@ -4006,542 +4554,11 @@ def generate(
 
 
 # -----------------------------------------------------------------------------
-# CLI
+# GRCE CLI Main Function
 # -----------------------------------------------------------------------------
 
-def parse_range_arg(value: str) -> tuple[int, int]:
-    parts = value.replace(" ", "").split("-", 1)
-    if len(parts) != 2:
-        raise ValueError(f"Invalid range '{value}'. Expected format START-END.")
-    start, end = int(parts[0]), int(parts[1])
-    if end < start:
-        raise ValueError(f"Range end {end} is smaller than start {start}.")
-    return start, end
-
-def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    defaults = MODEL_CONFIG_TEMPLATE
-    if argv is None:
-        raw_cli_args = sys.argv[1:]
-    elif argv is sys.argv:
-        raw_cli_args = list(argv[1:])
-    else:
-        raw_cli_args = list(argv)
-    parser = argparse.ArgumentParser(
-        description=__doc__,
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-        allow_abbrev=False,
-    )
-    def flag_present(flag: str) -> bool:
-        return any(arg == flag or arg.startswith(f"{flag}=") for arg in raw_cli_args)
-    generic = parser.add_argument_group("Generic options")
-    generic.add_argument(
-        "--corpus",
-        type=str,
-        default="simplerwiki",
-        help="Dataset base name; expects data/<name>-train.txt.gz and ...-test.txt.gz.",
-    )
-    generic.add_argument(
-        "--data",
-        type=str,
-        default="data",
-        help="Directory containing <corpus>-train.txt.gz and <corpus>-test.txt.gz",
-    )
-    generic.add_argument("--device", type=str, default="cuda", help="cpu or cuda")
-    generic.add_argument(
-        "--model",
-        type=str,
-        default="model",
-        help="Directory where checkpoints/logs/tokenizers are stored",
-    )
-
-    model_group = parser.add_argument_group("Model configuration")
-    model_group.add_argument(
-        "--block-size",
-        type=int,
-        default=defaults.block_size,
-        help="Number of tokens per training sample",
-    )
-    model_group.add_argument(
-        "--n-layer",
-        type=int,
-        default=defaults.n_layer,
-        help="Number of transformer blocks (GPT-2 base uses 12).",
-    )
-    model_group.add_argument(
-        "--n-head",
-        type=int,
-        default=defaults.n_head,
-        help="Number of attention heads per block (GPT-2 base uses 12).",
-    )
-    model_group.add_argument(
-        "--n-embd",
-        type=int,
-        default=defaults.n_embd,
-        help="Embedding/hidden dimension (GPT-2 base uses 768).",
-    )
-    model_group.add_argument(
-        "--n-grce",
-        type=int,
-        default=defaults.n_grce,
-        help="Dimension of the recurrent GRCE context; use 0 to disable the channel.",
-    )
-    model_group.add_argument(
-        "--n-xctx",
-        type=int,
-        default=defaults.n_xctx,
-        help=(
-            "Dimension of the wide (layer-partitioned) context channel; requires n_xctx to be divisible by n_layer"
-        ),
-    )
-    model_group.add_argument(
-        "--tokenizer-vocab",
-        type=int,
-        default=defaults.vocab_size,
-        help="Total vocabulary size for the GPT-2 style tokenizer (including special tokens)",
-    )
-    model_group.add_argument(
-        "--no-think",
-        dest="disable_think",
-        action="store_true",
-        help=(
-            "Disable thinking tokens entirely. By default the number of thinking rows is "
-            "computed automatically from batch size and special-row requirements."
-        ),
-    )
-    model_group.add_argument(
-        "--undo",
-        type=int,
-        default=0,
-        help="Enable undo pairs with up to N random+undo sequences per block",
-    )
-    model_group.add_argument(
-        "--tiny",
-        action="store_true",
-        help=(
-            "Shortcut for --batch-size 8 --block-size 8 --n-layer 3 --n-head 2 "
-            "--n-embd 8 --n-grce 4 --n-xctx 12 --steps 2 --cycles 1"
-        ),
-    )
-
-    training_group = parser.add_argument_group("Training schedule")
-    training_group.add_argument("--steps", type=int, default=100, help="Training steps per cycle")
-    training_group.add_argument(
-        "--cycles",
-        type=int,
-        default=100,
-        help="Repeat the full training/eval/update cycle N times.",
-    )
-    training_group.add_argument(
-        "--batch-size",
-        type=int,
-        default=32,
-        help="Number of sequences per optimization step.",
-    )
-    training_group.add_argument(
-        "--detach-span",
-        type=int,
-        default=0,
-        help="Detach GRCE context gradients every N positions (0 disables detaching).",
-    )
-    training_group.add_argument(
-        "--no-detach-ctx",
-        action="store_true",
-        help="Keep gradients through the recurrent GRCE context even when spans trigger",
-    )
-    training_group.add_argument(
-        "--dropout",
-        type=float,
-        default=defaults.dropout,
-        help="Dropout probability inside attention/FFN blocks.",
-    )
-    training_group.add_argument(
-        "--detach-layer",
-        type=int,
-        default=-1,
-        help="If >0, detach gradients after this Transformer layer (1-based index).",
-    )
-    training_group.add_argument(
-        "--context-dropout-interval",
-        type=int,
-        default=1,
-        help=(
-            "Every N steps create pure-Transformer, no-XCTX, punctured-XCTX, random-think, no-attention, "
-            "and attention-punctured rows (0 disables)"
-        ),
-    )
-    training_group.add_argument(
-        "--reward-relu",
-        type=float,
-        default=0.0,
-        help=(
-            "Enable experimental ReLU reward updates with scale=10^{-value} (value<=0 disables)"
-        ),
-    )
-    training_group.add_argument(
-        "--reset-prompt-each-cycle",
-        action="store_true",
-        help=(
-            "Rebuild the prompt queue at the start of every training cycle; default keeps cycling "
-            "through prompts across cycles"
-        ),
-    )
-    training_group.add_argument(
-        "--eval-interval",
-        type=int,
-        default=10,
-        help="How often to run train/test evaluation steps.",
-    )
-    training_group.add_argument(
-        "--eval-iters",
-        type=int,
-        default=2,
-        help="How many mini-batches to average for evaluation losses.",
-    )
-    training_group.add_argument(
-        "--eval-full",
-        type=int,
-        default=-1,
-        help=(
-            "How often to run the expensive evaluation variants: default -1 runs them once per cycle; 0 "
-            "disables them entirely; 1 runs them on every evaluation (the same cadence as --eval-interval); "
-            "positive values >1 must be multiples of --eval-interval; negative values schedule evenly spaced "
-            "full evals within each cycle (e.g., -1 means once at the end of a cycle, -2 means twice per cycle) "
-            "and require --steps to be divisible by the absolute value so the cadence lines up."
-        ),
-    )
-
-
-    sampling_group = parser.add_argument_group("Sampling & reporting")
-    sampling_group.add_argument(
-        "--prompt",
-        type=str,
-        default="ai will",
-        help="Prompt used for generation",
-    )
-    sampling_group.add_argument(
-        "--generate",
-        type=int,
-        default=10,
-        help="Number of new tokens to sample after training",
-    )
-    sampling_group.add_argument(
-        "--no-newlines",
-        action="store_true",
-        help="During sampling/reporting, avoid emitting newline tokens",
-    )
-    sampling_group.add_argument(
-        "--no-think-output",
-        dest="no_think_output",
-        action="store_true",
-        help="During sampling/reporting, suppress thinking tokens entirely",
-    )
-    sampling_group.add_argument(
-        "--no-think-prompt",
-        action="store_true",
-        help="Do not insert thinking tokens inside the prompt during sampling/reporting",
-    )
-    sampling_group.add_argument(
-        "--think-hard",
-        action="store_true",
-        help="While processing the prompt, insert thinking tokens after every mispredicted token",
-    )
-    sampling_group.add_argument(
-        "--no-boundary",
-        action="store_true",
-        help="Allow completions to continue immediately after the prompt without enforcing a word boundary",
-    )
-    sampling_group.add_argument(
-        "--underline",
-        action="store_true",
-        help="Underline console tokens when the pronoun detector strongly expects a pronoun",
-    )
-
-    logging_group = parser.add_argument_group("Logging & diagnostics")
-    logging_group.add_argument(
-        "--time",
-        action="store_true",
-        help="Prefix training progress logs with local HH:MM timestamps",
-    )
-    logging_group.add_argument(
-        "--debug-interrupt",
-        action="store_true",
-        help="If set, re-raise KeyboardInterrupt with a full stack trace.",
-    )
-    logging_group.add_argument(
-        "--no-ansi",
-        action="store_true",
-        help="Suppress the parallel .ansi log (which preserves ANSI colors)",
-    )
-    logging_group.add_argument(
-        "--train-loss-details",
-        action="store_true",
-        help="Show the special/noprev columns for train loss in the live log",
-    )
-    logging_group.add_argument(
-        "--no-test-loss-details",
-        action="store_true",
-        help="Collapse the test loss group down to a single column in the live log",
-    )
-    logging_group.add_argument(
-        "--long-loss-log",
-        action="store_true",
-        help="Always include the detailed loss columns in the live log even when data is missing",
-    )
-    logging_group.add_argument(
-        "--timeout",
-        type=float,
-        default=0.0,
-        help="Exit after N seconds using a timer (0 disables the timeout)",
-    )
-
-    import_group = parser.add_argument_group("Checkpoint import/export")
-    import_group.add_argument(
-        "--tag",
-        action="append",
-        default=[],
-        help="Append an extra _TAG suffix to the model name (can be repeated)",
-    )
-    import_group.add_argument(
-        "--import-model",
-        type=pathlib.Path,
-        help="Initialize from another checkpoint when creating a new model",
-    )
-    import_group.add_argument(
-        "--trim-model",
-        action="store_true",
-        help="Allow importing into a smaller model by dropping overflow",
-    )
-    import_group.add_argument(
-        "--drop-layers",
-        type=str,
-        default="",
-        help="Comma-separated layer numbers (1-indexed) to remove during import",
-    )
-    import_group.add_argument(
-        "--add-layers",
-        type=str,
-        default="",
-        help="Comma-separated layer numbers (1-indexed) to insert during import",
-    )
-    import_group.add_argument(
-        "--pt",
-        type=pathlib.Path,
-        help="Load an explicit checkpoint file for inference/debugging commands",
-    )
-    subparsers = parser.add_subparsers(
-        dest="command",
-        title="commands",
-        metavar="COMMAND",
-        help="Action to perform",
-    )
-    parser.set_defaults(
-        command=None,
-        report_count=None,
-        test_start=None,
-    )
-
-    train_parser = subparsers.add_parser(
-        "train",
-        help="Run the standard training loop",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    train_parser.set_defaults(command="train")
-
-    report_parser = subparsers.add_parser(
-        "report",
-        help="Skip training and generate completions",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    report_parser.set_defaults(command="report")
-    report_parser.add_argument(
-        "-n",
-        "--count",
-        dest="report_count",
-        type=int,
-        default=10,
-        help="How many completions to generate",
-    )
-
-    test_parser = subparsers.add_parser(
-        "test",
-        help="Print block_size tokens from the test corpus",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    test_parser.set_defaults(command="test")
-    test_parser.add_argument(
-        "--start",
-        dest="test_start",
-        type=int,
-        default=0,
-        help="Cursor offset within the test corpus to begin printing",
-    )
-
-    size_parser = subparsers.add_parser(
-        "size",
-        help="Print parameter breakdown for the configured model and exit",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    size_parser.set_defaults(command="size")
-    size_parser.add_argument(
-        "--check",
-        action="store_true",
-        help="Instantiate the model and verify the analytic counts",
-    )
-    size_parser.add_argument(
-        "--estimate",
-        action="store_true",
-        help="Append a dominant-term estimate section",
-    )
-
-    corpus_parser = subparsers.add_parser(
-        "corpus",
-        help="Manage tokenizer and cached corpora",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    corpus_parser.add_argument(
-        "--init-tokenizer",
-        action="store_true",
-        dest="corpus_init_tokenizer",
-        help="Train or refresh the tokenizer JSON for this corpus",
-    )
-    corpus_parser.add_argument(
-        "--init",
-        action="store_true",
-        dest="corpus_init",
-        help="Regenerate the cached token files (requires an existing tokenizer JSON)",
-    )
-    corpus_parser.add_argument(
-        "--print-train",
-        dest="corpus_print_train",
-        metavar="START-END",
-        help="Print a START-END token range from the train split",
-    )
-    corpus_parser.add_argument(
-        "--print-test",
-        dest="corpus_print_test",
-        metavar="START-END",
-        help="Print a START-END token range from the test split",
-    )
-    corpus_parser.set_defaults(command="corpus")
-
-    prompt_parser = subparsers.add_parser(
-        "prompts",
-        help="Inspect or modify the prompt-tracking metadata stored in a checkpoint",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    prompt_parser.add_argument(
-        "target",
-        nargs="?",
-        default=None,
-        help="Optional checkpoint path (defaults to the model path selected by global flags)",
-    )
-    prompt_parser.add_argument(
-        "--list",
-        action="store_true",
-        help="List the stored prompts and exit",
-    )
-    prompt_parser.add_argument(
-        "--reset",
-        action="store_true",
-        help="Reset prompts and statuses to the defaults hard-coded in grce.py",
-    )
-    prompt_parser.add_argument(
-        "--clear",
-        action="store_true",
-        help="Remove all stored prompts and reset statuses",
-    )
-    prompt_parser.add_argument(
-        "--add",
-        nargs=2,
-        metavar=("PROMPT", "EXPECTED"),
-        help="Append a new prompt/expected pair",
-    )
-    prompt_parser.add_argument(
-        "--remove",
-        type=int,
-        action="append",
-        default=[],
-        help="Remove the prompt at index N (can be repeated)",
-    )
-    prompt_parser.set_defaults(command="prompts")
-
-    create_parser = subparsers.add_parser(
-        "create",
-        help="Create a new checkpoint with random weights and exit",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    create_parser.set_defaults(command="create")
-
-    args = parser.parse_args()
-    raw_eval_full = getattr(args, "eval_full", None)
-    if args.command is None:
-        parser.print_help()
-        parser.exit(
-            1,
-            "\nPlease specify a command (train, report, test, size, corpus, create, or prompts).\n",
-        )
-    if args.command == "corpus":
-        has_corpus_action = bool(
-            getattr(args, "corpus_init", False)
-            or getattr(args, "corpus_print_train", None)
-            or getattr(args, "corpus_print_test", None)
-        )
-        if not has_corpus_action:
-            parser.error("corpus command requires --init and/or --print-* options")
-    if args.command == "create" and args.pt:
-        parser.error("--pt cannot be combined with the create command")
-    if args.tiny:
-        if not flag_present("--block-size"):
-            args.block_size = 8
-        if not flag_present("--batch-size"):
-            args.batch_size = 8
-        if not flag_present("--n-layer"):
-            args.n_layer = 3
-        if not flag_present("--n-head"):
-            args.n_head = 2
-        if not flag_present("--n-embd"):
-            args.n_embd = 8
-        if not flag_present("--n-grce"):
-            args.n_grce = 4
-        if not flag_present("--n-xctx"):
-            args.n_xctx = 12
-        if not flag_present("--steps"):
-            args.steps = 2
-        if not flag_present("--cycles"):
-            args.cycles = 1
-        if not flag_present("--eval-interval"):
-            args.eval_interval = 1
-        if not flag_present("--corpus"):
-            args.corpus = "simplestwiki"
-    if raw_eval_full is not None:
-        try:
-            eval_full_value = int(raw_eval_full)
-        except (TypeError, ValueError):
-            parser.error("--eval-full must be an integer")
-        eval_full = eval_full_value
-        if eval_full < 0:
-            if args.steps <= 0:
-                parser.error("--eval-full negative values require --steps > 0")
-            offset = abs(eval_full)
-            if args.steps % offset != 0:
-                parser.error("--eval-full -N requires --steps to be divisible by N")
-            eval_full = args.steps // offset
-        eval_full = max(0, eval_full)
-        if eval_full == 0:
-            if getattr(args, "train_loss_details", False):
-                parser.error("--eval-full 0 cannot be combined with --train-loss-details")
-            args.no_test_loss_details = True
-        elif eval_full != 1:
-            interval = max(1, args.eval_interval)
-            if eval_full % interval != 0:
-                parser.error("--eval-full must be 0, 1, or a multiple of --eval-interval")
-        args.eval_full = eval_full
-    if getattr(args, "disable_think", False):
-        args.think = 0
-    else:
-        args.think = compute_default_think_sequences(args)
-    return args
-
+import signal
+import traceback
 
 def grce_main(args: argparse.Namespace) -> int:
     def parse_layer_list(value: str, flag: str) -> list[int]:
@@ -5504,7 +5521,5 @@ def grce_main(args: argparse.Namespace) -> int:
 
     return 0
 
-
 if __name__ == "__main__":
-    cli_args = grce_cli_args(sys.argv)
     sys.exit(grce_main(cli_args))
