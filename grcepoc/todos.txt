@@ -1,0 +1,71 @@
+
+## Remove old <undo> and <think>
+
+Remove <undo> and <think> entirely from the codebase and
+the documentation. (We'll introduce and entirely diffenrent
+mode of thinking later. Any leftovers from the old code and
+concept will only lead to confusion later on, so make sure
+you get rid of all the code in grce.py and all the text in
+the README that relates to the <undo> and <think> features.)
+
+## Clean up and restructure the codebase
+
+I've added a Settings dataclass to grce.py.
+
+- Add all the missing fields to Settings so it captures verything we can set or
+  modify via CLi args -- except the selected subcomand and its arguments
+
+- Add an implementaion for grce_settings_from_cli_args
+
+- Replace grce_main(args: argparse.Namespace) with grce_main(settings: Settings). 
+
+- For every function that currently receives the cli_args, or any switches
+  derived from cli_args, as individual arguments: replace all those arguments
+  with a "settings: Settings" argument, which should always be the first argument
+  (after "self" ofc).
+
+After that, the only code dealing with cli_args (or settings.cli_args) should
+be in grce_settings_from_cli_args and the code in grce_main that deals with the
+different sub-commands.
+
+## Non-token embeddings
+
+(the following names for non-token embeddings are used for
+documentation, comments, and log messages. the syntax looks
+similar to the syntax we are going to use for our special
+token, but use [] instead of <> to distinguish them from the
+embedding names that correspond to special tokens below.
+
+[|pos:0|] [|pos:1|] ... [|pos:BS-1|]
+  position embeddings for the max BS positions in a sequence
+
+[|think:1/2|] [|think:2/2|]
+  additional "think" embeddings for think2x mode, in think2x
+  mode we only use BS/2 position embeddings and input tokens,
+  double each of the BS/2 input token+position encodings so
+  we are back to BS elements in our block, and then add
+  [|think:1/2|] to the even and [|think:2/2|] to the odd
+  positions.
+
+[|think:1/4|] [|think:2/4|] [|think:3/4|] [|think:4/4|]
+  additional "think" embeddings for think4x mode
+
+
+## Special tokens embeddings
+
+<|----|>
+  article seperator
+
+<|tokipona:> <|english:>
+  start of new tokipona/english input-section
+
+</english:> </tokipona:>
+  end of previous section and start of english/tokipona
+  output-section
+
+<|lq:> ... <:lq|>
+  potential "low-quality" block of training data.
+
+<|hq:> ... <:hq|>
+  high-quality training data.
+
