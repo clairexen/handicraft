@@ -873,8 +873,6 @@ def grce_settings_from_cli_args(args: argparse.Namespace) -> Settings:
 
 if __name__ == "__main__":
     cli_args = grce_cli_args(sys.argv)
-    cli_settings = grce_settings_from_cli_args(cli_args)
-
 
 # -----------------------------------------------------------------------------
 # GRCE Library Components

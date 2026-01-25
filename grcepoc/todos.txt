@@ -1,12 +1,63 @@
 
 ## Remove old <undo> and <think>
 
-Remove <undo> and <think> entirely from the codebase and
-the documentation. (We'll introduce and entirely diffenrent
-mode of thinking later. Any leftovers from the old code and
-concept will only lead to confusion later on, so make sure
-you get rid of all the code in grce.py and all the text in
-the README that relates to the <undo> and <think> features.)
+Remove **think mode entirely** and **undo mode** from grce.py: delete all
+think-related tokens, row types (`think`, `think2x`, `think3x`, `trthink`,
+`rdthink`), settings objects, augmentation logic, loss columns, and CLI flags,
+and make `--no-think` the hard-coded default with no remaining code paths for
+token insertion or think-specific evaluation. As part of this cleanup, remove
+`augment_training_batch` and all logic that mutates token streams during
+training or evaluation, so batches always consist of raw token IDs and standard
+causal LM targets.
+
+## Simplify and fix eval
+
+Simplify evaluation by **removing `--eval-full`, `--no-full-eval-first`,
+`--long-loss-log`, and all full-evaluation scheduling logic**, and instead
+always run evaluation at every step (or at the existing `eval_interval`, if
+retained) using exactly **one evaluation forward pass** per step. That single
+evaluation must correspond to the true training objective and produce
+`test_loss_target`, which represents the mixed batch containing the full
+row-type composition used during training, with all context and attention masks
+applied exactly as in training.
+
+Redefine all other `test_loss_*` metrics to be computed **from that same
+evaluation pass only**, by aggregating per-row losses for rows of the
+corresponding row type (`normal`, `plain`/noctx, `noattn`, `puxctx`, `encode`,
+etc.), rather than by running additional homogeneous batches or separate
+forward passes. This fixes the current bug where `test_loss_normal` aliases
+`test_loss_target`, ensures all loss metrics are semantically consistent,
+eliminates expensive duplicate evaluations, and makes every reported loss value
+directly comparable as a conditional view of the same underlying
+training-objective evaluation.
+
+
+## Fix self-attention prefix computation
+
+The current `grce.py` implementation is *logically* left-to-right but
+*computationally* prefix-recomputing. In `forward_autoreg`, the model loops
+over time `t`, but at each step it calls the Transformer core on the **entire
+prefix** `0..t`. Inside the core, causal self-attention is implemented with
+explicit `(T×T)` score matrices and masks, so every layer is evaluated
+**layer-by-layer over all prefix positions**. This enforces O(T²) work and
+prevents true streaming execution, even though only the activations at the
+current position are actually used.
+
+The GRCE/XCTX channels themselves are already compatible with strict
+left-to-right semantics. Context → Transformer injection is done via
+**per-layer additive bias vectors applied only at the current token position**,
+and Transformer → Context updates consume **per-layer activations at the
+current position only**. No GRCE/XCTX computation depends on future tokens or
+on earlier positions being recomputed, so their logic does not require
+prefix-wide evaluation.
+
+To obtain true left-to-right evaluation, the Transformer core must be
+refactored to an **incremental, KV-cached forward**. Each time step should run
+the *full layer stack for a single token*, appending that token’s K/V to
+per-layer caches and attending only against cached past keys/values. The
+GRCE/XCTX bias injection and state update can remain unchanged, now operating
+naturally at each step after the token’s full stack has been evaluated.
+
 
 ## Clean up and restructure the codebase
 
@@ -17,16 +68,55 @@ I've added a Settings dataclass to grce.py.
 
 - Add an implementaion for grce_settings_from_cli_args
 
-- Replace grce_main(args: argparse.Namespace) with grce_main(settings: Settings). 
+Now let's rewrite grce_main(). For each subcommand implement one function with this
+interface: grce_<subcommand>_cli(settings: Settings, args: argparse.Namespace) -> int
 
-- For every function that currently receives the cli_args, or any switches
-  derived from cli_args, as individual arguments: replace all those arguments
-  with a "settings: Settings" argument, which should always be the first argument
-  (after "self" ofc).
+And for each "mode" -- if the subcommand has more than one mode -- we add a
+mode-specific grce_<subcommand>_<mode> function that actually implements that
+functionality, otherwise we just add grce_<subcommand>(), when the subcommand
+does not have different modes. So for the "corpus" subcommand we wuld add:
 
-After that, the only code dealing with cli_args (or settings.cli_args) should
-be in grce_settings_from_cli_args and the code in grce_main that deals with the
-different sub-commands.
+grce_coprus_init(settings: Settings) -> int
+grce_coprus_init_tokenizer(settings: Settings) -> int
+grce_coprus_print(settings: Settings, from_test_corpus: Bool, start: int, end: int) -> int
+grce_coprus_cli(settings: Settings, args: argparse.Namespace) -> int
+
+The args parameter to the _cli function contains the argparse object for the
+subcommand only. All information from the top-level argsparse must have been
+moved into settings via grce_settings_from_cli_args inside main.
+
+After cleaning up main we should have a clean call hierarchy grce_main() -> grce_foo_cli() -> grce_foo_bar()
+with celarly assigned roles in args parsing and handling for each layer of that call stack.
+
+## Re-designing the XCTX data path
+
+Make sure you have read the README and grce.py. Then add a --new-xctx-arch option
+that implements the following behavior, and adds "_newxctx" to the model string:
+
+New architecture for the XCTX data path. With C = N_XCTX wide recurrent input,
+C' = the recurrent output, and S = the sum of all sampler outputs for this
+position, each step begins by combining the existing recurrent state with the
+current input contribution. The design explicitly separates long-term state
+storage from per-step influence, with the goal of achieving stable recurrence,
+controlled bandwidth, and high signal-to-noise in the C domain.
+
+C -> add S -> p = P(N -> N/2) -> LN -> q = Q(N/2 -> N) -> r = ReLU -> u = U(N, N) -> add C -> LN -> C'
+
+By first projecting the combined signal C + S down into an N/2 dimensional
+space, before applying LayerNorm and the ReLU-based MLP, the architecture
+deliberately limits the bandwidth of the per-step update. This bottleneck
+ensures that only structured, low-rank information can influence the recurrent
+state at each step, while LayerNorm removes mean and scale effects and
+stabilizes the internal dynamics before expansion and gating.
+
+An effective upsampling factor of 2x for the MLP is a natural choice: it is
+small enough to avoid unnecessary noise amplification, yet sufficient to allow
+the full input signal to be captured and re-expressed in the embedding domain.
+By avoiding any downsampling of the recurrent C path after the ReLU layer, the
+network is guaranteed to be able to find a noise-free encoding for any signal
+carried in C. This encoding can remain cleanly separable from other activity on
+the recurrent datapath, both in terms of the gated representation r and the
+mixed update u, and across the C, C', and S embedding spaces.
 
 ## Non-token embeddings
 
