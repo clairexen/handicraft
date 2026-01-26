@@ -4328,10 +4328,10 @@ def grce_main(args: argparse.Namespace) -> int:
     except KeyboardInterrupt:
         if args.debug_interrupt:
             raise
-        traceback.print_exc()
+        # traceback.print_exc()
         print(color_text("Interrupted by user; exiting cleanly.", Colors.RED, bold=True))
     except TimeoutAlarm:
-        traceback.print_exc()
+        # traceback.print_exc()
         print(color_text("Timeout; exiting cleanly.", Colors.RED, bold=True))
 
     finally:
