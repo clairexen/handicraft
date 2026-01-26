@@ -73,7 +73,7 @@ PROMPT_GOALS = [
     ("one plus one is", " two"),
     ("fire is hot and ice is", " cold"),
     ("the opposite of up is", " down"),
-    ("ice is cold and  fire is", " hot"),
+    ("ice is cold and fire is", " hot"),
     ("the first letter of the alphabet is", " a"),
     ("the first letter of the alphabet is the letter", " a"),
     ("the color of a red apple is", " red"),
