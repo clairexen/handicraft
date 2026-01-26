@@ -29,11 +29,12 @@ The model embedding dimension is n_embd. The width of the recurrent GRCE channel
 is n_grce, and the width of the recurrent XCTX channel is n_xctx. Note that usually
 n_grce < n_embd < n_xctx.
 
-A transformer block is simply this:
+A transformer block is simply this (GPT-2 design, with GRCE and XCTX bias added):
 Let Up4xE_i() be a per-layer learned linear from n_embd to 4*n_embd
 Let Dn4xE_i() be a per-layer learned linear from 4*n_embd to n_embd
-  H_i := MultiHeadAtt_i(LN(S_i))
-  T_i := S_i + H_i
+  Z_i := S_i [+ GRCE B_i bias ouput; if present] [+ XCTX B_i bias output; if present]
+  H_i := MultiHeadAtt_i(LN(Z_i))
+  T_i := Z_i + H_i
   R_i := ReLU(Up4xE_i(LN(T_i)))
   S_{i+1} := T_i + Dn4xE(R_i)
 
@@ -60,6 +61,7 @@ Let X2U_i() be a per-layer learned linear from n_xctx to u.
 Let U2E_i() be a per-layer learned linear from u to n_embd.
 Let DnX() be a learned linear from n_xctx to n_xctx/2.
 Let UpX() be a learned linear from n_xctx/2 to n_xctx.
+Let W() be a learned linear from n_xctx to n_xctx.
 Let P be a learned n_xctx dimensional bias vector.
   Bias injection based on the signal from the previous position via recurrent input G, create bias
   values B_i for the n_layer layers, to be added to block inputs *after* sampling the vectors S_i:
@@ -70,7 +72,7 @@ Let P be a learned n_xctx dimensional bias vector.
     M := LN(DnX(X + V_0 + V_1 + ... + V_{n_layers-1}))
   Then re-mixing the original recurrent X input (not M) with an MLP into the new
   recurrent vector X'; with RMSNorm (not LN, for better stability in recurrent path):
-    X' := RMSNorm(G + ReLU(UpX(M)) + P)
+    X' := RMSNorm(X + W(ReLU(UpX(M))) + P)
 
 **Note:** To obtain true left-to-right evaluation, the Transformer core must be
 using an **incremental, KV-cached forward** architecture. Each time step must
@@ -85,6 +87,63 @@ from the last position of the encoder only. The recurrent XCTX channel is presen
 for all positions of the encoder, but without the bias networks. So one could say
 in `encode` mode each transformer position is "blindly" injecting information
 into the shared data path.
+
+
+## Rationale for the recurrent channels, additional thoughts, and predicted behavior
+
+The vector of concatenated S_i values for a position already encodes the entire
+context for the next position. The position has to evaluate that context as part
+of predicting that token. Experiments show that we can disable grandient
+propagation at this interface entirely (--detach-span 1) and observe
+prectically no difference in how well the network can learn the GRCE and XCTX
+functionality. This demonstrates that all the information is already present,
+we only need to learn how to sample and extract it from that vector.
+
+That has trememdous implications! It basically means we have an easy path-way
+to learning a recurrent language model without having to learn a deep and
+complex recurrent function: we augment the transformer with two simple
+mechanisms to "shout" important information into the future, that the future
+will "see" without any need to query it. And then use dropout-style training
+scenarios that force optimization to build redundant structures with GRCE and
+XCTX, that can "help out" when we drop out attention for a position, until
+we can disable attention entirely and still get resonable results, at least
+on short sequences, with GRCE and XCTX as the only path that allows flow of
+information from transformer stacks on the left to transformer stacks to their
+right.
+
+The main purpose if this is (1) generally higher stability by creating a
+redundant path for information, forr all the cases where attention "glitches",
+and (2) models that can be debugged more easily, even on a very low level.
+The GRCE and XCTX channels provide model stability wrt to the current "role"
+and other information. Whenever a model fails to "stay in character", or
+"drift out of character", this will be manifest in the GRCE and XCTX signals!
+So it will be possible to just sample those signals, and inject them into a
+new model instance and present the model with <|!:> (dump context begin) and
+the model can verbalize it's context. This mode/information can then even be
+used to automatically learn certain GRCE embeddings, once the model has been
+trained to extract and verbalize the right information. (This may very well
+be simpler in some cases than in others... ;)
+
+The GRCE channel is low-dimension/low-bandwith and we expect it to learn to
+encode and send forward properties like the "current role" that, that may be
+stable without "drift" for a certain time, then maybe change sharply whenver
+the role changes, and we expect it to learn to encode and send forward
+properties that are only useful for the immediate next token, such as
+grammatical context for the next token or word. The remixing stage of the GRCE
+channel is expected to quickly saturate the channel, so that, for the most
+part, only information that is actively pushed forward by each position is
+going to survive.
+
+The XCTX channel on the other hand we first squeeze the M vector into a n_xctx/2
+dimensional space space. Resampling that by projecting back to n_xctx followed by
+ReLU is exactly enough to fuly ReLU-decompose the n_xctx/2 wide channel. There
+is no down-projection after the ReLU layer, we stay in n_xctx, and then use
+a direction-preserving norm for the recurrent path, so no noise is introduced
+into the channel that is not intentional signal interaction, because we can
+always learn (almost) n_xctx linear independent row/columns in W, whenever
+independent channels are desired. This path is meant to possibly accumulate
+information over longer time, and let information decay slowly without adding
+any "first order noise" in the critical (recurrent) path.
 
 
 ## Default train/eval batches and its row types -- (updated; implementation not up-to-date)
@@ -194,6 +253,94 @@ again with random start positions. The effective `PAGES_BATCH_SIZE := BATCH_SIZE
 for a pages batch is scaled down to keep the total size of a *pages batch* below or equal to that of a default batch.
 
 
+## Non-token embeddings -- (updated; implementation not up-to-date)
+
+(the following names for non-token embeddings are used for
+documentation, comments, and log messages. the syntax looks
+similar to the syntax we are going to use for our special
+token, but use [] instead of <> to distinguish them from the
+embedding names that correspond to special tokens below.
+
+[|pos:0|] [|pos:1|] ... [|pos:BS*PAGES-1|]
+  position embeddings for the max BS*PAGES positions in a sequence
+
+[|think:1/2|] [|think:2/2|]
+  additional "think" embeddings for think2x mode, in think2x
+  mode we only use BS/2 position embeddings and input tokens,
+  double each of the BS/2 input token+position encodings so
+  we are back to BS elements in our block, and then add
+  [|think:1/2|] to the even and [|think:2/2|] to the odd
+  positions.
+
+[|think:1/4|] [|think:2/4|] [|think:3/4|] [|think:4/4|]
+  additional "think" embeddings for think4x mode
+
+
+## Special tokens embeddings -- (updated; implementation not up-to-date)
+
+(currently all unused but reserved for later special use)
+
+<|----|>
+  article seperator
+
+<|//|>
+  verse seperator
+
+<|tokipona:> <|english:>
+  start of new tokipona/english input-section
+
+</english:> </tokipona:>
+  end of previous section and start of english/tokipona
+  output-section
+
+<|lq:> ... <:lq|>
+  potential "low-quality" block of training data.
+
+<|hq:> ... <:hq|>
+  block of "high-quality" training data.
+
+<|!:> ... <:!|>
+  "dump context" block begin and end marks
+
+<|?:> ... <:?|>
+  reasoning / comment block begin and end marks
+
+<|-:> ... <:-|>
+  strike-through block begin and end marks
+
+<|=:> ... <:=|>
+  strike-out block begin and end marks
+
+<|/:> ... <:/|>
+  third-person block begin and end marks
+
+
+## Special GRCE embeddings -- (this is future work)
+
+We define the following learned GRCE embeddings and corresponding simple on-off state machines:
+
+{tokipona}
+  set by <|tokipona:> and </tokipona:>, cleared by <|english:>, </english:>, <|//|>, and <|----|>
+
+{english}
+  set by <|english:> and </english:>, cleared by <|tokipona:>, </tokipona:>, <|//|>, and <|----|>
+
+{lq}
+  set by <|lq:>, cleared by <:lq|> and <|----|>. Likewise:
+
+{hq}, {!}, {?}, {-}, {=}, {/}
+  set by <|...:>, cleared by <:...|> and <|----|>.
+
+During training when --learn-grce-embeddings is present, we parse the
+BLOCK_SIZE (or PAGES_BLOCK_SIZE) sequence for each block and maintain a state
+variable for each of these GRCE embeddings. Initially they are all zero.
+Whenever we see a "set" token, we set the corresponding variable to +1,
+whenever we see a "clear" token, we set the corresponding variable to -1. For
+each step we look at the non-zero states and then either add the objective
+G.dot(embedding) > 1 for all GRCE state embeddings that are expected "ON" (+1), and
+G.dot(embedding) < 1 for all GRCE state embeddings that are expected "OFF" (-1).
+
+
 ---------------------------------------------------------------------------
 
 # TODOs
@@ -265,7 +412,7 @@ GRCE/XCTX bias injection and state update can remain unchanged, now operating
 naturally at each step after the token’s full stack has been evaluated.
 
 
-## Clean up and restructure the codebase
+## Clean up and restructure argument parsing and managing runtime settings
 
 I've added a Settings dataclass to grce.py.
 
@@ -295,74 +442,3 @@ After cleaning up main we should have a clean call hierarchy grce_main() -> grce
 with celarly assigned roles in args parsing and handling for each layer of that call stack.
 
 
-## Re-designing the XCTX data path
-
-Make sure you have read the README and grce.py. Then add a --new-xctx-arch option
-that implements the following behavior, and adds "_newxctx" to the model string:
-
-New architecture for the XCTX data path. With C = N_XCTX wide recurrent input,
-C' = the recurrent output, and S = the sum of all sampler outputs for this
-position, each step begins by combining the existing recurrent state with the
-current input contribution. The design explicitly separates long-term state
-storage from per-step influence, with the goal of achieving stable recurrence,
-controlled bandwidth, and high signal-to-noise in the C domain.
-
-C -> add S -> p = P(N -> N/2) -> LN -> q = Q(N/2 -> N) -> r = ReLU -> u = U(N, N) -> add C -> LN -> C'
-
-By first projecting the combined signal C + S down into an N/2 dimensional
-space, before applying LayerNorm and the ReLU-based MLP, the architecture
-deliberately limits the bandwidth of the per-step update. This bottleneck
-ensures that only structured, low-rank information can influence the recurrent
-state at each step, while LayerNorm removes mean and scale effects and
-stabilizes the internal dynamics before expansion and gating.
-
-An effective upsampling factor of 2x for the MLP is a natural choice: it is
-small enough to avoid unnecessary noise amplification, yet sufficient to allow
-the full input signal to be captured and re-expressed in the embedding domain.
-By avoiding any downsampling of the recurrent C path after the ReLU layer, the
-network is guaranteed to be able to find a noise-free encoding for any signal
-carried in C. This encoding can remain cleanly separable from other activity on
-the recurrent datapath, both in terms of the gated representation r and the
-mixed update u, and across the C, C', and S embedding spaces.
-
-
-## Non-token embeddings
-
-(the following names for non-token embeddings are used for
-documentation, comments, and log messages. the syntax looks
-similar to the syntax we are going to use for our special
-token, but use [] instead of <> to distinguish them from the
-embedding names that correspond to special tokens below.
-
-[|pos:0|] [|pos:1|] ... [|pos:BS-1|]
-  position embeddings for the max BS positions in a sequence
-
-[|think:1/2|] [|think:2/2|]
-  additional "think" embeddings for think2x mode, in think2x
-  mode we only use BS/2 position embeddings and input tokens,
-  double each of the BS/2 input token+position encodings so
-  we are back to BS elements in our block, and then add
-  [|think:1/2|] to the even and [|think:2/2|] to the odd
-  positions.
-
-[|think:1/4|] [|think:2/4|] [|think:3/4|] [|think:4/4|]
-  additional "think" embeddings for think4x mode
-
-
-## Special tokens embeddings
-
-<|----|>
-  article seperator
-
-<|tokipona:> <|english:>
-  start of new tokipona/english input-section
-
-</english:> </tokipona:>
-  end of previous section and start of english/tokipona
-  output-section
-
-<|lq:> ... <:lq|>
-  potential "low-quality" block of training data.
-
-<|hq:> ... <:hq|>
-  block of "high-quality" training data.
