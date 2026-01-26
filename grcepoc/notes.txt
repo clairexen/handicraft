@@ -23,11 +23,11 @@ mix and remix stage, and then per-layer bias-injection stage in the next positio
 
 Let's call the recurrent GRCE signal G, the updated recurrent signal G'. Let the
 sampled signal from the input to transformer layer i be S_i, and let the per-layer bias
-vectors, added to the transformer inputs after sampling S_i, B_i.
+vectors, added to the transformer inputs after sampling S_i, be B_i.
 
 The model embedding dimension is n_embd. The width of the recurrent GRCE channel
 is n_grce, and the width of the recurrent XCTX channel is n_xctx. Note that usually
-n_grce < n_embd < n_xctx.
+n_grce < n_embd < n_xctx. (n_xctx must be a multiple of n_layers.)
 
 A transformer block is simply this (GPT-2 design, with GRCE and XCTX bias added):
 Let Up4xE_i() be a per-layer learned linear from n_embd to 4*n_embd
@@ -62,7 +62,6 @@ Let U2E_i() be a per-layer learned linear from u to n_embd.
 Let DnX() be a learned linear from n_xctx to n_xctx/2.
 Let UpX() be a learned linear from n_xctx/2 to n_xctx.
 Let W() be a learned linear from n_xctx to n_xctx.
-Let P be a learned n_xctx dimensional bias vector.
   Bias injection based on the signal from the previous position via recurrent input G, create bias
   values B_i for the n_layer layers, to be added to block inputs *after* sampling the vectors S_i:
     B_i := U2E_i(LN(X2U_i(X)))
@@ -72,7 +71,7 @@ Let P be a learned n_xctx dimensional bias vector.
     M := LN(DnX(X + V_0 + V_1 + ... + V_{n_layers-1}))
   Then re-mixing the original recurrent X input (not M) with an MLP into the new
   recurrent vector X'; with RMSNorm (not LN, for better stability in recurrent path):
-    X' := RMSNorm(X + W(ReLU(UpX(M))) + P)
+    X' := RMSNorm(X + W(ReLU(UpX(M))))
 
 **Note:** To obtain true left-to-right evaluation, the Transformer core must be
 using an **incremental, KV-cached forward** architecture. Each time step must
@@ -111,8 +110,8 @@ on short sequences, with GRCE and XCTX as the only path that allows flow of
 information from transformer stacks on the left to transformer stacks to their
 right.
 
-The main purpose if this is (1) generally higher stability by creating a
-redundant path for information, forr all the cases where attention "glitches",
+The main purpose of this is (1) generally higher stability by creating a
+redundant path for information, for all the cases where attention "glitches",
 and (2) models that can be debugged more easily, even on a very low level.
 The GRCE and XCTX channels provide model stability wrt to the current "role"
 and other information. Whenever a model fails to "stay in character", or
@@ -121,29 +120,33 @@ So it will be possible to just sample those signals, and inject them into a
 new model instance and present the model with <|!:> (dump context begin) and
 the model can verbalize it's context. This mode/information can then even be
 used to automatically learn certain GRCE embeddings, once the model has been
-trained to extract and verbalize the right information. (This may very well
-be simpler in some cases than in others... ;)
+trained to extract and verbalize the right information. (In reality this may
+very well turn out to be much simpler in some cases than in others... ;)
 
 The GRCE channel is low-dimension/low-bandwith and we expect it to learn to
-encode and send forward properties like the "current role" that, that may be
+encode and send forward properties like the "current role" that may be
 stable without "drift" for a certain time, then maybe change sharply whenver
-the role changes, and we expect it to learn to encode and send forward
+the role changes, and we also expect it to learn to encode and send forward
 properties that are only useful for the immediate next token, such as
 grammatical context for the next token or word. The remixing stage of the GRCE
 channel is expected to quickly saturate the channel, so that, for the most
 part, only information that is actively pushed forward by each position is
-going to survive.
+going to survive. In short: we expect the GRCE channel to implement various
+forms of state machines.
 
-The XCTX channel on the other hand we first squeeze the M vector into a n_xctx/2
-dimensional space space. Resampling that by projecting back to n_xctx followed by
-ReLU is exactly enough to fuly ReLU-decompose the n_xctx/2 wide channel. There
-is no down-projection after the ReLU layer, we stay in n_xctx, and then use
-a direction-preserving norm for the recurrent path, so no noise is introduced
+For XCTX channel on the other hand we first squeeze the M vector into a n_xctx/2
+dimensional space space before the MLP. Resampling that by projecting back to
+n_xctx followed by ReLU is exactly enough to fuly ReLU-decompose the n_xctx/2
+wide channel. There is no down-projection after the ReLU layer, we stay in
+n_xctx, just perform a single linear from n_xctx to n_xctx, and then use a
+direction-preserving norm for the recurrent path, so no noise is introduced
 into the channel that is not intentional signal interaction, because we can
 always learn (almost) n_xctx linear independent row/columns in W, whenever
-independent channels are desired. This path is meant to possibly accumulate
-information over longer time, and let information decay slowly without adding
-any "first order noise" in the critical (recurrent) path.
+independent channels in the XCTX recurrent path are desired. This path is meant
+to be able to accumulate information over a span of positions and just carry them
+forward in time for as long as bandwith is available in the path, with new
+information cleanly overwriting or adding to older information, without adding
+any "architectural noise" into the critical (recurrent) path in the process.
 
 
 ## Default train/eval batches and its row types -- (updated; implementation not up-to-date)
