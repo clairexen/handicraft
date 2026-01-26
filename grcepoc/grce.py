@@ -2961,14 +2961,19 @@ ROW_METRIC_MAP = {
 
 ROW_METRIC_KEYS = [
     "normal",
+    "encode",
+    "recode",
     "decode",
     "noxctx",
     "puxctx",
     "noatt",
     "none",
-    "encode",
-    "recode",
 ]
+
+ROW_METRIC_GROUP_START = {
+    "encode",
+    "noxctx"
+}
 
 
 def sample_position_offsets(
@@ -3124,6 +3129,18 @@ def train_model(
     eval_wall_total = 0.0
     eval_cpu_total = 0.0
 
+    short_log_header = "target"
+    long_loss_header = "target " + " ".join(f"{': ' if key in ROW_METRIC_GROUP_START else ''}{key}" for key in ROW_METRIC_KEYS)
+
+    line_parts: List[str] = []
+    if show_time:
+        line_parts.append(color_text("time", Colors.BLUE))
+    line_parts.append(color_text(f"step", Colors.CYAN))
+    line_parts.append(color_text(long_loss_header if show_train_loss_details else short_log_header, Colors.MAGENTA))
+    line_parts.append(color_text(long_loss_header if show_test_loss_details else short_log_header, Colors.GREEN))
+    line = " | ".join(line_parts) + " |"
+    print(line)
+
     for step in range(1, steps + 1):
         xb, yb = dataset.get_batch("train", block_length, batch_size, device)
         row_types = list(row_type_template)
@@ -3262,7 +3279,8 @@ def train_model(
             value = split_metrics[split].get(key)
             if value is None:
                 return "-"
-            return f"{value:.3f}"
+            sep = ": " if key in ROW_METRIC_GROUP_START else ""
+            return f"{sep}{value:.3f}"
 
         detail_keys = ROW_METRIC_KEYS
 
@@ -3271,14 +3289,14 @@ def train_model(
             if not show_train_loss_details:
                 return base
             diag = " ".join(format_metric("train", key) for key in detail_keys)
-            return f"{base} : {diag}"
+            return f"{base} {diag}"
 
         def format_test_line() -> str:
             base = format_metric("test", "target")
             if not show_test_loss_details:
                 return base
             diag = " ".join(format_metric("test", key) for key in detail_keys)
-            return f"{base} : {diag}"
+            return f"{base} {diag}"
 
         train_values = format_train_line()
         test_values = format_test_line()
