@@ -515,6 +515,9 @@ IDs and standard causal LM targets.
 We are also removing the "pronoun/noun detector" and --underline and --reward-relu
 features from the code base.
 
+This is a large edit, but besides that it should be on the trivial side. Stop
+and asks questions if any questions come up or you encounter any difficulties.
+
 
 ## Simplify and fix eval
 
