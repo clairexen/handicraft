@@ -82,12 +82,13 @@ Let W() be a learned linear from n_xctx to n_xctx.
   recurrent vector X'; with RMSNorm (not LN, for better stability in recurrent path):
     X' := RMSNorm(X + W(ReLU(UpX(M))))
 
-So the XCTX architecture uses a similar sample-mix-remix architecture as GRCE,
-but shapes noise, manages dimensionality of updates, and incorporates other
-changes, such as using a direction preserving norm (RMSNorm instead of LN) in
-the recurrent path, that make XCTX better suited to perform short-term memory
-and working memory functions, instead of the position-by-position state-machine
-like functionalities that the GRCE channel can implement more easily.
+So the XCTX architecture uses a similar bias-sample-mix-remix architecture as
+GRCE, but shapes noise, manages dimensionality of updates, and incorporates
+other changes, such as using a direction-preserving norm (RMSNorm instead of
+LN) in the recurrent path, that make XCTX better suited to perform short-term
+memory and working memory functions, instead of the position-by-position
+state-machine like functionalities that the GRCE channel can implement better
+and more easily.
 
 **Note:** To obtain true left-to-right evaluation, the Transformer core must be
 using an **incremental, KV-cached forward** architecture. Each time step must
