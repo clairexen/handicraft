@@ -94,14 +94,16 @@ using an **incremental, KV-cached forward** architecture. Each time step must
 run the *full layer stack for a single token*, appending that token’s K/V to
 per-layer caches and attending only against cached past keys/values. (In
 `encode` rows we run the transformer with simple un-masked attention, so
-we are not using a KV-cached architecture in the case of `encode` rows.)
+we must not use a KV-cached architecture in the case of `encode` rows.)
 
-In `encode` blocks (see below) the GRCE channel is disabed. Only the last position
-in an `encode` blocks has the GRCE sampler and shared path, to generate a GRCE output
-from the last position of the encoder only. The recurrent XCTX channel is present
-for all positions of the encoder, but without the bias networks. So one could say
-in `encode` mode each transformer position is "blindly" injecting information
-into the shared data path.
+In `encode` blocks (see below) the GRCE channel is disabed. Only the last
+position in an `encode` block has the GRCE sampler and shared path, to generate
+a GRCE output from the last position of the encoder only. The recurrent XCTX
+channel however is present for all positions of the encoder, but without the
+bias injection networks. So one could say in `encode` mode each transformer
+position is "blindly" injecting information into the shared forward-projecting
+data path. `recode` rows (see below) are used to train encoders to produce
+XCTX and GRCE outputs that that decoders can consume.
 
 
 ## Rationale for the recurrent channels, additional thoughts, and predicted behavior
