@@ -6,18 +6,18 @@ training loop, evaluation utilities, and reporting helpers used by the
 ``grce.py`` entry point. Key entities:
 
 * :class:`ModelConfig` – dataclass that defines the model geometry and feeds
-  into tokenizer/model builders, :func:`describe_model_size`, and
-  :func:`grce_main`.
+into tokenizer/model builders, :func:`describe_model_size`, and
+:func:`grce_main`.
 * :func:`grce_cli_args` – constructs the CLI parser; invoked at startup and by
-  external tooling to mirror the binary interface. Its result is consumed by
-  :func:`grce_main`.
+external tooling to mirror the binary interface. Its result is consumed by
+:func:`grce_main`.
 * :func:`train_model` – the main training loop used by :func:`grce_main`. It
-  orchestrates batch augmentation, diagnostics, and logging.
+orchestrates batch augmentation, diagnostics, and logging.
 * :func:`augment_training_batch` – mutates minibatches according to the row
-  types before the model sees them. Called by :func:`train_model` and
-  :func:`evaluate_split`.
+types before the model sees them. Called by :func:`train_model` and
+:func:`evaluate_split`.
 * :func:`evaluate_split` – runs the expensive evaluation variants whenever
-  :func:`train_model` or the CLI requests diagnostics.
+:func:`train_model` or the CLI requests diagnostics.
 * :func:`describe_model_size` – backs the ``size`` subcommand by combining
   :class:`ModelConfig` metadata with :func:`compute_row_type_counts`.
 
@@ -1212,24 +1212,26 @@ def _dominant_estimates(config: ModelConfig) -> list[tuple[str, int, str]]:
     X = config.n_xctx
     U = _get_inner_xctx_width(config)
     estimates = [
-        ("transformer", 12*L*E*E, "12*L*E^2"),
+        ("transformer", 12*L*E*E, "(12*L*E^2)"),
     ]
     if G > 0:
         estimates.append(
             (
-                "grce",
+                "grce channel",
                 2*L*E*G + 8*G*G,
-                "2*L*E*G + 8*G^2",
+                "(2*L*E*G + 8*G^2)",
             )
         )
     if X > 0:
         estimates.append(
             (
-                "xctx",
+                "xctx channel",
                 2*E*U + 2*X*U + 2*X*X,
-                "2*E*U + 2*X*U + 2*X*X",
+                "(2*E*U + 2*X*U + 2*X^2)",
             )
         )
+    overall = sum(item[1] for item in estimates)
+    estimates.append(("total", overall, ""))
     return estimates
 
 
@@ -1257,16 +1259,16 @@ def describe_model_size(
             for entry in items:
                 label = entry["label"]
                 count = entry["count"]
-                line = f"  {label:<18} {count:>15,}"
+                line = f"  {label:<20} {count:>15,}"
                 print(line)
             continue
         _print_section(title, items)
 
     if estimate:
         print()
-        print(color_text("Estimate using dominant terms only", Colors.CYAN, bold=True))
+        print(color_text("Estimate using dominant terms only (excl. embeddings)", Colors.CYAN, bold=True))
         for label, count, formula in _dominant_estimates(config):
-            print(f"  {label:<12} {count:>15,}  ({formula})")
+            print(f"  {label:<20} {count:>15,}  {formula}")
 
     if check:
         expected_map = _flatten_expected(sections)
