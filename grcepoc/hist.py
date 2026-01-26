@@ -12,23 +12,13 @@ from typing import Dict, Iterable, List, Tuple
 import matplotlib.pyplot as plt
 
 LEGACY_TARGET_FIELDS = {
-    "train_loss": "train_loss_target",
-    "test_loss": "test_loss_target",
+    #"train_loss": "train_loss_target",
+    #"test_loss": "test_loss_target",
 }
 
 LEGACY_SPECIAL_FIELDS = {
-    "train_loss_nogrce": "train_loss_noxctx",
-    "test_loss_nogrce": "test_loss_noxctx",
-    "train_loss_noctx": "train_loss_noxctx",
-    "test_loss_noctx": "test_loss_noxctx",
-    "train_loss_plain": "train_loss_decode",
-    "test_loss_plain": "test_loss_decode",
-    "train_loss_nothink": "train_loss_decode",
-    "test_loss_nothink": "test_loss_decode",
-    "train_loss_plain_normal": "train_loss_normal",
-    "test_loss_plain_normal": "test_loss_normal",
-    "train_loss_special": "train_loss_target",
-    "test_loss_special": "test_loss_target",
+    "train_loss_noatt": "train_loss_noattn",
+    "test_loss_noatt": "test_loss_noattn",
 }
 
 ALLOWED_FIELDS = {
@@ -40,13 +30,10 @@ ALLOWED_FIELDS = {
     "train_loss_noctx",
     "train_loss_noxctx",
     "train_loss_puxctx",
-    "train_loss_noatt",
+    "train_loss_noattn",
     "train_loss_none",
     "train_loss_encode",
     "train_loss_recode",
-    "train_loss_think",
-    "train_loss_think2x",
-    "train_loss_think3x",
     "test_loss_target",
     "test_loss_noprev",
     "test_loss_decode",
@@ -54,13 +41,10 @@ ALLOWED_FIELDS = {
     "test_loss_noctx",
     "test_loss_noxctx",
     "test_loss_puxctx",
-    "test_loss_noatt",
+    "test_loss_noattn",
     "test_loss_none",
     "test_loss_encode",
     "test_loss_recode",
-    "test_loss_think",
-    "test_loss_think2x",
-    "test_loss_think3x",
     "train_wall_seconds",
     "unix_time",
     "train_cursor",

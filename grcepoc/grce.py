@@ -2953,8 +2953,8 @@ ROW_METRIC_MAP = {
     "decode": "decode",
     "noxctx": "noxctx",
     "puxctx": "puxctx",
-    "noattn": "noatt",
-    "puattn": "none",
+    "noattn": "noattn",
+    "puattn": "puattn",
     "encode": "encode",
     "recode": "recode",
 }
@@ -2966,8 +2966,8 @@ ROW_METRIC_KEYS = [
     "decode",
     "noxctx",
     "puxctx",
-    "noatt",
-    "none",
+    "noattn",
+    "puattn",
 ]
 
 ROW_METRIC_GROUP_START = {
@@ -3129,15 +3129,14 @@ def train_model(
     eval_wall_total = 0.0
     eval_cpu_total = 0.0
 
-    short_log_header = "target"
-    long_loss_header = "target " + " ".join(f"{': ' if key in ROW_METRIC_GROUP_START else ''}{key}" for key in ROW_METRIC_KEYS)
+    long_loss_header = " ".join([""] + [f"{': ' if key in ROW_METRIC_GROUP_START else ''}{key}" for key in ROW_METRIC_KEYS])
 
     line_parts: List[str] = []
     if show_time:
         line_parts.append(color_text("time", Colors.BLUE))
     line_parts.append(color_text(f"step", Colors.CYAN))
-    line_parts.append(color_text(long_loss_header if show_train_loss_details else short_log_header, Colors.MAGENTA))
-    line_parts.append(color_text(long_loss_header if show_test_loss_details else short_log_header, Colors.GREEN))
+    line_parts.append(color_text("train" + (long_loss_header if show_train_loss_details else ""), Colors.MAGENTA))
+    line_parts.append(color_text("test" + (long_loss_header if show_test_loss_details else ""), Colors.GREEN))
     line = " | ".join(line_parts) + " |"
     print(line)
 
@@ -3273,7 +3272,7 @@ def train_model(
         completion_text = tokenizer.decode(torch.tensor(completion_ids))
         sample_prefix = color_text(prompt_text, Colors.CYAN)
         sample_suffix = color_text(completion_text, Colors.YELLOW)
-        sample_render = sample_prefix + sample_suffix
+        sample_render = f"{sampling_strategy}: " + sample_prefix + sample_suffix
 
         def format_metric(split: str, key: str) -> str:
             value = split_metrics[split].get(key)
