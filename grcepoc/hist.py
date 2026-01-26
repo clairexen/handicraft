@@ -12,8 +12,8 @@ from typing import Dict, Iterable, List, Tuple
 import matplotlib.pyplot as plt
 
 LEGACY_TARGET_FIELDS = {
-    #"train_loss": "train_loss_target",
-    #"test_loss": "test_loss_target",
+    # "train_loss": "train_loss_target",
+    # "test_loss": "test_loss_target",
 }
 
 LEGACY_SPECIAL_FIELDS = {
@@ -31,7 +31,7 @@ ALLOWED_FIELDS = {
     "train_loss_noxctx",
     "train_loss_puxctx",
     "train_loss_noattn",
-    "train_loss_none",
+    "train_loss_puattn",
     "train_loss_encode",
     "train_loss_recode",
     "test_loss_target",
@@ -42,7 +42,7 @@ ALLOWED_FIELDS = {
     "test_loss_noxctx",
     "test_loss_puxctx",
     "test_loss_noattn",
-    "test_loss_none",
+    "test_loss_puattn",
     "test_loss_encode",
     "test_loss_recode",
     "train_wall_seconds",
