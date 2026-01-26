@@ -29,10 +29,7 @@ into tokenizer/model builders, :func:`describe_model_size`, and
 external tooling to mirror the binary interface. Its result is consumed by
 :func:`grce_main`.
 * :func:`train_model` – the main training loop used by :func:`grce_main`. It
-orchestrates batch augmentation, diagnostics, and logging.
-* :func:`augment_training_batch` – mutates minibatches according to the row
-types before the model sees them. Called by :func:`train_model` and
-:func:`evaluate_split`.
+handles batching, diagnostics, and logging.
 * :func:`evaluate_split` – runs the expensive evaluation variants whenever
 :func:`train_model` or the CLI requests diagnostics.
 * :func:`describe_model_size` – backs the ``size`` subcommand by combining
@@ -43,7 +40,6 @@ Call tree (simplified)::
     grce_cli_args
         └── grce_main
             ├── train_model
-            │     ├── augment_training_batch
             │     └── evaluate_split
             └── describe_model_size
 """
@@ -209,12 +205,8 @@ def settings_from_cli_args(args: argparse.Namespace) -> Settings:
 # -----------------------------------------------------------------------------
 
 def compute_row_type_counts(batch_size: int) -> dict[str, int]:
-    """Return the deterministic row-type counts for a batch size.
+    """Return the deterministic row-type counts for a batch size."""
 
-    :func:`describe_model_size` and :func:`train_model` call this helper to
-    translate `n_total` into the per-row counts described in the README, which
-    in turn drives :func:`build_row_type_template`.
-    """
     total = max(0, int(batch_size))
     if total == 0:
         return {
@@ -223,41 +215,40 @@ def compute_row_type_counts(batch_size: int) -> dict[str, int]:
             "n_puxctx": 0,
             "n_noattn": 0,
             "n_puattn": 0,
-            "n_rdthink": 0,
-            "n_trthink": 0,
             "n_normal": 0,
             "n_encode": 0,
-            "n_think": 0,
-            "n_think2x": 0,
-            "n_think3x": 0,
             "n_total": 0,
         }
 
     counts: dict[str, int] = {
         "n_plain": 0,
-        "n_noxctx": 1,
-        "n_puxctx": 1,
-        "n_noattn": 1,
-        "n_puattn": 1,
-        "n_rdthink": 1,
-        "n_trthink": 0,
+        "n_noxctx": 0,
+        "n_puxctx": 0,
+        "n_noattn": 0,
+        "n_puattn": 0,
         "n_normal": 0,
-        "n_encode": 1,
-        "n_think": 1,
-        "n_think2x": 1,
-        "n_think3x": 1,
+        "n_encode": 0,
     }
-    think_fixed = counts["n_think"] + counts["n_think2x"] + counts["n_think3x"]
-    base = max(0, total - 9)
-    counts["n_trthink"] = max(1, base // 4 - 3)
-    counts["n_plain"] = max(1, base // 2 - (counts["n_trthink"] + think_fixed))
-    normal_base = max(1, total - 9) - (counts["n_plain"] + counts["n_trthink"] + think_fixed)
-    counts["n_normal"] = max(1, normal_base)
+    remaining = total
+    special_order = ["n_noxctx", "n_puxctx", "n_noattn", "n_puattn", "n_encode"]
+    for key in special_order:
+        if remaining <= 0:
+            break
+        counts[key] = 1
+        remaining -= 1
+    if remaining > 0:
+        plain = max(1, remaining // 2)
+        plain = min(plain, remaining)
+        counts["n_plain"] = plain
+        remaining -= plain
+    counts["n_normal"] = remaining
     counts["n_total"] = total
-    row_sum = sum(value for key, value in counts.items() if key.startswith("n_") and key != "n_total")
-    if row_sum > total:
+    row_sum = sum(
+        value for key, value in counts.items() if key.startswith("n_") and key != "n_total"
+    )
+    if row_sum != total:
         raise ValueError(
-            f"Row-type composition overflows batch size: sum={row_sum} exceeds n_total={total}"
+            f"Row-type composition mismatch: sum={row_sum} differs from n_total={total}"
         )
     return counts
 
@@ -266,7 +257,6 @@ def build_row_type_template(
     row_counts: dict[str, int],
     batch_size: int,
     *,
-    think_enabled: bool,
     context_enabled: bool,
     xctx_enabled: bool,
 ) -> list[str]:
@@ -291,11 +281,6 @@ def build_row_type_template(
     allocate("puxctx", context_enabled and xctx_enabled)
     allocate("noattn", True)
     allocate("puattn", True)
-    allocate("rdthink", think_enabled)
-    allocate("trthink", think_enabled)
-    allocate("think", think_enabled)
-    allocate("think2x", think_enabled)
-    allocate("think3x", think_enabled)
     allocate("encode", True)
     normal_count = max(0, int(row_counts.get("n_normal", 0)))
     template.extend(["normal"] * normal_count)
@@ -313,15 +298,13 @@ def build_row_type_masks(
     block_size: int,
     device: torch.device,
     *,
-    think_enabled: bool,
     context_enabled: bool,
     xctx_enabled: bool,
 ) -> SpecialRowMasks:
     """Create the per-row masks for a row template.
 
     The returned :class:`SpecialRowMasks` structure is consumed by
-    :func:`train_model` and :func:`augment_training_batch` to disable GRCE,
-    XCTX, or attention and to force thinking behavior on specific rows.
+    :func:`train_model` to disable GRCE, XCTX, or attention for specific rows.
     """
     batch_size = len(row_types)
     context_special_rows: set[int] = set()
@@ -334,9 +317,6 @@ def build_row_type_masks(
     context_dropout_positions = None
     attention_disabled_mask = torch.zeros(batch_size, dtype=torch.bool, device=device)
     attention_dropout_positions = None
-    think_disabled_rows: set[int] = set()
-    forced_think_rows: set[int] = set()
-
     def ensure_tensor(tensor: torch.Tensor | None, *, dtype, fill) -> torch.Tensor:
         if tensor is None:
             return torch.full((batch_size,), fill, dtype=dtype, device=device)
@@ -368,12 +348,6 @@ def build_row_type_masks(
             )
             attention_dropout_positions[idx] = random.randrange(max(1, block_size))
             context_special_rows.add(idx)
-        elif row_type == "rdthink" and think_enabled:
-            forced_think_rows.add(idx)
-            context_special_rows.add(idx)
-        if think_enabled and row_type not in {"trthink", "think", "rdthink", "think2x", "think3x"}:
-            think_disabled_rows.add(idx)
-
     if context_disabled_mask is not None and not context_disabled_mask.any():
         context_disabled_mask = None
     if xctx_disabled_mask is not None and not xctx_disabled_mask.any():
@@ -392,8 +366,6 @@ def build_row_type_masks(
         context_dropout_positions,
         attention_disabled_mask,
         attention_dropout_positions,
-        think_disabled_rows,
-        forced_think_rows,
     )
 
 
@@ -513,21 +485,6 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         ),
     )
     model_group.add_argument(
-        "--no-think",
-        dest="disable_think",
-        action="store_true",
-        help=(
-            "Disable thinking tokens entirely. By default the number of thinking rows is "
-            "computed automatically from batch size and special-row requirements."
-        ),
-    )
-    model_group.add_argument(
-        "--undo",
-        type=int,
-        default=0,
-        help="(Temporarily disabled)",
-    )
-    model_group.add_argument(
         "--tiny",
         action="store_true",
         help=(
@@ -572,14 +529,6 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=int,
         default=-1,
         help="If >0, detach gradients after this Transformer layer (1-based index).",
-    )
-    training_group.add_argument(
-        "--reward-relu",
-        type=float,
-        default=0.0,
-        help=(
-            "Enable experimental ReLU reward updates with scale=10^{-value} (value<=0 disables)"
-        ),
     )
     training_group.add_argument(
         "--reset-prompt-each-cycle",
@@ -639,30 +588,9 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="During sampling/reporting, avoid emitting newline tokens",
     )
     sampling_group.add_argument(
-        "--no-think-output",
-        dest="no_think_output",
-        action="store_true",
-        help="During sampling/reporting, suppress thinking tokens entirely",
-    )
-    sampling_group.add_argument(
-        "--no-think-prompt",
-        action="store_true",
-        help="Do not insert thinking tokens inside the prompt during sampling/reporting",
-    )
-    sampling_group.add_argument(
-        "--think-hard",
-        action="store_true",
-        help="While processing the prompt, insert thinking tokens after every mispredicted token",
-    )
-    sampling_group.add_argument(
         "--no-boundary",
         action="store_true",
         help="Allow completions to continue immediately after the prompt without enforcing a word boundary",
-    )
-    sampling_group.add_argument(
-        "--underline",
-        action="store_true",
-        help="Underline console tokens when the pronoun detector strongly expects a pronoun",
     )
 
     logging_group = parser.add_argument_group("Logging & diagnostics")
@@ -947,11 +875,6 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             if eval_full % interval != 0:
                 parser.error("--eval-full must be 0, 1, or a multiple of --eval-interval")
         args.eval_full = eval_full
-    if getattr(args, "disable_think", False):
-        args.think = 0
-    else:
-        row_counts = compute_row_type_counts(args.batch_size)
-        args.think = max(0, int(row_counts.get("n_trthink", 0)))
     return args
 
 
@@ -999,6 +922,41 @@ def color_text(text: str, color: str, *, bold: bool = False, underline: bool = F
     if underline:
         prefix += Colors.UNDERLINE
     return f"{prefix}{color}{text}{Colors.RESET}"
+
+
+def normalize_prompt(text: str) -> str:
+    """Map placeholder characters back to literal spaces/newlines."""
+
+    return text.replace(FANCY_SPACE, " ").replace(FANCY_ENTER, "\n")
+
+
+def prompt_needs_boundary(text: str) -> bool:
+    trimmed = text.rstrip()
+    if not trimmed:
+        return False
+    return trimmed[-1].lower() in ASCII_LOWERCASE
+
+
+def upgrade_state_dict(state: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    """Upgrade legacy checkpoints that used older feed-forward key names."""
+
+    needs_upgrade = any(".ff.net." in key for key in state)
+    if not needs_upgrade:
+        return state
+    upgraded: dict[str, torch.Tensor] = {}
+    for key, value in state.items():
+        new_key = key
+        marker = ".ff.net."
+        if marker in key:
+            prefix, suffix = key.split(marker, 1)
+            if suffix.startswith("0."):
+                new_key = f"{prefix}.ff.fc1.{suffix[2:]}"
+            elif suffix.startswith("2."):
+                new_key = f"{prefix}.ff.fc2.{suffix[2:]}"
+            else:
+                continue
+        upgraded[new_key] = value
+    return upgraded
 
 
 class Tee:
@@ -1353,11 +1311,6 @@ from tokenizers.trainers import BpeTrainer
 
 FANCY_SPACE = "\u2423"  # Open Box symbol for visible spaces
 FANCY_ENTER = "\u23CE"  # Return symbol for visible newlines
-THINK_TOKEN = "<think>"
-THINK_SYMBOL = "\u2754"  # white question mark
-# THINK_SYMBOL = "\u21BA"  # anticlockwise circle arrow (alternative option)
-UNDO_TOKEN = "<undo>"
-UNDO_SYMBOL = "\u21A9"  # leftwards arrow with hook
 ASCII_LETTERS = set(string.ascii_letters)
 ASCII_LOWERCASE = set(string.ascii_lowercase)
 
@@ -1518,122 +1471,8 @@ def _restrict_bpe_training_text(text: str) -> str:
 # -----------------------------------------------------------------------------
 
 
-NOUN_PROFORM_WORDS = [
-    "i",
-    "you",
-    "he",
-    "she",
-    "it",
-    "we",
-    "they",
-    "me",
-    "him",
-    "her",
-    "us",
-    "them",
-    "my",
-    "your",
-    "his",
-    "her",
-    "its",
-    "our",
-    "their",
-    "mine",
-    "yours",
-    "hers",
-    "ours",
-    "theirs",
-    "myself",
-    "yourself",
-    "himself",
-    "herself",
-    "itself",
-    "ourselves",
-    "yourselves",
-    "themselves",
-    "this",
-    "that",
-    "these",
-    "those",
-    "who",
-    "whom",
-    "whose",
-]
-
-NON_NOUN_PROFORM_WORDS = [
-    "do",
-    "does",
-    "did",
-    "done",
-    "doing",
-    "so",
-    "such",
-    "thus",
-    "there",
-    "here",
-    "then",
-    "therefore",
-    "thereby",
-    "therein",
-    "thereof",
-]
-
-PRONOUN_DOMINANCE_RATIO = 2.0
-PRONOUN_MIN_MASS = 0.05
-
-
-class NounExpectationDetector:
-    def __init__(
-        self,
-        model: "GRCEGPT",
-        tokenizer: "GPT2TokenizerWrapper",
-        think_token_id: int | None,
-    ) -> None:
-        self.model = model
-        self.tokenizer = tokenizer
-        self.device = next(model.parameters()).device
-        self.think_token_id = think_token_id
-        self.max_context = getattr(model.config, "block_size", 0)
-        self.noun_token_ids = sorted(tokenizer.noun_proform_token_ids)
-        self.other_token_ids = sorted(tokenizer.other_proform_token_ids)
-
-    def _prob_mass(self, probs: torch.Tensor, token_ids: list[int]) -> float:
-        if not token_ids:
-            return 0.0
-        index = torch.tensor(token_ids, device=probs.device, dtype=torch.long)
-        return float(probs.index_select(0, index).sum().item())
-
-    def requires_pronoun(self, prefix_tokens: list[int]) -> bool:
-        if not prefix_tokens or not self.noun_token_ids:
-            return False
-        context = prefix_tokens[-self.max_context :] if self.max_context > 0 else prefix_tokens
-        idx = torch.tensor(context, dtype=torch.long, device=self.device).unsqueeze(0)
-        was_training = self.model.training
-        if was_training:
-            self.model.eval()
-        try:
-            with torch.no_grad():
-                logits, _, _ = self.model.forward_autoreg(
-                    idx,
-                    think_token_id=self.think_token_id,
-                )
-        finally:
-            if was_training:
-                self.model.train()
-        next_logits = logits[:, -1, :].squeeze(0)
-        probs = torch.softmax(next_logits, dim=-1)
-        pronoun_mass = self._prob_mass(probs, self.noun_token_ids)
-        if pronoun_mass < PRONOUN_MIN_MASS:
-            return False
-        other_mass = self._prob_mass(probs, self.other_token_ids)
-        if other_mass <= 0.0:
-            return True
-        return pronoun_mass >= other_mass * PRONOUN_DOMINANCE_RATIO
-
-
-
 class GPT2TokenizerWrapper:
-    EXTRA_SPECIAL_TOKENS = [THINK_TOKEN, UNDO_TOKEN] + SPECIAL_TOKENS
+    EXTRA_SPECIAL_TOKENS = list(SPECIAL_TOKENS)
 
     def __init__(
         self,
@@ -1658,19 +1497,9 @@ class GPT2TokenizerWrapper:
         )
         self.vocab_size = self.tokenizer.get_vocab_size()
         self.special_ids = set(self.tokenizer.all_special_ids)
-        self.think_id = self.tokenizer.convert_tokens_to_ids(THINK_TOKEN)
-        if self.think_id is None:
-            raise ValueError("Failed to add think token to tokenizer vocabulary")
-        self.undo_id = self.tokenizer.convert_tokens_to_ids(UNDO_TOKEN)
-        if self.undo_id is None:
-            raise ValueError("Failed to add undo token to tokenizer vocabulary")
         self.non_special_ids = [
             tok_id for tok_id in range(self.vocab_size) if tok_id not in self.special_ids
         ]
-        self.noun_proform_token_ids = self._collect_proform_token_ids(NOUN_PROFORM_WORDS)
-        self.other_proform_token_ids = self._collect_proform_token_ids(
-            NON_NOUN_PROFORM_WORDS
-        )
         self.leading_alpha_token_ids = sorted(self._collect_leading_alpha_tokens())
 
     def _load_or_train(
@@ -1724,32 +1553,6 @@ class GPT2TokenizerWrapper:
             tk.add_special_tokens({"additional_special_tokens": extra_special_tokens})
         return tk
 
-    def _collect_proform_token_ids(self, words: list[str]) -> set[int]:
-        token_ids: set[int] = set()
-        for word in words:
-            token_ids.update(self._token_ids_for_word(word))
-        return token_ids
-
-    def _token_ids_for_word(self, word: str) -> set[int]:
-        base = word.lower()
-        token_ids: set[int] = set()
-        variants = {base, base.capitalize(), base.upper()}
-        for variant in variants:
-            for prefix in ("", " "):
-                text = f"{prefix}{variant}"
-                encoded = self.tokenizer.encode(text, add_special_tokens=False)
-                if len(encoded) != 1:
-                    continue
-                tok_id = encoded[0]
-                decoded = (
-                    self.tokenizer.decode([tok_id], clean_up_tokenization_spaces=False)
-                    .strip()
-                    .lower()
-                )
-                if decoded == base:
-                    token_ids.add(tok_id)
-        return token_ids
-
     def _collect_leading_alpha_tokens(self) -> set[int]:
         token_ids: set[int] = set()
         for tok_id in self.non_special_ids:
@@ -1763,9 +1566,6 @@ class GPT2TokenizerWrapper:
             if first in ASCII_LOWERCASE:
                 token_ids.add(tok_id)
         return token_ids
-
-    def is_noun_proform_token(self, token_id: int) -> bool:
-        return token_id in self.noun_proform_token_ids
 
     def encode(self, text: str) -> torch.Tensor:
         ids = self.tokenizer.encode(text, add_special_tokens=False)
@@ -2085,28 +1885,6 @@ class TextDataset:
         return segments
 
 
-def compute_prefill_contexts(
-    model: GRCEGPT,
-    prefill_tokens: torch.Tensor,
-    *,
-    think_token_id: int | None,
-) -> list[torch.Tensor] | None:
-    if prefill_tokens.numel() == 0:
-        return None
-    if not model.context_channels:
-        return None
-    with torch.no_grad():
-        _, _, extras = model.forward_autoreg(
-            prefill_tokens,
-            think_token_id=think_token_id,
-            record_final_context=True,
-        )
-    if not extras:
-        return None
-    final_contexts = extras.get("final_context_raw")
-    if not final_contexts:
-        return None
-    return [ctx.detach() if ctx is not None else None for ctx in final_contexts]
 
 
 @dataclass
@@ -2117,8 +1895,6 @@ class SpecialRowMasks:
     context_dropout_positions: torch.Tensor | None
     attention_disabled_mask: torch.Tensor | None
     attention_dropout_positions: torch.Tensor | None
-    think_disabled_rows: set[int]
-    forced_think_rows: set[int]
 
 
 def build_special_row_masks(
@@ -2126,13 +1902,10 @@ def build_special_row_masks(
     block_size: int,
     device: torch.device,
     *,
-    think_enabled: bool,
     context_enabled: bool,
     xctx_enabled: bool,
 ) -> SpecialRowMasks:
     context_special_rows: set[int] = set()
-    think_disabled_rows: set[int] = set()
-    forced_think_rows: set[int] = set()
     context_disabled_mask: torch.Tensor | None = None
     xctx_disabled_mask: torch.Tensor | None = None
     context_dropout_positions: torch.Tensor | None = None
@@ -2146,8 +1919,6 @@ def build_special_row_masks(
             context_dropout_positions,
             attention_disabled_mask,
             attention_dropout_positions,
-            think_disabled_rows,
-            forced_think_rows,
         )
 
     def pick_row(
@@ -2199,13 +1970,6 @@ def build_special_row_masks(
         attention_dropout_positions[att_puncture] = att_drop_position
         context_special_rows.add(att_puncture)
 
-    if think_enabled:
-        think_disabled_rows.add(random.randrange(batch_size))
-        candidates = [idx for idx in range(batch_size) if idx not in think_disabled_rows]
-        if candidates:
-            forced_idx = pick_row(occupied_rows, disallowed=think_disabled_rows)
-            forced_think_rows.add(forced_idx)
-
     return SpecialRowMasks(
         context_special_rows,
         context_disabled_mask,
@@ -2213,504 +1977,7 @@ def build_special_row_masks(
         context_dropout_positions,
         attention_disabled_mask,
         attention_dropout_positions,
-        think_disabled_rows,
-        forced_think_rows,
     )
-
-
-@dataclass
-class ThinkSettings:
-    max_steps: int = 0
-    token_id: int | None = None
-
-    @property
-    def enabled(self) -> bool:
-        return self.max_steps > 0 and self.token_id is not None
-
-
-def active_think_token_id(think: ThinkSettings | None) -> int | None:
-    if think is None or not think.enabled or think.token_id is None:
-        return None
-    return int(think.token_id)
-@dataclass
-class UndoSettings:
-    max_pairs: int = 0
-    token_id: int | None = None
-    fill_choices: list[int] = field(default_factory=list)
-
-    @property
-    def enabled(self) -> bool:
-        return (
-            self.max_pairs > 0
-            and self.token_id is not None
-            and bool(self.fill_choices)
-        )
-
-
-class ReLURewardTracker:
-    def __init__(
-        self,
-        model: GRCEGPT,
-        steps: int,
-        *,
-        ratio: float = 0.2,
-        scale: float = 1e-4,
-    ) -> None:
-        device = next(model.parameters()).device
-        hidden = 4 * model.config.n_embd
-        self.good_counts = [torch.zeros(hidden, device=device) for _ in range(model.config.n_layer)]
-        self.bad_counts = [torch.zeros(hidden, device=device) for _ in range(model.config.n_layer)]
-        self.interval = max(1, steps // 2)
-        self.ratio = ratio
-        self.token_ratio = 0.25
-        self.scale = max(0.0, float(scale))
-        self.model = model
-        self.pending_steps = 0
-
-    def record_batch(
-        self,
-        relu_activity: list[list[torch.Tensor | None]] | None,
-        token_losses: torch.Tensor,
-        valid_mask: torch.Tensor,
-    ) -> None:
-        if relu_activity is None:
-            return
-        good_scores, bad_scores = self._compute_token_scores(token_losses, valid_mask)
-        for t, per_layer in enumerate(relu_activity):
-            if per_layer is None:
-                continue
-            good_weight = good_scores[:, t].unsqueeze(1)
-            bad_weight = bad_scores[:, t].unsqueeze(1)
-            good_active = good_weight.any()
-            bad_active = bad_weight.any()
-            if not good_active and not bad_active:
-                continue
-            for layer_idx, mask in enumerate(per_layer):
-                if mask is None:
-                    continue
-                if good_active:
-                    contrib = (mask.float() * good_weight).sum(dim=0)
-                    self.good_counts[layer_idx] += contrib
-                if bad_active:
-                    inactive = (~mask).float()
-                    contrib = (inactive * bad_weight).sum(dim=0)
-                    self.bad_counts[layer_idx] += contrib
-        self.pending_steps += 1
-
-    def maybe_apply(self) -> None:
-        if self.pending_steps >= self.interval:
-            self.apply_updates()
-
-    def finalize(self) -> None:
-        if any(count.sum().item() != 0 for count in self.good_counts + self.bad_counts):
-            self.apply_updates()
-
-    def apply_updates(self) -> None:
-        if self.scale <= 0:
-            self.pending_steps = 0
-            return
-        self.pending_steps = 0
-        for layer_idx, block in enumerate(self.model.core.blocks):
-            combined = self.good_counts[layer_idx] + self.bad_counts[layer_idx]
-            self._apply_bias(block.ff.fc1.bias, combined)
-            self.good_counts[layer_idx].zero_()
-            self.bad_counts[layer_idx].zero_()
-        print(
-            color_text(
-                f"[reward-relu] applied auxiliary updates (scale={self.scale:.2e})",
-                Colors.MAGENTA,
-            )
-        )
-
-    def _apply_bias(self, bias: torch.Tensor, scores: torch.Tensor) -> None:
-        if bias is None or scores.numel() == 0:
-            return
-        positive = scores > 0
-        if not positive.any():
-            return
-        hidden = bias.size(0)
-        k = max(1, int(hidden * self.ratio))
-        available = positive.sum().item()
-        k = min(k, available)
-        if k <= 0:
-            return
-        values, indices = torch.topk(scores, k)
-        bias_std = bias.data.std().item()
-        delta = self.scale * bias_std
-        if delta == 0:
-            return
-        bias.data[indices] += delta
-
-    def _compute_token_scores(
-        self, token_losses: torch.Tensor, valid_mask: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        good = torch.zeros_like(token_losses)
-        bad = torch.zeros_like(token_losses)
-        B, T = token_losses.shape
-        for b in range(B):
-            valid_indices = torch.nonzero(valid_mask[b], as_tuple=False).flatten()
-            if valid_indices.numel() == 0:
-                continue
-            losses = token_losses[b, valid_indices]
-            slice_size = max(1, int(valid_indices.numel() * self.token_ratio))
-            slice_size = min(slice_size, valid_indices.numel())
-            if slice_size <= 0:
-                continue
-            mean_loss = losses.mean()
-            good_vals, good_pos = torch.topk(losses, slice_size, largest=False)
-            bad_vals, bad_pos = torch.topk(losses, slice_size, largest=True)
-            good_scores = (mean_loss - good_vals).clamp(min=0)
-            bad_scores = (bad_vals - mean_loss).clamp(min=0)
-            good_indices = valid_indices[good_pos]
-            bad_indices = valid_indices[bad_pos]
-            good[b, good_indices] = good_scores
-            bad[b, bad_indices] = bad_scores
-        return good, bad
-def augment_training_batch(
-    model: GRCEGPT,
-    inputs: torch.Tensor,
-    targets: torch.Tensor,
-    think: ThinkSettings | None,
-    undo: UndoSettings | None,
-    *,
-    disable_context_rows: set[int] | None = None,
-    disable_think_rows: set[int] | None = None,
-    forced_think_rows: set[int] | None = None,
-    initial_context_raw: list[torch.Tensor] | None = None,
-    row_types: Sequence[str] | None = None,
-) -> tuple[
-    torch.Tensor,
-    torch.Tensor,
-    torch.Tensor | None,
-    torch.Tensor | None,
-    torch.Tensor | None,
-]:
-    """Mutate a minibatch according to the active row types.
-
-    Invoked by both :func:`train_model` and :func:`evaluate_split` to insert
-    `<think>` tokens, apply undo fillers (currently disabled), and produce the
-    auxiliary masks used by loss computation.
-    """
-    think_enabled = think is not None and think.enabled
-    think_token_id = active_think_token_id(think)
-    forced_context_off = disable_context_rows or set()
-    forced_think_rows = forced_think_rows or set()
-    think_disabled_rows = disable_think_rows or set()
-    undo_enabled = False
-    if not think_enabled:
-        return inputs, targets, None, None, None
-    B, block_size = inputs.shape
-    device = inputs.device
-    new_inputs = inputs.clone()
-    new_targets = targets.clone()
-    random_mask = None
-    think_labels = None
-    think_slot_mask = None
-    random_mask = None
-    full_logits = None
-    prev_mode = model.training
-    need_logits = think_enabled or undo_enabled
-    if need_logits:
-        model.eval()
-        with torch.no_grad():
-            full_logits, _, _ = model.forward_autoreg(
-                inputs,
-                think_token_id=think_token_id,
-                initial_context_raw=initial_context_raw,
-            )
-    if prev_mode and need_logits:
-        model.train()
-    think_scores = None
-    if think_enabled:
-        think_labels = torch.full_like(inputs, -1)
-        think_slot_mask = torch.zeros_like(inputs, dtype=torch.bool, device=device)
-        if full_logits is not None and think is not None and think.token_id is not None:
-            think_scores = full_logits[..., think.token_id]
-    think_row_set: set[int] = set()
-    special_think_rows: set[int] = set(forced_think_rows)
-    if row_types is None and think_enabled and think is not None:
-        seq_think_quota = max(0, int(think.max_steps))
-        if seq_think_quota > 0:
-            eligible_rows = [
-                row_idx
-                for row_idx in range(B)
-                if row_idx not in think_disabled_rows
-                and row_idx not in forced_context_off
-                and row_idx not in forced_think_rows
-            ]
-            quota = min(seq_think_quota, len(eligible_rows))
-            think_row_set = set(eligible_rows[:quota])
-        special_think_rows.update(forced_think_rows)
-
-    def sample_scaled_value() -> int:
-        u = random.random()
-        return int((u * u * block_size) / 4)
-
-    def sample_think_target_value() -> int:
-        u = random.random()
-        return int((u * u * block_size) / 2)
-
-    think_row_types = {"trthink", "think", "rdthink", "think2x", "think3x"}
-    for row in range(B):
-        row_type = None
-        if row_types is not None and row < len(row_types):
-            row_type = row_types[row]
-        row_is_special = row in special_think_rows
-        row_think_active = False
-        if think_enabled and think is not None and think.token_id is not None:
-            if row_type is not None:
-                row_think_active = row_type in think_row_types
-                if row_type == "rdthink":
-                    row_is_special = True
-            else:
-                if row_is_special:
-                    row_think_active = True
-                elif row in think_row_set:
-                    row_think_active = True
-        max_insert_budget = block_size - 1
-        undo_cap = 0
-        remaining_budget = max_insert_budget
-        undo_cap = min(undo_cap, remaining_budget // 2)
-        undo_pairs = random.randint(0, undo_cap) if undo_cap > 0 else 0
-        keep_len = block_size - 2 * undo_pairs
-        keep_len = max(1, keep_len)
-        seq_entries = [
-            {
-                "token": int(inputs[row, idx].item()),
-                "tag": "base",
-                "base_index": idx,
-            }
-            for idx in range(keep_len)
-        ]
-        tail_token = int(targets[row, keep_len - 1].item())
-        tail_entry = {"token": tail_token, "tag": "base", "base_index": None}
-
-        def truncate_entries() -> None:
-            limit = block_size + 1
-            if len(seq_entries) > limit:
-                del seq_entries[limit:]
-
-        truncate_entries()
-
-        think_token_val = int(think.token_id) if think is not None and think.token_id is not None else None
-        if row_think_active and think_token_val is not None:
-            if row_type == "think2x":
-                expanded: list[dict] = []
-                for entry in seq_entries:
-                    expanded.append(entry)
-                    expanded.append(
-                        {
-                            "token": think_token_val,
-                            "tag": "think_forced",
-                            "base_index": entry.get("base_index"),
-                        }
-                    )
-                seq_entries = expanded
-                truncate_entries()
-            elif row_type == "think3x":
-                expanded = []
-                for entry in seq_entries:
-                    expanded.append(entry)
-                    for _ in range(2):
-                        expanded.append(
-                            {
-                                "token": think_token_val,
-                                "tag": "think_forced",
-                                "base_index": entry.get("base_index"),
-                            }
-                        )
-                seq_entries = expanded
-                truncate_entries()
-            elif row_is_special:
-                max_k = max(0, (3 * block_size) // 4)
-                k_val = random.randint(0, max_k)
-                prob = k_val / max(1, block_size)
-                expanded: list[dict] = []
-                for idx_entry, entry in enumerate(seq_entries):
-                    if idx_entry > 0 and random.random() < prob:
-                        expanded.append(
-                            {
-                                "token": think_token_val,
-                                "tag": "think_random",
-                                "base_index": None,
-                            }
-                        )
-                    expanded.append(entry)
-                seq_entries = expanded
-                truncate_entries()
-            else:
-                repeat_budget = sample_scaled_value()
-                tail_budget = sample_scaled_value()
-                target_budget = sample_scaled_value()
-                if row_type == "think":
-                    repeat_budget = 0
-                    tail_budget = 0
-                    target_budget = sample_think_target_value()
-                if repeat_budget > 0:
-                    expanded: list[dict] = []
-                    for entry in seq_entries:
-                        expanded.append(entry)
-                        for _ in range(repeat_budget):
-                            expanded.append(
-                                {
-                                    "token": think_token_val,
-                                    "tag": "think_repeat",
-                                    "base_index": None,
-                                }
-                            )
-                    seq_entries = expanded
-                    truncate_entries()
-                if target_budget > 0 and think_scores is not None:
-                    for _ in range(target_budget):
-                        base_positions = [
-                            (idx, entry)
-                            for idx, entry in enumerate(seq_entries)
-                            if entry.get("base_index") is not None
-                        ]
-                        if not base_positions:
-                            break
-                        scores = [
-                            float(think_scores[row, entry[1]["base_index"]].item())
-                            for entry in base_positions
-                        ]
-                        max_score = max(scores)
-                        weights = [math.exp(val - max_score) for val in scores]
-                        total_weight = sum(weights)
-                        if total_weight <= 0:
-                            break
-                        normalized = [w / total_weight for w in weights]
-                        chosen_entry = random.choices(base_positions, weights=normalized, k=1)[0]
-                        insert_idx = chosen_entry[0] + 1
-                        seq_entries.insert(
-                            insert_idx,
-                            {
-                                "token": think_token_val,
-                                "tag": "think_weighted",
-                                "base_index": None,
-                            },
-                        )
-                        truncate_entries()
-                if tail_budget > 0:
-                    for _ in range(tail_budget):
-                        if len(seq_entries) >= block_size:
-                            seq_entries.pop()
-                        last_base = None
-                        for idx in range(len(seq_entries) - 1, -1, -1):
-                            if seq_entries[idx].get("base_index") is not None:
-                                last_base = idx
-                                break
-                        insert_idx = (last_base + 1) if last_base is not None else len(seq_entries)
-                        seq_entries.insert(
-                            insert_idx,
-                            {
-                                "token": think_token_val,
-                                "tag": "think_tail",
-                                "base_index": None,
-                            },
-                        )
-                        truncate_entries()
-
-        seq_entries.append(tail_entry)
-        truncate_entries()
-        if len(seq_entries) < block_size + 1:
-            padding_token = seq_entries[-1]["token"]
-            while len(seq_entries) < block_size + 1:
-                seq_entries.append({"token": padding_token, "tag": "pad", "base_index": None})
-
-        seq_tensor = torch.tensor(
-            [entry["token"] for entry in seq_entries], dtype=inputs.dtype, device=device
-        )
-        new_inputs[row] = seq_tensor[:-1]
-        new_targets[row] = seq_tensor[1:]
-        if think_labels is not None and think_token_val is not None:
-            for idx in range(block_size):
-                if int(new_inputs[row, idx].item()) == think_token_val:
-                    think_labels[row, idx] = int(new_targets[row, idx].item())
-        if think_slot_mask is not None:
-            think_slot_mask[row].fill_(row_think_active)
-
-    return new_inputs, new_targets, random_mask, think_labels, think_slot_mask
-
-
-
-def apply_think_slot_mask(
-    logits: torch.Tensor,
-    think_slot_mask: torch.Tensor | None,
-    think: ThinkSettings | None,
-) -> torch.Tensor:
-    if (
-        think_slot_mask is None
-        or think is None
-        or not think.enabled
-        or think.token_id is None
-    ):
-        return logits
-    disable_mask = (~think_slot_mask).to(device=logits.device)
-    if not disable_mask.any():
-        return logits
-    logits[..., think.token_id] = logits[..., think.token_id].masked_fill(
-        disable_mask, -1e9
-    )
-    return logits
-
-
-def disable_think_logits(
-    logits: torch.Tensor, think: ThinkSettings | None
-) -> torch.Tensor:
-    if think is None or not think.enabled or think.token_id is None:
-        return logits
-    logits[..., int(think.token_id)] = -1e9
-    return logits
-
-
-def compute_think_alignment_loss(
-    model: GRCEGPT,
-    logits: torch.Tensor,
-    inputs: torch.Tensor,
-    targets: torch.Tensor,
-    per_token_loss: torch.Tensor,
-    think: ThinkSettings | None,
-) -> torch.Tensor:
-    if think is None or not think.enabled or think.token_id is None:
-        return logits.new_tensor(0.0)
-    think_id = int(think.token_id)
-    mask = inputs == think_id
-    if not mask.any():
-        return logits.new_tensor(0.0)
-    emb_table = model.core.tok_emb.weight
-    think_emb = emb_table[think_id]
-    head = model.core.head
-    loss_accum = logits.new_tensor(0.0)
-    count = 0
-    B, T = inputs.shape
-    for b in range(B):
-        for t in range(T - 1):
-            if not mask[b, t]:
-                continue
-            target_id = int(targets[b, t].item())
-            next_target = int(targets[b, t + 1].item())
-            if target_id == LOSS_IGNORE_INDEX or next_target == LOSS_IGNORE_INDEX:
-                continue
-            A = float(per_token_loss[b, t].item())
-            B_loss = float(per_token_loss[b, t + 1].item())
-            denom = A + B_loss
-            if denom <= 0:
-                continue
-            ratio = A / (denom + 1e-6)
-            next_emb = emb_table[target_id]
-            mix_vec = next_emb + think_emb * ratio
-            mix_vec = next_emb + 0.5 * (mix_vec - next_emb)
-            target_logits = head(mix_vec.unsqueeze(0)).squeeze(0)
-            target_probs = F.softmax(target_logits.detach(), dim=-1)
-            output_logits = logits[b, t]
-            log_probs = F.log_softmax(output_logits, dim=-1)
-            diff = target_probs - log_probs.exp()
-            loss_accum = loss_accum + 0.5 * torch.sum(diff * diff)
-            count += 1
-    if count > 0:
-        loss_accum = loss_accum / count
-    return loss_accum
-
 
 
 def load_or_prepare_tokens(
@@ -3055,7 +2322,6 @@ class GRCEGPT(nn.Module):
         *,
         disable_context: bool = False,
         capture_activations: bool = False,
-        think_token_id: int | None = None,
         collect_relu_mask: bool = False,
         context_disabled_rows: torch.Tensor | None = None,
         xctx_disabled_rows: torch.Tensor | None = None,
@@ -3125,16 +2391,6 @@ class GRCEGPT(nn.Module):
                     context_states[idx_ch] = channel.context_norm(init_raw)
         logits_steps = []
         hidden_steps = []
-        pos_counters = torch.zeros(B, dtype=torch.long, device=device)
-        last_content_token = torch.full(
-            (B,),
-            -1,
-            dtype=torch.long,
-            device=device,
-        )
-        think_marker = None
-        if think_token_id is not None:
-            think_marker = self.core.tok_emb.weight[think_token_id]
         activation_store: dict | None = None
         need_store = capture_activations or collect_relu_mask
         relu_activity: list[list[torch.Tensor | None]] | None = [] if collect_relu_mask else None
@@ -3166,34 +2422,6 @@ class GRCEGPT(nn.Module):
             else:
                 prefix = idx[:, : t + 1]
                 target_pos = prefix.size(1) - 1
-            token_ids = prefix[:, target_pos]
-            tok_last = self.core.tok_emb(token_ids)
-            think_mask = None
-            if think_token_id is not None:
-                think_mask = token_ids == think_token_id
-                if think_mask.any():
-                    tok_last = tok_last.clone()
-                    valid_prev = last_content_token >= 0
-                    if valid_prev.any():
-                        prev_emb = self.core.tok_emb(last_content_token.clamp(min=0))
-                        combined_mask = think_mask & valid_prev
-                        if combined_mask.any():
-                            tok_last[combined_mask] = prev_emb[combined_mask]
-                    if think_marker is not None:
-                        tok_last[think_mask] = tok_last[think_mask] + think_marker
-            pos_ids = pos_counters.clone()
-            if think_mask is not None and think_mask.any():
-                prior_pos = torch.clamp(pos_counters[think_mask] - 1, min=0)
-                pos_ids[think_mask] = prior_pos
-            pos_emb = self.core.pos_emb(pos_ids)
-            if think_mask is not None:
-                content_mask = ~think_mask
-            else:
-                content_mask = torch.ones_like(token_ids, dtype=torch.bool)
-            if content_mask.any():
-                last_content_token[content_mask] = token_ids[content_mask]
-            pos_counters = pos_counters + content_mask.to(pos_counters.dtype)
-            token_input = tok_last + pos_emb
             block_biases = None
             if use_context:
                 for channel, state in zip(active_channels, context_states):
@@ -3341,59 +2569,6 @@ def build_model_tag(config: ModelConfig) -> str:
 LOSS_IGNORE_INDEX = -100
 
 
-def build_loss_targets(
-    targets: torch.Tensor,
-    think: ThinkSettings | None,
-    random_mask: torch.Tensor | None,
-) -> torch.Tensor:
-    mask: torch.Tensor | None = None
-    if think is not None and think.enabled and think.token_id is not None:
-        mask = targets == think.token_id
-    if random_mask is not None:
-        mask = random_mask if mask is None else (mask | random_mask)
-    if mask is None or not mask.any():
-        return targets
-    masked = targets.clone()
-    masked[mask] = LOSS_IGNORE_INDEX
-    return masked
-
-
-def expand_prompt_with_thinking(
-    model: GRCEGPT, prompt: torch.Tensor, think: ThinkSettings | None
-) -> torch.Tensor:
-    if think is None or not think.enabled or think.token_id is None:
-        return prompt
-    if prompt.size(0) != 1:
-        return prompt
-    idx = prompt.clone()
-    inserted = 0
-    pos = 0
-    max_insertions = max(0, think.max_steps)
-    max_positions = int(model.config.block_size)
-    while (
-        pos < idx.size(1)
-        and inserted < max_insertions
-        and idx.size(1) < max_positions
-    ):
-        prefix = idx[:, : pos + 1]
-        logits, _, _ = model.forward_autoreg(
-            prefix,
-            think_token_id=active_think_token_id(think),
-        )
-        next_logits = logits[:, -1, :]
-        top_ids = torch.argmax(next_logits, dim=-1)
-        if int(top_ids.item()) == int(think.token_id):
-            think_tok = torch.tensor([[think.token_id]], dtype=idx.dtype, device=idx.device)
-            idx = torch.cat((idx[:, : pos + 1], think_tok, idx[:, pos + 1 :]), dim=1)
-            inserted += 1
-            pos += 1
-            if idx.size(1) >= max_positions:
-                break
-            continue
-        pos += 1
-    return idx
-
-
 # -----------------------------------------------------------------------------
 # Training / Generation Helpers
 # -----------------------------------------------------------------------------
@@ -3411,336 +2586,68 @@ def evaluate_split(
     disable_context: bool = False,
     disable_xctx: bool = False,
     disable_attention: bool = False,
-    think_settings: ThinkSettings | None = None,
-    undo_settings: UndoSettings | None = None,
     batches: list[tuple[torch.Tensor, torch.Tensor]] | None = None,
     use_special_rows: bool = False,
     encoder_mode: bool = False,
 ) -> float:
-    """Run a diagnostic evaluation for the requested split.
+    """Run a diagnostic evaluation for the requested split."""
 
-    Called from :func:`train_model` during scheduled evaluations and from
-    :func:`grce_main` when the CLI requests reporting. It reuses
-    :func:`augment_training_batch` to mirror the training-time mutations.
-    """
-    ce_losses = []
+    ce_losses: list[float] = []
     if batches is None:
-        batches = []
-        for _ in range(iters):
-            xb, yb = dataset.get_batch(
-                split,
-                block_size,
-                batch_size,
-                device,
-            )
-            batches.append((xb, yb))
-    think_token_id = active_think_token_id(think_settings)
+        batches = [
+            dataset.get_batch(split, block_size, batch_size, device)
+            for _ in range(iters)
+        ]
     context_path_enabled = bool(model.context_channels)
     xctx_enabled = any(
         getattr(channel, "is_xctx", False) for channel in getattr(model, "context_channels", [])
     )
-    think_enabled = think_settings is not None and think_settings.enabled
-    for payload in batches:
-        xb, yb = payload[:2]
-        init_ctx = None
+    for xb, yb in batches:
         special_masks: SpecialRowMasks | None = None
         if use_special_rows:
             special_masks = build_special_row_masks(
                 xb.size(0),
                 block_size,
                 xb.device,
-                think_enabled=think_enabled,
                 context_enabled=context_path_enabled,
                 xctx_enabled=xctx_enabled,
             )
-        context_special_rows = (
-            special_masks.context_special_rows if special_masks is not None else None
-        )
-        think_disabled_rows = (
-            set(special_masks.think_disabled_rows) if special_masks is not None else None
-        )
-        forced_think_rows = (
-            set(special_masks.forced_think_rows) if special_masks is not None else None
-        )
-        aug_xb, aug_yb, random_mask, _, think_slot_mask = augment_training_batch(
-            model,
-            xb,
-            yb,
-            think_settings,
-            undo_settings,
-            disable_context_rows=context_special_rows,
-            disable_think_rows=think_disabled_rows,
-            forced_think_rows=forced_think_rows,
-            initial_context_raw=init_ctx,
+        context_disabled_rows = special_masks.context_disabled_mask if special_masks else None
+        xctx_disabled_rows = special_masks.xctx_disabled_mask if special_masks else None
+        context_dropout_positions = (
+            special_masks.context_dropout_positions if special_masks else None
         )
         attention_disabled_rows = None
-        if disable_attention:
-            attention_disabled_rows = torch.ones(
-                aug_xb.size(0), dtype=torch.bool, device=device
-            )
-        elif special_masks is not None:
-            attention_disabled_rows = special_masks.attention_disabled_mask
         attention_dropout_positions = None
         if disable_attention:
-            attention_dropout_positions = attention_disabled_rows
+            attention_disabled_rows = torch.ones(xb.size(0), dtype=torch.bool, device=xb.device)
         elif special_masks is not None:
+            attention_disabled_rows = special_masks.attention_disabled_mask
             attention_dropout_positions = special_masks.attention_dropout_positions
-        context_disabled_rows = None
-        xctx_disabled_rows = None
-        context_dropout_positions = None
-        if special_masks is not None:
-            context_disabled_rows = special_masks.context_disabled_mask
-            xctx_disabled_rows = special_masks.xctx_disabled_mask
-            context_dropout_positions = special_masks.context_dropout_positions
-        raw_logits, _, _ = model.forward_autoreg(
-            aug_xb,
+        logits, _, _ = model.forward_autoreg(
+            xb,
+            targets=yb,
             disable_context=disable_context,
-            think_token_id=think_token_id,
             disable_xctx=disable_xctx,
             attention_disabled_rows=attention_disabled_rows,
             attention_dropout_positions=attention_dropout_positions,
             context_disabled_rows=context_disabled_rows,
             xctx_disabled_rows=xctx_disabled_rows,
             context_dropout_positions=context_dropout_positions,
-            initial_context_raw=init_ctx,
             encoder_mode=encoder_mode,
         )
-        logits_main = disable_think_logits(raw_logits.clone(), think_settings)
-        logits_main = apply_think_slot_mask(logits_main, think_slot_mask, think_settings)
-        loss_targets = build_loss_targets(aug_yb, think_settings, random_mask)
+        targets_eval = yb
         if encoder_mode:
-            keep_mask = torch.zeros_like(loss_targets, dtype=torch.bool)
-            keep_mask[:, -1] = True
-            mask_val = torch.full_like(loss_targets, LOSS_IGNORE_INDEX)
-            loss_targets = torch.where(keep_mask, loss_targets, mask_val)
-        logits_flat = logits_main.view(-1, logits_main.size(-1))
-        per_token = F.cross_entropy(
-            logits_flat,
-            loss_targets.view(-1),
-            reduction="none",
+            mask = torch.full_like(targets_eval, LOSS_IGNORE_INDEX)
+            mask[:, -1] = targets_eval[:, -1]
+            targets_eval = mask
+        loss = F.cross_entropy(
+            logits.view(-1, logits.size(-1)),
+            targets_eval.view(-1),
             ignore_index=LOSS_IGNORE_INDEX,
         )
-        valid_mask = loss_targets != LOSS_IGNORE_INDEX
-        denom = valid_mask.sum().item()
-        if denom == 0:
-            main_loss = per_token.sum() * 0
-        else:
-            main_loss = per_token.sum() / denom
-        ce_losses.append(main_loss.item())
-    ce_avg = sum(ce_losses) / len(ce_losses)
-    return ce_avg
-
-
-def build_think_sequences(
-    inputs: torch.Tensor,
-    targets: torch.Tensor,
-    counts: torch.Tensor,
-    *,
-    think_token_id: int,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    B, T = inputs.shape
-    device = inputs.device
-    dtype = inputs.dtype
-    new_inputs = torch.empty_like(inputs)
-    new_targets = torch.empty_like(targets)
-    eval_targets = torch.full_like(targets, LOSS_IGNORE_INDEX)
-    eval_weights = torch.zeros(B, T, device=device, dtype=torch.float32)
-
-    limit = T + 1
-    counts = counts.to(device=device, dtype=torch.long).clamp_min(0)
-
-    for row in range(B):
-        seq_entries: list[dict] = []
-        base_targets = [int(val) for val in targets[row].tolist()]
-        for idx in range(T):
-            seq_entries.append(
-                {"token": int(inputs[row, idx].item()), "base_index": idx, "tag": "base"}
-            )
-        tail_token = int(targets[row, -1].item())
-        seq_entries.append({"token": tail_token, "base_index": None, "tag": "tail"})
-
-        def truncate() -> None:
-            if len(seq_entries) > limit:
-                del seq_entries[limit:]
-
-        base_counts = counts[row]
-        for base_idx in range(T):
-            count = int(base_counts[base_idx].item())
-            if count <= 0:
-                continue
-            insert_pos = None
-            for pos, entry in enumerate(seq_entries):
-                if entry.get("base_index") == base_idx:
-                    insert_pos = pos + 1
-                    break
-            if insert_pos is None:
-                continue
-            for k in range(count):
-                seq_entries.insert(
-                    insert_pos + k,
-                    {
-                        "token": int(think_token_id),
-                        "tag": "think",
-                        "base_index": base_idx,
-                        "think_idx": k,
-                        "think_total": count,
-                    },
-                )
-                truncate()
-
-        while len(seq_entries) < limit:
-            seq_entries.append(seq_entries[-1])
-
-        row_tokens = torch.tensor(
-            [entry["token"] for entry in seq_entries],
-            dtype=dtype,
-            device=device,
-        )
-        new_inputs[row] = row_tokens[:-1]
-        new_targets[row] = row_tokens[1:]
-
-        for pos, entry in enumerate(seq_entries[:-1]):
-            if entry.get("tag") != "base":
-                continue
-            base_idx = entry.get("base_index")
-            if base_idx is None or base_idx >= len(base_targets):
-                continue
-            count = int(base_counts[base_idx].item())
-            eval_targets[row, pos] = base_targets[base_idx]
-            eval_weights[row, pos] = float(max(1, count + 1))
-
-    return new_inputs, new_targets, eval_targets, eval_weights
-
-
-def run_think_insertion_eval(
-    model: GRCEGPT,
-    inputs: torch.Tensor,
-    targets: torch.Tensor,
-    counts: torch.Tensor,
-    *,
-    think_token_id: int,
-    initial_context_raw: list[torch.Tensor] | None = None,
-) -> tuple[float, float]:
-    new_inputs, new_targets, eval_targets, eval_weights = build_think_sequences(
-        inputs,
-        targets,
-        counts,
-        think_token_id=think_token_id,
-    )
-    logits, _, _ = model.forward_autoreg(
-        new_inputs,
-        think_token_id=think_token_id,
-        initial_context_raw=initial_context_raw,
-    )
-    think_guard = ThinkSettings(max_steps=1, token_id=think_token_id)
-    logits = disable_think_logits(logits, think_guard)
-    masked_targets = torch.where(
-        eval_weights > 0,
-        eval_targets,
-        torch.full_like(eval_targets, LOSS_IGNORE_INDEX),
-    )
-    loss_flat = F.cross_entropy(
-        logits.view(-1, logits.size(-1)),
-        masked_targets.view(-1),
-        reduction="none",
-        ignore_index=LOSS_IGNORE_INDEX,
-    )
-    weighted = loss_flat * eval_weights.view(-1)
-    total_weight = float(eval_weights.sum().item())
-    if total_weight <= 0:
-        return 0.0, 0.0
-    return float(weighted.sum().item()), total_weight
-
-
-def evaluate_think_modes(
-    model: GRCEGPT,
-    batches: list[
-        tuple[torch.Tensor, torch.Tensor]
-        | tuple[torch.Tensor, torch.Tensor, list[torch.Tensor] | None]
-    ],
-    *,
-    think_token_id: int,
-) -> dict[str, float]:
-    results: dict[str, float] = {}
-
-    def aggregate(batch_losses: list[tuple[float, float]]) -> float:
-        weight_sum = sum(weight for _, weight in batch_losses)
-        if weight_sum <= 0:
-            return 0.0
-        loss_sum = sum(loss for loss, _ in batch_losses)
-        return loss_sum / weight_sum
-
-    batch_losses: list[tuple[float, float]] = []
-    for payload in batches:
-        if len(payload) == 3:
-            xb, yb, init_ctx = payload
-        else:
-            xb, yb = payload[:2]
-            init_ctx = None
-        logits, _, _ = model.forward_autoreg(
-            xb,
-            think_token_id=think_token_id,
-            initial_context_raw=init_ctx,
-        )
-        preds = torch.argmax(logits, dim=-1)
-        counts = preds.eq(think_token_id).long()
-        counts = counts * (yb != LOSS_IGNORE_INDEX).long()
-        loss_sum, weight = run_think_insertion_eval(
-            model,
-            xb,
-            yb,
-            counts,
-            think_token_id=think_token_id,
-            initial_context_raw=init_ctx,
-        )
-        if weight > 0:
-            batch_losses.append((loss_sum, weight))
-    results["think"] = aggregate(batch_losses)
-
-    const_batches: list[tuple[float, float]] = []
-    for payload in batches:
-        if len(payload) == 3:
-            xb, yb, init_ctx = payload
-        else:
-            xb, yb = payload[:2]
-            init_ctx = None
-        counts = torch.ones_like(xb, dtype=torch.long)
-        counts = counts * (yb != LOSS_IGNORE_INDEX).long()
-        loss_sum, weight = run_think_insertion_eval(
-            model,
-            xb,
-            yb,
-            counts,
-            think_token_id=think_token_id,
-            initial_context_raw=init_ctx,
-        )
-        if weight > 0:
-            const_batches.append((loss_sum, weight))
-    results["think2x"] = aggregate(const_batches)
-
-    triple_batches: list[tuple[float, float]] = []
-    for payload in batches:
-        if len(payload) == 3:
-            xb, yb, init_ctx = payload
-        else:
-            xb, yb = payload[:2]
-            init_ctx = None
-        counts = torch.full_like(xb, 2, dtype=torch.long)
-        counts = counts * (yb != LOSS_IGNORE_INDEX).long()
-        loss_sum, weight = run_think_insertion_eval(
-            model,
-            xb,
-            yb,
-            counts,
-            think_token_id=think_token_id,
-            initial_context_raw=init_ctx,
-        )
-        if weight > 0:
-            triple_batches.append((loss_sum, weight))
-    results["think3x"] = aggregate(triple_batches)
-
-    return results
-
+        ce_losses.append(float(loss.item()))
+    return sum(ce_losses) / max(1, len(ce_losses))
 
 def train_model(
     model: GRCEGPT,
@@ -3757,19 +2664,12 @@ def train_model(
     tokenizer: GPT2TokenizerWrapper,
     suppress_newlines: bool,
     newline_token_id: int | None,
-    think_settings: ThinkSettings | None,
-    suppress_think_output: bool,
-    suppress_think_prompt: bool,
-    think_hard: bool,
-    undo_settings: UndoSettings | None,
     prompt_tracker: PromptTracker | None = None,
     reset_prompt_queue: bool = False,
     *,
-    reward_relu: bool = False,
     cycle_wall_start: float,
     base_wall_seconds: float,
     show_time: bool = False,
-    underline_tokens: bool = False,
     default_prompt_boundary: bool = False,
     boundary_blocklist: Sequence[int] | None = None,
     show_train_loss_details: bool = False,
@@ -3778,109 +2678,55 @@ def train_model(
     full_eval_stride: int = 1,
     force_full_eval_first: bool = True,
 ) -> Tuple[int, List[Dict[str, float]], float, float, float, float]:
-    """Run the main training loop for a cycle.
+    """Run the main training loop for a cycle."""
 
-    Called exclusively by :func:`grce_main`. Manages batching,
-    :func:`augment_training_batch`, optimizer steps, periodic calls to
-    :func:`evaluate_split`, and logging/metric collection.
-    """
     optim = torch.optim.AdamW(model.parameters(), lr=3e-4)
     total_steps = start_step
     history_updates: List[Dict[str, float]] = []
     printed_header = False
     long_log_force = bool(long_loss_log)
-    think_enabled = think_settings is not None and think_settings.enabled
-    undo_enabled = undo_settings is not None and undo_settings.enabled
-    think_token_id = active_think_token_id(think_settings)
-    noun_detector = (
-        NounExpectationDetector(model, tokenizer, think_token_id)
-        if underline_tokens
-        else None
-    )
-    reward_tracker = (
-        ReLURewardTracker(model, steps, scale=reward_relu)
-        if reward_relu > 0
-        else None
-    )
+
     if prompt_tracker is not None:
         prompt_queue = prompt_tracker.prompt_queue(reset=reset_prompt_queue)
     else:
         prompt_queue = []
 
-    def enqueue_prompt(idx: int, *, front: bool = False) -> None:
-        if prompt_tracker is None or idx is None or idx < 0:
-            return
-        prompt_queue[:] = [existing for existing in prompt_queue if existing != idx]
-        if front:
-            prompt_queue.insert(0, idx)
-        else:
-            prompt_queue.append(idx)
-
-    full_eval_stride = max(0, int(full_eval_stride))
-    full_eval_enabled = full_eval_stride > 0
-    force_full_eval = bool(force_full_eval_first)
-    show_think_columns = bool(
-        full_eval_enabled and think_enabled and tokenizer.think_id is not None
-    )
-    show_train_details = bool(show_train_loss_details and full_eval_enabled)
-    show_test_details = bool(show_test_loss_details and full_eval_enabled)
     context_path_enabled = bool(model.context_channels)
     xctx_enabled = any(
         getattr(channel, "is_xctx", False) for channel in getattr(model, "context_channels", [])
     )
     row_counts = compute_row_type_counts(batch_size)
-    if think_settings is not None and think_settings.enabled:
-        think_settings.max_steps = max(0, row_counts.get("n_trthink", 0))
     row_type_template = build_row_type_template(
         row_counts,
         batch_size,
-        think_enabled=think_enabled,
         context_enabled=context_path_enabled,
         xctx_enabled=xctx_enabled,
     )
+
     loop_wall_start = time.time()
     loop_cpu_start = time.process_time()
     eval_wall_total = 0.0
     eval_cpu_total = 0.0
-    preeval_wall_total = 0.0
-    preeval_cpu_total = 0.0
+
+    full_eval_stride = max(0, int(full_eval_stride))
+    full_eval_enabled = full_eval_stride > 0
+    force_full_eval = bool(force_full_eval_first)
+
     for step in range(1, steps + 1):
-        batch_payload = dataset.get_batch(
+        xb, yb = dataset.get_batch(
             "train",
             block_size,
             batch_size,
             device,
         )
-        xb, yb = batch_payload
         row_types = list(row_type_template)
         random.shuffle(row_types)
         special_masks = build_row_type_masks(
             row_types,
             block_size,
             device,
-            think_enabled=think_enabled,
             context_enabled=context_path_enabled,
             xctx_enabled=xctx_enabled,
-        )
-        context_special_rows = set(special_masks.context_special_rows)
-        context_disabled_mask = special_masks.context_disabled_mask
-        xctx_disabled_mask = special_masks.xctx_disabled_mask
-        context_dropout_positions = special_masks.context_dropout_positions
-        attention_disabled_mask = special_masks.attention_disabled_mask
-        attention_dropout_positions = special_masks.attention_dropout_positions
-        think_disabled_rows = set(special_masks.think_disabled_rows)
-        forced_think_rows = set(special_masks.forced_think_rows)
-        xb, yb, random_mask, think_labels, think_slot_mask = augment_training_batch(
-            model,
-            xb,
-            yb,
-            think_settings,
-            undo_settings,
-            disable_context_rows=context_special_rows,
-            disable_think_rows=think_disabled_rows,
-            forced_think_rows=forced_think_rows,
-            initial_context_raw=None,
-            row_types=row_types,
         )
         encode_indices = [idx for idx, t in enumerate(row_types) if t == "encode"]
         encode_index_tensor = torch.tensor(encode_indices, dtype=torch.long, device=xb.device)
@@ -3899,1102 +2745,356 @@ def train_model(
                 return None
             return tensor.index_select(0, index)
 
-        total_loss = None
+        total_loss = torch.tensor(0.0, device=device)
         token_losses = None
-        valid_mask = None
-        raw_logits = None
-        loss_targets_main = None
-        xb_main = None
-        main_loss = torch.tensor(0.0, device=device)
-        activation_store = None
-        hidden_states = None
         if main_index_tensor.numel() > 0:
             xb_main = xb.index_select(0, main_index_tensor)
             yb_main = yb.index_select(0, main_index_tensor)
-            random_mask_main = select_rows(random_mask, main_index_tensor)
-            think_labels_main = select_rows(think_labels, main_index_tensor)
-            think_slot_mask_main = select_rows(think_slot_mask, main_index_tensor)
-            context_disabled_mask_main = select_rows(context_disabled_mask, main_index_tensor)
-            xctx_disabled_mask_main = select_rows(xctx_disabled_mask, main_index_tensor)
-            context_dropout_positions_main = select_rows(context_dropout_positions, main_index_tensor)
-            attention_disabled_mask_main = select_rows(attention_disabled_mask, main_index_tensor)
-            attention_dropout_positions_main = select_rows(attention_dropout_positions, main_index_tensor)
-            logits_main, hidden_states, activation_store = model.forward_autoreg(
+            context_disabled_mask_main = select_rows(
+                special_masks.context_disabled_mask,
+                main_index_tensor,
+            )
+            xctx_disabled_mask_main = select_rows(
+                special_masks.xctx_disabled_mask,
+                main_index_tensor,
+            )
+            context_dropout_positions_main = select_rows(
+                special_masks.context_dropout_positions,
+                main_index_tensor,
+            )
+            attention_disabled_mask_main = select_rows(
+                special_masks.attention_disabled_mask,
+                main_index_tensor,
+            )
+            attention_dropout_positions_main = select_rows(
+                special_masks.attention_dropout_positions,
+                main_index_tensor,
+            )
+            logits_main, _, _ = model.forward_autoreg(
                 xb_main,
                 targets=yb_main,
-                think_token_id=think_token_id,
-                collect_relu_mask=reward_tracker is not None,
                 context_disabled_rows=context_disabled_mask_main,
                 xctx_disabled_rows=xctx_disabled_mask_main,
                 context_dropout_positions=context_dropout_positions_main,
                 attention_disabled_rows=attention_disabled_mask_main,
                 attention_dropout_positions=attention_dropout_positions_main,
-                encoder_mode=False,
             )
-            raw_logits_main = logits_main
-            logits_main_adj = disable_think_logits(raw_logits_main.clone(), think_settings)
-            logits_main_adj = apply_think_slot_mask(
-                logits_main_adj, think_slot_mask_main, think_settings
-            )
-            loss_targets_main = build_loss_targets(yb_main, think_settings, random_mask_main)
-            logits_flat = logits_main_adj.view(-1, logits_main_adj.size(-1))
-            token_loss_flat = F.cross_entropy(
+            logits_flat = logits_main.view(-1, logits_main.size(-1))
+            targets_flat = yb_main.view(-1)
+            loss_main = F.cross_entropy(
                 logits_flat,
-                loss_targets_main.view(-1),
-                reduction="none",
+                targets_flat,
                 ignore_index=LOSS_IGNORE_INDEX,
             )
-            per_token_main = token_loss_flat.view_as(loss_targets_main)
-            valid_mask_main = loss_targets_main != LOSS_IGNORE_INDEX
-            denom_main = valid_mask_main.sum().item()
-            if denom_main == 0:
-                main_loss = per_token_main.sum() * 0
-            else:
-                main_loss = per_token_main.sum() / denom_main
-            total_loss = main_loss
-            token_losses = per_token_main
-            valid_mask = valid_mask_main
-            raw_logits = raw_logits_main
-            loss_targets_main = loss_targets_main
+            total_loss = total_loss + loss_main
+            token_losses = loss_main.detach()
 
-        encode_loss = None
         if encode_index_tensor.numel() > 0:
             xb_enc = xb.index_select(0, encode_index_tensor)
             yb_enc = yb.index_select(0, encode_index_tensor)
             logits_enc, _, _ = model.forward_autoreg(
                 xb_enc,
                 targets=yb_enc,
-                think_token_id=None,
-                collect_relu_mask=False,
                 disable_context=True,
                 disable_xctx=True,
-                context_disabled_rows=None,
-                xctx_disabled_rows=None,
-                context_dropout_positions=None,
-                attention_disabled_rows=None,
-                attention_dropout_positions=None,
                 encoder_mode=True,
             )
-            loss_targets_enc = build_loss_targets(yb_enc, None, None)
-            if loss_targets_enc.numel() > 0:
-                mask = torch.full_like(loss_targets_enc, LOSS_IGNORE_INDEX)
-                keep = torch.zeros_like(loss_targets_enc, dtype=torch.bool)
-                keep[:, -1] = True
-                loss_targets_enc = torch.where(keep, loss_targets_enc, mask)
-            logits_flat_enc = logits_enc.view(-1, logits_enc.size(-1))
-            token_loss_flat_enc = F.cross_entropy(
-                logits_flat_enc,
-                loss_targets_enc.view(-1),
-                reduction="none",
+            enc_targets = torch.full_like(yb_enc, LOSS_IGNORE_INDEX)
+            enc_targets[:, -1] = yb_enc[:, -1]
+            loss_enc = F.cross_entropy(
+                logits_enc.view(-1, logits_enc.size(-1)),
+                enc_targets.view(-1),
                 ignore_index=LOSS_IGNORE_INDEX,
             )
-            per_token_enc = token_loss_flat_enc.view_as(loss_targets_enc)
-            valid_mask_enc = loss_targets_enc != LOSS_IGNORE_INDEX
-            denom_enc = valid_mask_enc.sum().item()
-            if denom_enc == 0:
-                encode_loss = per_token_enc.sum() * 0
-            else:
-                encode_loss = per_token_enc.sum() / denom_enc
-            total_loss = encode_loss if total_loss is None else total_loss + encode_loss
+            total_loss = total_loss + loss_enc
 
-        if total_loss is None:
-            total_loss = torch.tensor(0.0, device=device, requires_grad=True)
-        align_loss = torch.tensor(0.0, device=device)
-        if (
-            raw_logits is not None
-            and loss_targets_main is not None
-            and token_losses is not None
-            and xb_main is not None
-        ):
-            align_loss = compute_think_alignment_loss(
-                model,
-                raw_logits,
-                xb_main,
-                loss_targets_main,
-                token_losses.detach(),
-                think_settings,
-            )
-        loss = total_loss + align_loss
-        optim.zero_grad()
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        optim.zero_grad(set_to_none=True)
+        total_loss.backward()
         optim.step()
         total_steps += 1
 
-        if reward_tracker is not None:
-            relu_activity = None
-            if activation_store is not None:
-                relu_activity = activation_store.get("relu_activity")
-            if relu_activity is not None and token_losses is not None and valid_mask is not None:
-                with torch.no_grad():
-                    reward_tracker.record_batch(
-                        relu_activity,
-                        token_losses.detach(),
-                        valid_mask.detach(),
+        eval_due = step == 1 or step % eval_interval == 0 or step == steps
+        if not eval_due:
+            continue
+        full_eval_now = full_eval_enabled and (
+            full_eval_stride > 0 and total_steps % full_eval_stride == 0
+        )
+        if force_full_eval and step == 1:
+            full_eval_now = True
+        eval_wall_block = time.time()
+        eval_cpu_block = time.process_time()
+        model.eval()
+        with torch.no_grad():
+            split_metrics: dict[str, dict[str, float]] = {"train": {}, "test": {}}
+            cached_batches: dict[str, list[tuple[torch.Tensor, torch.Tensor]]] = {}
+            for split in ("train", "test"):
+                cached_batches[split] = []
+                for _ in range(eval_iters):
+                    cached_batches[split].append(
+                        dataset.get_batch(split, block_size, batch_size, device)
                     )
-                    reward_tracker.maybe_apply()
+                base_batches = cached_batches[split]
+                split_metrics[split]["target"] = float(
+                    evaluate_split(
+                        model,
+                        dataset,
+                        device,
+                        block_size,
+                        batch_size,
+                        split,
+                        eval_iters,
+                        batches=base_batches,
+                    )
+                )
+                if not full_eval_now:
+                    continue
+                noprev_batches = list(base_batches)
+                split_metrics[split]["noprev"] = float(
+                    evaluate_split(
+                        model,
+                        dataset,
+                        device,
+                        block_size,
+                        batch_size,
+                        split,
+                        eval_iters,
+                        batches=noprev_batches,
+                    )
+                )
+                plain_kwargs = dict(batches=cached_batches[split])
+                split_metrics[split]["plain"] = float(
+                    evaluate_split(
+                        model,
+                        dataset,
+                        device,
+                        block_size,
+                        batch_size,
+                        split,
+                        eval_iters,
+                        disable_context=True,
+                        disable_xctx=True,
+                        **plain_kwargs,
+                    )
+                )
+                split_metrics[split]["normal"] = float(
+                    evaluate_split(
+                        model,
+                        dataset,
+                        device,
+                        block_size,
+                        batch_size,
+                        split,
+                        eval_iters,
+                        **plain_kwargs,
+                    )
+                )
+                split_metrics[split]["noctx"] = float(
+                    evaluate_split(
+                        model,
+                        dataset,
+                        device,
+                        block_size,
+                        batch_size,
+                        split,
+                        eval_iters,
+                        disable_xctx=True,
+                        **plain_kwargs,
+                    )
+                )
+                split_metrics[split]["noatt"] = float(
+                    evaluate_split(
+                        model,
+                        dataset,
+                        device,
+                        block_size,
+                        batch_size,
+                        split,
+                        eval_iters,
+                        disable_attention=True,
+                        **plain_kwargs,
+                    )
+                )
+                split_metrics[split]["none"] = float(
+                    evaluate_split(
+                        model,
+                        dataset,
+                        device,
+                        block_size,
+                        batch_size,
+                        split,
+                        eval_iters,
+                        disable_xctx=True,
+                        disable_attention=True,
+                        **plain_kwargs,
+                    )
+                )
+                split_metrics[split]["encode"] = float(
+                    evaluate_split(
+                        model,
+                        dataset,
+                        device,
+                        block_size,
+                        batch_size,
+                        split,
+                        eval_iters,
+                        disable_context=True,
+                        disable_xctx=True,
+                        encoder_mode=True,
+                        **plain_kwargs,
+                    )
+                )
+        model.train()
+        block_wall = time.time() - eval_wall_block
+        block_cpu = time.process_time() - eval_cpu_block
+        eval_wall_total += block_wall
+        eval_cpu_total += block_cpu
 
-        preeval_wall_block = time.time()
-        preeval_cpu_block = time.process_time()
-        if step == 1 or step % eval_interval == 0 or step == steps:
-            full_eval_now = full_eval_enabled and (
-                full_eval_stride > 0 and total_steps % full_eval_stride == 0
-            )
-            if force_full_eval and step == 1:
-                full_eval_now = True
-            eval_wall_block = time.time()
-            eval_cpu_block = time.process_time()
-            model.eval()
-            with torch.no_grad():
-                split_metrics: dict[str, dict[str, float]] = {"train": {}, "test": {}}
-                cached_batches: dict[
-                    str, list[tuple[torch.Tensor, torch.Tensor]]
-                ] = {}
-                for split in ("train", "test"):
-                    cached_batches[split] = []
-                    for _ in range(eval_iters):
-                        cached_batch = dataset.get_batch(
-                            split,
-                            block_size,
-                            batch_size,
-                            device,
-                        )
-                        bx, by = cached_batch
-                        cached_batches[split].append((bx, by))
-                    base_batches = cached_batches[split]
-                    split_metrics[split]["target"] = float(
-                        evaluate_split(
-                            model,
-                            dataset,
-                            device,
-                            block_size,
-                            batch_size,
-                            split,
-                            eval_iters,
-                            disable_context=False,
-                            disable_xctx=False,
-                            disable_attention=False,
-                            think_settings=think_settings,
-                            undo_settings=undo_settings,
-                            batches=base_batches,
-                        )
-                    )
-                    if not full_eval_now:
-                        continue
-                    noprev_batches = list(base_batches)
-                    split_metrics[split]["noprev"] = float(
-                        evaluate_split(
-                            model,
-                            dataset,
-                            device,
-                            block_size,
-                            batch_size,
-                            split,
-                            eval_iters,
-                            disable_context=False,
-                            disable_xctx=False,
-                            disable_attention=False,
-                            think_settings=think_settings,
-                            undo_settings=undo_settings,
-                            batches=noprev_batches,
-                        )
-                    )
-                    plain_kwargs = dict(
-                        think_settings=None,
-                        undo_settings=None,
-                        batches=cached_batches[split],
-                    )
-                    split_metrics[split]["plain"] = float(
-                        evaluate_split(
-                            model,
-                            dataset,
-                            device,
-                            block_size,
-                            batch_size,
-                            split,
-                            eval_iters,
-                            disable_context=True,
-                            disable_xctx=True,
-                            disable_attention=False,
-                            **plain_kwargs,
-                        )
-                    )
-                    split_metrics[split]["normal"] = float(
-                        evaluate_split(
-                            model,
-                            dataset,
-                            device,
-                            block_size,
-                            batch_size,
-                            split,
-                            eval_iters,
-                            disable_context=False,
-                            disable_xctx=False,
-                            disable_attention=False,
-                            **plain_kwargs,
-                        )
-                    )
-                    split_metrics[split]["noctx"] = float(
-                        evaluate_split(
-                            model,
-                            dataset,
-                            device,
-                            block_size,
-                            batch_size,
-                            split,
-                            eval_iters,
-                            disable_context=False,
-                            disable_xctx=True,
-                            disable_attention=False,
-                            **plain_kwargs,
-                        )
-                    )
-                    split_metrics[split]["noatt"] = float(
-                        evaluate_split(
-                            model,
-                            dataset,
-                            device,
-                            block_size,
-                            batch_size,
-                            split,
-                            eval_iters,
-                            disable_context=False,
-                            disable_xctx=False,
-                            disable_attention=True,
-                            **plain_kwargs,
-                        )
-                    )
-                    split_metrics[split]["none"] = float(
-                        evaluate_split(
-                            model,
-                            dataset,
-                            device,
-                            block_size,
-                            batch_size,
-                            split,
-                            eval_iters,
-                            disable_context=False,
-                            disable_xctx=True,
-                            disable_attention=True,
-                            **plain_kwargs,
-                        )
-                    )
-                    split_metrics[split]["encode"] = float(
-                        evaluate_split(
-                            model,
-                            dataset,
-                            device,
-                            block_size,
-                            batch_size,
-                            split,
-                            eval_iters,
-                            disable_context=True,
-                            disable_xctx=True,
-                            disable_attention=False,
-                            encoder_mode=True,
-                            **plain_kwargs,
-                        )
-                    )
-                    if show_think_columns and full_eval_now:
-                        think_modes = evaluate_think_modes(
-                            model,
-                            cached_batches[split],
-                            think_token_id=int(tokenizer.think_id),
-                        )
-                        split_metrics[split].update(think_modes)
-            block_wall = time.time() - eval_wall_block
-            block_cpu = time.process_time() - eval_cpu_block
-            eval_wall_total += block_wall
-            eval_cpu_total += block_cpu
-            preeval_wall_total += time.time() - preeval_wall_block
-            preeval_cpu_total += time.process_time() - preeval_cpu_block
-            prompt_input = sample_prompt
-            prompt_needs_boundary_flag = (
-                default_prompt_boundary and boundary_blocklist is not None
-            )
-            current_prompt_idx = None
-            use_argmax_completion = random.random() < 0.5
-            sampling_strategy = "argmax" if use_argmax_completion else "sample"
-            if prompt_tracker is not None:
-                while prompt_queue and prompt_tracker.is_completed(prompt_queue[0]):
-                    prompt_queue.pop(0)
-                if prompt_queue:
-                    current_prompt_idx = prompt_queue.pop(0)
-                    prompt_input = prompt_tracker.prompt_tensor(current_prompt_idx, device)
-                    prompt_text = prompt_tracker.prompts[current_prompt_idx][0]
-                    prompt_needs_boundary_flag = (
-                        boundary_blocklist is not None
-                        and prompt_needs_boundary(prompt_text)
-                    )
-                    state_val = prompt_tracker.state(current_prompt_idx)
-                    if state_val == 1:
-                        use_argmax_completion = True
-                    else:
-                        use_argmax_completion = random.random() < 0.5
-                    sampling_strategy = (
-                        "argmax" if use_argmax_completion else "sample"
-                    )
+        prompt_input = sample_prompt
+        prompt_needs_boundary_flag = default_prompt_boundary and boundary_blocklist is not None
+        current_prompt_idx = None
+        use_argmax_completion = random.random() < 0.5
+        sampling_strategy = "argmax" if use_argmax_completion else "sample"
+        if prompt_tracker is not None:
+            while prompt_queue and prompt_tracker.is_completed(prompt_queue[0]):
+                prompt_queue.pop(0)
+            if prompt_queue:
+                current_prompt_idx = prompt_queue.pop(0)
+                prompt_input = prompt_tracker.prompt_tensor(current_prompt_idx, device)
+                prompt_text = prompt_tracker.prompts[current_prompt_idx][0]
+                prompt_needs_boundary_flag = (
+                    boundary_blocklist is not None and prompt_needs_boundary(prompt_text)
+                )
+                state_val = prompt_tracker.state(current_prompt_idx)
+                if state_val == 1:
+                    use_argmax_completion = True
                 else:
                     use_argmax_completion = random.random() < 0.5
-                    sampling_strategy = (
-                        "argmax" if use_argmax_completion else "sample"
-                    )
-            sample_tokens, prompt_len = generate(
-                model,
-                prompt_input.clone(),
-                sample_chars,
-                suppress_newlines=suppress_newlines,
-                newline_token_id=newline_token_id,
-                think_settings=think_settings,
-                suppress_think=suppress_think_output,
-                suppress_think_prompt=suppress_think_prompt,
-                think_hard=think_hard,
-                first_token_blocklist=(
-                    boundary_blocklist if prompt_needs_boundary_flag else None
-                ),
-                sampling_strategy=sampling_strategy,
-            )
-            model.train()
-            sample_ids = sample_tokens[0].detach().cpu().tolist()
-            prompt_ids = sample_ids[:prompt_len]
-            completion_ids = sample_ids[prompt_len:]
-
-            if prompt_tracker is not None and current_prompt_idx is not None:
-                matched, prev_state, new_state = prompt_tracker.mark_if_satisfied(
-                    current_prompt_idx,
-                    completion_ids,
-                    used_argmax=use_argmax_completion,
-                )
-                if matched and new_state > prev_state:
-                    expected = prompt_tracker.expected_text(current_prompt_idx)
-                    prompt_text = prompt_tracker.prompts[current_prompt_idx][0]
-                    if new_state == 2:
-                        mode = "argmax"
-                        print(
-                            color_text(
-                                f"Prompt #{current_prompt_idx + 1} satisfied ({mode}): {prompt_text} (expected '{expected}')",
-                                Colors.YELLOW,
-                                bold=True,
-                            )
-                        )
-                    else:
-                        mode = "sample"
-                        print(
-                            color_text(
-                                f"Prompt #{current_prompt_idx + 1} satisfied ({mode}): {prompt_text} (expected '{expected}')",
-                                Colors.YELLOW,
-                                bold=False,
-                            )
-                        )
-                if new_state < 2:
-                    front_requeue = new_state == 1 and prev_state == 0
-                    enqueue_prompt(
-                        current_prompt_idx,
-                        front=front_requeue,
-                    )
-
-            prefix_text = color_tokens(
-                tokenizer,
-                prompt_ids,
-                [Colors.MAGENTA, Colors.GREEN],
-                bold=False,
-                think_token_id=tokenizer.think_id,
-                undo_token_id=tokenizer.undo_id,
-                noun_detector=noun_detector,
-            )
-            completion_text = color_tokens(
-                tokenizer,
-                completion_ids,
-                [Colors.YELLOW, Colors.CYAN],
-                bold=use_argmax_completion,
-                think_token_id=tokenizer.think_id,
-                undo_token_id=tokenizer.undo_id,
-                noun_detector=noun_detector,
-                context_prefix=prompt_ids,
-            )
-            colored_sample = prefix_text + completion_text
-            long_log_now = bool(long_log_force or full_eval_now)
-            sample_prefix = ""
-            if not full_eval_now and not long_log_force:
-                sample_prefix = color_text(f"{sampling_strategy}:", Colors.YELLOW) + " "
-            if not printed_header:
-                if prompt_tracker is not None:
-                    random_only_count, solved_count, total_prompts = prompt_tracker.counts()
-                else:
-                    total_prompts = len(default_prompt_entries())
-                    random_only_count = 0
-                    solved_count = 0
-                train_header = "train loss"
-                if show_train_details:
-                    train_header += " noprev : plain encode normal - noctx noatt none"
-                    if show_think_columns:
-                        train_header += " : think 2x 3x"
-                test_header = "test loss"
-                if show_test_details:
-                    test_header += " noprev : plain encode normal - noctx noatt none"
-                    if show_think_columns:
-                        test_header += " : think 2x 3x"
-                header_parts: List[str] = []
-                if show_time:
-                    header_parts.append("time")
-                header_parts.append(color_text("step", Colors.CYAN))
-                header_parts.append(color_text(train_header, Colors.MAGENTA))
-                header_parts.append(color_text(test_header, Colors.GREEN))
-                header_line = " | ".join(header_parts) + color_text(
-                    f" | sample/argmax ({random_only_count}/{solved_count}/{total_prompts})",
-                    Colors.YELLOW,
-                )
-                print(header_line)
-                printed_header = True
-
-            def format_metric(split: str, key: str) -> str:
-                value = split_metrics.get(split, {}).get(key)
-                if value is None or math.isnan(value):
-                    return " -- "
-                return f"{value:.2f}"
-
-            def format_train_line() -> str:
-                if not show_train_details or not long_log_now:
-                    return format_metric("train", "target")
-                primary_group = " ".join(
-                    format_metric("train", key)
-                    for key in ("target", "noprev")
-                )
-                diag_vals = " ".join(
-                    [format_metric("train", key) for key in ("plain", "encode", "normal")]
-                    + ["-"]
-                    + [format_metric("train", key) for key in ("noctx", "noatt", "none")]
-                )
-                parts = [primary_group, diag_vals]
-                if show_think_columns and long_log_now:
-                    think_vals = " ".join(
-                        format_metric("train", key)
-                        for key in ("think", "think2x", "think3x")
-                    )
-                    parts.append(think_vals)
-                return " : ".join(parts)
-
-            def format_test_line() -> str:
-                if not show_test_details or not long_log_now:
-                    return format_metric("test", "target")
-                primary_group = " ".join(
-                    format_metric("test", key)
-                    for key in ("target", "noprev")
-                )
-                diag_vals = " ".join(
-                    [format_metric("test", key) for key in ("plain", "encode", "normal")]
-                    + ["-"]
-                    + [format_metric("test", key) for key in ("noctx", "noatt", "none")]
-                )
-                parts = [primary_group, diag_vals]
-                if show_think_columns and long_log_now:
-                    think_vals = " ".join(
-                        format_metric("test", key)
-                        for key in ("think", "think2x", "think3x")
-                    )
-                    parts.append(think_vals)
-                return " : ".join(parts)
-
-            train_values = format_train_line()
-            test_values = format_test_line()
-            if prompt_tracker is not None:
-                random_only_count, solved_prompts, total_prompts = prompt_tracker.counts()
+                sampling_strategy = "argmax" if use_argmax_completion else "sample"
             else:
-                total_prompts = len(default_prompt_entries())
-                random_only_count = 0
-                solved_prompts = 0
-            line_parts: List[str] = []
-            if show_time:
-                timestamp = time.strftime("%H:%M", time.localtime())
-                line_parts.append(color_text(timestamp, Colors.BLUE))
-            line_parts.append(color_text(f"{total_steps}", Colors.CYAN))
-            line_parts.append(color_text(train_values, Colors.MAGENTA))
-            line_parts.append(color_text(test_values, Colors.GREEN))
-            line = " | ".join(line_parts) + " | " + sample_prefix + colored_sample
-            print(line)
-            eval_now = time.time()
-            cycle_wall_elapsed = max(0.0, eval_now - cycle_wall_start)
-            total_wall_seconds = base_wall_seconds + cycle_wall_elapsed
+                use_argmax_completion = random.random() < 0.5
+                sampling_strategy = "argmax" if use_argmax_completion else "sample"
+        sample_tokens, prompt_len = generate(
+            model,
+            prompt_input.clone(),
+            sample_chars,
+            suppress_newlines=suppress_newlines,
+            newline_token_id=newline_token_id,
+            first_token_blocklist=(boundary_blocklist if prompt_needs_boundary_flag else None),
+            sampling_strategy=sampling_strategy,
+        )
+        sample_ids = sample_tokens[0].detach().cpu().tolist()
+        prompt_ids = sample_ids[:prompt_len]
+        completion_ids = sample_ids[prompt_len:]
 
-            record = {
-                "step": total_steps,
-                "train_loss": float(split_metrics["train"].get("target", 0.0)),
-                "test_loss": float(split_metrics["test"].get("target", 0.0)),
-                "train_wall_seconds": float(total_wall_seconds),
-                "unix_time": float(eval_now),
-                "train_cursor": int(dataset.positions.get("train", 0)),
-                "test_cursor": int(dataset.positions.get("test", 0)),
-            }
-            if full_eval_now:
-                record.update(
-                    {
-                        "train_loss_target": float(
-                            split_metrics["train"].get("target", 0.0)
-                        ),
-                        "train_loss_noprev": float(
-                            split_metrics["train"].get("noprev", 0.0)
-                        ),
-                        "train_loss_plain": float(split_metrics["train"].get("plain", 0.0)),
-                        "train_loss_normal": float(
-                            split_metrics["train"].get("normal", 0.0)
-                        ),
-                        "train_loss_noctx": float(
-                            split_metrics["train"].get("noctx", 0.0)
-                        ),
-                        "train_loss_noatt": float(
-                            split_metrics["train"].get("noatt", 0.0)
-                        ),
-                        "train_loss_none": float(
-                            split_metrics["train"].get("none", 0.0)
-                        ),
-                        "train_loss_encode": float(
-                            split_metrics["train"].get("encode", 0.0)
-                        ),
-                        "test_loss_target": float(
-                            split_metrics["test"].get("target", 0.0)
-                        ),
-                        "test_loss_noprev": float(
-                            split_metrics["test"].get("noprev", 0.0)
-                        ),
-                        "test_loss_plain": float(split_metrics["test"].get("plain", 0.0)),
-                        "test_loss_normal": float(
-                            split_metrics["test"].get("normal", 0.0)
-                        ),
-                        "test_loss_noctx": float(
-                            split_metrics["test"].get("noctx", 0.0)
-                        ),
-                        "test_loss_noatt": float(
-                            split_metrics["test"].get("noatt", 0.0)
-                        ),
-                        "test_loss_none": float(
-                            split_metrics["test"].get("none", 0.0)
-                        ),
-                        "test_loss_encode": float(
-                            split_metrics["test"].get("encode", 0.0)
-                        ),
-                    }
+        if prompt_tracker is not None and current_prompt_idx is not None:
+            matched, prev_state, new_state = prompt_tracker.mark_if_satisfied(
+                current_prompt_idx,
+                completion_ids,
+                used_argmax=use_argmax_completion,
+            )
+            if matched and new_state > prev_state:
+                expected = prompt_tracker.expected_text(current_prompt_idx)
+                prompt_text = prompt_tracker.prompts[current_prompt_idx][0]
+                if new_state == 2:
+                    mode = "argmax"
+                else:
+                    mode = "sample"
+                print(
+                    color_text(
+                        f"Prompt #{current_prompt_idx + 1} satisfied ({mode}): {prompt_text} (expected '{expected}')",
+                        Colors.YELLOW,
+                        bold=True,
+                    )
                 )
-            if show_think_columns and full_eval_now:
-                record["train_loss_think"] = float(split_metrics["train"].get("think", 0.0))
-                record["train_loss_think2x"] = float(split_metrics["train"].get("think2x", 0.0))
-                record["train_loss_think3x"] = float(split_metrics["train"].get("think3x", 0.0))
-                record["test_loss_think"] = float(split_metrics["test"].get("think", 0.0))
-                record["test_loss_think2x"] = float(split_metrics["test"].get("think2x", 0.0))
-                record["test_loss_think3x"] = float(split_metrics["test"].get("think3x", 0.0))
-            history_updates.append(record)
-    
-    if reward_tracker is not None:
-        reward_tracker.finalize()
+
+        sample_text = tokenizer.decode(torch.tensor(sample_ids))
+        prompt_text = tokenizer.decode(torch.tensor(prompt_ids))
+        completion_text = tokenizer.decode(torch.tensor(completion_ids))
+        sample_prefix = color_text(prompt_text, Colors.CYAN)
+        sample_suffix = color_text(completion_text, Colors.YELLOW)
+        sample_render = sample_prefix + sample_suffix
+
+        def format_metric(split: str, key: str) -> str:
+            value = split_metrics[split].get(key)
+            if value is None:
+                return "-"
+            return f"{value:.3f}"
+
+        def format_train_line() -> str:
+            if not show_train_loss_details or not full_eval_now:
+                return format_metric("train", "target")
+            primary = " ".join(
+                format_metric("train", key) for key in ("target", "noprev")
+            )
+            diag = " ".join(
+                [format_metric("train", key) for key in ("plain", "encode", "normal")]
+                + ["-"]
+                + [format_metric("train", key) for key in ("noctx", "noatt", "none")]
+            )
+            return f"{primary} : {diag}"
+
+        def format_test_line() -> str:
+            if not show_test_loss_details or not full_eval_now:
+                return format_metric("test", "target")
+            primary = " ".join(
+                format_metric("test", key) for key in ("target", "noprev")
+            )
+            diag = " ".join(
+                [format_metric("test", key) for key in ("plain", "encode", "normal")]
+                + ["-"]
+                + [format_metric("test", key) for key in ("noctx", "noatt", "none")]
+            )
+            return f"{primary} : {diag}"
+
+        train_values = format_train_line()
+        test_values = format_test_line()
+        if prompt_tracker is not None:
+            random_only_count, solved_prompts, total_prompts = prompt_tracker.counts()
+        else:
+            total_prompts = len(default_prompt_entries())
+            random_only_count = 0
+            solved_prompts = 0
+        line_parts: List[str] = []
+        if show_time:
+            timestamp = time.strftime("%H:%M", time.localtime())
+            line_parts.append(color_text(timestamp, Colors.BLUE))
+        line_parts.append(color_text(f"{total_steps}", Colors.CYAN))
+        line_parts.append(color_text(train_values, Colors.MAGENTA))
+        line_parts.append(color_text(test_values, Colors.GREEN))
+        line = " | ".join(line_parts) + " | " + sample_render
+        print(line)
+
+        eval_now = time.time()
+        cycle_wall_elapsed = max(0.0, eval_now - cycle_wall_start)
+        total_wall_seconds = base_wall_seconds + cycle_wall_elapsed
+
+        record = {
+            "step": total_steps,
+            "train_loss": float(split_metrics["train"].get("target", 0.0)),
+            "test_loss": float(split_metrics["test"].get("target", 0.0)),
+            "train_wall_seconds": float(total_wall_seconds),
+            "unix_time": float(eval_now),
+            "train_cursor": int(dataset.positions.get("train", 0)),
+            "test_cursor": int(dataset.positions.get("test", 0)),
+        }
+        if full_eval_now:
+            for key in (
+                "target",
+                "noprev",
+                "plain",
+                "normal",
+                "noctx",
+                "noatt",
+                "none",
+                "encode",
+            ):
+                record[f"train_loss_{key}"] = float(split_metrics["train"].get(key, 0.0))
+                record[f"test_loss_{key}"] = float(split_metrics["test"].get(key, 0.0))
+        history_updates.append(record)
+
     loop_wall_total = time.time() - loop_wall_start
     loop_cpu_total = time.process_time() - loop_cpu_start
-    return (
-        total_steps,
-        history_updates,
-        loop_wall_total,
-        loop_cpu_total,
-        eval_wall_total,
-        eval_cpu_total,
-        preeval_wall_total,
-        preeval_cpu_total,
-    )
-
-
-def run_report_mode(
-    model: GRCEGPT,
-    tokenizer: GPT2TokenizerWrapper,
-    prompt_tokens: torch.Tensor,
-    sample_len: int,
-    count: int,
-    device: torch.device,
-    suppress_newlines: bool,
-    newline_token_id: int | None,
-    think_settings: ThinkSettings | None,
-    suppress_think: bool,
-    suppress_think_prompt: bool,
-    think_hard: bool,
-    underline_tokens: bool = False,
-    default_prompt_boundary: bool = False,
-    boundary_blocklist: Sequence[int] | None = None,
-) -> None:
-    model.eval()
-    think_token_id = active_think_token_id(think_settings)
-    noun_detector = None
-    if underline_tokens:
-        noun_detector = NounExpectationDetector(model, tokenizer, think_token_id)
-    base_len = prompt_tokens.size(1)
-    with torch.no_grad():
-        for idx in range(1, count + 1):
-            use_argmax_completion = idx == 1
-            sampling_strategy = "argmax" if use_argmax_completion else "sample"
-            generated, prompt_len = generate(
-                model,
-                prompt_tokens.clone(),
-                sample_len,
-                suppress_newlines=suppress_newlines,
-                newline_token_id=newline_token_id,
-                think_settings=think_settings,
-                suppress_think=suppress_think,
-                suppress_think_prompt=suppress_think_prompt,
-                think_hard=think_hard,
-                first_token_blocklist=(
-                    boundary_blocklist if default_prompt_boundary else None
-                ),
-                sampling_strategy=sampling_strategy,
-            )
-            tokens = generated[0].detach().cpu().tolist()
-            prompt_ids = tokens[:prompt_len]
-            completion_ids = tokens[prompt_len:]
-            prefix_text = color_tokens(
-                tokenizer,
-                prompt_ids,
-                [Colors.MAGENTA, Colors.GREEN],
-                bold=False,
-                think_token_id=tokenizer.think_id,
-                undo_token_id=tokenizer.undo_id,
-                noun_detector=noun_detector,
-            )
-            completion_text = color_tokens(
-                tokenizer,
-                completion_ids,
-                [Colors.YELLOW, Colors.CYAN],
-                bold=use_argmax_completion,
-                think_token_id=tokenizer.think_id,
-                undo_token_id=tokenizer.undo_id,
-                noun_detector=noun_detector,
-                context_prefix=prompt_ids,
-            )
-            print(
-                color_text(f"[report {idx:02d}]", Colors.CYAN)
-                + " | sample: "
-                + prefix_text
-                + completion_text
-            )
-
-
-def run_test_slice(
-    *,
-    dataset: TextDataset,
-    tokenizer: GPT2TokenizerWrapper,
-    model: GRCEGPT,
-    block_size: int,
-    start_pos: int | None,
-    think_settings: ThinkSettings | None,
-    underline_tokens: bool = False,
-) -> None:
-    tokens = dataset.test_tokens
-    if tokens.numel() == 0:
-        print(color_text("test corpus is empty", Colors.MAGENTA))
-        return
-    total = int(tokens.numel())
-    start = int(start_pos or 0) % total
-    span = block_size if block_size > 0 else 1
-    indices = [int(tokens[(start + i) % total]) for i in range(span)]
-    model_device = next(model.parameters()).device
-    seq = torch.tensor(indices, dtype=torch.long, device=model_device).unsqueeze(0)
-    model.eval()
-    think_token_id = active_think_token_id(think_settings)
-    noun_detector = None
-    if underline_tokens:
-        noun_detector = NounExpectationDetector(model, tokenizer, think_token_id)
-    prefill_tokens = None
-    if block_size > 0:
-        pre_slice = dataset.looped_slice("test", start - block_size, block_size)
-        prefill_tokens = pre_slice.to(model_device).unsqueeze(0)
-    initial_contexts = None
-    if prefill_tokens is not None:
-        initial_contexts = compute_prefill_contexts(
-            model,
-            prefill_tokens,
-            think_token_id=think_token_id,
-        )
-    with torch.no_grad():
-        logits, _, _ = model.forward_autoreg(
-            seq,
-            think_token_id=think_token_id,
-            initial_context_raw=initial_contexts,
-        )
-    preds = logits.argmax(dim=-1).squeeze(0).tolist()
-    correct_mask = [False] * len(indices)
-    for i in range(1, len(indices)):
-        correct_mask[i] = preds[i - 1] == indices[i]
-
-    augmented = list(indices)
-    think_enabled = think_settings is not None and think_settings.enabled
-    if think_enabled:
-        augmented = []
-        for tok, pred in zip(indices, preds):
-            augmented.append(tok)
-            if pred == tokenizer.think_id:
-                augmented.append(tokenizer.think_id)
-    tensor = torch.tensor(augmented, dtype=torch.long)
-    decoded = color_tokens(
-        tokenizer,
-        tensor.tolist(),
-        [Colors.MAGENTA, Colors.GREEN],
-        bold=False,
-        think_token_id=tokenizer.think_id,
-        undo_token_id=tokenizer.undo_id,
-        noun_detector=noun_detector,
-    )
-    print(
-        color_text(
-            f"\nTest mode: cursor={start} span={span} (wrap @ {total})",
-            Colors.BLUE,
-        )
-    )
-    print("token_ids:", " ".join(str(idx) for idx in indices))
-    baseline = color_tokens(
-        tokenizer,
-        indices,
-        [Colors.MAGENTA, Colors.GREEN],
-        bold=False,
-        think_token_id=tokenizer.think_id,
-        undo_token_id=tokenizer.undo_id,
-        correct_mask=correct_mask,
-        completion_colors=[Colors.YELLOW, Colors.CYAN],
-        bold_correct=True,
-        noun_detector=noun_detector,
-    )
-    print("decoded:", baseline)
-    print()
-
-    print(color_text("Per-position predictions:", Colors.YELLOW))
-    prob_matrix = torch.softmax(logits, dim=-1).squeeze(0)
-    top_k = min(10, prob_matrix.size(-1))
-    rows = []
-    label_width = 0
-    pred_widths = [0] * top_k
-    usable = max(0, len(indices) - 1)
-    for pos in range(usable):
-        context_id = indices[pos]
-        target_id = indices[pos + 1]
-        token_label = format_token_label(tokenizer, context_id)
-        label_width = max(label_width, len(token_label))
-        top_probs, top_idx = prob_matrix[pos].topk(top_k)
-        entry = []
-        for col, (pred_id, prob) in enumerate(zip(top_idx.tolist(), top_probs.tolist())):
-            pred_label = format_token_label(tokenizer, pred_id)
-            marker = "*" if pred_id == target_id else " "
-            prob_str = f"{prob:.3f}".split(".")[-1]
-            entry.append((pred_label, prob_str, marker))
-            pred_widths[col] = max(pred_widths[col], len(pred_label))
-        rows.append((token_label, entry))
-    for token_label, entries in rows:
-        parts = []
-        for (pred_label, prob_str, marker), width in zip(entries, pred_widths):
-            cell = f"{pred_label:>{width}} {prob_str}{marker}"
-            if marker == "*":
-                cell = color_text(cell, Colors.WHITE, bold=True)
-            parts.append(cell)
-        print(f"{token_label:>{label_width}} | {' '.join(parts)}")
-    print()
-
-    print(color_text("Attention-head activation heatmap for last position:", Colors.YELLOW))
-    print("FIXME")
-    print()
-
-def count_eval_calls(steps: int, eval_interval: int) -> int:
-    evals = 0
-    for step in range(1, steps + 1):
-        if step == 1 or step == steps or (eval_interval > 0 and step % eval_interval == 0):
-            evals += 1
-    return max(1, evals)
-
-
-def tidy(text: str, replace_newline: str = FANCY_ENTER) -> str:
-    return text.replace("\n", replace_newline).replace(" ", FANCY_SPACE)
-
-def color_tokens(
-    tokenizer: GPT2TokenizerWrapper,
-    tokens: list[int],
-    colors: list[str],
-    *,
-    bold: bool = True,
-    replace_newline: str = FANCY_ENTER,
-    think_token_id: int | None = None,
-    undo_token_id: int | None = None,
-    correct_mask: list[bool] | None = None,
-    completion_colors: list[str] | None = None,
-    bold_correct: bool = False,
-    noun_detector: NounExpectationDetector | None = None,
-    context_prefix: list[int] | None = None,
-) -> str:
-    parts: list[str] = []
-    color_index = 0
-    completion_index = 0
-    prefix_tokens: list[int] = list(context_prefix or [])
-    in_word = False
-    underline_active = False
-    word_connectors = {"'", "-"}
-    for idx, tok in enumerate(tokens):
-        if think_token_id is not None and tok == think_token_id:
-            piece = THINK_SYMBOL
-            color = Colors.WHITE
-            parts.append(color_text(piece, color, bold=True))
-            color_index += 1
-            in_word = False
-            underline_active = False
-            prefix_tokens.append(tok)
-            continue
-        if undo_token_id is not None and tok == undo_token_id:
-            piece = UNDO_SYMBOL
-            color = Colors.BLUE
-            parts.append(color_text(piece, color, bold=True))
-            color_index += 1
-            in_word = False
-            underline_active = False
-            prefix_tokens.append(tok)
-            continue
-        raw_piece = tokenizer.tokenizer.decode([tok], clean_up_tokenization_spaces=False)
-        if not raw_piece:
-            prefix_tokens.append(tok)
-            continue
-        display_piece = tidy(raw_piece, replace_newline=replace_newline)
-        if not display_piece:
-            prefix_tokens.append(tok)
-            continue
-        palette = colors
-        if correct_mask is not None and correct_mask[idx]:
-            palette = completion_colors or [Colors.YELLOW, Colors.MAGENTA]
-            color = palette[completion_index % len(palette)]
-            completion_index += 1
-            use_bold = True if bold_correct else bold
-        else:
-            color = palette[color_index % len(palette)]
-            color_index += 1
-            use_bold = bold
-        # display_piece already computed for early checks; reuse the same string
-        char_pairs = list(zip(raw_piece, display_piece))
-        segments: list[tuple[str, bool]] = []
-        current_segment: list[str] = []
-        current_underlined = underline_active
-
-        def flush_segment() -> None:
-            nonlocal current_segment
-            if not current_segment:
-                return
-            text = "".join(current_segment)
-            segments.append((text, current_underlined))
-            current_segment = []
-
-        for raw_char, display_char in char_pairs:
-            char_is_letter = raw_char.isalpha()
-            char_is_word_char = char_is_letter or (in_word and raw_char in word_connectors)
-            if in_word and not char_is_word_char:
-                flush_segment()
-                in_word = False
-                underline_active = False
-                current_underlined = underline_active
-            if not in_word and char_is_letter:
-                flush_segment()
-                if noun_detector is not None:
-                    underline_active = noun_detector.requires_pronoun(prefix_tokens)
-                else:
-                    underline_active = False
-                in_word = True
-                current_underlined = underline_active
-            if current_underlined != underline_active:
-                flush_segment()
-                current_underlined = underline_active
-            current_segment.append(display_char)
-        flush_segment()
-        if not segments:
-            prefix_tokens.append(tok)
-            continue
-        for text, underlined in segments:
-            parts.append(color_text(text, color, bold=use_bold, underline=underlined))
-        prefix_tokens.append(tok)
-    return "".join(parts)
-
-
-def format_token_label(tokenizer: GPT2TokenizerWrapper, token_id: int, *, width: int = 10) -> str:
-    piece = tokenizer.tokenizer.decode([token_id], clean_up_tokenization_spaces=False)
-    piece = piece.replace("\n", "\\n")
-    piece = piece.replace("\t", "\\t")
-    piece = piece.replace("\r", "\\r")
-    if not piece.strip():
-        piece = f"#{token_id}"
-    if len(piece) > width:
-        piece = piece[: width - 1] + "…"
-    return piece
-
-
-def normalize_prompt(text: str) -> str:
-    return text.replace(FANCY_SPACE, " ").replace(FANCY_ENTER, "\n")
-
-
-def prompt_needs_boundary(text: str) -> bool:
-    trimmed = text.rstrip()
-    if not trimmed:
-        return False
-    last = trimmed[-1].lower()
-    return last in ASCII_LOWERCASE
-
-
-def load_checkpoint_payload(path: pathlib.Path, device: torch.device) -> tuple[dict, dict]:
-    payload = torch.load(path, map_location=device, weights_only=False)
-    if isinstance(payload, dict) and "model" in payload:
-        state = upgrade_state_dict(payload["model"])
-        payload["model"] = state
-        meta = payload
-    else:
-        state = upgrade_state_dict(payload)
-        meta = {}
-    return state, meta
-
-
-def upgrade_state_dict(state: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
-    needs_upgrade = any(".ff.net." in key for key in state)
-    if not needs_upgrade:
-        return state
-    upgraded: dict[str, torch.Tensor] = {}
-    for key, value in state.items():
-        new_key = key
-        marker = ".ff.net."
-        if marker in key:
-            prefix, suffix = key.split(marker, 1)
-            if suffix.startswith("0."):
-                new_key = f"{prefix}.ff.fc1.{suffix[2:]}"
-            elif suffix.startswith("2."):
-                new_key = f"{prefix}.ff.fc2.{suffix[2:]}"
-            else:
-                continue
-        upgraded[new_key] = value
-    return upgraded
-
-
-def count_layers_from_state(state: dict[str, torch.Tensor]) -> int:
-    pattern = re.compile(r"core\.blocks\.(\d+)\.")
-    max_idx = -1
-    for key in state.keys():
-        match = pattern.search(key)
-        if match:
-            idx = int(match.group(1))
-            if idx > max_idx:
-                max_idx = idx
-    return max_idx + 1
-
-
-def build_layer_mapping(
-    src_layers: int,
-    dst_layers: int,
-    drop_layers: list[int],
-    add_layers: list[int],
-    allow_trim: bool,
-) -> dict[int, int | None]:
-    drop_zero = {idx - 1 for idx in drop_layers}
-    if any(idx < 0 or idx >= src_layers for idx in drop_zero):
-        raise ValueError("--drop-layers indices must fall within the source layer range")
-    if len(drop_zero) != len(drop_layers):
-        raise ValueError("--drop-layers indices must be unique")
-    survivors = [i for i in range(src_layers) if i not in drop_zero]
-
-    add_zero = {idx - 1 for idx in add_layers}
-    if any(idx < 0 or idx >= dst_layers for idx in add_zero):
-        raise ValueError("--add-layers indices must fall within the destination layer range")
-    if len(add_zero) != len(add_layers):
-        raise ValueError("--add-layers indices must be unique")
-
-    dest_non_new = dst_layers - len(add_zero)
-    if dest_non_new < 0:
-        raise ValueError("Too many --add-layers entries for the destination depth")
-
-    if drop_layers or add_layers:
-        if len(survivors) != dest_non_new:
-            raise ValueError(
-                "--drop-layers/--add-layers must leave exactly the destination layer count"
-            )
-    else:
-        if len(survivors) < dest_non_new:
-            raise ValueError(
-                "Destination has more layers than source; use --add-layers to specify insertions"
-            )
-        if len(survivors) > dest_non_new:
-            if not allow_trim:
-                raise ValueError(
-                    "Destination has fewer layers; rerun with --trim-model to allow trimming"
-                )
-            survivors = survivors[:dest_non_new]
-
-    mapping: dict[int, int | None] = {}
-    survivor_iter = iter(survivors)
-    for dst_idx in range(dst_layers):
-        if dst_idx in add_zero:
-            mapping[dst_idx] = None
-        else:
-            try:
-                mapping[dst_idx] = next(survivor_iter)
-            except StopIteration:
-                raise ValueError(
-                    "Drop/add configuration did not provide enough surviving layers"
-                )
-    return mapping
-
-
-LAYER_PREFIXES = [
-    "core.blocks.",
-    "context.pre_norms.",
-    "context.context_sampler.",
-    "context.context_bias_gen.",
-]
-
-
-def _remap_key_for_layers(name: str, mapping: dict[int, int | None]) -> str | None:
-    for prefix in LAYER_PREFIXES:
-        pos = name.find(prefix)
-        if pos == -1:
-            continue
-        start = pos + len(prefix)
-        end = name.find(".", start)
-        if end == -1:
-            continue
-        idx = int(name[start:end])
-        mapped = mapping.get(idx)
-        if mapped is None:
-            return None
-        name = f"{name[:start]}{mapped}{name[end:]}"
-    return name
-
-
-def _copy_tensor_data(
-    dst: torch.Tensor, src: torch.Tensor, *, allow_trim: bool
-) -> torch.Tensor:
-    if dst.shape == src.shape:
-        return src.clone()
-    if dst.ndim != src.ndim:
-        raise ValueError("Cannot import parameters with different tensor ranks")
-    slices = []
-    for d, s in zip(dst.shape, src.shape):
-        if d < s and not allow_trim:
-            raise ValueError(
-                "Destination parameter is smaller; rerun with --trim-model to allow trimming"
-            )
-        slices.append(slice(0, min(d, s)))
-    result = dst.clone()
-    result[tuple(slices)] = src[tuple(slices)]
-    return result
-
-
-def apply_imported_state(
-    model: GRCEGPT,
-    source_state: dict[str, torch.Tensor],
-    *,
-    allow_trim: bool,
-    mapping: dict[int, int | None],
-) -> None:
-    dst_state = model.state_dict()
-    new_state: dict[str, torch.Tensor] = {}
-    for name, dst_tensor in dst_state.items():
-        remapped = _remap_key_for_layers(name, mapping)
-        if remapped is None:
-            new_state[name] = dst_tensor
-            continue
-        src_tensor = source_state.get(remapped)
-        if src_tensor is None:
-            new_state[name] = dst_tensor
-            continue
-        new_state[name] = _copy_tensor_data(dst_tensor, src_tensor, allow_trim=allow_trim)
-    model.load_state_dict(new_state)
+    return total_steps, history_updates, loop_wall_total, loop_cpu_total, eval_wall_total, eval_cpu_total
 
 
 @torch.no_grad()
@@ -5005,58 +3105,22 @@ def generate(
     *,
     suppress_newlines: bool = False,
     newline_token_id: int | None = None,
-    think_settings: ThinkSettings | None = None,
-    suppress_think: bool = False,
-    suppress_think_prompt: bool = False,
-    think_hard: bool = False,
     first_token_blocklist: Sequence[int] | None = None,
     sampling_strategy: str = "sample",
 ) -> tuple[torch.Tensor, int]:
     model.eval()
     idx = idx.clone()
     prompt_len = idx.size(1)
-    think_token_id = active_think_token_id(think_settings)
-    if not suppress_think and not suppress_think_prompt:
-        if think_hard and think_settings is not None and think_settings.enabled:
-            with torch.no_grad():
-                logits, _, _ = model.forward_autoreg(
-                    idx,
-                    think_token_id=think_token_id,
-                )
-            prompt_ids = idx[0].tolist()
-            think_token_id = think_settings.token_id
-            new_tokens: list[int] = []
-            for i, tok in enumerate(prompt_ids):
-                new_tokens.append(tok)
-                if think_token_id is None:
-                    continue
-                if i == 0:
-                    new_tokens.append(think_token_id)
-                    continue
-                prev_logits = logits[0, i - 1]
-                pred = int(torch.argmax(prev_logits).item())
-                if pred != tok:
-                    new_tokens.append(think_token_id)
-            idx = torch.tensor([new_tokens], dtype=idx.dtype, device=idx.device)
-            prompt_len = idx.size(1)
-        else:
-            idx = expand_prompt_with_thinking(model, idx, think_settings)
-            prompt_len = idx.size(1)
     enforce_first_token_guard = bool(first_token_blocklist)
     blocklist = list(first_token_blocklist or [])
     for _ in range(steps):
         idx_cond = idx[:, -model.config.block_size :]
-        logits, _, _ = model.forward_autoreg(
-            idx_cond,
-            think_token_id=think_token_id,
-        )
+        logits, _, _ = model.forward_autoreg(idx_cond)
         logits_last = logits[:, -1, :]
         probs = F.softmax(logits_last, dim=-1)
         suppressed_ids: list[int] = []
         if suppress_newlines and newline_token_id is not None:
             suppressed_ids.append(int(newline_token_id))
-        if suppress_think and think_settings is not None and think_settings.token_id is not None:
-            suppressed_ids.append(int(think_settings.token_id))
         if enforce_first_token_guard and blocklist:
             suppressed_ids.extend(blocklist)
         if suppressed_ids:
@@ -5076,9 +3140,49 @@ def generate(
     return idx, prompt_len
 
 
-# -----------------------------------------------------------------------------
-# GRCE CLI Main Function
-# -----------------------------------------------------------------------------
+def run_report_mode(
+    model: GRCEGPT,
+    tokenizer: GPT2TokenizerWrapper,
+    prompt_tokens: torch.Tensor,
+    sample_len: int,
+    count: int,
+    device: torch.device,
+    suppress_newlines: bool,
+    newline_token_id: int | None,
+    default_prompt_boundary: bool,
+    boundary_blocklist: Sequence[int] | None,
+) -> None:
+    prompt_tokens = prompt_tokens.to(device)
+    prompt_text = tokenizer.decode(prompt_tokens[0])
+    needs_boundary = default_prompt_boundary and boundary_blocklist is not None
+    for idx in range(count):
+        generated, prompt_len = generate(
+            model,
+            prompt_tokens.clone(),
+            sample_len,
+            suppress_newlines=suppress_newlines,
+            newline_token_id=newline_token_id,
+            first_token_blocklist=(boundary_blocklist if needs_boundary else None),
+            sampling_strategy="sample" if idx % 2 else "argmax",
+        )
+        sample_ids = generated[0].tolist()
+        completion_ids = sample_ids[prompt_len:]
+        completion = tokenizer.decode(torch.tensor(completion_ids))
+        print(color_text(f"Sample #{idx + 1}: {prompt_text}{completion}", Colors.GREEN))
+
+
+def run_test_slice(
+    dataset: TextDataset,
+    tokenizer: GPT2TokenizerWrapper,
+    model: GRCEGPT,
+    block_size: int,
+    start_pos: int,
+) -> None:
+    tokens = dataset.looped_slice("test", start_pos, block_size)
+    text = tokenizer.decode(tokens)
+    print(color_text(f"Test slice @ {start_pos}:", Colors.CYAN))
+    print(text)
+
 
 import signal
 import traceback
@@ -5108,18 +3212,6 @@ def grce_main(args: argparse.Namespace) -> int:
     if args.trim_model and not args.import_model:
         raise ValueError("--trim-model is only valid with --import-model")
     args.prompt = normalize_prompt(args.prompt)
-    args.prompt = args.prompt.replace(THINK_SYMBOL, THINK_TOKEN)
-    args.prompt = args.prompt.replace(UNDO_SYMBOL, UNDO_TOKEN)
-    if args.think == 0 and THINK_TOKEN in args.prompt:
-        raise ValueError(
-            "Prompt contains thinking tokens but --no-think was specified. Remove them or omit --no-think."
-        )
-    if args.undo:
-        raise ValueError("--undo support temporarily removed/disabled")
-    if UNDO_TOKEN in args.prompt:
-        raise ValueError(
-            "Prompt contains undo tokens but undo support is temporarily disabled. Remove them."
-        )
     torch.manual_seed(42)
     random.seed(42)
 
@@ -5287,16 +3379,6 @@ def grce_main(args: argparse.Namespace) -> int:
         if newline_tokens:
             newline_token_id = newline_tokens[0]
 
-        think_settings = ThinkSettings(
-            max_steps=args.think,
-            token_id=tokenizer.think_id,
-        )
-        undo_settings = UndoSettings(
-            max_pairs=args.undo,
-            token_id=tokenizer.undo_id,
-            fill_choices=[],
-        )
-
         enforce_boundary_guard = not args.no_boundary
         boundary_blocklist = (
             tokenizer.leading_alpha_token_ids if enforce_boundary_guard else None
@@ -5324,19 +3406,6 @@ def grce_main(args: argparse.Namespace) -> int:
             tokenizer,
             seed=5678,
         )
-
-        def ensure_token_absent(tensor: torch.Tensor, token_id: int, label: str, enabled: bool) -> None:
-            if enabled or token_id is None:
-                return
-            if (tensor == token_id).any().item():
-                raise ValueError(
-                    f"Training data includes {label} token but {label} mode is disabled."
-                )
-
-        ensure_token_absent(train_tokens, tokenizer.think_id, "think", args.think > 0)
-        ensure_token_absent(test_tokens, tokenizer.think_id, "think", args.think > 0)
-        ensure_token_absent(train_tokens, tokenizer.undo_id, "undo", args.undo > 0)
-        ensure_token_absent(test_tokens, tokenizer.undo_id, "undo", args.undo > 0)
 
         if train_text is None and train_bytes == 0:
             train_bytes = len(train_tokens)  # fallback when text absent
@@ -5367,6 +3436,12 @@ def grce_main(args: argparse.Namespace) -> int:
             test_path=test_path,
         )
 
+        def count_eval_calls(steps: int, interval: int) -> int:
+            if steps <= 0 or interval <= 0:
+                return 0
+            return 1 + (steps - 1) // interval
+
+
         def emit_range(label: str, tokens: torch.Tensor, spec: str) -> None:
             start, end = parse_range_arg(spec)
             total = int(tokens.numel())
@@ -5385,15 +3460,8 @@ def grce_main(args: argparse.Namespace) -> int:
             chunk_size = 128
             for offset in range(0, len(subset), chunk_size):
                 chunk_tokens = subset[offset : offset + chunk_size]
-                colored = color_tokens(
-                    tokenizer,
-                    chunk_tokens,
-                    [Colors.MAGENTA, Colors.GREEN],
-                    bold=False,
-                    think_token_id=tokenizer.think_id,
-                    undo_token_id=tokenizer.undo_id,
-                )
-                print(colored)
+                text = tokenizer.decode(torch.tensor(chunk_tokens))
+                print(text)
 
         if selected_action == "corpus":
             actions_done = False
@@ -5431,10 +3499,6 @@ def grce_main(args: argparse.Namespace) -> int:
             detach_layer=max(-1, args.detach_layer),
         )
         model_tag = build_model_tag(config)
-        if args.think > 0:
-            model_tag += "_think"
-        if args.undo > 0:
-            model_tag += f"_undo{args.undo}"
         for extra_tag in args.tag:
             cleaned = re.sub(r"[^0-9A-Za-z]+", "", extra_tag)
             if cleaned:
@@ -5821,15 +3885,8 @@ def grce_main(args: argparse.Namespace) -> int:
                 device=device,
                 suppress_newlines=args.no_newlines,
                 newline_token_id=newline_token_id,
-                think_settings=think_settings,
-                suppress_think=args.no_think_output,
-                suppress_think_prompt=args.no_think_prompt,
-                think_hard=args.think_hard,
-                underline_tokens=args.underline,
                 default_prompt_boundary=default_prompt_boundary,
                 boundary_blocklist=boundary_blocklist,
-                show_train_loss_details=args.train_loss_details,
-                show_test_loss_details=not args.no_test_loss_details,
             )
             return
 
@@ -5840,14 +3897,9 @@ def grce_main(args: argparse.Namespace) -> int:
                 model=model,
                 block_size=args.block_size,
                 start_pos=args.test_start,
-                think_settings=think_settings,
-                underline_tokens=args.underline,
             )
             return
 
-        reward_scale = 0.0
-        if args.reward_relu > 0:
-            reward_scale = 10 ** (-float(args.reward_relu))
         acc_train_wall = 0.0
         acc_train_cpu = 0.0
         acc_eval_wall = 0.0
@@ -5865,14 +3917,6 @@ def grce_main(args: argparse.Namespace) -> int:
                 plus_tags.append("+XCTX")
             else:
                 minus_tags.append(" wo/XCTX")
-            if args.think > 0:
-                plus_tags.append("+THINK")
-            else:
-                minus_tags.append(" wo/THINK")
-            if args.undo > 0:
-                plus_tags.append("+UNDO")
-            else:
-                minus_tags.append(" wo/UNDO")
             label = "".join(tags + plus_tags + minus_tags)
             hours = total_train_wall / 3600.0
             days = hours / 24.0
@@ -5934,8 +3978,6 @@ def grce_main(args: argparse.Namespace) -> int:
                 cycle_cpu_elapsed,
                 eval_wall_total,
                 eval_cpu_total,
-                preeval_wall_total,
-                preeval_cpu_total,
             ) = train_model(
                 model,
                 dataset,
@@ -5951,18 +3993,11 @@ def grce_main(args: argparse.Namespace) -> int:
                 tokenizer,
                 suppress_newlines=args.no_newlines,
                 newline_token_id=newline_token_id,
-                think_settings=think_settings,
-                suppress_think_output=args.no_think_output,
-                suppress_think_prompt=args.no_think_prompt,
-                think_hard=args.think_hard,
-                undo_settings=undo_settings,
                 prompt_tracker=prompt_tracker,
                 reset_prompt_queue=args.reset_prompt_each_cycle,
-                reward_relu=reward_scale,
-                                cycle_wall_start=cycle_wall,
+                cycle_wall_start=cycle_wall,
                 base_wall_seconds=total_train_wall,
                 show_time=args.time,
-                underline_tokens=args.underline,
                 default_prompt_boundary=default_prompt_boundary,
                 boundary_blocklist=boundary_blocklist,
                 show_train_loss_details=args.train_loss_details,
@@ -5979,12 +4014,6 @@ def grce_main(args: argparse.Namespace) -> int:
             eval_cpu = eval_cpu_total
             pure_train_wall = max(0.0, train_wall - eval_wall)
             pure_train_cpu = max(0.0, train_cpu - eval_cpu)
-            preeval_wall_ratio = (
-                preeval_wall_total / train_wall if train_wall > 0 else 0.0
-            )
-            preeval_cpu_ratio = (
-                preeval_cpu_total / train_cpu if train_cpu > 0 else 0.0
-            )
             acc_train_wall += pure_train_wall
             acc_train_cpu += pure_train_cpu
             acc_eval_wall += eval_wall
@@ -6012,12 +4041,8 @@ def grce_main(args: argparse.Namespace) -> int:
                 f" eval: wall={eval_wall:.2f}s cpu={eval_cpu:.2f}s;",
                 Colors.GREEN,
             )
-            ratio_part = color_text(
-                f" train-pre-eval/train-total: wall={preeval_wall_ratio:.2f} cpu={preeval_cpu_ratio:.2f};",
-                Colors.CYAN,
-            )
             updated_part = color_text(" model updated.", Colors.YELLOW)
-            print(cycle_part + train_part + eval_part + ratio_part + updated_part)
+            print(cycle_part + train_part + eval_part + updated_part)
             def ratio_text(num: float, denom: float) -> str:
                 if denom <= 0:
                     if num <= 0:

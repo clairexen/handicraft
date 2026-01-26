@@ -31,7 +31,7 @@ One way to view this geometry is that attention “killed” classic recurrence 
 
 The corpus is stored with a trailing record separator so it is always safe to treat it as a looped scroll. All low-level slice helpers accept windows that cross the file boundary (even negative offsets) and quietly wrap the indices. Every sampled batch therefore knows both its `(block_size + 1)` training window and the `block_size` tokens that immediately preceded it in the corpus.
 
-Before running the “real” block we feed that preceding window through the model exactly once (with the usual settings) and capture the raw GRCE/XCTX vectors emitted by the last position—these are the fused, pre-LayerNorm values that would otherwise become the residual input to the next step. Those raw vectors are saved per channel and injected into the actual block so each layer’s bias generator sees the same recurrent state it would have seen if we had streamed tokens through continuously. All later special-row experiments (context dropout, attention punctures, think/no-think eval modes, etc.) reuse the cached vectors, so the prefill happens just once per batch regardless of how many forward passes we run.
+Before running the “real” block we feed that preceding window through the model exactly once (with the usual settings) and capture the raw GRCE/XCTX vectors emitted by the last position—these are the fused, pre-LayerNorm values that would otherwise become the residual input to the next step. Those raw vectors are saved per channel and injected into the actual block so each layer’s bias generator sees the same recurrent state it would have seen if we had streamed tokens through continuously. All later special-row experiments (context dropout, attention punctures, additional evaluation modes, etc.) reuse the cached vectors, so the prefill happens just once per batch regardless of how many forward passes we run.
 
 This means any layer at position N can send a context-related message to any layer at position N+1, and the training signal never has to cross the position boundary: by the time we emit the message, the previous stack has already computed everything it needs to predict the next token. In practice (see the sweeps in this repo), even `--detach-span 1`—which suppresses cross-position gradients entirely—matches the default span: the channel just learns how to sample the information that already exists inside the previous position’s layers.
 
@@ -46,42 +46,24 @@ Training and evaluation revolve around *row types*—deterministic ways of mutat
 - **`encode`** – identical to `plain` in that both GRCE and XCTX are disabled, but we run the Transformer in encoder mode (no causal mask) so every token can attend bidirectionally before the final position predicts the first token beyond the block.
 - **`noxctx` / `puxctx`** – remove the wide XCTX signal either for the entire row (`noxctx`) or by puncturing it at a single random timestep (`puxctx`) while GRCE remains active.
 - **`noattn` / `puattn`** – shut attention off entirely (`noattn`) or mask a single timestep’s ability to transmit forward (`puattn`) so the recurrent channels have to carry the load.
-- **`rdthink`** – the random-think row that litters the sequence with `<think>` tokens even when the base model would not have inserted them, forcing it to handle arbitrary reasoning detours.
-- **`trthink` / `think`** – the family of thinking rows scheduled every batch. `trthink` uses the full repeat/target/tail (R/T/H) budgeting scheme described below; `think` uses the same targeted-insert logic but clamps `R=0` and `H=0` with a wider `T` budget so every base token is eligible for exactly one planner insertion pass. Both row types label every inserted planner with the correct next-token target.
-- **`think2x` / `think3x`** – deterministic reasoning rows: `think2x` injects exactly one `<think>` after every base token, `think3x` injects two. Only the final planner in each chain contributes to the loss, and we keep one row of each in every training batch so the optimizer practices those cadenced behaviors as well.
 
 ### How these row types shape a training batch
 
 Let `n_total` be the batch size. Each batch is a fixed mixture of row types:
 
-- `n_plain := max(1, (n_total - 9) // 2 - (n_trthink + 3))`
-- `n_noxctx := 1`
-- `n_puxctx := 1`
-- `n_noattn := 1`
-- `n_puattn := 1`
-- `n_rdthink := 1`
-- `n_trthink := max(1, (n_total - 9) // 4 - 3)`
-- `n_normal := max(1, n_total - 9) - (n_plain + n_trthink + 3)`
-- `n_encode := 1`
-- `n_think := 1`
-- `n_think2x := 1`
-- `n_think3x := 1`
+- `n_noxctx = n_puxctx = n_noattn = n_puattn = n_encode = 1`
+- The remaining rows are split between `plain` (roughly half of what remains) and standard `normal` rows so the optimizer keeps seeing baseline sequences.
 
-That means every batch carries exactly one copy of each structural ablation (pure transformer, no-XCTX, punctured-XCTX, no-attention, punctured-attention, random-think) plus a healthy mix of `normal` and `trthink` rows. The ordering varies per batch because we randomly assign row indices when building the masks, but the counts above remain fixed.
-
-Thinking rows (`trthink`) receive the extra `<think>` insertions described earlier; `normal` rows remain untouched so the optimizer keeps seeing baseline sequences. Finally, if `--undo` is active we annotate a subset of rows (sampled uniformly from the current batch) with undo filler pairs *before* we apply any of the row-specific transformations. Undo insertion therefore happens first in the pipeline, but we describe it last here because the row-type composition is the more important mental model.
-
-When a row becomes `trthink`, we mutate the token sequence *after* all other transformations: we sample the repeat (`R`), targeted insert (`T`), and tail (`H`) budgets, splice the requested `<think>` tokens, and maintain per-slot targets so the labels still point at the correct next token even though reasoning detours were inserted.
+That means every batch carries exactly one copy of each structural ablation (pure Transformer, no-XCTX, punctured-XCTX, no-attention, punctured-attention) plus a healthy mix of `normal` rows. The ordering varies per batch because we randomly assign row indices when building the masks, but the counts above remain fixed.
 
 ### Loss reporting
 
 The live log and checkpoint history capture three groups of losses:
 
-1. **Training target (`target`) and no-prefill (`noprev`).** `target` is the exact loss the optimizer just saw, including thinking/undo insertions and the cached prefill state for GRCE/XCTX. `noprev` replays the same sequences but zeros the cached context vectors so each block starts “from scratch”; it is a regression test for the prefill plumbing and measures how much the model leans on recurrent state.
+1. **Training target (`target`) and no-prefill (`noprev`).** `target` is the exact loss the optimizer just saw, including the cached prefill state for GRCE/XCTX. `noprev` replays the same sequences but zeros the cached context vectors so each block starts “from scratch”; it is a regression test for the prefill plumbing and measures how much the model leans on recurrent state.
 2. **Row-type diagnostics.** For each structural ablation we run an entire evaluation batch composed solely of that row type and log the resulting CE: `plain`, `normal`, `noxctx`, `noattn`, `none`, `encode`, etc. These are the same transformations described above—they are just executed one-at-a-time over the cached evaluation batches so you can read the columns as direct probes of each fault mode. The `encode` column in particular disables both GRCE and XCTX (like `plain`), switches attention into encoder mode, and only scores the final position (scaled by `block_size`) so its magnitude is comparable to the causal columns.
-3. **Think-mode probes.** When `<think>` is enabled we append the `think`, `2x`, and `3x` columns. Each column reruns the evaluation batches with a forced reasoning strategy (exact predictions, one planner per token, two planners per token) and only scores the final planner in each chain so long reasoning bursts weigh the same as short detours.
 
-Taken together, the first group tracks what the optimizer optimizes, the second group shows how robust the model is to each structural ablation, and the third group makes the reasoning pipeline visible.
+Taken together, the first group tracks what the optimizer optimizes and the second group shows how robust the model is to each structural ablation.
 
 ## Parameter count (dominant terms)
 
@@ -96,72 +78,6 @@ Ignoring embeddings and other lower-order pieces, two terms dominate:
 For exact counts (including the XCTX channel and bias/sampler splits) run `python grce.py size [--check]` with your chosen hyperparameters—the report prints every contribution with its closed-form formula and can optionally instantiate a model to verify the arithmetic.
 
 Thinking about the stack from a geometric point of view helps explain why the recurrent shortcut is viable: attention “killed” classical recurrence by rotating the computation over depth, letting every position look backwards instead of pushing state forward. GRCE rotates a slim slice of that structure back into the time axis, but it keeps the same design philosophy—tight bottlenecks, shared samplers/decoders, and a single shared nonlinearity—so gradients never have to march through time. The heavy lifting still happens in the standard Transformer layers; the recurrent channels just recycle whatever features those layers already extracted.
-
-## Think tokens
-
-Thinking is enabled by default: the training loop evaluates the untouched batch to collect logits, then automatically schedules a fixed number of thinking rows (roughly half of the non-special sequences in each batch). The count depends on `batch_size`, whether GRCE/XCTX are active, and the reserved dropout rows. Pass `--no-think` to disable the workflow entirely. For each `trthink` row we sample three non-negative integers `R`, `T`, and `H` by drawing `u ~ U[0,1)`, squaring it, multiplying by `block_size/4`, and flooring. These act as simple compute budgets:
-
-1. **Repeat phase (`R`).** After every base token we insert `R` `<think>` tokens, truncating any overflow. When `R>0` this dramatically shrinks the effective context and forces the model to reuse the same slot multiple times.
-2. **Targeted inserts (`T`).** We look at the logits we saved earlier and insert `T` more `<think>` tokens, sampling positions proportionally to their probability of emitting `<think>`. This gives the model practice placing thought where it already “wants” it.
-3. **Tail padding (`H`).** Finally we append `<think>` tokens just before the block boundary until we have inserted at least `H` trailing planners, ensuring the network also learns to finish a thought explicitly.
-
-Undo fillers (currently disabled) used to be spliced in before all of the above, and one sequence per batch is always left plain so the model keeps calibrating on non-thinking data. Whenever a context channel is enabled we carve out six special rows: (1) a pure-Transformer baseline with both GRCE and XCTX disabled, (2) a no-XCTX row where the wide channel is muted entirely while GRCE continues to flow, (3) a punctured-XCTX row whose wide channel is zeroed at one random timestep, (4) an attention-disabled row whose multi-head attention is muted so it must rely entirely on GRCE/XCTX, (5) an attention-punctured row whose single random timestep cannot send information forward via attention (its value stream is masked for all later positions), and (6) a random-think row (only when `<think>` is enabled). The random-think row samples `K ~ randint(0, 3*block_size/4)` once per sequence and then inserts a `<think>` token after each non-initial position with probability `K / block_size`, ensuring thinking is exercised even when the model would normally avoid it. Every dropout step therefore trains the model on “no context,” “no XCTX,” “punctured XCTX,” “random think,” “no attention,” and “punctured attention” scenarios simultaneously, and the training log mirrors those experiments via the `plain`, `normal`, `noctx`, `noatt`, and `none` columns.
-
-`think` rows reuse the exact same insertion machinery but clamp `R=0` and `H=0` while drawing `T` from a wider `block_size/2` distribution so every base token gets a fair chance at exactly one forced planner. `think2x` and `think3x` skip the probabilistic budgeting entirely and just insert one or two `<think>` tokens after every base token, scoring only the final planner in each chain.
-
-For every `<think>` slot we compute the normal CE using a decoder with the `<think>` logit disabled (so the loss remains comparable to non-thinking runs). We also compute an **alignment loss**: let `A` be that CE at position `N`, `B` the CE at `N+1`, and `ratio = A/(A+B+ε)`. We blend the next-token embedding with the `<think>` embedding by `ratio`, decode it, and compare that soft distribution against the *unmodified* decoder output. Conceptually this enforces the intended behavior: early `<think>` evaluations still carry some mixture of “target vs. reasoning”, while the final stack converges on the exact target token. The alignment loss replaces the old plan head/penalty system.
-
-During sampling/reporting we flip a coin for each completion: heads means argmax, tails means sampling from the predicted distribution. Prompts that have only been solved via the random path stay in the queue and are retried with argmax until the top candidate alone satisfies the goal. The progress header shows `sample (random-only/argmax/total)` so you can track both counts at a glance, and completions generated via argmax are the only ones rendered in bold.
-
-The recurrent context has two width knobs. `--n-grce` controls a narrow, low-bandwidth GRCE bottleneck, while `--n-xctx` enables a wider channel that uses the same overall method with minor modifications and a much larger context vector space. Use either on its own or enable both—their projected biases simply add before each Transformer block—so you can mix a steady recurrent signal with a higher-bandwidth shortcut.
-
-## Undo tokens
-
-`--undo N` injects up to `U≤N` *undo pairs* into every training block. Each pair contributes a random filler token immediately followed by a dedicated `<undo>` marker (rendered as `↩` in the logs). We shorten the base chunk to `block_size - T - 2U` tokens so the augmented sample still fits the configured block size, splice the undo pairs in sequence (allowing nesting when a later pair lands inside an earlier one), and only then insert the `T` think tokens. During loss computation the filler tokens are ignored entirely, while the `<undo>` tokens are enforced like any other label so the model learns to clean up after each random detour. Undo pairs stay in-place for all evaluations, keeping the reported losses comparable to standard runs while giving the sampler a reversible scratch pad it can lean on during training.
-
-## A mental model for large ReLU networks and transformer-style networks
-
-Think of a Transformer stack as a long sequence of “mix → detect → remix” stages operating on a shared channel. The **mix** stage is completely linear: attention builds queries/keys, computes the weighted sum of value vectors, and hands that mixture to the downstream detector (GRCE’s mix stage is just the per-layer sampler sums). The **detect** stage pushes that linear combination through non-linearities (GELU/ReLU) to decide which motifs are active, and the **remix** stage projects those non-negative activations back onto the channel. We normalize twice: once between mix and detect (LayerNorm before attention/MLP so the detector sees a stable magnitude), and once between remix and the next block (either by placing LayerNorm at the start of the next block—pre-norm, as in this repo—or at the end of the current block—post-norm). Both normalizations exist to keep the channel’s signal-to-noise ratio consistent.
-
-### Messages riding on an orthogonal basis
-
-An N-dimensional vector can simultaneously carry N independent “messages” if each one aligns with an orthogonal basis vector. In practice the basis is not literally orthogonal—the model learns whatever mixture best represents the training distribution—but it helps to imagine that each neuron owns a direction in embedding space. The attention “mix” stage is just a matrix multiply (queries·keys) that selects which of those directions should contribute to the weighted sum, and the GRCE “mix” stage is even simpler: each block samples `n_embd → n_grce` features via a linear map and sums them. When a block wants to detect a pattern, it creates a probe vector aligned with the relevant positive directions and computes a dot product with the incoming channel. The result is a scalar score saying “how loudly is this pattern currently active?”
-
-The probe can also subtract evidence: append a few antipattern directions (negative encodings) for features that should *not* coincide with the target pattern. Because dot products are linear, this contrastive construction still fits inside a single matrix multiply. If we collect M such probes we end up with an `N×M` projection, run its outputs through a ReLU/GELU (zeroing negative scores), and interpret the non-negative scalars as detected message strengths.
-
-### Remixing back into the channel
-
-The second linear map (`M×N`) takes those non-negative activations and re-encodes them as broadcastable updates on the channel. Positive activations add energy to their preferred directions; zeroed (formerly negative) activations mean “leave that direction alone.” Residual connections ensure that if a block decides “I don’t have anything new to say,” the channel simply flows through unchanged.
-
-LayerNorm (or RMSNorm) between blocks keeps the energy roughly constant. If a downstream block still needs an upstream feature, backpropagation increases the weight on the residual path or trains the block to recreate that feature explicitly. If the signal is no longer useful, gradients push the block to cancel it and amplify something more relevant. Over depth this continual attenuation-and-refresh process makes the loss surface much smoother: early layers learn broad principles quickly, while later layers spend their capacity on increasingly specific refinements.
-
-### Attention and GRCE in this picture
-
-Self-attention is just another message mixer: the `QK^T` term selects which source tokens contribute to the message, and the value projection determines which directions get added to the channel. GRCE fits into the same mental model but rotates it over time instead of over tokens. Each layer emits a compressed “message” about its local view, the shared GRCE bottleneck mixes those across depth, and the next time step injects the decoded biases back into the channel. Because we only pass around additive messages (no full activations) the system stays easy to reason about.
-
-When you picture the network this way, debugging becomes simpler: norm spikes mean “too much energy in the channel,” flat probes mean “no block bothered to speak,” and GRCE provides a narrow, well-defined lane where long-range biases can hitch a ride without polluting the main attention stream.
-
-## Running grce.py
-
-Call `grce.py --help` for the full CLI.
-
-Key switches:
-- `--no-think` disables the thinking-token workflow entirely. Without this flag the number of thinking rows is computed automatically from the batch geometry, and one row per batch is always left in “plain” mode so the model keeps a steady diet of non-thinking updates. Use `--no-think-output` if you only want to suppress `<think>` tokens during sampling without disabling the underlying training behavior. Think tokens (and undo tokens) always live in the tokenizer/embedding space, so you can import/export checkpoints between think/non-think runs without remapping vocabularies.
-- `--reward-relu VALUE` enables an experimental auxiliary update that periodically inspects the top/bottom 25% token predictions per sequence: active neurons that helped the good predictions and inactive neurons that hurt the bad ones accumulate credit, and at scheduled checkpoints the union of those counts is used to select roughly the top 20% of neurons for a tiny bias boost. The increment is `10^{-VALUE} * std(bias_vector)` (VALUE ≤ 0 disables the mechanism), so every nudge is relative to the layer’s own bias magnitude while letting you specify the multiplier in log10 form. Updates fire mid-cycle and at the end, and no extra state needs to be saved in checkpoints.
-- `--corpus NAME` chooses which `<NAME>-train.txt.gz` / `<NAME>-test.txt.gz` split to load from the `--data DIR` directory (default `data/`).
-- `--model DIR` selects where checkpoints, logs, and tokenizer caches live (default `model/`).
-- `--import-model some.pt` seeds a new run from an existing checkpoint. Use `--drop-layers i,j,...` to delete specific source layers (1-indexed) and `--add-layers i,j,...` to specify where new randomly initialized layers should be inserted so the total matches the new `--n-layer`. `--trim-model` lets you shrink other tensor dimensions (embedding width, vocab, etc.) while copying whatever fits. The importer enforces that the number of attention heads (`--n-head`) stays the same and that every overlapping tensor slice lines up, carries over the total step counter, and writes a fresh `.pt` with an empty loss history.
-- `--undo N` inserts up to `N` random+undo pairs per block (filler loss ignored, undo enforced).
-- `train` is the main command and runs the standard training loop with the configured cycles/steps.
-- `report -n N` (or `report --count N`) loads the latest checkpoint and prints `N` prompt completions without running another training cycle.
-- `test --start N` dumps `block_size` tokens from the test split starting at cursor `N`; if the model supports thinking tokens it also runs the model over that window and inserts predicted `<think>` tokens in-line so you can inspect where the network wants to branch into reasoning mode.
-- `size` prints the configured model’s parameter breakdown (respecting the usual geometry flags) and exits.
-- `corpus --print-train START-END` / `corpus --print-test START-END` emit token ranges from the respective corpus splits so you can debug the raw data without kicking off a training run.
-- `corpus --init` builds (or refreshes) the tokenizer cache if needed and writes a brand-new checkpoint with zeroed training counters so you can stage experiments or clone configs without running a cycle.
-- `create` writes the initial checkpoint (random weights, zeroed counters, default prompt tracking). Run this once per new experiment before calling `train`, `report`, `test`, or `prompts`—those commands now expect the checkpoint file to exist already.
-- `--pt some_checkpoint.pt` lets you run any of the non-training commands directly against an explicit checkpoint file; all geometry parameters are lifted from the file so you don’t have to mirror the original CLI flags (and with `corpus --init` or `create` it simply names the destination checkpoint).
-- `--no-newlines` keeps the sampler from emitting newline tokens so completions stay on one line.
-You can reproduce the sweeps below; notice how even the `--detach-span 1` run (which detaches the recurrent gradients entirely) tracks all other spans almost perfectly, confirming that the channel only needs to learn what to sample, not how to backpropagate across positions.
 
 ## Example training sweeps
 
@@ -196,16 +112,6 @@ Below are two quick sweeps you can adapt.
     for cy in 2 3 5 10 10; do
 	python3 grce.py --cycles $cy --n-grce 32
 	python3 grce.py --cycles $cy --n-grce 256
-    done'
-    ```
-
-3. **Think vs non-think.** Compares the base model to a run with thinking tokens disabled.
-
-    ```bash
-    time bash -exc '
-    for cy in 2 3 5 10 10 20 20 30; do
-	python3 grce.py --cycles $cy
-	python3 grce.py --cycles $cy --no-think
     done'
     ```
 
