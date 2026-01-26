@@ -1,0 +1,368 @@
+
+**Agents:** Don't modify this file unless specifically asked to do so. Always
+point out any differences between the *Reference Specs* here and the
+AI-generated implementation in grce.py and the AI-generated documentation in
+README.md.
+
+
+---------------------------------------------------------------------------
+
+# Reference Specs
+
+This is the hand-written spec, the stable point-of-reference and root source of
+information abou the desired behavior for AI agents (= OpenAI Codex).
+
+
+## GRCE and XCTX data path spec -- (updated; implementation not up-to-date)
+
+GRCE and XCTX both sample the n_layer input vectors to the transformer blocks in the
+stack at position t, mixe with a recurrent GRCE or XCTX signal (G or X), remixes, and
+update the recurrent signal (G' and X'), and then injects the context information into the
+transformer layers at position t+1. Each have a per-layer sample stage, a shared
+mix and remix stage, and then per-layer bias-injection stage in the next position.
+
+Let's call the recurrent GRCE signal G, the updated recurrent signal G'. Let the
+sampled signal at layer i at the previous position be S_i, and the bias injected
+into the next position B_i.
+
+The model embedding dimension is n_embd. The width of the recurrent GRCE channel
+is n_grce, and the width of the recurrent XCTX channel is n_xctx. Note that usually
+n_grce < n_embd < n_xctx.
+
+A transformer block is simply this:
+Let Up4xE_i() be a per-layer learned linear from n_embd to 4*n_embd
+Let Dn4xE_i() be a per-layer learned linear from 4*n_embd to n_embd
+  H_i := MultiHeadAtt_i(LN(S_i))
+  T_i := S_i + H_i
+  R_i := ReLU(Up4xE_i(LN(T_i)))
+  S_{i+1} := T_i + Dn4xE(R_i)
+
+The (low-dimensional) GRCE channel (G -> G'):
+Let G2E_i() be a per-layer learned linear from n_grce to n_embd.
+Let E2G_i() be a per-layer learned linear from n_embd to n_grce.
+Let Up4xG() be a learned linear from n_grce to 4*n_grce
+Let Dn4xG() be a learned linear from 4*n_grce to n_grce
+  Bias injection based on the signal from the previous position via recurrent input G, create bias
+  values B_i for the n_layer layers, to be added to block inputs *after* sampling the vectors S_i:
+    B_i := G2E_i(LN(G))
+  For each transformer layer i at this position and thus for each sampled vector S_i:
+    V_i := E2G_i(LN(S_i))
+  Then the shared mixing stage, combining the recurrent input signal G with the per-layer values:
+    M := LN(G + V_0 + V_1 + ... + V_{n_layers-1})
+  Then re-mixing M with an MLP into a new recurrent vector G'
+    G' := LN(M + Dn4xG(ReLU(Up4xG(M))))
+
+The (high-dimensional) XCTX channel (X -> X'):
+Let u := 2*n_xctx/n_layer be the reduced per-layer sampling dimension.
+Let E2U_i() be a per-layer learned linear from n_embd to u.
+Let U2X_i() be a per-layer learned linear from u to n_xctx.
+Let X2U_i() be a per-layer learned linear from n_xctx to u.
+Let U2E_i() be a per-layer learned linear from u to n_embd.
+Let DnX() be a learned linear from n_xctx to n_xctx/2.
+Let UpX() be a learned linear from n_xctx/2 to n_xctx.
+Let P be a learned n_xctx dimensional bias vector.
+  Bias injection based on the signal from the previous position via recurrent input G, create bias
+  values B_i for the n_layer layers, to be added to block inputs *after* sampling the vectors S_i:
+    B_i := U2E_i(LN(X2U_i(X)))
+  For each transformer layer i at this position and thus for each sampled vector S_i:
+    V_i := U2X_i(LN(E2U_i(S_i)))
+  Then the shared mixing stage, combining the recurrent input signal G with the per-layer values:
+    M := LN(DnX(X + V_0 + V_1 + ... + V_{n_layers-1}))
+  Then re-mixing the original recurrent X input (not M) with an MLP into the new
+  recurrent vector X'; with RMSNorm (not LN, for better stability in recurrent path):
+    X' := RMSNorm(G + ReLU(UpX(M)) + P)
+
+**Note:** To obtain true left-to-right evaluation, the Transformer core must be
+using an **incremental, KV-cached forward** architecture. Each time step must
+run the *full layer stack for a single token*, appending that token’s K/V to
+per-layer caches and attending only against cached past keys/values. (In
+`encode` rows we run the transformer with simple un-masked attention, so
+we are not using a KV-cached architecture in the case of `encode` rows.)
+
+In `encode` blocks (see below) the GRCE channel is disabed. Only the last position
+in an `encode` blocks has the GRCE sampler and shared path, to generate a GRCE output
+from the last position of the encoder only. The recurrent XCTX channel is present
+for all positions of the encoder, but without the bias networks. So one could say
+in `encode` mode each transformer position is "blindly" injecting information
+into the shared data path.
+
+
+## Default train/eval batches and its row types -- (updated; implementation not up-to-date)
+
+**`normal`**
+  the baseline path: GRCE, XCTX, and attention all enabled with the standard causal mask.
+
+**`decode`**
+  disables both GRCE and XCTX entirely so the GPT core behaves like a pure Transformer.
+
+**`encode`**
+  disable GRCE and run XCTX in "encode mode" (see description of XCTX below);
+  run the Transformer in encoder mode (no causal mask) so every token can
+  attend bidirectionally before the final position predicts the first token
+  beyond the block. (the XCTX output is unused in this row type, but it is used
+  in `recode` rows):
+
+**`recode`**
+  a hybrid of `encode` and `decode`: the first BLOCK_SIZE//2 positions form an
+  `encode` sub-row and the remaining positions are a `normal` sub-row.
+  attention does not span accross the sob row-boundary. so non-masked attention
+  in the `encode` sub-block can only query other positions in the `encode`
+  sub-block, and causal masked attention in the `normal` sub-block can only see
+  the positions left of it within the `normal` sub-block, not see all the way
+  further left into the `encode` sub-block. the `encode` subblock is only
+  linked to the second subblock via GRCE and XCTX. The GRCE input vector for
+  the first `normal` position is simply created from sampling the last `encode`
+  position and setting the recurrent input for that stage to zero. The XCTX
+  output signal of the `encode` block is calculated by runnig the entire
+  recurrent XCTX pipeline for the entire `encode` sub-block, but without the
+  XCTX "bias injection".
+
+- **`noxctx` / `puxctx`**
+  remove the wide XCTX signal either for the entire row (`noxctx`) or by
+  puncturing it at a single random timestep (`puxctx`) while GRCE remains
+  active.
+
+- **`noattn` / `puattn`**
+  shut attention off entirely (`noattn`) or mask a single timestep’s ability to
+  transmit forward (`puattn`) so the recurrent channels have to carry the load.
+
+For training we prepare batches of BATCH_SIZE sequences. Of these we dedicate 1
+sequence per batch to each of: `encode`, `recode`, `noxctx`, `puxctx`, `noattn`,
+and `puattn`. Then we use `decode` for (BATCH_SIZE//2 - 6) of the remaining rows
+in each batch, and finnaly use `normal` for the last (BATCH_SIZE+1)//2 rows.
+We call this batch composition a *default batch* and it is used in training
+and evaluation:
+
+(Or simply put: the *default batch* optimizes for `normal` and `decode`, but
+also adds one of each of the other row-types in each training block, to create
+knock-out type scenarios that drives learning towards robust implementations
+that utilize attention, grce, and xctx to stabalize each other and create
+models that are easier to debug.)
+
+The reported and logged loss values {train,test}_loss_target are the loss value
+for an evaluation of such a "mixed" batch, our true objective function that we
+train and optimize for.
+
+The loss values {train,test}_loss_normal are based on the same batch, but only
+using the loss values from `normal` rows.
+
+The loss values {train,test}_loss_encode are based on the one loss values from
+the two `encode` rows in each batch, and so forth.
+
+All these losses a logged in the `loss_hist` array in the .pt file. Each record
+contains the loss numbers as well as the step count, total training time so far,
+a unix timestamp, and the cursors for train and eval corpus.
+
+In addition to the 'train' subcommand there's also an 'eval' subcommand. For
+example, `grce.py eval encode` will pull STEPS*BATCH_SIZE*BLOCK_SIZE tokens
+from the test corpus (train coprus when `eval --train`), without advancing the
+cursor for that corpus, and the run STEPS batches full of `encode` rows. Then
+log the results and also store them in a `eval_hist` array in the model .pt
+file, using a record with the following fields:
+	rowtype =  for example "normal"
+	corpus = "train" or "test"
+	cursor = current cursor position in that corpus
+	seq_tokens_losses = array with STEPS*BATCH_SIZE arrays, each with 2*BLOCK_SIZE+1 entries:
+		token_0, loss_0, token_1, loss_1, ... token_{n}, loss_{n}, token_{n+1}
+	min_loss = min of the STEPS*BATCH_SIZE*BLOCK_SIZE loss values
+	max_loss = max of the STEPS*BATCH_SIZE*BLOCK_SIZE loss values
+	mean_loss = mean of the STEPS*BATCH_SIZE*BLOCK_SIZE loss values
+	stddev_loss = standard deviation of the STEPS*BATCH_SIZE*BLOCK_SIZE loss values
+	median_loss = median of the STEPS*BATCH_SIZE*BLOCK_SIZE loss values
+
+The tokens in seq_tokens_losses are strings, the loss values are floats. For "encode"
+there is only one loss value for the last position, predicting the first token of the
+next sequence.
+
+
+## Position embeddings -- (updated; implementation not up-to-date)
+
+Instead of just BLOCK_SIZE position encodings we reserve BLOCK_SIZE*PAGE_COUNT
+position encodings. (These position encodings form an "infinite loop": the
+successor of the last position encoding is simply the first position encoding again.
+(The default value for PAGE_COUNT is 16.)
+
+In training we pick a new random start position within the 0 .. BLOCK_SIZE*PAGE_COUNT-1
+range for each sequence, so the entire range incl. "wrap around" at the end of the
+range is learned quickly, even tho only BLOCK_SIZE encodings are using in each
+batch.
+
+We define a new batch format to train for larger inputs: the *pages batch*.
+
+A *pages batch* has `normal` rows of length `PAGES_BLOCK_SIZE := min(PAGE_COUNT-1, BATCH_SIZE)*BLOCK_SIZE`,
+again with random start positions. The effective `PAGES_BATCH_SIZE := BATCH_SIZE*BLOCK_SIZE // PAGES_BLOCK_SIZE`
+for a pages batch is scaled down to keep the total size of a *pages batch* below or equal to that of a default batch.
+
+
+---------------------------------------------------------------------------
+
+# TODOs
+
+Read AGENTS.md, README.md, and the comments at the top of grce.py. Then:
+
+
+## Remove old <undo> and <think> and --underline and --reward-relu
+
+We are going to remove **think mode entirely** and **undo mode** from grce.py:
+delete all think-related tokens, row types (`think`, `think2x`, `think3x`,
+`trthink`, `rdthink`), settings objects, augmentation logic, loss columns, and
+CLI flags, and make `--no-think` the hard-coded default with no remaining code
+paths for token insertion or think-specific evaluation. As part of this
+cleanup, remove `augment_training_batch` and all logic that mutates token
+streams during training or evaluation, so batches always consist of raw token
+IDs and standard causal LM targets.
+
+We are also removing the "pronoun/noun detector" and --underline and --reward-relu
+features from the code base.
+
+
+## Simplify and fix eval
+
+Simplify evaluation by **removing `--eval-full`, `--no-full-eval-first`,
+`--long-loss-log`, and all full-evaluation scheduling logic**, and instead
+always run evaluation at every eval_interval step (and the first step in each
+cyclw) using exactly **one evaluation forward pass** per step. That single
+evaluation must correspond to the true training objective and produce
+`test_loss_target`, which represents the mixed batch containing the full
+row-type composition used during training, with all context and attention masks
+applied exactly as in training.
+
+Redefine all other `test_loss_*` metrics to be computed **from that same
+evaluation pass only**, by aggregating per-row losses for rows of the
+corresponding row type (`normal`, `plain`/noctx, `noattn`, `puxctx`, `encode`,
+etc.), rather than by running additional homogeneous batches or separate
+forward passes. This fixes the current bug where `test_loss_normal` aliases
+`test_loss_target`, ensures all loss metrics are semantically consistent,
+eliminates expensive duplicate evaluations, and makes every reported loss value
+directly comparable as a conditional view of the same underlying
+training-objective evaluation.
+
+
+## Fix self-attention prefix computation
+
+The current `grce.py` implementation is *logically* left-to-right but
+*computationally* prefix-recomputing. In `forward_autoreg`, the model loops
+over time `t`, but at each step it calls the Transformer core on the **entire
+prefix** `0..t`. Inside the core, causal self-attention is implemented with
+explicit `(T×T)` score matrices and masks, so every layer is evaluated
+**layer-by-layer over all prefix positions**. This enforces O(T²) work and
+prevents true streaming execution, even though only the activations at the
+current position are actually used.
+
+The GRCE/XCTX channels themselves are already compatible with strict
+left-to-right semantics. Context → Transformer injection is done via
+**per-layer additive bias vectors applied only at the current token position**,
+and Transformer → Context updates consume **per-layer activations at the
+current position only**. No GRCE/XCTX computation depends on future tokens or
+on earlier positions being recomputed, so their logic does not require
+prefix-wide evaluation.
+
+To obtain true left-to-right evaluation, the Transformer core must be
+refactored to an **incremental, KV-cached forward**. Each time step should run
+the *full layer stack for a single token*, appending that token’s K/V to
+per-layer caches and attending only against cached past keys/values. The
+GRCE/XCTX bias injection and state update can remain unchanged, now operating
+naturally at each step after the token’s full stack has been evaluated.
+
+
+## Clean up and restructure the codebase
+
+I've added a Settings dataclass to grce.py.
+
+- Add all the missing fields to Settings so it captures verything we can set or
+  modify via CLi args -- except the selected subcomand and its arguments
+
+- Add an implementaion for grce_settings_from_cli_args
+
+Now let's rewrite grce_main(). For each subcommand implement one function with this
+interface: grce_<subcommand>_cli(settings: Settings, args: argparse.Namespace) -> int
+
+And for each "mode" -- if the subcommand has more than one mode -- we add a
+mode-specific grce_<subcommand>_<mode> function that actually implements that
+functionality, otherwise we just add grce_<subcommand>(), when the subcommand
+does not have different modes. So for the "corpus" subcommand we wuld add:
+
+grce_coprus_init(settings: Settings) -> int
+grce_coprus_init_tokenizer(settings: Settings) -> int
+grce_coprus_print(settings: Settings, from_test_corpus: Bool, start: int, end: int) -> int
+grce_coprus_cli(settings: Settings, args: argparse.Namespace) -> int
+
+The args parameter to the _cli function contains the argparse object for the
+subcommand only. All information from the top-level argsparse must have been
+moved into settings via grce_settings_from_cli_args inside main.
+
+After cleaning up main we should have a clean call hierarchy grce_main() -> grce_foo_cli() -> grce_foo_bar()
+with celarly assigned roles in args parsing and handling for each layer of that call stack.
+
+
+## Re-designing the XCTX data path
+
+Make sure you have read the README and grce.py. Then add a --new-xctx-arch option
+that implements the following behavior, and adds "_newxctx" to the model string:
+
+New architecture for the XCTX data path. With C = N_XCTX wide recurrent input,
+C' = the recurrent output, and S = the sum of all sampler outputs for this
+position, each step begins by combining the existing recurrent state with the
+current input contribution. The design explicitly separates long-term state
+storage from per-step influence, with the goal of achieving stable recurrence,
+controlled bandwidth, and high signal-to-noise in the C domain.
+
+C -> add S -> p = P(N -> N/2) -> LN -> q = Q(N/2 -> N) -> r = ReLU -> u = U(N, N) -> add C -> LN -> C'
+
+By first projecting the combined signal C + S down into an N/2 dimensional
+space, before applying LayerNorm and the ReLU-based MLP, the architecture
+deliberately limits the bandwidth of the per-step update. This bottleneck
+ensures that only structured, low-rank information can influence the recurrent
+state at each step, while LayerNorm removes mean and scale effects and
+stabilizes the internal dynamics before expansion and gating.
+
+An effective upsampling factor of 2x for the MLP is a natural choice: it is
+small enough to avoid unnecessary noise amplification, yet sufficient to allow
+the full input signal to be captured and re-expressed in the embedding domain.
+By avoiding any downsampling of the recurrent C path after the ReLU layer, the
+network is guaranteed to be able to find a noise-free encoding for any signal
+carried in C. This encoding can remain cleanly separable from other activity on
+the recurrent datapath, both in terms of the gated representation r and the
+mixed update u, and across the C, C', and S embedding spaces.
+
+
+## Non-token embeddings
+
+(the following names for non-token embeddings are used for
+documentation, comments, and log messages. the syntax looks
+similar to the syntax we are going to use for our special
+token, but use [] instead of <> to distinguish them from the
+embedding names that correspond to special tokens below.
+
+[|pos:0|] [|pos:1|] ... [|pos:BS-1|]
+  position embeddings for the max BS positions in a sequence
+
+[|think:1/2|] [|think:2/2|]
+  additional "think" embeddings for think2x mode, in think2x
+  mode we only use BS/2 position embeddings and input tokens,
+  double each of the BS/2 input token+position encodings so
+  we are back to BS elements in our block, and then add
+  [|think:1/2|] to the even and [|think:2/2|] to the odd
+  positions.
+
+[|think:1/4|] [|think:2/4|] [|think:3/4|] [|think:4/4|]
+  additional "think" embeddings for think4x mode
+
+
+## Special tokens embeddings
+
+<|----|>
+  article seperator
+
+<|tokipona:> <|english:>
+  start of new tokipona/english input-section
+
+</english:> </tokipona:>
+  end of previous section and start of english/tokipona
+  output-section
+
+<|lq:> ... <:lq|>
+  potential "low-quality" block of training data.
+
+<|hq:> ... <:hq|>
+  block of "high-quality" training data.
