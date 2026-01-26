@@ -265,26 +265,6 @@ detailed token-level debug information about that evaluation. Use `test --size N
 to artificially reduce the block size to de-clutter the output of the command.
 
 
-## Rotating position embeddings with paging -- (updated; implementation not up-to-date)
-
-Instead of just BLOCK_SIZE position encodings we reserve BLOCK_SIZE*PAGE_COUNT
-position encodings. (These position encodings form an "infinite loop": the
-successor of the last position encoding is simply the first position encoding again.
-(The default value for PAGE_COUNT is 8, but we currently only train for
-sequences up to a length of PAGE_COUNT // 2; see below.)
-
-In training we pick a new random start position within the 0 .. BLOCK_SIZE*PAGE_COUNT-1
-range for each sequence, so the entire range incl. "wrap around" at the end of the
-range is learned quickly, even tho only BLOCK_SIZE encodings are using in each
-batch.
-
-We define a new batch format to train for larger inputs: the *pages batch*.
-
-A *pages batch* has `normal` rows of length `PAGES_BLOCK_SIZE := min(PAGE_COUNT // 2, BATCH_SIZE)*BLOCK_SIZE`,
-again with random start positions. The effective `PAGES_BATCH_SIZE := BATCH_SIZE*BLOCK_SIZE // PAGES_BLOCK_SIZE`
-for a *pages batch* is scaled down to keep a *pages batch* within the size of a *default batch*.
-
-
 ## Training and evaluation with pre-evaluation -- (this is future work)
 
 We add a `--pre-eval` CLI option. For that mode we define a *pre-eval batch*,
@@ -501,39 +481,21 @@ G.dot(embedding) < 1 for all GRCE state embeddings that are expected "OFF" (-1).
 Read AGENTS.md, README.md, and the comments at the top of grce.py. Then:
 
 
-## Fix self-attention prefix computation
+## Split --block-size CLI option into --block-size and --block-length
 
-To obtain true left-to-right evaluation in the blocks with GRCE and/or XCTX
-enabled, the Transformer core must be using an **incremental, KV-cached
-forward** architecture. Each time step must run the *full layer stack for a
-single token*, appending that token’s K/V to per-layer caches and attending
-only against cached past keys/values. (In `encode` blocks we run the
-transformer with simple un-masked attention, so we must not switch to a
-KV-cached architecture in the case of `encode` blocks.)
+Currently --block-size is both a model configuration, that sets the number of
+available positional encodings in the model, and a runtime flag that sets
+the actual block-size to be used. Let's keep --block-size for the model config,
+but let's add --block-length to configure the actual length in a block for
+this train/eval run. (When --block-length is not specified it shoud just default
+to the current behavior of using whatever the value of block-size is.)
 
-The current `grce.py` implementation is *logically* left-to-right but
-*computationally* prefix-recomputing. In `forward_autoreg`, the model loops
-over time `t`, but at each step it calls the Transformer core on the **entire
-prefix** `0..t`. Inside the core, causal self-attention is implemented with
-explicit `(T×T)` score matrices and masks, so every layer is evaluated
-**layer-by-layer over all prefix positions**. This enforces O(T²) work and
-prevents true streaming execution, even though only the activations at the
-current position are actually used.
+The value of --block-length must always be <= --block-size.
 
-The GRCE/XCTX channels themselves are already compatible with strict
-left-to-right semantics. Context → Transformer injection is done via
-**per-layer additive bias vectors applied only at the current token position**,
-and Transformer → Context updates consume **per-layer activations at the
-current position only**. No GRCE/XCTX computation depends on future tokens or
-on earlier positions being recomputed, so their logic does not require
-prefix-wide evaluation.
-
-To obtain true left-to-right evaluation, the Transformer core must be
-refactored to an **incremental, KV-cached forward**. Each time step should run
-the *full layer stack for a single token*, appending that token’s K/V to
-per-layer caches and attending only against cached past keys/values. The
-GRCE/XCTX bias injection and state update can remain unchanged, now operating
-naturally at each step after the token’s full stack has been evaluated.
+When --block-length has a smaller value than --block-size, we pick a random
+start position index, so that we never exceed the number of positional
+encodings within the block length, but still also cover the entire range of
+positional encodings available in the model.
 
 
 ## Clean up and restructure CLI subcommand handling and managing runtime settings
