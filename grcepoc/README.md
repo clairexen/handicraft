@@ -6,14 +6,17 @@ This adds the following benefits:
 - The low-bandwith "GRCE" channel mostly adds stability, debugability, and interpretability.
 - The high-bandwith "XCTX" channel is meant to be functionally equivalent to the multi-head attention mechanism. It's a (simplistic and thus probably worse ;) recurrent re-implementation of the same functinality, that we can only learn because we use the transformer stack and its multi-head attention as "scaffolding". Instead of sending queries into the past we are shuting the things worth remembering for a little while into the future. We use a dropout-like mechanism during learning to encourage the network to learn that functionality, that is redundant within a token block. And then we use that learned functionality to both pass messages forward in time from one block to the next in inference, and prevent the network from doing weird things at the same time. The attention mechanism is great, when you know what you want to know from the past. Context is a way for the past to let the future know what to query.
 
-Training and sampling logic all lives in `grce.py`.
+Training and sampling logic all lives in `grce.py`. The CLI separates the model's
+maximum positional range (`--block-size`) from the runtime window (`--block-length`),
+so you can keep the checkpoint's full set of positional embeddings while training on
+shorter slices that randomly slide across the corpus.
 
 ## How the context channel works
 
 1. **Per-position capture.** For every position we collect the inputs to each Transformer block before self-attention/FFN work on them. Those vectors are the only items allowed to leak information across time.
-2. **Gradient-limited sampling.** Each block input goes through LayerNorm + a linear bottleneck `n_embd → n_grce`. The `n_layer` message vectors share weights across timesteps but are detached according to `--detach-span` (span 0 keeps gradients, span 1 detaches every step, span N>1 detaches every Nth step).
-3. **Context propagation.** All per-layer messages are summed, the (optionally detach-controlled) previous context is added once, and that combined vector is *normalized again* before entering the shared MLP `n_grce → 4*n_grce → ReLU → n_grce`. The MLP output then adds the same previous context again—just like a Transformer residual—before a final LayerNorm produces the next-step context. That LayerNormed output is the sole signal that crosses positions—nothing else persists across time.
-4. **Bias injection.** At the next position every block applies a single linear decoder `n_grce → n_embd`. The generated biases are added only to the newest token row of each block input, so the rest of the sequence remains untouched while the context acts as an additive steering signal.
+2. **Gradient-limited sampling.** Each block input goes through LayerNorm plus a learned projection `n_embd → n_grce` to produce per-layer messages `V_i`. Messages are detached according to `--detach-span`, so gradients never travel through time for more than a few steps.
+3. **Context propagation.** The previous recurrent state `G` is added to the sum of sampled messages, LayerNorm'ed, remixed via a shared MLP `n_grce → 4*n_grce → ReLU → n_grce`, and residual-added before a final LayerNorm yields `G'`. That normalized vector is the sole low-bandwidth signal that crosses positions.
+4. **Bias injection.** Before processing the next token each block consumes `LN(G)` via a learned projection `n_grce → n_embd` and adds the bias only to the newest token row of the block input, leaving the rest of the sequence untouched.
 
 In other words, this channel is literally the recurrent shortcut that classic RNNs tried to build, but it is implemented as a clean add-on to the Transformer stack: Each block, while computing logits for token N+1, already contains every piece of context needed to describe the prefix. The GRCE path just samples that information, compresses it into `n_grce` scalars, mixes them with a single hidden layer in the time domain, and feeds the signal into the very next step. Nothing else has to travel across time. Training stays stable because gradients do not need to propagate across multiple positions; the heavy lifting is still performed inside the per-token Transformer layers.
 
@@ -23,7 +26,15 @@ This mechanism creates an explicit channel for time-domain (i.e. recurrent) sign
 
 Think of it this way: the original “Attention Is All You Need” insight was to rotate an interleaved recurrent stack by 90°, replace the fixed unit selector ("use the same layer from the previous token") with attention, and thereby remove the long gradient paths that made RNNs hard to train. GRCE rotates us back over depth, but instead of letting layers browse earlier positions, every layer at position N sends a small learned message to position N+1. A shared bottleneck MLP mixes those messages, and each layer in the next position adds a linear bias from the shared vector. That gives us the benefits of a depth-wise recurrent shortcut (context and role persistence) without the hard-to-train time-domain gradients—everything needed to predict the next token is already inside the previous stack, so GRCE just samples and forwards it.
 
-The extended context (XCTX) variant follows the same sampler, residual, and per-layer bias workflow; its shared MLP just runs narrower (`n_xctx → 4*n_xctx//n_layer → ReLU → n_xctx`) so the wide channel stays parameter-efficient even though it carries more activations. That keeps the signal high-bandwidth while still constraining it to `n_xctx` scalars.
+### Extended context (XCTX)
+
+XCTX follows the same capture/mix/remix template while widening the channel so it can behave more like a short-term memory buffer:
+
+1. Each block input is LayerNorm'ed, projected down to an intermediate width `u`, re-normalized, and expanded back to `n_xctx`. A matching decoder maps `LN(X)` back to token-space biases via `X2U → U2E`.
+2. The recurrent state `X` is added to the sum of sampled messages, passed through a learned down-projection `DnX`, and LayerNorm'ed before it enters the shared mixer.
+3. The mixed vector is expanded with `UpX`, pushed through a learned `W` projection with ReLU, and added to the previous state before a final RMSNorm produces `X'`. RMSNorm keeps the direction of the recurrent signal stable so the channel can accumulate information over many steps.
+
+Because both channels bolt onto the same Transformer spine, we can vary their widths or disable them entirely with CLI flags while leaving the core model unchanged.
 
 One way to view this geometry is that attention “killed” classic recurrence by rotating the computation over depth and letting every position look backward. GRCE rotates a slim slice of that structure back into the time axis, but it keeps the Transformer philosophy—tight bottlenecks, shared emitters/decoders, and a single shared nonlinear mix—so gradients never have to walk through time. The heavy lifting stays inside the per-token Transformer blocks; the recurrent shortcut simply recycles whatever features those blocks already distilled.
 
