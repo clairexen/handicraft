@@ -108,7 +108,7 @@ class ModelConfig:
     """
 
     vocab_size: int = 3000  # GPT-2 base supports ~50k merges; we stay small for the PoC.
-    block_size: int = 64    # GPT-2 base uses 1024 tokens.
+    block_size: int = 256   # GPT-2 base uses 1024 tokens.
     n_layer: int = 8        # GPT-2 base uses 12 layers.
     n_head: int = 6         # GPT-2 base uses 12 attention heads.
     n_embd: int = 384       # GPT-2 base uses 768 embedding dims.
