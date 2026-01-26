@@ -211,4 +211,4 @@ Below are two quick sweeps you can adapt.
 
 ## Dev notes & agent cheat sheet
 
-See AGENTS.md file.
+See the AGENTS.md and notes.txt files for more information.
