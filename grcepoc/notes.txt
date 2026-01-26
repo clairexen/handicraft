@@ -94,8 +94,8 @@ and more easily.
 using an **incremental, KV-cached forward** architecture. Each time step must
 run the *full layer stack for a single token*, appending that token’s K/V to
 per-layer caches and attending only against cached past keys/values. (In
-`encode` rows we run the transformer with simple un-masked attention, so
-we must not use a KV-cached architecture in the case of `encode` rows.)
+`encode` blocks we run the transformer with simple un-masked attention, so
+we must not use a KV-cached architecture in the case of `encode` blocks.)
 
 In `encode` blocks (see below) the GRCE channel is disabed. Only the last
 position in an `encode` block has the GRCE sampler and shared path, to generate
@@ -140,7 +140,7 @@ new model instance and present the model with <|!:> (dump context begin) and
 the model can verbalize it's context. This mode/information can then even be
 used to automatically learn certain GRCE embeddings, once the model has been
 trained to extract and verbalize the right information. (In reality this may
-very well turn out to be much simpler in some cases than in others... ;)
+very well turn out to be simple in some cases and very much not so in others... ;)
 
 The GRCE channel is low-dimension/low-bandwith and we expect it to learn to
 encode and send forward properties like the "current role" that may be
