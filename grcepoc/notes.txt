@@ -452,7 +452,7 @@ embedding names that correspond to special tokens below.
   or the model is inside a <|@:> ... <:@|> block.
 
 <|p7|> <|p6|> <|p5|> <|p4|> <|p3|> <|p2|> <|p1|> <|p0|>
-  process-tokens. no special handling in the architecture. we simply
+  process-tokens. no special handling within the architecture. we simply
   train the model that whenever it sees <|pN|>, the next tokens will
   always be <|p{N-1}|> ... <|p0|>. this means injecting such a process-sequence
   will effectively free the model from spending any compute on predicting the
