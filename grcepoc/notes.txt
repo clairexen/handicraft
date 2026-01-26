@@ -395,20 +395,28 @@ embedding names that correspond to special tokens below.
 <|@:> ... <:@|>
   think-available block begin and end marks
 
-<|p7|> <|p6|> <|p5|> <|p4|> <|p3|> <|p2|> <|p1|> <|p0|>
-  process-tokens. we simply train the model that whenever it
-  sees <|pN|>, the next tokens will always be <|p{N-1}|> ... <|p0|>
-  this means injecting a process-sequence will effectively free
-  the model from spending any compute on predicting the immediate
-  next token, and is instead free to use its attention head and
-  compute to set up whatever the positions later in the sequence
-  tend to find useful within the training corpus.
-
 <|think|>
-  the model predicts this token to request an extra think step
+  the model predicts this token to request an extra think step.
   it's a token and not a non-token embedding, because we might
   want to add it to training data in order to teach the model
-  when to request additional thinking time.
+  when to request additional thinking time. The model is trained
+  to only do that, when [|think-avail|] is present on the input,
+  or the model is inside a <|@:> ... <:@|> block.
+
+<|p7|> <|p6|> <|p5|> <|p4|> <|p3|> <|p2|> <|p1|> <|p0|>
+  process-tokens. no special handling in the architecture. we simply
+  train the model that whenever it sees <|pN|>, the next tokens will
+  always be <|p{N-1}|> ... <|p0|>. this means injecting such a process-sequence
+  will effectively free the model from spending any compute on predicting the
+  immediate next token for the next N positions, and is instead free to use its
+  attention heads and compute to re-structure what it knows and set up whatever
+  the positions later in the sequence tend to find useful within the training
+  corpus. In a transformer without recurrent path this would be pointless of course.
+  But with GRCE and XCTX this is already all that's really needed to enable a
+  first mode of "additional thinking". (We usually add such a sequence in
+  training in a special training mode, where we add them at random positions in
+  the corpus, always before a whitespace, and preferrably immediately after a
+  puncuation mark (!?:;,. or ").
 
 
 ## Special GRCE embeddings -- (this is future work)
