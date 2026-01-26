@@ -269,8 +269,8 @@ to artificially reduce the block size to de-clutter the output of the command.
 Instead of just BLOCK_SIZE position encodings we reserve BLOCK_SIZE*PAGE_COUNT
 position encodings. (These position encodings form an "infinite loop": the
 successor of the last position encoding is simply the first position encoding again.
-(The default value for PAGE_COUNT is 8, but we only train for sequences up to
-a length of PAGE_COUNT // 2; see below.)
+(The default value for PAGE_COUNT is 8, but we currently only train for
+sequences up to a length of PAGE_COUNT // 2; see below.)
 
 In training we pick a new random start position within the 0 .. BLOCK_SIZE*PAGE_COUNT-1
 range for each sequence, so the entire range incl. "wrap around" at the end of the
@@ -323,28 +323,19 @@ not introduce explicit internal state or compute control.
 
 GRCE and XCTX already remove this limitation without introducing any notion of
 “thinking”. By sampling activations from all layers at a position, mixing them,
-and injecting the result into the next position, they allow information to
-cross layer boundaries across time explicitly. The entire context discovered at
-one position becomes available to subsequent positions in a layer-agnostic way.
-This can free attention heads to focus on retrieval, alignment, or comparison,
-rather than on carrying state forward, and it also enables the *next position*
-to rebroadcast that information from a lower layer if additional compute or
-restructuring is useful.
+and injecting the result into any layer of the next position(s), they allow
+information to cross layer boundaries across time explicitly. The entire
+context discovered at one position becomes available to subsequent positions in
+a layer-agnostic way.  This can free attention heads to focus on retrieval,
+alignment, or comparison, rather than on carrying state forward, and it also
+enables the *next position* to rebroadcast that information from a lower layer
+if additional compute or restructuring is useful.
 
 Thinking is therefore not the same as reasoning. Reasoning is the sequence of
 transformations the model applies to information, as it summarizes it into more
-tokens. Thinking is the allocation of more time and compute to analyze the
-current token and it's context and internally re-structure and/or enhance that
-information and directly broadcast that enhanced information forward via
-attention and/or via XCTX bias injection, to exactly the layers where the
-information is most useful.
-
-transformations can be applied before it must commit.  transformations are
-applied to information; thinking is about *how much time and compute* the model
-is allowed to spend before committing to an output. In this design, thinking is
-treated as a scheduling and control problem, not as an explicit reasoning
-trace. The model does not need to externalize its reasoning; it only needs to
-know whether it can defer a decision and continue processing.
+new tokens. Thinking is the allocation of time and compute that determines how
+many such transformations can be applied to a position before the model must
+commit to a prediction.
 
 There are two complementary ways to allocate thinking time. One is explicit and
 fixed: duplicate tokens and positions and annotate them with `think:n/k`,
@@ -465,14 +456,15 @@ embedding names that correspond to special tokens below.
   always be <|p{N-1}|> ... <|p0|>. this means injecting such a process-sequence
   will effectively free the model from spending any compute on predicting the
   immediate next token for the next N positions, and is instead free to use its
-  attention heads and compute to re-structure what it knows and set up whatever
-  the positions later in the sequence tend to find useful within the training
-  corpus. In a transformer without recurrent path this would be pointless of course.
-  But with GRCE and XCTX this is already all that's really needed to enable a
-  first mode of "additional thinking". (We usually add such a sequence in
-  training in a special training mode, where we add them at random positions in
-  the corpus, always before a whitespace, and preferrably immediately after a
-  puncuation mark (!?:;,. or ").
+  attention heads and compute to re-structure what it knows and make that
+  re-structured information available to the later positions in the sequence,
+  in whatever way of form turns out to be usful within the training corpus.
+  In a transformer without recurrent path this exercise would be pointless.
+  But with the added recurrent GRCE and XCTX channels just adding those
+  process-tokend is already enough to enable a simple first mode of "additional
+  thinking time". (We usually add such a sequence in training in a special
+  training mode, where we add them at random positions in the corpus, always
+  between a puncuation mark (!?:;,. or ") and a whitespace that follows it.
 
 
 ## Special GRCE embeddings -- (this is future work)
@@ -600,5 +592,3 @@ moved into settings via grce_settings_from_cli_args inside main.
 
 After cleaning up main we should have a clean call hierarchy grce_main() -> grce_foo_cli() -> grce_foo_bar()
 with celarly assigned roles in args parsing and handling for each layer of that call stack.
-
-
