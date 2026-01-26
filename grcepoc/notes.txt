@@ -258,6 +258,11 @@ The tokens in seq_tokens_losses are strings, the loss values are floats. For "en
 there is only one loss value in the second to last position, for predicting the
 first token of the next sequence, which is found in the last position of the array..
 
+Further there is also a 'test' subcommand that evaluates the model on a single
+block of the specified row-type (per default: `normal`), and prints verbose and
+detailed token-level debug information about that evaluation. Use `test --size N`
+to artificially reduce the block size to de-clutter the output of the command.
+
 
 ## Rotating position embeddings with paging -- (updated; implementation not up-to-date)
 
