@@ -89,6 +89,12 @@ PROMPT_GOALS = [
     ("celsius is based on the freezing and boiling points of water. water freezes at", " 0"),
 ]
 
+SPECIAL_TOKENS = """
+<|----|> <|//|> <|tokipona:> <|english:> </english:> </tokipona:>
+<|lq:> <:lq|> <|hq:> <:hq|> <|!:> <:!|> <|?:> <:?|> <|*:> <:*|>
+<|-:> <:-|> <|=:> <:=|> <|/:> <:/|> <|@:> <:@|> <|think|>
+<|p7|> <|p6|> <|p5|> <|p4|> <|p3|> <|p2|> <|p1|> <|p0|>
+""".split()
 
 
 # -----------------------------------------------------------------------------
@@ -105,7 +111,7 @@ class ModelConfig:
     tokenizer builder, :func:`describe_model_size`, and :func:`grce_main`.
     """
 
-    vocab_size: int = 2000  # GPT-2 base supports ~50k merges; we stay small for the PoC.
+    vocab_size: int = 3000  # GPT-2 base supports ~50k merges; we stay small for the PoC.
     block_size: int = 64    # GPT-2 base uses 1024 tokens.
     n_layer: int = 8        # GPT-2 base uses 12 layers.
     n_head: int = 6         # GPT-2 base uses 12 attention heads.
@@ -145,7 +151,7 @@ class Settings:
     n_xctx: int = MODEL_CONFIG_DEFAULTS.n_xctx
 
     # Additional non-geometry "pseudo" model args
-    corpus: str = "simplertwiki"
+    corpus: str = "simplerwiki"
     extra_tags: tuple[str] = ()
 
     # Training Loop
@@ -1627,7 +1633,7 @@ class NounExpectationDetector:
 
 
 class GPT2TokenizerWrapper:
-    EXTRA_SPECIAL_TOKENS = [THINK_TOKEN, UNDO_TOKEN]
+    EXTRA_SPECIAL_TOKENS = [THINK_TOKEN, UNDO_TOKEN] + SPECIAL_TOKENS
 
     def __init__(
         self,
