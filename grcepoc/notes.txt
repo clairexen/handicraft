@@ -54,7 +54,7 @@ Let Dn4xG() be a learned linear from 4*n_grce to n_grce
     G' := LN(M + Dn4xG(ReLU(Up4xG(M))))
 
 The (high-dimensional) XCTX channel (X -> X'):
-Let u := 2*n_xctx/n_layer be the reduced per-layer sampling dimension.
+Let u := min(n_embd // 2, n_xctx // 2, max(n_embd // 4, n_xctx // n_layer)), an intermediate dimension <n_embd and <n_xctx
 Let E2U_i() be a per-layer learned linear from n_embd to u.
 Let U2X_i() be a per-layer learned linear from u to n_xctx.
 Let X2U_i() be a per-layer learned linear from n_xctx to u.
