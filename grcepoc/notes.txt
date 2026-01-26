@@ -32,7 +32,7 @@ n_grce < n_embd < n_xctx. (n_xctx must be a multiple of n_layers.)
 A transformer block is simply this (GPT-2 design, with GRCE and XCTX bias added):
 Let Up4xE_i() be a per-layer learned linear from n_embd to 4*n_embd
 Let Dn4xE_i() be a per-layer learned linear from 4*n_embd to n_embd
-  Z_i := S_i [+ GRCE B_i bias ouput; if present] [+ XCTX B_i bias output; if present]
+  Z_i := S_i [+ GRCE B_i bias signal, if present] [+ XCTX B_i bias signal, if present]
   H_i := MultiHeadAtt_i(LN(Z_i))
   T_i := Z_i + H_i
   R_i := ReLU(Up4xE_i(LN(T_i)))
@@ -43,7 +43,7 @@ Let G2E_i() be a per-layer learned linear from n_grce to n_embd.
 Let E2G_i() be a per-layer learned linear from n_embd to n_grce.
 Let Up4xG() be a learned linear from n_grce to 4*n_grce
 Let Dn4xG() be a learned linear from 4*n_grce to n_grce
-  Bias injection based on the signal from the previous position via recurrent input G, create bias
+  Bias injection based on the signal from the previous position(s) via recurrent input G, create bias
   values B_i for the n_layer layers, to be added to block inputs *after* sampling the vectors S_i:
     B_i := G2E_i(LN(G))
   For each transformer layer i at this position and thus for each sampled vector S_i:
@@ -52,6 +52,15 @@ Let Dn4xG() be a learned linear from 4*n_grce to n_grce
     M := LN(G + V_0 + V_1 + ... + V_{n_layers-1})
   Then re-mixing M with an MLP into a new recurrent vector G'
     G' := LN(M + Dn4xG(ReLU(Up4xG(M))))
+
+The GRCE architecture is almost identical to a block of the transformer stack,
+except that it has the transformer stack itself in its first half, instead of
+the attention mechanism that we find in the first half of each block of the
+transformer stack. Note that via the path B_i -> V_j (with i<j) thru the
+transformer, the GRCE path can access compute resources inside the transformer
+stack, and thus only one shared MLP layer is ever needed in the GRCE data path
+itself, for remixing and combining the V_i signals from different layers into a
+single recurrent state vector.
 
 The (high-dimensional) XCTX channel (X -> X'):
 Let u := min(n_embd // 2, n_xctx // 2, max(n_embd // 4, n_xctx // n_layer)), an intermediate dimension <n_embd and <n_xctx
@@ -72,6 +81,11 @@ Let W() be a learned linear from n_xctx to n_xctx.
   Then re-mixing the original recurrent X input (not M) with an MLP into the new
   recurrent vector X'; with RMSNorm (not LN, for better stability in recurrent path):
     X' := RMSNorm(X + W(ReLU(UpX(M))))
+
+The XCTX architecture uses a similar sample-mix-remix architecture, but shapes
+noise, manages dimensionality of updates, and incorporates other changes, that
+make it better suited to perform short-term memory and working memory functions,
+instead of the state-machine like functionalities that the GRCE channel provides.
 
 **Note:** To obtain true left-to-right evaluation, the Transformer core must be
 using an **incremental, KV-cached forward** architecture. Each time step must
