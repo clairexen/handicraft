@@ -501,46 +501,6 @@ G.dot(embedding) < 1 for all GRCE state embeddings that are expected "OFF" (-1).
 Read AGENTS.md, README.md, and the comments at the top of grce.py. Then:
 
 
-## Remove old <undo> and <think> and --underline and --reward-relu code
-
-We are going to remove **think mode entirely** and **undo mode** from grce.py:
-delete all think-related tokens, row types (`think`, `think2x`, `think3x`,
-`trthink`, `rdthink`), settings objects, augmentation logic, loss columns, and
-CLI flags, and make `--no-think` the hard-coded default with no remaining code
-paths for token insertion or think-specific evaluation. As part of this
-cleanup, remove `augment_training_batch` and all logic that mutates token
-streams during training or evaluation, so batches always consist of raw token
-IDs and standard causal LM targets.
-
-We are also removing the "pronoun/noun detector" and --underline and --reward-relu
-features from the code base.
-
-This is a large edit, but besides that it should be on the trivial side. Stop
-and asks questions if any questions come up or you encounter any difficulties.
-
-
-## Simplify and fix eval
-
-Simplify evaluation by **removing `--eval-full`, `--no-full-eval-first`,
-`--long-loss-log`, and all full-evaluation scheduling logic**, and instead
-always run "full" evaluation at every eval_interval step (and the first step in
-each cyclw) using exactly **one evaluation forward pass** per step. That single
-evaluation must correspond to the true training objective and produce
-`test_loss_target`, which represents the mixed batch containing the full
-row-type composition used during training, with all context and attention masks
-applied exactly as in training.
-
-Redefine all other `test_loss_*` metrics to be computed **from that same
-evaluation pass only**, by aggregating per-row losses for rows of the
-corresponding row type (`normal`, `plain`/noctx, `noattn`, `puxctx`, `encode`,
-etc.), rather than by running additional homogeneous batches or separate
-forward passes. This fixes the current bug where `test_loss_normal` aliases
-`test_loss_target`, ensures all loss metrics are semantically consistent,
-eliminates expensive duplicate evaluations, and makes every reported loss value
-directly comparable as a conditional view of the same underlying
-training-objective evaluation.
-
-
 ## Fix self-attention prefix computation
 
 To obtain true left-to-right evaluation in the blocks with GRCE and/or XCTX
@@ -576,34 +536,17 @@ GRCE/XCTX bias injection and state update can remain unchanged, now operating
 naturally at each step after the token’s full stack has been evaluated.
 
 
-## Clean up and restructure argument parsing and managing runtime settings
+## Clean up and restructure CLI subcommand handling and managing runtime settings
 
-I've added a Settings dataclass to grce.py.
+I've added a Settings dataclass to grce.py, that should simply passing the
+runtime setting around. Let's re-structure the code one sub-command at a time.
 
-- Add all the missing fields to Settings so it captures verything we can set or
-  modify via CLi args -- except the selected subcomand and its arguments
+Have a look at grce_cli_size(args) and grce_cmd_size(settings, ...) for the
+general pattern: a slim cli shim that handles args, and a main subcommand
+function, that receives settings as first arg, and the parsed cli options
+as additional args.
 
-- Add an implementaion for grce_settings_from_cli_args
-
-Now let's rewrite grce_main(). For each subcommand implement one function with this
-interface: grce_<subcommand>_cli(settings: Settings, args: argparse.Namespace) -> int
-
-And for each "mode" -- if the subcommand has more than one mode -- we add a
-mode-specific grce_<subcommand>_<mode> function that actually implements that
-functionality, otherwise we just add grce_<subcommand>(), when the subcommand
-does not have different modes. So for the "corpus" subcommand we wuld add:
-
-grce_coprus_init(settings: Settings) -> int
-grce_coprus_init_tokenizer(settings: Settings) -> int
-grce_coprus_print(settings: Settings, from_test_corpus: Bool, start: int, end: int) -> int
-grce_coprus_cli(settings: Settings, args: argparse.Namespace) -> int
-
-The args parameter to the _cli function contains the argparse object for the
-subcommand only. All information from the top-level argsparse must have been
-moved into settings via grce_settings_from_cli_args inside main.
-
-After cleaning up main we should have a clean call hierarchy grce_main() -> grce_foo_cli() -> grce_foo_bar()
-with celarly assigned roles in args parsing and handling for each layer of that call stack.
+Maybe let's restructure 'create' into grce_cli_create() and grce_cmd_create() first?
 
 
 ## Move --import-model etc from top-level args parser into 'create' subcommand

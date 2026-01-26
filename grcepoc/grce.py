@@ -1163,10 +1163,8 @@ def _dominant_estimates(config: ModelConfig) -> list[tuple[str, int, str]]:
     return estimates
 
 
-def describe_model_size(
-    config: ModelConfig,
-    block_size: int,
-    batch_size: int,
+def grce_cmd_size(
+    settings: ModelConfig,
     *,
     check: bool = False,
     estimate: bool = False,
@@ -1177,8 +1175,8 @@ def describe_model_size(
     Called exclusively from :func:`grce_main`.
     """
     print()
-    geometry = _build_geometry(config, block_size)
-    sections = _append_summary_section(_expected_sections(config, block_size))
+    geometry = _build_geometry(settings, settings.block_size)
+    sections = _append_summary_section(_expected_sections(settings, settings.block_size))
     _print_geometry(geometry)
     for idx, (key, title, items) in enumerate(sections):
         print()
@@ -1195,12 +1193,12 @@ def describe_model_size(
     if estimate:
         print()
         print(color_text("Estimate using dominant terms only (excl. embeddings)", Colors.CYAN, bold=True))
-        for label, count, formula in _dominant_estimates(config):
+        for label, count, formula in _dominant_estimates(settings):
             print(f"  {label:<20} {count:>15,}  {formula}")
 
     if check:
         expected_map = _flatten_expected(sections)
-        actual_map = _compute_actual_counts(config)
+        actual_map = _compute_actual_counts(settings)
         mismatches: list[tuple[str, str, int, int]] = []
         for (key, label), expected in expected_map.items():
             actual = actual_map.get((key, label), 0)
@@ -1220,25 +1218,23 @@ def describe_model_size(
             )
 
     print()
-
-def run_describe_model_size_subcommand():
-    assert cli_args.command == "size"
-    describe_model_size(
-        settings_from_cli_args(cli_args),
-        cli_args.block_size,
-        cli_args.batch_size,
-        check=getattr(cli_args, "check", False),
-        estimate=getattr(cli_args, "estimate", False),
-    )
     return 0
 
+def grce_cli_size(args: argparse.Namespace):
+    assert args.command == "size"
+    settings = settings_from_cli_args(args)
+    return grce_cmd_size(
+        settings,
+        check=getattr(args, "check", False),
+        estimate=getattr(args, "estimate", False),
+    )
 
 if __name__ == "__main__":
     # run it here when not in --check mode, and run it later if we need torch for --check
     # on some builds it can take 5 seconds or longer to import torch, so we early-exit
     # on the "size" sub-command here so it prints the model size right away without that delay
     if cli_args.command == "size" and not getattr(cli_args, "check", False):
-        sys.exit(run_describe_model_size_subcommand())
+        sys.exit(grce_cli_size(cli_args))
 
 
 # -----------------------------------------------------------------------------
@@ -3862,7 +3858,7 @@ if __name__ == "__main__":
     # Torch imported; used only in 'size --check' mode
     if cli_args.command == "size":
         assert getattr(cli_args, "check", False)
-        sys.exit(run_describe_model_size_subcommand())
+        sys.exit(grce_cli_size(cli_args))
 
     # otherwise: run the big "default" main
     sys.exit(grce_main(cli_args))
