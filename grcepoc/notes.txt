@@ -481,23 +481,6 @@ G.dot(embedding) < 1 for all GRCE state embeddings that are expected "OFF" (-1).
 Read AGENTS.md, README.md, and the comments at the top of grce.py. Then:
 
 
-## Split --block-size CLI option into --block-size and --block-length
-
-Currently --block-size is both a model configuration, that sets the number of
-available positional encodings in the model, and a runtime flag that sets
-the actual block-size to be used. Let's keep --block-size for the model config,
-but let's add --block-length to configure the actual length in a block for
-this train/eval run. (When --block-length is not specified it shoud just default
-to the current behavior of using whatever the value of block-size is.)
-
-The value of --block-length must always be <= --block-size.
-
-When --block-length has a smaller value than --block-size, we pick a random
-start position index, so that we never exceed the number of positional
-encodings within the block length, but still also cover the entire range of
-positional encodings available in the model.
-
-
 ## Clean up and restructure CLI subcommand handling and managing runtime settings
 
 I've added a Settings dataclass to grce.py, that should simply passing the
