@@ -2029,6 +2029,41 @@ class CausalSelfAttention(nn.Module):
             y = y * row_mask
         return self.proj(y)
 
+    def forward_incremental(
+        self,
+        x: torch.Tensor,
+        cache: "LayerCache",
+        *,
+        puncture_mask: torch.Tensor | None = None,
+        disable_rows: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, "LayerCache"]:
+        if x.size(1) != 1:
+            raise ValueError("Incremental attention expects a single-token sequence")
+        B, T, C = x.shape
+        k_full = self.key(x)
+        q = self.query(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
+        v_full = self.value(x)
+        v = v_full.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
+        k_new = k_full.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
+        key_append = k_new.squeeze(2).unsqueeze(2)
+        value_append = v.squeeze(2).unsqueeze(2)
+        cache.key = torch.cat([cache.key, key_append], dim=2)
+        cache.value = torch.cat([cache.value, value_append], dim=2)
+        cache.length = cache.key.size(2)
+        k = cache.key
+        v = cache.value
+        att = (q @ k.transpose(-2, -1)) / math.sqrt(k.size(-1))
+        if puncture_mask is not None:
+            att = att.masked_fill(puncture_mask[:, None, None, :], float("-inf"))
+        att = F.softmax(att, dim=-1)
+        att = self.dropout(att)
+        y = att @ v
+        y = y.transpose(1, 2).contiguous().view(B, T, C)
+        if disable_rows is not None and disable_rows.any():
+            row_mask = (~disable_rows).view(-1, 1, 1).to(y.dtype)
+            y = y * row_mask
+        return self.proj(y), cache
+
 
 class FeedForward(nn.Module):
     def __init__(self, config: ModelConfig) -> None:
@@ -2084,6 +2119,37 @@ class Block(nn.Module):
         x = x + ff_out
         return x, mask
 
+    def forward_incremental(
+        self,
+        x: torch.Tensor,
+        cache: LayerCache,
+        *,
+        record_mask: bool = False,
+        attention_disabled_rows: torch.Tensor | None = None,
+        puncture_mask: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, LayerCache, torch.Tensor | None]:
+        attn_out, cache = self.attn.forward_incremental(
+            self.ln1(x),
+            cache,
+            puncture_mask=puncture_mask,
+            disable_rows=attention_disabled_rows,
+        )
+        if attention_disabled_rows is not None and attention_disabled_rows.any():
+            mask = (~attention_disabled_rows).view(-1, 1, 1).to(attn_out.dtype)
+            attn_out = attn_out * mask
+        x = x + attn_out
+        pre_ff = self.ln2(x)
+        ff_out, mask = self.ff(pre_ff, record_mask=record_mask)
+        x = x + ff_out
+        return x, cache, mask
+
+
+@dataclass
+class LayerCache:
+    key: torch.Tensor
+    value: torch.Tensor
+    length: int = 0
+
 
 class GPTCore(nn.Module):
     def __init__(self, config: ModelConfig) -> None:
@@ -2098,6 +2164,44 @@ class GPTCore(nn.Module):
         self.detach_layer = max(-1, int(getattr(config, "detach_layer", -1)))
         if self.detach_layer > len(self.blocks):
             self.detach_layer = len(self.blocks)
+
+    def allocate_kv_caches(
+        self,
+        batch_size: int,
+        max_seq_len: int,
+        device: torch.device,
+    ) -> list[LayerCache]:
+        head_dim = self.config.n_embd // self.config.n_head
+        dtype = self.tok_emb.weight.dtype
+        caches: list[LayerCache] = []
+        for _ in range(len(self.blocks)):
+            key = torch.empty(
+                batch_size,
+                self.config.n_head,
+                0,
+                head_dim,
+                device=device,
+                dtype=dtype,
+            )
+            value = torch.empty_like(key)
+            caches.append(LayerCache(key=key, value=value, length=0))
+        return caches
+
+    def _build_puncture_mask(
+        self,
+        positions: torch.Tensor | None,
+        cache_len: int,
+        *,
+        device: torch.device,
+    ) -> torch.Tensor | None:
+        if positions is None or cache_len <= 1:
+            return None
+        valid = (positions >= 0) & (positions < (cache_len - 1))
+        if not torch.any(valid):
+            return None
+        mask = torch.zeros(positions.size(0), cache_len, dtype=torch.bool, device=device)
+        mask[valid, positions[valid]] = True
+        return mask
 
     def forward(
         self,
@@ -2145,6 +2249,54 @@ class GPTCore(nn.Module):
         x = self.ln_f(x)
         logits = self.head(x)
         return logits, x, block_inputs, relu_masks
+
+    def forward_step(
+        self,
+        idx: torch.Tensor,
+        position_ids: torch.Tensor,
+        caches: list[LayerCache],
+        block_biases: list[torch.Tensor] | None = None,
+        *,
+        record_relu_mask: bool = False,
+        attention_disabled_rows: torch.Tensor | None = None,
+        puncture_positions: torch.Tensor | None = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor, List[torch.Tensor], List[torch.Tensor] | None]:
+        if attention_disabled_rows is not None:
+            attention_disabled_rows = attention_disabled_rows.to(idx.device, dtype=torch.bool)
+        else:
+            attention_disabled_rows = torch.zeros(idx.size(0), dtype=torch.bool, device=idx.device)
+        pos_idx = position_ids.view(idx.size(0), 1)
+        tok = self.tok_emb(idx.view(idx.size(0), 1))
+        pos = self.pos_emb(pos_idx)
+        x = self.drop(tok + pos)
+        block_inputs: List[torch.Tensor] = []
+        relu_masks: List[torch.Tensor | None] | None = None
+        if record_relu_mask:
+            relu_masks = [None] * len(self.blocks)
+        cache_len = caches[0].length
+        puncture_mask = self._build_puncture_mask(
+            puncture_positions,
+            cache_len + 1,
+            device=idx.device,
+        )
+        for layer_idx, block in enumerate(self.blocks):
+            if block_biases is not None:
+                x = x + block_biases[layer_idx].unsqueeze(1)
+            block_inputs.append(x[:, 0, :])
+            x, caches[layer_idx], layer_mask = block.forward_incremental(
+                x,
+                caches[layer_idx],
+                record_mask=record_relu_mask,
+                attention_disabled_rows=attention_disabled_rows,
+                puncture_mask=puncture_mask,
+            )
+            if self.detach_layer > 0 and (layer_idx + 1) == self.detach_layer:
+                x = x.detach()
+            if record_relu_mask and relu_masks is not None and layer_mask is not None:
+                relu_masks[layer_idx] = layer_mask
+        x = self.ln_f(x)
+        logits = self.head(x)
+        return logits[:, 0, :], x[:, 0, :], block_inputs, relu_masks
 
 
 class GRCEContextChannel(nn.Module):
@@ -2349,6 +2501,9 @@ class GRCEGPT(nn.Module):
         base_context_mask_has = bool(base_context_mask.any().item())
         base_xctx_mask = xctx_disabled_rows
         base_xctx_mask_has = bool(base_xctx_mask.any().item())
+        caches = None
+        if not encoder_mode:
+            caches = self.core.allocate_kv_caches(B, T, device=device)
 
         for t in range(T):
             xctx_step_mask = None
@@ -2362,9 +2517,6 @@ class GRCEGPT(nn.Module):
             if encoder_mode:
                 prefix = idx
                 target_pos = min(prefix.size(1) - 1, t)
-            else:
-                prefix = idx[:, : t + 1]
-                target_pos = prefix.size(1) - 1
             block_biases = None
             if use_context:
                 for channel, state in zip(active_channels, context_states):
@@ -2395,19 +2547,27 @@ class GRCEGPT(nn.Module):
                         state_for_bias[channel_mask] = 0
                     bias_vectors = channel.project(state_for_bias)
                     channel_biases: list[torch.Tensor] = []
-                    for bias_vec in bias_vectors:
-                        if channel_mask_has:
-                            bias_vec = bias_vec.clone()
-                            bias_vec[channel_mask] = 0
-                        full = torch.zeros(
-                            B,
-                            prefix.size(1),
-                            self.config.n_embd,
-                            device=device,
-                            dtype=bias_vec.dtype,
-                        )
-                        full[:, target_pos, :] = bias_vec
-                        channel_biases.append(full)
+                    if encoder_mode:
+                        for bias_vec in bias_vectors:
+                            if channel_mask_has:
+                                bias_vec = bias_vec.clone()
+                                bias_vec[channel_mask] = 0
+                            full = torch.zeros(
+                                B,
+                                prefix.size(1),
+                                self.config.n_embd,
+                                device=device,
+                                dtype=bias_vec.dtype,
+                            )
+                            full[:, target_pos, :] = bias_vec
+                            channel_biases.append(full)
+                    else:
+                        for bias_vec in bias_vectors:
+                            working = bias_vec
+                            if channel_mask_has:
+                                working = working.clone()
+                                working[channel_mask] = 0
+                            channel_biases.append(working)
                     if block_biases is None:
                         block_biases = channel_biases
                     else:
@@ -2415,15 +2575,33 @@ class GRCEGPT(nn.Module):
                             block_biases[layer_idx] = (
                                 block_biases[layer_idx] + channel_biases[layer_idx]
                             )
-            logits, hidden_layer, block_inputs, layer_masks = self.core(
-                prefix,
-                block_biases=block_biases,
-                record_relu_mask=collect_relu_mask,
-                attention_disabled_rows=attention_disabled_rows,
-                attention_dropout_positions=attention_dropout_positions,
-                full_attention=encoder_mode,
-                target_position=target_pos,
-            )
+            if encoder_mode:
+                logits, hidden_layer, block_inputs, layer_masks = self.core(
+                    prefix,
+                    block_biases=block_biases,
+                    record_relu_mask=collect_relu_mask,
+                    attention_disabled_rows=attention_disabled_rows,
+                    attention_dropout_positions=attention_dropout_positions,
+                    full_attention=encoder_mode,
+                    target_position=target_pos,
+                )
+                step_logits = logits[:, target_pos : target_pos + 1, :]
+                step_hidden = hidden_layer[:, target_pos : target_pos + 1, :]
+            else:
+                if caches is None:
+                    raise RuntimeError("KV caches were not initialized")
+                position_ids = torch.full((B,), t, dtype=torch.long, device=device)
+                logits_step, hidden_step, block_inputs, layer_masks = self.core.forward_step(
+                    idx[:, t],
+                    position_ids,
+                    caches,
+                    block_biases=block_biases,
+                    record_relu_mask=collect_relu_mask,
+                    attention_disabled_rows=attention_disabled_rows,
+                    puncture_positions=attention_dropout_positions,
+                )
+                step_logits = logits_step.unsqueeze(1)
+                step_hidden = hidden_step.unsqueeze(1)
             if relu_activity is not None:
                 relu_activity.append(layer_masks)
             if activation_store is not None:
@@ -2432,6 +2610,8 @@ class GRCEGPT(nn.Module):
                     activation_store["block_norms"][layer_idx].extend(
                         norms.cpu().tolist()
                     )
+            logits_steps.append(step_logits)
+            hidden_steps.append(step_hidden)
             if use_context:
                 for idx_ch, channel in enumerate(active_channels):
                     span = channel.detach_span
@@ -2479,8 +2659,6 @@ class GRCEGPT(nn.Module):
                     if activation_store is not None:
                         ctx_norms = torch.linalg.vector_norm(raw_context.detach(), dim=-1)
                         activation_store["context_norms"].extend(ctx_norms.cpu().tolist())
-            logits_steps.append(logits[:, target_pos : target_pos + 1, :])
-            hidden_steps.append(hidden_layer[:, target_pos : target_pos + 1, :])
         logits = torch.cat(logits_steps, dim=1)
         hidden = torch.cat(hidden_steps, dim=1)
         if relu_activity is not None:
