@@ -103,8 +103,8 @@ a GRCE output from the last position of the encoder only. The recurrent XCTX
 channel however is present for all positions of the encoder, but without the
 bias injection networks. So one could say in `encode` mode each transformer
 position is "blindly" injecting information into the shared forward-projecting
-data path. `recode` rows (see below) are used to train encoders to produce
-XCTX and GRCE outputs that that decoders can consume.
+XCTX data path. `recode` rows (see below) are used to train such encoders to
+produce pairs of GRCE and XCTX outputs that that decoders can consume.
 
 
 ## Rationale for the recurrent channels, additional thoughts, and predicted behavior
@@ -113,21 +113,22 @@ The vector of concatenated S_i values for a position already encodes the entire
 context for the next position. The position has to evaluate that context as part
 of predicting that token. Experiments show that we can disable grandient
 propagation at this interface entirely (--detach-span 1) and observe
-prectically no difference in how well the network can learn the GRCE and XCTX
-functionality. This demonstrates that all the information is already present,
-we only need to learn how to sample and extract it from that vector.
+almost no difference in how well and/or quickly the network can learn the GRCE
+and XCTX functionality. This demonstrates that all the context information is
+already present in the set of S_i vectors, we only need to learn how to sample
+and extract it from that vector using the GRCE and XCTX sample-mix-remix
+pipelines.
 
-That has trememdous implications! It basically means we have an easy path-way
+That has trememdous implications! It basically means we have an easy pathway
 to learning a recurrent language model without having to learn a deep and
-complex recurrent function: we augment the transformer with two simple
-mechanisms to "shout" important information into the future, that the future
-will "see" without any need to query it. And then use dropout-style training
-scenarios that force optimization to build redundant structures with GRCE and
-XCTX, that can "help out" when we drop out attention for a position, until
-we can disable attention entirely and still get resonable results, at least
-on short sequences, with GRCE and XCTX as the only path that allows flow of
-information from transformer stacks on the left to transformer stacks to their
-right.
+complex recurrent function: we instead just augment the transformer with two
+simple mechanisms to "shout" important information into the future, that the
+future will "see" without any need to explicitly query it. And then we use
+dropout-style training scenarios that force optimization to build redundant
+structures with GRCE and XCTX, that can "help out" when we drop out attention
+for a position, until we can disable attention entirely and still get resonable
+results, at least on short sequences, with GRCE and XCTX as the only path that
+allows flow of information between transformer stacks.
 
 The main purpose of this is (1) generally higher stability by creating a
 redundant path for information, for all the cases where attention "glitches",
@@ -209,14 +210,14 @@ any "architectural noise" into the critical (recurrent) path in the process.
 
 For training we prepare batches of BATCH_SIZE sequences. Of these we dedicate 1
 sequence per batch to each of: `encode`, `recode`, `noxctx`, `puxctx`, `noattn`,
-and `puattn`. Then we use `decode` for (BATCH_SIZE//2 - 6) of the remaining rows
-in each batch, and finnaly use `normal` for the last (BATCH_SIZE+1)//2 rows.
-We call this batch composition a *default batch* and it is used in training
-and evaluation:
+and `puattn`. Then we use `decode` for (BATCH_SIZE//2 - 6) rows in each batch,
+and finally use `normal` for the remaining (BATCH_SIZE+1)//2 rows.  We call
+this batch composition a *default batch* and it is used in training and
+evaluation by default.
 
 (Or simply put: the *default batch* optimizes for `normal` and `decode`, but
 also adds one of each of the other row-types in each training block, to create
-knock-out type scenarios that drive learning towards robust implementations
+knock-out/drop-out type scenarios that drive learning towards robust networks
 that utilize attention, grce, and xctx to stabalize each other and create
 stable models that are easier to debug.)
 
