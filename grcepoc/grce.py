@@ -446,6 +446,12 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
     model_group = parser.add_argument_group("Model configuration")
     model_group.add_argument(
+        "--vocab-size",
+        type=int,
+        default=defaults.vocab_size,
+        help="Total vocabulary size for the tokenizer (including special tokens)",
+    )
+    model_group.add_argument(
         "--block-size",
         type=int,
         default=defaults.block_size,
@@ -467,7 +473,7 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--n-embd",
         type=int,
         default=defaults.n_embd,
-        help="Embedding/hidden dimension (GPT-2 base uses 768).",
+        help="Embedding/hidden dimension (GPT-2 base uses 768); must be a multiple of n_head.",
     )
     model_group.add_argument(
         "--n-grce",
@@ -480,14 +486,8 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=int,
         default=defaults.n_xctx,
         help=(
-            "Dimension of the wide (layer-partitioned) context channel; requires n_xctx to be divisible by n_layer"
+            "Dimension of the wide (layer-partitioned) context channel; must be a multiple of n_layer"
         ),
-    )
-    model_group.add_argument(
-        "--vocab-size",
-        type=int,
-        default=defaults.vocab_size,
-        help="Total vocabulary size for the GPT-2 style tokenizer (including special tokens)",
     )
     model_group.add_argument(
         "--no-think",
@@ -6045,7 +6045,7 @@ def grce_main(args: argparse.Namespace) -> int:
     return 0
 
 if __name__ == "__main__":
-    # second entry point for "size" subcommand with
+    # second entry point for "size" subcommand, now with
     # Torch imported; used only in 'size --check' mode
     if cli_args.command == "size":
         assert getattr(cli_args, "check", False)

@@ -601,3 +601,9 @@ moved into settings via grce_settings_from_cli_args inside main.
 
 After cleaning up main we should have a clean call hierarchy grce_main() -> grce_foo_cli() -> grce_foo_bar()
 with celarly assigned roles in args parsing and handling for each layer of that call stack.
+
+
+## Move --import-model etc from top-level args parser into 'create' subcommand
+
+Move the top-level --import-model, --trim-model, --drop-layers, and --add-layers cli options
+from the top-level args parser to be cli options of the 'create' subcommand.
