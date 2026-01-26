@@ -20,13 +20,13 @@ LEGACY_TARGET_FIELDS = {
 }
 
 LEGACY_NOTHINK_FIELDS = {
-    "train_loss_nothink": "train_plain",
-    "test_loss_nothink": "test_plain",
+    "train_loss_nothink": "train_decode",
+    "test_loss_nothink": "test_decode",
 }
 
 LEGACY_SPECIAL_FIELDS = {
-    "train_loss_plain": "train_plain",
-    "test_loss_plain": "test_plain",
+    "train_loss_plain": "train_decode",
+    "test_loss_plain": "test_decode",
     "train_loss_nogrce": "train_noctx",
     "test_loss_nogrce": "test_noctx",
     "train_loss_noctx": "train_noctx",
@@ -67,8 +67,8 @@ class LossRecord:
     test: List[float]
     train_noprev: Optional[List[float]] = None
     test_noprev: Optional[List[float]] = None
-    train_plain: Optional[List[float]] = None
-    test_plain: Optional[List[float]] = None
+    train_decode: Optional[List[float]] = None
+    test_decode: Optional[List[float]] = None
     train_normal: Optional[List[float]] = None
     test_normal: Optional[List[float]] = None
     train_noctx: Optional[List[float]] = None
@@ -81,6 +81,8 @@ class LossRecord:
     test_none: Optional[List[float]] = None
     train_encode: Optional[List[float]] = None
     test_encode: Optional[List[float]] = None
+    train_recode: Optional[List[float]] = None
+    test_recode: Optional[List[float]] = None
     train_think: Optional[List[float]] = None
     test_think: Optional[List[float]] = None
     train_think2x: Optional[List[float]] = None
@@ -144,8 +146,8 @@ def load_records(json_paths: Iterable[pathlib.Path]) -> List[LossRecord]:
             test_ng = extract_series("test_loss_nogrce")
         train_puxctx = extract_series("train_loss_puxctx")
         test_puxctx = extract_series("test_loss_puxctx")
-        train_plain = extract_series("train_loss_plain")
-        test_plain = extract_series("test_loss_plain")
+        train_plain = extract_series("train_loss_decode")
+        test_plain = extract_series("test_loss_decode")
         train_normal = extract_series("train_loss_normal")
         test_normal = extract_series("test_loss_normal")
         train_noatt = extract_series("train_loss_noatt")
@@ -154,6 +156,8 @@ def load_records(json_paths: Iterable[pathlib.Path]) -> List[LossRecord]:
         test_none = extract_series("test_loss_none")
         train_encode = extract_series("train_loss_encode")
         test_encode = extract_series("test_loss_encode")
+        train_recode = extract_series("train_loss_recode")
+        test_recode = extract_series("test_loss_recode")
         train_think = extract_series("train_loss_think")
         test_think = extract_series("test_loss_think")
         train_think2x = extract_series("train_loss_think2x")
@@ -174,8 +178,8 @@ def load_records(json_paths: Iterable[pathlib.Path]) -> List[LossRecord]:
                 test_noprev=[float(v) for v in test_noprev]
                 if test_noprev
                 else None,
-                train_plain=[float(v) for v in train_plain] if train_plain else None,
-                test_plain=[float(v) for v in test_plain] if test_plain else None,
+                train_decode=[float(v) for v in train_plain] if train_plain else None,
+                test_decode=[float(v) for v in test_plain] if test_plain else None,
                 train_normal=[float(v) for v in train_normal] if train_normal else None,
                 test_normal=[float(v) for v in test_normal] if test_normal else None,
                 train_noctx=[float(v) for v in train_ng] if train_ng else None,
@@ -188,6 +192,8 @@ def load_records(json_paths: Iterable[pathlib.Path]) -> List[LossRecord]:
                 test_none=[float(v) for v in test_none] if test_none else None,
                 train_encode=[float(v) for v in train_encode] if train_encode else None,
                 test_encode=[float(v) for v in test_encode] if test_encode else None,
+                train_recode=[float(v) for v in train_recode] if train_recode else None,
+                test_recode=[float(v) for v in test_recode] if test_recode else None,
                 train_think=[float(v) for v in train_think] if train_think else None,
                 test_think=[float(v) for v in test_think] if test_think else None,
                 train_think2x=[float(v) for v in train_think2x] if train_think2x else None,
@@ -220,9 +226,9 @@ def load_store(path: pathlib.Path) -> List[LossRecord]:
                     if normalized_entry.get("train_noprev")
                     else None
                 ),
-                train_plain=(
-                    list(map(float, normalized_entry.get("train_plain", [])))
-                    if normalized_entry.get("train_plain")
+                train_decode=(
+                    list(map(float, normalized_entry.get("train_decode", [])))
+                    if normalized_entry.get("train_decode")
                     else None
                 ),
                 train_normal=(
@@ -238,9 +244,9 @@ def load_store(path: pathlib.Path) -> List[LossRecord]:
                     if normalized_entry.get("test_noprev")
                     else None
                 ),
-                test_plain=(
-                    list(map(float, normalized_entry.get("test_plain", [])))
-                    if normalized_entry.get("test_plain")
+                test_decode=(
+                    list(map(float, normalized_entry.get("test_decode", [])))
+                    if normalized_entry.get("test_decode")
                     else None
                 ),
                 test_normal=(
@@ -300,6 +306,16 @@ def load_store(path: pathlib.Path) -> List[LossRecord]:
                 test_encode=(
                     list(map(float, normalized_entry.get("test_encode", [])))
                     if normalized_entry.get("test_encode")
+                    else None
+                ),
+                train_recode=(
+                    list(map(float, normalized_entry.get("train_recode", [])))
+                    if normalized_entry.get("train_recode")
+                    else None
+                ),
+                test_recode=(
+                    list(map(float, normalized_entry.get("test_recode", [])))
+                    if normalized_entry.get("test_recode")
                     else None
                 ),
                 train_think=(
@@ -383,13 +399,13 @@ def store_records(
                 else {}
             ),
             **(
-                {"train_plain": rec.train_plain}
-                if include_train and rec.train_plain is not None
+                {"train_decode": rec.train_decode}
+                if include_train and rec.train_decode is not None
                 else {}
             ),
             **(
-                {"test_plain": rec.test_plain}
-                if include_test and rec.test_plain is not None
+                {"test_decode": rec.test_decode}
+                if include_test and rec.test_decode is not None
                 else {}
             ),
             **(
@@ -420,6 +436,16 @@ def store_records(
             **(
                 {"test_encode": rec.test_encode}
                 if include_test and rec.test_encode is not None
+                else {}
+            ),
+            **(
+                {"train_recode": rec.train_recode}
+                if include_train and rec.train_recode is not None
+                else {}
+            ),
+            **(
+                {"test_recode": rec.test_recode}
+                if include_test and rec.test_recode is not None
                 else {}
             ),
             **(
@@ -641,13 +667,13 @@ def main() -> None:
         rec.is_think = is_think
         rec.scaled_steps = compute_scaled_steps(rec, is_think=is_think)
         rec.scaled_train = compute_scaled_series(rec.train, is_think=is_think)
-        rec.scaled_train_plain = compute_scaled_series(rec.train_plain, is_think=is_think)
+        rec.scaled_train_decode = compute_scaled_series(rec.train_decode, is_think=is_think)
         rec.scaled_train_normal = compute_scaled_series(rec.train_normal, is_think=is_think)
         rec.scaled_train_noprev = compute_scaled_series(
             rec.train_noprev, is_think=is_think
         )
         rec.scaled_test = compute_scaled_series(rec.test, is_think=is_think)
-        rec.scaled_test_plain = compute_scaled_series(rec.test_plain, is_think=is_think)
+        rec.scaled_test_decode = compute_scaled_series(rec.test_decode, is_think=is_think)
         rec.scaled_test_normal = compute_scaled_series(rec.test_normal, is_think=is_think)
         rec.scaled_test_noprev = compute_scaled_series(
             rec.test_noprev, is_think=is_think
@@ -663,6 +689,12 @@ def main() -> None:
         )
         rec.scaled_test_encode = compute_scaled_series(
             rec.test_encode, is_think=is_think
+        )
+        rec.scaled_train_recode = compute_scaled_series(
+            rec.train_recode, is_think=is_think
+        )
+        rec.scaled_test_recode = compute_scaled_series(
+            rec.test_recode, is_think=is_think
         )
         rec.scaled_train_think = compute_scaled_series(rec.train_think, is_think=is_think)
         rec.scaled_test_think = compute_scaled_series(rec.test_think, is_think=is_think)

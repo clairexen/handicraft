@@ -210,37 +210,46 @@ def compute_row_type_counts(batch_size: int) -> dict[str, int]:
     total = max(0, int(batch_size))
     if total == 0:
         return {
-            "n_plain": 0,
+            "n_decode": 0,
+            "n_encode": 0,
+            "n_recode": 0,
             "n_noxctx": 0,
             "n_puxctx": 0,
             "n_noattn": 0,
             "n_puattn": 0,
             "n_normal": 0,
-            "n_encode": 0,
             "n_total": 0,
         }
 
     counts: dict[str, int] = {
-        "n_plain": 0,
+        "n_decode": 0,
+        "n_encode": 0,
+        "n_recode": 0,
         "n_noxctx": 0,
         "n_puxctx": 0,
         "n_noattn": 0,
         "n_puattn": 0,
         "n_normal": 0,
-        "n_encode": 0,
     }
     remaining = total
-    special_order = ["n_noxctx", "n_puxctx", "n_noattn", "n_puattn", "n_encode"]
+    special_order = [
+        "n_encode",
+        "n_recode",
+        "n_noxctx",
+        "n_puxctx",
+        "n_noattn",
+        "n_puattn",
+    ]
     for key in special_order:
         if remaining <= 0:
             break
         counts[key] = 1
         remaining -= 1
     if remaining > 0:
-        plain = max(1, remaining // 2)
-        plain = min(plain, remaining)
-        counts["n_plain"] = plain
-        remaining -= plain
+        decode = max(1, remaining // 2)
+        decode = min(decode, remaining)
+        counts["n_decode"] = decode
+        remaining -= decode
     counts["n_normal"] = remaining
     counts["n_total"] = total
     row_sum = sum(
@@ -276,12 +285,13 @@ def build_row_type_template(
             return
         template.extend([name] * count)
 
-    allocate("plain", context_enabled)
+    allocate("decode", context_enabled)
     allocate("noxctx", context_enabled and xctx_enabled)
     allocate("puxctx", context_enabled and xctx_enabled)
     allocate("noattn", True)
     allocate("puattn", True)
     allocate("encode", True)
+    allocate("recode", True)
     normal_count = max(0, int(row_counts.get("n_normal", 0)))
     template.extend(["normal"] * normal_count)
     if len(template) > batch_size:
@@ -311,24 +321,48 @@ def build_row_type_masks(
     context_disabled_mask = (
         torch.zeros(batch_size, dtype=torch.bool, device=device) if context_enabled else None
     )
+    context_bias_disabled_mask: torch.Tensor | None = None
     xctx_disabled_mask = (
         torch.zeros(batch_size, dtype=torch.bool, device=device) if xctx_enabled else None
     )
+    xctx_bias_disabled_mask: torch.Tensor | None = None
     context_dropout_positions = None
     attention_disabled_mask = torch.zeros(batch_size, dtype=torch.bool, device=device)
     attention_dropout_positions = None
+    encode_rows = torch.zeros(batch_size, dtype=torch.bool, device=device)
+    recode_rows = torch.zeros(batch_size, dtype=torch.bool, device=device)
+    recode_boundaries = torch.full(
+        (batch_size,),
+        -1,
+        dtype=torch.long,
+        device=device,
+    )
+
+    def ensure_mask(mask: torch.Tensor | None) -> torch.Tensor:
+        if mask is None:
+            return torch.zeros(batch_size, dtype=torch.bool, device=device)
+        return mask
     def ensure_tensor(tensor: torch.Tensor | None, *, dtype, fill) -> torch.Tensor:
         if tensor is None:
             return torch.full((batch_size,), fill, dtype=dtype, device=device)
         return tensor
 
     for idx, row_type in enumerate(row_types):
-        if row_type in {"plain", "encode"} and context_enabled and context_disabled_mask is not None:
+        if row_type in {"decode", "encode"} and context_enabled and context_disabled_mask is not None:
             context_disabled_mask[idx] = True
             context_special_rows.add(idx)
-        elif row_type in {"noxctx", "encode"} and xctx_enabled and xctx_disabled_mask is not None:
+            context_bias_disabled_mask = ensure_mask(context_bias_disabled_mask)
+            context_bias_disabled_mask[idx] = True
+        if row_type in {"decode", "encode"} and xctx_enabled and xctx_disabled_mask is not None:
             xctx_disabled_mask[idx] = True
             context_special_rows.add(idx)
+            xctx_bias_disabled_mask = ensure_mask(xctx_bias_disabled_mask)
+            xctx_bias_disabled_mask[idx] = True
+        if row_type == "encode":
+            encode_rows[idx] = True
+        if row_type == "recode":
+            recode_rows[idx] = True
+            recode_boundaries[idx] = max(1, block_length // 2)
         elif row_type == "puxctx" and xctx_enabled:
             context_dropout_positions = ensure_tensor(
                 context_dropout_positions,
@@ -350,22 +384,36 @@ def build_row_type_masks(
             context_special_rows.add(idx)
     if context_disabled_mask is not None and not context_disabled_mask.any():
         context_disabled_mask = None
+    if context_bias_disabled_mask is not None and not context_bias_disabled_mask.any():
+        context_bias_disabled_mask = None
     if xctx_disabled_mask is not None and not xctx_disabled_mask.any():
         xctx_disabled_mask = None
+    if xctx_bias_disabled_mask is not None and not xctx_bias_disabled_mask.any():
+        xctx_bias_disabled_mask = None
     if context_dropout_positions is not None and (context_dropout_positions < 0).all():
         context_dropout_positions = None
     if not attention_disabled_mask.any():
         attention_disabled_mask = None
     if attention_dropout_positions is not None and (attention_dropout_positions < 0).all():
         attention_dropout_positions = None
+    if not encode_rows.any():
+        encode_rows = None
+    if not recode_rows.any():
+        recode_rows = None
+        recode_boundaries = None
 
     return SpecialRowMasks(
         context_special_rows,
         context_disabled_mask,
+        context_bias_disabled_mask,
         xctx_disabled_mask,
+        xctx_bias_disabled_mask,
         context_dropout_positions,
         attention_disabled_mask,
         attention_dropout_positions,
+        encode_rows,
+        recode_rows,
+        recode_boundaries,
     )
 
 
@@ -1855,10 +1903,15 @@ class TextDataset:
 class SpecialRowMasks:
     context_special_rows: set[int]
     context_disabled_mask: torch.Tensor | None
+    context_bias_disabled_mask: torch.Tensor | None
     xctx_disabled_mask: torch.Tensor | None
+    xctx_bias_disabled_mask: torch.Tensor | None
     context_dropout_positions: torch.Tensor | None
     attention_disabled_mask: torch.Tensor | None
     attention_dropout_positions: torch.Tensor | None
+    encode_rows: torch.Tensor | None
+    recode_rows: torch.Tensor | None
+    recode_boundaries: torch.Tensor | None
 
 
 def build_special_row_masks(
@@ -1879,10 +1932,15 @@ def build_special_row_masks(
         return SpecialRowMasks(
             context_special_rows,
             context_disabled_mask,
+            None,
             xctx_disabled_mask,
+            None,
             context_dropout_positions,
             attention_disabled_mask,
             attention_dropout_positions,
+            None,
+            None,
+            None,
         )
 
     def pick_row(
@@ -1937,10 +1995,15 @@ def build_special_row_masks(
     return SpecialRowMasks(
         context_special_rows,
         context_disabled_mask,
+        None,
         xctx_disabled_mask,
+        None,
         context_dropout_positions,
         attention_disabled_mask,
         attention_dropout_positions,
+        None,
+        None,
+        None,
     )
 
 
@@ -2561,7 +2624,9 @@ class GRCEGPT(nn.Module):
         capture_activations: bool = False,
         collect_relu_mask: bool = False,
         context_disabled_rows: torch.Tensor | None = None,
+        context_bias_disabled_rows: torch.Tensor | None = None,
         xctx_disabled_rows: torch.Tensor | None = None,
+        xctx_bias_disabled_rows: torch.Tensor | None = None,
         context_dropout_positions: torch.Tensor | None = None,
         disable_xctx: bool = False,
         attention_disabled_rows: torch.Tensor | None = None,
@@ -2570,6 +2635,9 @@ class GRCEGPT(nn.Module):
         record_final_context: bool = False,
         encoder_mode: bool = False,
         position_offsets: torch.Tensor | None = None,
+        encode_rows: torch.Tensor | None = None,
+        recode_rows: torch.Tensor | None = None,
+        recode_boundaries: torch.Tensor | None = None,
     ) -> Tuple[torch.Tensor, torch.Tensor | None, dict | None]:
         B, T = idx.shape
         device = idx.device
@@ -2594,10 +2662,18 @@ class GRCEGPT(nn.Module):
             context_disabled_rows = context_disabled_rows.to(device=device, dtype=torch.bool)
         if context_disabled_rows is None or not use_context:
             context_disabled_rows = torch.zeros(B, dtype=torch.bool, device=device)
+        if context_bias_disabled_rows is not None:
+            context_bias_disabled_rows = context_bias_disabled_rows.to(device=device, dtype=torch.bool)
+        if not use_context:
+            context_bias_disabled_rows = None
         if xctx_disabled_rows is not None:
             xctx_disabled_rows = xctx_disabled_rows.to(device=device, dtype=torch.bool)
         if xctx_disabled_rows is None or not use_context:
             xctx_disabled_rows = torch.zeros(B, dtype=torch.bool, device=device)
+        if xctx_bias_disabled_rows is not None:
+            xctx_bias_disabled_rows = xctx_bias_disabled_rows.to(device=device, dtype=torch.bool)
+        if not use_context:
+            xctx_bias_disabled_rows = None
         if context_dropout_positions is not None:
             context_dropout_positions = context_dropout_positions.to(device=device, dtype=torch.long).clone()
         if attention_disabled_rows is not None:
@@ -2606,6 +2682,18 @@ class GRCEGPT(nn.Module):
             attention_disabled_rows = torch.zeros(B, dtype=torch.bool, device=device)
         if attention_dropout_positions is not None:
             attention_dropout_positions = attention_dropout_positions.to(device=device, dtype=torch.long).clone()
+        if encode_rows is not None:
+            encode_rows = encode_rows.to(device=device, dtype=torch.bool)
+        if recode_rows is not None:
+            recode_rows = recode_rows.to(device=device, dtype=torch.bool)
+        if recode_boundaries is not None:
+            recode_boundaries = recode_boundaries.to(device=device, dtype=torch.long)
+        def ensure_dynamic_mask(mask: torch.Tensor | None) -> torch.Tensor:
+            if mask is None:
+                return torch.zeros(B, dtype=torch.bool, device=device)
+            return mask
+        base_context_bias_mask = context_bias_disabled_rows
+        base_xctx_bias_mask = xctx_bias_disabled_rows
         context_states: list[torch.Tensor] = []
         effective_initial_context: list[torch.Tensor] | None = None
         if use_context:
@@ -2655,6 +2743,12 @@ class GRCEGPT(nn.Module):
             caches = self.core.allocate_kv_caches(B, T, device=device)
 
         for t in range(T):
+            context_bias_mask = (
+                base_context_bias_mask.clone() if base_context_bias_mask is not None else None
+            )
+            xctx_bias_mask = (
+                base_xctx_bias_mask.clone() if base_xctx_bias_mask is not None else None
+            )
             xctx_step_mask = None
             xctx_mask_has = False
             if context_dropout_positions is not None:
@@ -2663,6 +2757,14 @@ class GRCEGPT(nn.Module):
                     context_dropout_positions[step_mask] = -1
                     xctx_step_mask = step_mask
                     xctx_mask_has = True
+            recode_encode_mask = None
+            if recode_rows is not None and recode_boundaries is not None:
+                recode_encode_mask = recode_rows & (recode_boundaries > t)
+                if recode_encode_mask.any():
+                    context_bias_mask = ensure_dynamic_mask(context_bias_mask)
+                    context_bias_mask[recode_encode_mask] = True
+                    xctx_bias_mask = ensure_dynamic_mask(xctx_bias_mask)
+                    xctx_bias_mask[recode_encode_mask] = True
             if encoder_mode:
                 prefix = idx
                 target_pos = min(prefix.size(1) - 1, t)
@@ -2671,34 +2773,35 @@ class GRCEGPT(nn.Module):
             block_biases = None
             if use_context:
                 for channel, state in zip(active_channels, context_states):
-                    channel_mask = base_context_mask
-                    channel_mask_has = base_context_mask_has
+                    state_mask = base_context_mask
+                    state_mask_has = base_context_mask_has
+                    bias_mask = context_bias_mask
                     if channel.is_xctx:
-                        if base_xctx_mask_has:
-                            channel_mask = (
-                                (channel_mask | base_xctx_mask)
-                                if channel_mask_has
-                                else base_xctx_mask
-                            )
-                            channel_mask_has = True
+                        state_mask = base_xctx_mask
+                        state_mask_has = base_xctx_mask_has
+                        bias_mask = xctx_bias_mask
                         if xctx_mask_has:
-                            channel_mask = (
-                                (channel_mask | xctx_step_mask)
-                                if channel_mask_has
+                            state_mask = (
+                                (state_mask | xctx_step_mask)
+                                if state_mask_has
                                 else xctx_step_mask
                             )
-                            channel_mask_has = True
+                            state_mask_has = True
                     state_for_bias = state
-                    if channel_mask_has:
+                    if state_mask_has:
                         state_for_bias = state_for_bias.clone()
-                        state_for_bias[channel_mask] = 0
+                        state_for_bias[state_mask] = 0
                     bias_vectors = channel.project(state_for_bias)
+                    bias_mask_has = bool(bias_mask is not None and bias_mask.any())
                     channel_biases: list[torch.Tensor] = []
                     if encoder_mode:
                         for bias_vec in bias_vectors:
-                            if channel_mask_has:
+                            if state_mask_has:
                                 bias_vec = bias_vec.clone()
-                                bias_vec[channel_mask] = 0
+                                bias_vec[state_mask] = 0
+                            if bias_mask_has:
+                                bias_vec = bias_vec.clone()
+                                bias_vec[bias_mask] = 0
                             full = torch.zeros(
                                 B,
                                 prefix.size(1),
@@ -2711,9 +2814,12 @@ class GRCEGPT(nn.Module):
                     else:
                         for bias_vec in bias_vectors:
                             working = bias_vec
-                            if channel_mask_has:
+                            if state_mask_has:
                                 working = working.clone()
-                                working[channel_mask] = 0
+                                working[state_mask] = 0
+                            if bias_mask_has:
+                                working = working.clone()
+                                working[bias_mask] = 0
                             channel_biases.append(working)
                     if block_biases is None:
                         block_biases = channel_biases
@@ -2844,15 +2950,25 @@ LOSS_IGNORE_INDEX = -100
 
 ROW_METRIC_MAP = {
     "normal": "normal",
-    "plain": "plain",
+    "decode": "decode",
     "noxctx": "noxctx",
     "puxctx": "puxctx",
     "noattn": "noatt",
     "puattn": "none",
     "encode": "encode",
+    "recode": "recode",
 }
 
-ROW_METRIC_KEYS = ["normal", "plain", "noxctx", "puxctx", "noatt", "none", "encode"]
+ROW_METRIC_KEYS = [
+    "normal",
+    "decode",
+    "noxctx",
+    "puxctx",
+    "noatt",
+    "none",
+    "encode",
+    "recode",
+]
 
 
 def sample_position_offsets(
@@ -2933,11 +3049,16 @@ def evaluate_single_batch(
         xb,
         targets=yb,
         context_disabled_rows=special_masks.context_disabled_mask,
+        context_bias_disabled_rows=special_masks.context_bias_disabled_mask,
         xctx_disabled_rows=special_masks.xctx_disabled_mask,
+        xctx_bias_disabled_rows=special_masks.xctx_bias_disabled_mask,
         context_dropout_positions=special_masks.context_dropout_positions,
         attention_disabled_rows=special_masks.attention_disabled_mask,
         attention_dropout_positions=special_masks.attention_dropout_positions,
         position_offsets=position_offsets,
+        encode_rows=special_masks.encode_rows,
+        recode_rows=special_masks.recode_rows,
+        recode_boundaries=special_masks.recode_boundaries,
     )
     per_token = F.cross_entropy(
         logits.view(-1, logits.size(-1)),
@@ -3024,11 +3145,16 @@ def train_model(
             xb,
             targets=yb,
             context_disabled_rows=special_masks.context_disabled_mask,
+            context_bias_disabled_rows=special_masks.context_bias_disabled_mask,
             xctx_disabled_rows=special_masks.xctx_disabled_mask,
+            xctx_bias_disabled_rows=special_masks.xctx_bias_disabled_mask,
             context_dropout_positions=special_masks.context_dropout_positions,
             attention_disabled_rows=special_masks.attention_disabled_mask,
             attention_dropout_positions=special_masks.attention_dropout_positions,
             position_offsets=position_offsets,
+            encode_rows=special_masks.encode_rows,
+            recode_rows=special_masks.recode_rows,
+            recode_boundaries=special_masks.recode_boundaries,
         )
         total_loss = F.cross_entropy(
             logits.view(-1, logits.size(-1)),

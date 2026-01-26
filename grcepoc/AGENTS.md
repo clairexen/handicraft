@@ -17,5 +17,5 @@
   ```
   This fits in RAM and exercises the context dropout path without a GPU.
 - **Detaching parts of the stack:** `--detach-layer K` severs gradients after Transformer layer `K` (1-based), letting you freeze the lower stack while training fresh layers on top.
-- **Model evaluation:** Each evaluation pass reuses a single mixed batch and reports the training target plus per-row diagnostics (`normal`, `plain`, `noxctx`, `puxctx`, `noatt`, `none`, `encode`). Every number is therefore a conditional view of the same forward pass, so `test_loss_target` and every `test_loss_*` share the exact evaluation batch.
+- **Model evaluation:** Each evaluation pass reuses a single mixed batch and reports the training target plus per-row diagnostics (`normal`, `decode`, `noxctx`, `puxctx`, `noatt`, `none`, `encode`, `recode`). Every number is therefore a conditional view of the same forward pass, so `test_loss_target` and every `test_loss_*` share the exact evaluation batch.
 - **Environment note:** always run tooling via `.venv/bin/python3` (and related entrypoints) so the local dependencies are available; the system python may lack the required packages, or there even may be no system python.
