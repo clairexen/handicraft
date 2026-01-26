@@ -253,6 +253,70 @@ again with random start positions. The effective `PAGES_BATCH_SIZE := BATCH_SIZE
 for a pages batch is scaled down to keep the total size of a *pages batch* below or equal to that of a default batch.
 
 
+## Thinking Models -- (this is future work)
+
+Standard transformers have a structural limitation: attention only connects
+tokens across time *within the same layer*. Information computed in higher
+layers at position t cannot directly influence lower layers at position t+1.
+Any cross-layer temporal influence must be re-encoded into the token stream and
+reprocessed bottom-up, which is indirect and lossy. The current state of the
+art for mitigating this is Chain-of-Thought (CoT), which trains the model to
+emit intermediate reasoning steps. However, CoT is not an architectural feature
+of large language models; it is purely a learned behavioral pattern and does
+not introduce explicit internal state or compute control.
+
+GRCE and XCTX already remove this limitation without introducing any notion of
+“thinking”. By sampling activations from all layers at a position, mixing them,
+and injecting the result into the next position, they allow information to
+cross layer boundaries across time explicitly. The entire context discovered at
+one position becomes available to subsequent positions in a layer-agnostic way.
+This can free attention heads to focus on retrieval, alignment, or comparison,
+rather than on carrying state forward, and it also enables the *next position*
+to rebroadcast that information from a lower layer if additional compute or
+restructuring is useful.
+
+Thinking is therefore not the same as reasoning. Reasoning is the sequence of
+transformations the model applies to information, as it summarizes it into more
+tokens. Thinking is the allocation of more time and compute to analyze the
+current token and it's context and internally re-structure and/or enhance that
+information and directly broadcast that enhanced information forward via
+attention and/or via XCTX bias injection, to exactly the layers where the
+information is most useful.
+
+transformations can be applied before it must commit.  transformations are
+applied to information; thinking is about *how much time and compute* the model
+is allowed to spend before committing to an output. In this design, thinking is
+treated as a scheduling and control problem, not as an explicit reasoning
+trace. The model does not need to externalize its reasoning; it only needs to
+know whether it can defer a decision and continue processing.
+
+There are two complementary ways to allocate thinking time. One is explicit and
+fixed: duplicate tokens and positions and annotate them with `think:n/k`,
+telling the model exactly how many think steps exist and which one it is
+currently in. The other is adaptive: guarantee availability via `think-avail`
+and let the model request more time by predicting the `<|think|>` token. In
+both cases, the crucial point is that the model knows *in advance* whether at
+least one more time slice is available, so it can safely postpone commitment.
+
+Because of GRCE and XCTX, multiple passes over the same input position are not
+redundant. Each additional stack runs with updated recurrent state, so later
+think steps do not simply repeat earlier computations. GRCE provides
+low-bandwidth control over phase and strategy, while XCTX carries
+high-bandwidth accumulated context forward. This turns repeated stacks into a
+genuine multi-step process rather than a loop.
+
+XCTX in particular enables cross-layer interaction across time. Signals sampled
+from different layers are mixed and remixed before updating the recurrent
+state, so an update to the XCTX vector can depend on the *joint presence* of
+signals from multiple layers. As a result, thinking longer is not about doing
+the same work twice, but about enabling conditional, staged computation whose
+effects can propagate far forward in the sequence. One especially interesting
+consequence is that later positions — far downstream — may see reduced loss
+because they can rely on information that was explicitly stabilized and refined
+during earlier thinking steps, rather than having to reconstruct it again
+through attention alone.
+
+
 ## Non-token embeddings -- (updated; implementation not up-to-date)
 
 (the following names for non-token embeddings are used for
@@ -275,6 +339,17 @@ embedding names that correspond to special tokens below.
 [|think:1/4|] [|think:2/4|] [|think:3/4|] [|think:4/4|]
   additional "think" embeddings for think4x mode
 
+[|think-avail|]
+  we add this learned embedding to all positions where we explicitly
+  want to allow the model to request an additional think slot by
+  predicting the <|think|> token (see below). (This is a guarantee.
+  There's no guarantee that even more thinking time will be made
+  available after the next position, but when we add this embedding
+  to the input of a stack, the stack can decide early to do more
+  thinking and can then confidently do whatever the model wants to
+  do, when it knows, there will be at least one more time slice
+  before it has to make up its mind.
+
 
 ## Special tokens embeddings -- (updated; implementation not up-to-date)
 
@@ -283,15 +358,15 @@ embedding names that correspond to special tokens below.
 <|----|>
   article seperator
 
-<|//|>
-  verse seperator
-
 <|tokipona:> <|english:>
   start of new tokipona/english input-section
 
 </english:> </tokipona:>
   end of previous section and start of english/tokipona
   output-section
+
+<|//|>
+  verse seperator
 
 <|lq:> ... <:lq|>
   potential "low-quality" block of training data.
@@ -314,6 +389,15 @@ embedding names that correspond to special tokens below.
 <|/:> ... <:/|>
   third-person block begin and end marks
 
+<|@:> ... <:@|>
+  think-available block begin and end marks
+
+<|think|>
+  the model predicts this token to request an extra think step
+  it's a token and not a non-token embedding, because we might
+  want to add it to training data in order to teach the model
+  when to request additional thinking time.
+
 
 ## Special GRCE embeddings -- (this is future work)
 
@@ -328,7 +412,7 @@ We define the following learned GRCE embeddings and corresponding simple on-off 
 {lq}
   set by <|lq:>, cleared by <:lq|> and <|----|>. Likewise:
 
-{hq}, {!}, {?}, {-}, {=}, {/}
+{hq}, {!}, {?}, {-}, {=}, {/}, {@}
   set by <|...:>, cleared by <:...|> and <|----|>.
 
 During training when --learn-grce-embeddings is present, we parse the

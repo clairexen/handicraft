@@ -72,10 +72,10 @@ class ModelConfig:
     vocab_size: int = 2000  # GPT-2 base supports ~50k merges; we stay small for the PoC.
     block_size: int = 64    # GPT-2 base uses 1024 tokens.
     n_layer: int = 12       # GPT-2 base uses 12 layers.
-    n_head: int = 8         # GPT-2 base uses 12 attention heads.
-    n_embd: int = 128       # GPT-2 base uses 768 embedding dims.
+    n_head: int = 4         # GPT-2 base uses 12 attention heads.
+    n_embd: int = 256       # GPT-2 base uses 768 embedding dims.
     n_grce: int = 64        # Narrow GRCE context dims.
-    n_xctx: int = 384       # Wide XCTX context dims.
+    n_xctx: int = 768       # Wide XCTX context dims.
     dropout: float = 0.05
     detach_span: int = 0    # Detach gradients every N positions (0 disables detaching).
     detach_context: bool = True  # Whether to detach recurring context when span triggers.
@@ -99,10 +99,10 @@ class Settings:
     vocab_size: int = 2000  # GPT-2 base supports ~50k merges; we stay small for the PoC.
     block_size: int = 64    # GPT-2 base uses 1024 tokens.
     n_layer: int = 12       # GPT-2 base uses 12 layers.
-    n_head: int = 8         # GPT-2 base uses 12 attention heads.
-    n_embd: int = 128       # GPT-2 base uses 768 embedding dims.
+    n_head: int = 4         # GPT-2 base uses 12 attention heads.
+    n_embd: int = 256       # GPT-2 base uses 768 embedding dims.
     n_grce: int = 64        # Narrow GRCE context dims.
-    n_xctx: int = 384       # Wide XCTX context dims.
+    n_xctx: int = 768       # Wide XCTX context dims.
 
     # Training Parameters
     dropout: float = 0.05
