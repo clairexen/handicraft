@@ -460,8 +460,8 @@ embedding names that correspond to special tokens below.
   re-structured information available to the later positions in the sequence,
   in whatever way of form turns out to be usful within the training corpus.
   In a transformer without recurrent path this exercise would be pointless.
-  But with the added recurrent GRCE and XCTX channels just adding those
-  process-tokend is already enough to enable a simple first mode of "additional
+  But with the added recurrent GRCE and XCTX channels, just adding those
+  process-tokens is already enough to enable a simple first mode of "additional
   thinking time". (We usually add such a sequence in training in a special
   training mode, where we add them at random positions in the corpus, always
   between a puncuation mark (!?:;,. or ") and a whitespace that follows it.
