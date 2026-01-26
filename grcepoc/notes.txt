@@ -116,11 +116,11 @@ propagation at this interface entirely (--detach-span 1) and observe
 almost no difference in how well and/or quickly the network can learn the GRCE
 and XCTX functionality. This demonstrates that all the context information is
 already present in the set of S_i vectors, we only need to learn how to sample
-and extract it from that vector using the GRCE and XCTX sample-mix-remix
-pipelines.
+and extract that already-present information from that vector using the GRCE
+and XCTX sample-mix-remix pipelines.
 
-That has trememdous implications! It basically means we have an easy pathway
-to learning a recurrent language model without having to learn a deep and
+That has trememdous implications! It basically means we have an easy pathway to
+learning a recurrent large language model without having to learn a deep and
 complex recurrent function: we instead just augment the transformer with two
 simple mechanisms to "shout" important information into the future, that the
 future will "see" without any need to explicitly query it. And then we use
@@ -155,7 +155,7 @@ going to survive. In short: we expect the GRCE channel to implement various
 forms of state machines.
 
 For XCTX channel on the other hand we first squeeze the M vector into a n_xctx/2
-dimensional space space before the MLP. Resampling that by projecting back to
+dimensional vector space before the MLP. Resampling that by projecting back to
 n_xctx followed by ReLU is exactly enough to fuly ReLU-decompose the n_xctx/2
 wide channel. There is no down-projection after the ReLU layer, we stay in
 n_xctx, just perform a single linear from n_xctx to n_xctx, and then use a
