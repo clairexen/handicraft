@@ -63,7 +63,7 @@ from dataclasses import dataclass
 
 @dataclass
 class ModelConfig:
-    """Holds the GRCE/XCTX model geometry.
+    """Holds the GPT+GRCE+XCTX model geometry.
 
     Instances are created in :func:`grce_cli_args` and threaded through the
     tokenizer builder, :func:`describe_model_size`, and :func:`grce_main`.
@@ -71,15 +71,19 @@ class ModelConfig:
 
     vocab_size: int = 2000  # GPT-2 base supports ~50k merges; we stay small for the PoC.
     block_size: int = 64    # GPT-2 base uses 1024 tokens.
-    n_layer: int = 12       # GPT-2 base uses 12 layers.
-    n_head: int = 4         # GPT-2 base uses 12 attention heads.
-    n_embd: int = 256       # GPT-2 base uses 768 embedding dims.
+    n_layer: int = 8        # GPT-2 base uses 12 layers.
+    n_head: int = 6         # GPT-2 base uses 12 attention heads.
+    n_embd: int = 384       # GPT-2 base uses 768 embedding dims.
     n_grce: int = 64        # Narrow GRCE context dims.
     n_xctx: int = 768       # Wide XCTX context dims.
+
+    # FIXME: these should only be part of Settings, not ModelConfig
     dropout: float = 0.05
     detach_span: int = 0    # Detach gradients every N positions (0 disables detaching).
     detach_context: bool = True  # Whether to detach recurring context when span triggers.
     detach_layer: int = -1       # Layer index (1-based) after which to detach Transformer grads.
+
+MODEL_CONFIG_DEFAULTS = ModelConfig()
 
 
 @dataclass
@@ -96,13 +100,13 @@ class Settings:
     cli_args: argparse.Namespace | None = None
 
     # Model Geometry
-    vocab_size: int = 2000  # GPT-2 base supports ~50k merges; we stay small for the PoC.
-    block_size: int = 64    # GPT-2 base uses 1024 tokens.
-    n_layer: int = 12       # GPT-2 base uses 12 layers.
-    n_head: int = 4         # GPT-2 base uses 12 attention heads.
-    n_embd: int = 256       # GPT-2 base uses 768 embedding dims.
-    n_grce: int = 64        # Narrow GRCE context dims.
-    n_xctx: int = 768       # Wide XCTX context dims.
+    vocab_size: int = MODEL_CONFIG_DEFAULTS.vocab_size
+    block_size: int = MODEL_CONFIG_DEFAULTS.block_size
+    n_layer: int = MODEL_CONFIG_DEFAULTS.n_layer
+    n_head: int = MODEL_CONFIG_DEFAULTS.n_head
+    n_embd: int = MODEL_CONFIG_DEFAULTS.n_embd
+    n_grce: int = MODEL_CONFIG_DEFAULTS.n_grce
+    n_xctx: int = MODEL_CONFIG_DEFAULTS.n_xctx
 
     # Training Parameters
     dropout: float = 0.05
@@ -113,8 +117,8 @@ class Settings:
     # TODO: ... and verything else we can set or modify via CLi args -- except the selected
     # subcomand and its arguments (!) ...
 
+SETTINGS_DEFAULTS = Settings()
 
-MODEL_CONFIG_TEMPLATE = ModelConfig()
 
 
 def compute_row_type_counts(batch_size: int) -> dict[str, int]:
@@ -341,7 +345,7 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     wants to mirror the CLI behavior without invoking the binary. The result
     is passed directly to :func:`grce_main`.
     """
-    defaults = MODEL_CONFIG_TEMPLATE
+    defaults = MODEL_CONFIG_DEFAULTS
     if argv is None:
         raw_cli_args = sys.argv[1:]
     elif argv is sys.argv:
