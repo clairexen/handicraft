@@ -501,7 +501,7 @@ G.dot(embedding) < 1 for all GRCE state embeddings that are expected "OFF" (-1).
 Read AGENTS.md, README.md, and the comments at the top of grce.py. Then:
 
 
-## Remove old <undo> and <think> and --underline and --reward-relu
+## Remove old <undo> and <think> and --underline and --reward-relu code
 
 We are going to remove **think mode entirely** and **undo mode** from grce.py:
 delete all think-related tokens, row types (`think`, `think2x`, `think3x`,
@@ -520,8 +520,8 @@ features from the code base.
 
 Simplify evaluation by **removing `--eval-full`, `--no-full-eval-first`,
 `--long-loss-log`, and all full-evaluation scheduling logic**, and instead
-always run evaluation at every eval_interval step (and the first step in each
-cyclw) using exactly **one evaluation forward pass** per step. That single
+always run "full" evaluation at every eval_interval step (and the first step in
+each cyclw) using exactly **one evaluation forward pass** per step. That single
 evaluation must correspond to the true training objective and produce
 `test_loss_target`, which represents the mixed batch containing the full
 row-type composition used during training, with all context and attention masks
@@ -539,6 +539,14 @@ training-objective evaluation.
 
 
 ## Fix self-attention prefix computation
+
+To obtain true left-to-right evaluation in the blocks with GRCE and/or XCTX
+enabled, the Transformer core must be using an **incremental, KV-cached
+forward** architecture. Each time step must run the *full layer stack for a
+single token*, appending that token’s K/V to per-layer caches and attending
+only against cached past keys/values. (In `encode` blocks we run the
+transformer with simple un-masked attention, so we must not switch to a
+KV-cached architecture in the case of `encode` blocks.)
 
 The current `grce.py` implementation is *logically* left-to-right but
 *computationally* prefix-recomputing. In `forward_autoreg`, the model loops
