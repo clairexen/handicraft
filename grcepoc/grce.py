@@ -487,8 +487,8 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--tiny",
         action="store_true",
         help=(
-            "Shortcut for --batch-size 8 --block-size 8 --n-layer 3 --n-head 2 "
-            "--n-embd 8 --n-grce 4 --n-xctx 12 --steps 2 --cycles 1"
+            "Shortcut for --vocab-size 500 --batch-size 12 --block-size 6 --n-layer 3 --n-head 2 "
+            "--n-embd 8 --n-grce 4 --n-xctx 9 --steps 2 --cycles 1 --eval-interval 1 --corpus simplestwiki"
         ),
     )
 
@@ -798,10 +798,12 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     if args.command == "create" and args.pt:
         parser.error("--pt cannot be combined with the create command")
     if args.tiny:
-        if not flag_present("--block-size"):
-            args.block_size = 6
+        if not flag_present("--vocab-size"):
+            args.vocab_size = 500
         if not flag_present("--batch-size"):
             args.batch_size = 12
+        if not flag_present("--block-size"):
+            args.block_size = 6
         if not flag_present("--n-layer"):
             args.n_layer = 3
         if not flag_present("--n-head"):
@@ -812,8 +814,6 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             args.n_grce = 4
         if not flag_present("--n-xctx"):
             args.n_xctx = 9
-        if not flag_present("--vocab-size"):
-            args.vocab_size = 200
         if not flag_present("--steps"):
             args.steps = 2
         if not flag_present("--cycles"):
