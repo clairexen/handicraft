@@ -13,7 +13,7 @@ This is the hand-written reference spec, the definitive source of information
 about the intended design behavior, mostly directed at AI agents (= OpenAI Codex).
 
 
-## GRCE and XCTX data path spec -- (updated; implementation not up-to-date)
+## GRCE and XCTX data path spec
 
 GRCE and XCTX both sample the n_layer input vectors to the transformer blocks in the
 stack at a position, mix with a recurrent GRCE or XCTX signal (G or X), remix, and
@@ -379,9 +379,9 @@ embedding names that correspond to special tokens below.
   before it has to make up its mind.
 
 
-## Special tokens embeddings -- (updated; implementation not up-to-date)
+## Special tokens embeddings
 
-(currently all unused but reserved for later special use)
+(currently all unused but reserved in tokenizer for later special use)
 
 <|----|>
   article seperator

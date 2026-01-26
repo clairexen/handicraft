@@ -1134,18 +1134,9 @@ def _compute_actual_counts(config: ModelConfig) -> dict[tuple[str, str], int]:
         if channel.disabled:
             continue
         key = "xctx" if channel.is_xctx else "grce"
-        sampler_count = _module_list_param_count(channel.pre_norms) + _module_list_param_count(
-            channel.context_sampler
-        )
-        mlp_count = (
-            _module_param_count(channel.context_fuse_norm)
-            + _module_param_count(channel.context_mlp)
-            + _module_param_count(channel.context_norm)
-        )
-        bias_count = _module_list_param_count(channel.context_bias_gen)
-        counts[(key, "samplers")] = counts.get((key, "samplers"), 0) + sampler_count
-        counts[(key, "mlp")] = counts.get((key, "mlp"), 0) + mlp_count
-        counts[(key, "bias")] = counts.get((key, "bias"), 0) + bias_count
+        breakdown = channel.parameter_breakdown()
+        for label, value in breakdown.items():
+            counts[(key, label)] = counts.get((key, label), 0) + value
     return counts
 
 
@@ -1272,6 +1263,20 @@ FANCY_SPACE = "\u2423"  # Open Box symbol for visible spaces
 FANCY_ENTER = "\u23CE"  # Return symbol for visible newlines
 ASCII_LETTERS = set(string.ascii_letters)
 ASCII_LOWERCASE = set(string.ascii_lowercase)
+
+class RMSNorm(nn.Module):
+    """Root-mean-square norm used by the XCTX recurrent path."""
+
+    def __init__(self, dim: int, eps: float = 1e-6) -> None:
+        super().__init__()
+        self.eps = float(eps)
+        self.weight = nn.Parameter(torch.ones(dim))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        rms = x.pow(2).mean(dim=-1, keepdim=True)
+        scale = torch.rsqrt(rms + self.eps)
+        return x * scale * self.weight
+
 
 # Local GPT2 tokenizer adapter (no huggingface dependency)
 class GPT2TokenizerFast:
@@ -2326,74 +2331,57 @@ class GPTCore(nn.Module):
         return logits[:, 0, :], x[:, 0, :], block_inputs, relu_masks
 
 
-class GRCEContextChannel(nn.Module):
-    def __init__(
-        self,
-        config: ModelConfig,
-        *,
-        width: int,
-        is_xctx: bool,
-    ) -> None:
+class BaseContextChannel(nn.Module):
+    def __init__(self, config: ModelConfig, width: int) -> None:
         super().__init__()
         self.config = config
         self.context_dim = int(width)
-        self.is_xctx = is_xctx
         self.disabled = self.context_dim <= 0
         self.detach_span = max(0, int(getattr(config, "detach_span", 0)))
         self.detach_context = bool(getattr(config, "detach_context", True))
-        if self.is_xctx:
-            if config.n_layer <= 0 or self.context_dim % config.n_layer != 0:
-                raise ValueError("--n-xctx requires n_xctx to be divisible by n_layer")
-            self.layer_chunk = self.context_dim // config.n_layer
-        else:
-            self.layer_chunk = None
-        if not self.disabled:
-            self.pre_norms = nn.ModuleList(
-                nn.LayerNorm(config.n_embd) for _ in range(config.n_layer)
-            )
-            self.context_sampler = nn.ModuleList(
-                [self._build_sampler(config.n_embd, self.context_dim) for _ in range(config.n_layer)]
-            )
-            if self.is_xctx:
-                layers = max(1, config.n_layer)
-                mid = max(1, (4 * self.context_dim) // layers)
-            else:
-                mid = 4 * self.context_dim
-            self.context_fuse_norm = nn.LayerNorm(self.context_dim)
-            self.context_mlp = nn.Sequential(
-                nn.Linear(self.context_dim, mid),
-                nn.ReLU(),
-                nn.Linear(mid, self.context_dim),
-            )
-            self.context_norm = nn.LayerNorm(self.context_dim)
-            self.context_bias_gen = nn.ModuleList(
-                [self._build_bias(self.context_dim, config.n_embd) for _ in range(config.n_layer)]
-            )
 
-    def _build_sampler(self, in_dim: int, out_dim: int) -> nn.Module:
-        if not self.is_xctx or self.layer_chunk is None:
-            return nn.Linear(in_dim, out_dim)
-        chunk = self.layer_chunk
-        return nn.Sequential(
-            nn.Linear(in_dim, chunk),
-            nn.Linear(chunk, out_dim),
-        )
+    def parameter_breakdown(self) -> dict[str, int]:
+        return {}
 
-    def _build_bias(self, in_dim: int, out_dim: int) -> nn.Module:
-        if not self.is_xctx or self.layer_chunk is None:
-            return nn.Linear(in_dim, out_dim)
-        chunk = self.layer_chunk
-        return nn.Sequential(
-            nn.Linear(in_dim, chunk),
-            nn.Linear(chunk, out_dim),
+    @staticmethod
+    def _apply_mask(tensor: torch.Tensor, mask: torch.Tensor | None) -> torch.Tensor:
+        if mask is None:
+            return tensor
+        masked = tensor.clone()
+        masked[mask] = 0
+        return masked
+
+    def normalize_state(self, tensor: torch.Tensor) -> torch.Tensor:
+        return tensor
+
+
+class GRCEContextChannel(BaseContextChannel):
+    def __init__(self, config: ModelConfig) -> None:
+        super().__init__(config, config.n_grce)
+        self.is_xctx = False
+        if self.disabled:
+            return
+        self.sample_norms = nn.ModuleList(
+            nn.LayerNorm(config.n_embd) for _ in range(config.n_layer)
         )
+        self.sample_projections = nn.ModuleList(
+            nn.Linear(config.n_embd, self.context_dim) for _ in range(config.n_layer)
+        )
+        self.bias_norm = nn.LayerNorm(self.context_dim)
+        self.bias_projections = nn.ModuleList(
+            nn.Linear(self.context_dim, config.n_embd) for _ in range(config.n_layer)
+        )
+        self.mix_norm = nn.LayerNorm(self.context_dim)
+        hidden = max(1, 4 * self.context_dim)
+        self.mlp_up = nn.Linear(self.context_dim, hidden)
+        self.mlp_down = nn.Linear(hidden, self.context_dim)
+        self.output_norm = nn.LayerNorm(self.context_dim)
 
     def project(self, context: torch.Tensor) -> List[torch.Tensor]:
         if self.disabled:
             raise RuntimeError("Context channel disabled; project should not be called.")
-        if self.disabled:
-            raise RuntimeError("Context channel disabled; project should not be called.")
-        return [gen(context) for gen in self.context_bias_gen]
+        normed = self.bias_norm(context)
+        return [proj(normed) for proj in self.bias_projections]
 
     def update(
         self,
@@ -2404,22 +2392,149 @@ class GRCEContextChannel(nn.Module):
     ) -> tuple[torch.Tensor, torch.Tensor]:
         if self.disabled:
             raise RuntimeError("Context channel disabled; update should not be called.")
-        pieces = [inp.detach() if stop_grad else inp for inp in block_inputs]
-        messages = []
-        for ln, sampler, part in zip(self.pre_norms, self.context_sampler, pieces):
-            messages.append(sampler(ln(part)))
+        messages: list[torch.Tensor] = []
+        for norm, proj, part in zip(self.sample_norms, self.sample_projections, block_inputs):
+            messages.append(proj(norm(part)))
         fused = torch.stack(messages, dim=0).sum(dim=0)
-        if prev_context is not None:
-            detach_prev = stop_grad and self.detach_context
-            residual = prev_context.detach() if detach_prev else prev_context
-            fused = fused + residual
-        normed_fused = self.context_fuse_norm(fused)
-        context = self.context_mlp(normed_fused)
-        if prev_context is not None:
-            context = context + residual
-        raw_context = context
-        context = self.context_norm(context)
+        if prev_context is None:
+            combined = fused
+        else:
+            residual = prev_context.detach() if (stop_grad and self.detach_context) else prev_context
+            combined = fused + residual
+        mixed = self.mix_norm(combined)
+        mlp_out = self.mlp_down(F.relu(self.mlp_up(mixed)))
+        raw_context = mixed + mlp_out
+        context = self.output_norm(raw_context)
         return context, raw_context
+
+    def parameter_breakdown(self) -> dict[str, int]:
+        if self.disabled:
+            return {}
+        sampler = _module_list_param_count(self.sample_norms) + _module_list_param_count(
+            self.sample_projections
+        )
+        mlp = (
+            _module_param_count(self.mix_norm)
+            + _module_param_count(self.mlp_up)
+            + _module_param_count(self.mlp_down)
+            + _module_param_count(self.output_norm)
+        )
+        bias = _module_param_count(self.bias_norm) + _module_list_param_count(self.bias_projections)
+        return {"samplers": sampler, "mlp": mlp, "bias": bias}
+
+    def normalize_state(self, tensor: torch.Tensor) -> torch.Tensor:
+        if self.disabled:
+            return tensor
+        return self.output_norm(tensor)
+
+
+class XCTXContextChannel(BaseContextChannel):
+    def __init__(self, config: ModelConfig) -> None:
+        super().__init__(config, config.n_xctx)
+        self.is_xctx = True
+        if self.disabled:
+            return
+        layers = max(1, config.n_layer)
+        mid = max(1, min(config.n_embd // 2, self.context_dim // 2, max(config.n_embd // 4, self.context_dim // layers)))
+        down_dim = max(1, self.context_dim // 2)
+        self.inner_dim = mid
+        self.down_dim = down_dim
+        self.sample_input_norms = nn.ModuleList(
+            nn.LayerNorm(config.n_embd) for _ in range(config.n_layer)
+        )
+        self.sample_e2u = nn.ModuleList(
+            nn.Linear(config.n_embd, mid) for _ in range(config.n_layer)
+        )
+        self.sample_mid_norms = nn.ModuleList(
+            nn.LayerNorm(mid) for _ in range(config.n_layer)
+        )
+        self.sample_u2x = nn.ModuleList(
+            nn.Linear(mid, self.context_dim) for _ in range(config.n_layer)
+        )
+        self.bias_x2u = nn.ModuleList(
+            nn.Linear(self.context_dim, mid) for _ in range(config.n_layer)
+        )
+        self.bias_mid_norms = nn.ModuleList(
+            nn.LayerNorm(mid) for _ in range(config.n_layer)
+        )
+        self.bias_u2e = nn.ModuleList(
+            nn.Linear(mid, config.n_embd) for _ in range(config.n_layer)
+        )
+        self.down_proj = nn.Linear(self.context_dim, down_dim)
+        self.mix_norm = nn.LayerNorm(down_dim)
+        self.up_proj = nn.Linear(down_dim, self.context_dim)
+        self.cross_proj = nn.Linear(self.context_dim, self.context_dim)
+        self.rms_norm = RMSNorm(self.context_dim)
+
+    def project(self, context: torch.Tensor) -> List[torch.Tensor]:
+        if self.disabled:
+            raise RuntimeError("Context channel disabled; project should not be called.")
+        outputs: list[torch.Tensor] = []
+        for x2u, norm, u2e in zip(self.bias_x2u, self.bias_mid_norms, self.bias_u2e):
+            reduced = norm(x2u(context))
+            outputs.append(u2e(reduced))
+        return outputs
+
+    def update(
+        self,
+        block_inputs: List[torch.Tensor],
+        *,
+        prev_context: torch.Tensor | None,
+        stop_grad: bool,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if self.disabled:
+            raise RuntimeError("Context channel disabled; update should not be called.")
+        messages: list[torch.Tensor] = []
+        for inp_norm, e2u, mid_norm, u2x, part in zip(
+            self.sample_input_norms,
+            self.sample_e2u,
+            self.sample_mid_norms,
+            self.sample_u2x,
+            block_inputs,
+        ):
+            reduced = e2u(inp_norm(part))
+            messages.append(u2x(mid_norm(reduced)))
+        stacked = torch.stack(messages, dim=0).sum(dim=0)
+        if prev_context is None:
+            base = torch.zeros_like(stacked)
+        else:
+            base = prev_context.detach() if (stop_grad and self.detach_context) else prev_context
+        combined = base + stacked
+        compressed = self.down_proj(combined)
+        mixed = self.mix_norm(compressed)
+        expanded = self.up_proj(mixed)
+        remixed = self.cross_proj(F.relu(expanded))
+        raw_context = base + remixed
+        context = self.rms_norm(raw_context)
+        return context, raw_context
+
+    def parameter_breakdown(self) -> dict[str, int]:
+        if self.disabled:
+            return {}
+        sampler = (
+            _module_list_param_count(self.sample_input_norms)
+            + _module_list_param_count(self.sample_e2u)
+            + _module_list_param_count(self.sample_mid_norms)
+            + _module_list_param_count(self.sample_u2x)
+        )
+        bias = (
+            _module_list_param_count(self.bias_x2u)
+            + _module_list_param_count(self.bias_mid_norms)
+            + _module_list_param_count(self.bias_u2e)
+        )
+        mlp = (
+            _module_param_count(self.down_proj)
+            + _module_param_count(self.mix_norm)
+            + _module_param_count(self.up_proj)
+            + _module_param_count(self.cross_proj)
+            + _module_param_count(self.rms_norm)
+        )
+        return {"samplers": sampler, "mlp": mlp, "bias": bias}
+
+    def normalize_state(self, tensor: torch.Tensor) -> torch.Tensor:
+        if self.disabled:
+            return tensor
+        return self.rms_norm(tensor)
 
 
 class GRCEGPT(nn.Module):
@@ -2430,11 +2545,11 @@ class GRCEGPT(nn.Module):
         self.context_channels = nn.ModuleList()
         if config.n_grce > 0:
             self.context_channels.append(
-                GRCEContextChannel(config, width=config.n_grce, is_xctx=False)
+                GRCEContextChannel(config)
             )
         if config.n_xctx > 0:
             self.context_channels.append(
-                GRCEContextChannel(config, width=config.n_xctx, is_xctx=True)
+                XCTXContextChannel(config)
             )
 
     def forward_autoreg(
@@ -2517,7 +2632,7 @@ class GRCEGPT(nn.Module):
                         raise ValueError(
                             f"initial context shape {init_raw.shape} does not match {expected}"
                         )
-                    context_states[idx_ch] = channel.context_norm(init_raw)
+                    context_states[idx_ch] = channel.normalize_state(init_raw)
         logits_steps = []
         hidden_steps = []
         activation_store: dict | None = None
@@ -2556,10 +2671,8 @@ class GRCEGPT(nn.Module):
             block_biases = None
             if use_context:
                 for channel, state in zip(active_channels, context_states):
-                    chunk = channel.layer_chunk if channel.is_xctx else None
                     channel_mask = base_context_mask
                     channel_mask_has = base_context_mask_has
-                    xctx_len = None
                     if channel.is_xctx:
                         if base_xctx_mask_has:
                             channel_mask = (
@@ -2568,15 +2681,13 @@ class GRCEGPT(nn.Module):
                                 else base_xctx_mask
                             )
                             channel_mask_has = True
-                        if chunk is not None:
-                            xctx_len = chunk
-                            if xctx_mask_has:
-                                channel_mask = (
-                                    (channel_mask | xctx_step_mask)
-                                    if channel_mask_has
-                                    else xctx_step_mask
-                                )
-                                channel_mask_has = True
+                        if xctx_mask_has:
+                            channel_mask = (
+                                (channel_mask | xctx_step_mask)
+                                if channel_mask_has
+                                else xctx_step_mask
+                            )
+                            channel_mask_has = True
                     state_for_bias = state
                     if channel_mask_has:
                         state_for_bias = state_for_bias.clone()
@@ -2661,7 +2772,6 @@ class GRCEGPT(nn.Module):
                     prev_context = context_states[idx_ch]
                     channel_mask = base_context_mask
                     channel_mask_has = base_context_mask_has
-                    chunk = channel.layer_chunk if channel.is_xctx else None
                     if channel.is_xctx:
                         if base_xctx_mask_has:
                             channel_mask = (
