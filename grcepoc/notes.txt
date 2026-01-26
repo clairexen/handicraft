@@ -9,8 +9,8 @@ README.md.
 
 # Reference Specs
 
-This is the hand-written spec, the stable point-of-reference and root source of
-information abou the desired behavior for AI agents (= OpenAI Codex).
+This is the hand-written reference spec, the root source of information about
+the intended design behavior, mostly directed at AI agents (= OpenAI Codex).
 
 
 ## GRCE and XCTX data path spec -- (updated; implementation not up-to-date)
