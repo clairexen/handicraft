@@ -2972,7 +2972,8 @@ ROW_METRIC_KEYS = [
 
 ROW_METRIC_GROUP_START = {
     "encode",
-    "noxctx"
+    "noxctx",
+    "noattn",
 }
 
 
@@ -3279,7 +3280,7 @@ def train_model(
             if value is None:
                 return "-"
             sep = ": " if key in ROW_METRIC_GROUP_START else ""
-            return f"{sep}{value:.3f}"
+            return f"{sep}{value:.2f}"
 
         detail_keys = ROW_METRIC_KEYS
 
