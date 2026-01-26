@@ -351,7 +351,7 @@ redundant. Each additional stack runs with updated recurrent state, so later
 think steps do not simply repeat earlier computations. GRCE provides
 low-bandwidth control over phase and strategy, while XCTX carries
 high-bandwidth accumulated context forward. This turns repeated stacks into a
-genuine multi-step process rather than a loop.
+genuine multi-step process rather than a redundant loop.
 
 XCTX in particular enables cross-layer interaction across time. Signals sampled
 from different layers are mixed and remixed before updating the recurrent
