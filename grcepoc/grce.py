@@ -30,8 +30,8 @@ external tooling to mirror the binary interface. Its result is consumed by
 :func:`grce_main`.
 * :func:`train_model` – the main training loop used by :func:`grce_main`. It
 handles batching, diagnostics, and logging.
-* :func:`evaluate_split` – runs the expensive evaluation variants whenever
-:func:`train_model` or the CLI requests diagnostics.
+* :func:`evaluate_single_batch` – computes evaluation metrics from a single
+forward pass that mirrors the training row-type composition.
 * :func:`describe_model_size` – backs the ``size`` subcommand by combining
   :class:`ModelConfig` metadata with :func:`compute_row_type_counts`.
 
@@ -40,7 +40,7 @@ Call tree (simplified)::
     grce_cli_args
         └── grce_main
             ├── train_model
-            │     └── evaluate_split
+            │     └── evaluate_single_batch
             └── describe_model_size
 """
 from __future__ import annotations
@@ -155,7 +155,6 @@ class Settings:
     cycles: int = 100
     batch_size: int = 32
     eval_interval: int = 10
-    eval_iters: int = 2
 
     # Training Details
     dropout: float = 0.05
@@ -189,7 +188,6 @@ def settings_from_cli_args(args: argparse.Namespace) -> Settings:
         cycles=args.cycles,
         batch_size=args.batch_size,
         eval_interval=args.eval_interval,
-        eval_iters=args.eval_iters,
 
         # Training Details
         dropout=args.dropout,
@@ -385,6 +383,7 @@ import time
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from typing import Dict, List, Tuple, Sequence
+from collections import defaultdict
 
 
 def parse_range_arg(value: str) -> tuple[int, int]:
@@ -544,29 +543,6 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=10,
         help="How often to run train/test evaluation steps.",
     )
-    training_group.add_argument(
-        "--eval-iters",
-        type=int,
-        default=2,
-        help="How many mini-batches to average for evaluation losses.",
-    )
-    training_group.add_argument(
-        "--eval-full",
-        type=int,
-        default=-1,
-        help=(
-            "How often to run the expensive evaluation variants: default -1 runs them once per cycle; 0 "
-            "disables them entirely; 1 runs them on every evaluation (the same cadence as --eval-interval); "
-            "positive values >1 must be multiples of --eval-interval; negative values schedule evenly spaced "
-            "full evals within each cycle (e.g., -1 means once at the end of a cycle, -2 means twice per cycle) "
-            "and require --steps to be divisible by the absolute value so the cadence lines up."
-        ),
-    )
-    training_group.add_argument(
-        "--no-full-eval-first",
-        action="store_true",
-        help="Disable the default behavior of forcing the first evaluation in a cycle to be full",
-    )
 
 
     sampling_group = parser.add_argument_group("Sampling & reporting")
@@ -612,17 +588,12 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     logging_group.add_argument(
         "--train-loss-details",
         action="store_true",
-        help="Show the special/noprev columns for train loss in the live log",
+        help="Show the per-row loss columns in the live log",
     )
     logging_group.add_argument(
         "--no-test-loss-details",
         action="store_true",
         help="Collapse the test loss group down to a single column in the live log",
-    )
-    logging_group.add_argument(
-        "--long-loss-log",
-        action="store_true",
-        help="Always include the detailed loss columns in the live log even when data is missing",
     )
     logging_group.add_argument(
         "--timeout",
@@ -810,7 +781,6 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     create_parser.set_defaults(command="create")
 
     args = parser.parse_args()
-    raw_eval_full = getattr(args, "eval_full", None)
     if args.command is None:
         parser.print_help()
         parser.exit(
@@ -852,29 +822,6 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             args.eval_interval = 1
         if not flag_present("--corpus"):
             args.corpus = "simplestwiki"
-    if raw_eval_full is not None:
-        try:
-            eval_full_value = int(raw_eval_full)
-        except (TypeError, ValueError):
-            parser.error("--eval-full must be an integer")
-        eval_full = eval_full_value
-        if eval_full < 0:
-            if args.steps <= 0:
-                parser.error("--eval-full negative values require --steps > 0")
-            offset = abs(eval_full)
-            if args.steps % offset != 0:
-                parser.error("--eval-full -N requires --steps to be divisible by N")
-            eval_full = args.steps // offset
-        eval_full = max(0, eval_full)
-        if eval_full == 0:
-            if getattr(args, "train_loss_details", False):
-                parser.error("--eval-full 0 cannot be combined with --train-loss-details")
-            args.no_test_loss_details = True
-        elif eval_full != 1:
-            interval = max(1, args.eval_interval)
-            if eval_full % interval != 0:
-                parser.error("--eval-full must be 0, 1, or a multiple of --eval-interval")
-        args.eval_full = eval_full
     return args
 
 
@@ -2574,80 +2521,92 @@ LOSS_IGNORE_INDEX = -100
 # -----------------------------------------------------------------------------
 
 
-def evaluate_split(
+ROW_METRIC_MAP = {
+    "normal": "normal",
+    "plain": "plain",
+    "noxctx": "noxctx",
+    "puxctx": "puxctx",
+    "noattn": "noatt",
+    "puattn": "none",
+    "encode": "encode",
+}
+
+ROW_METRIC_KEYS = ["normal", "plain", "noxctx", "puxctx", "noatt", "none", "encode"]
+
+
+def aggregate_row_metrics(
+    row_types: Sequence[str],
+    per_token_losses: torch.Tensor,
+    valid_mask: torch.Tensor,
+) -> dict[str, float | None]:
+    loss_sum = float((per_token_losses * valid_mask).sum().item())
+    token_count = int(valid_mask.sum().item())
+    metrics: dict[str, float | None] = {"target": loss_sum / max(1, token_count)}
+
+    bucket_sum: dict[str, float] = defaultdict(float)
+    bucket_count: dict[str, int] = defaultdict(int)
+    for idx, row_type in enumerate(row_types):
+        mask = valid_mask[idx]
+        count = int(mask.sum().item())
+        if count <= 0:
+            continue
+        bucket_sum[row_type] += float((per_token_losses[idx] * mask).sum().item())
+        bucket_count[row_type] += count
+
+    for row_type, metric_name in ROW_METRIC_MAP.items():
+        denom = bucket_count.get(row_type, 0)
+        if denom:
+            metrics[metric_name] = bucket_sum[row_type] / denom
+        else:
+            metrics[metric_name] = None
+    return metrics
+
+
+def evaluate_single_batch(
     model: GRCEGPT,
     dataset: TextDataset,
-    device: torch.device,
+    split: str,
     block_size: int,
     batch_size: int,
-    split: str,
-    iters: int,
+    device: torch.device,
+    row_type_template: Sequence[str],
     *,
-    disable_context: bool = False,
-    disable_xctx: bool = False,
-    disable_attention: bool = False,
-    batches: list[tuple[torch.Tensor, torch.Tensor]] | None = None,
-    use_special_rows: bool = False,
-    encoder_mode: bool = False,
-) -> float:
-    """Run a diagnostic evaluation for the requested split."""
-
-    ce_losses: list[float] = []
-    if batches is None:
-        batches = [
-            dataset.get_batch(split, block_size, batch_size, device)
-            for _ in range(iters)
-        ]
-    context_path_enabled = bool(model.context_channels)
-    xctx_enabled = any(
-        getattr(channel, "is_xctx", False) for channel in getattr(model, "context_channels", [])
+    context_enabled: bool,
+    xctx_enabled: bool,
+) -> dict[str, float | None]:
+    row_types = list(row_type_template)
+    random.shuffle(row_types)
+    xb, yb = dataset.get_batch(
+        split,
+        block_size,
+        batch_size,
+        device,
     )
-    for xb, yb in batches:
-        special_masks: SpecialRowMasks | None = None
-        if use_special_rows:
-            special_masks = build_special_row_masks(
-                xb.size(0),
-                block_size,
-                xb.device,
-                context_enabled=context_path_enabled,
-                xctx_enabled=xctx_enabled,
-            )
-        context_disabled_rows = special_masks.context_disabled_mask if special_masks else None
-        xctx_disabled_rows = special_masks.xctx_disabled_mask if special_masks else None
-        context_dropout_positions = (
-            special_masks.context_dropout_positions if special_masks else None
-        )
-        attention_disabled_rows = None
-        attention_dropout_positions = None
-        if disable_attention:
-            attention_disabled_rows = torch.ones(xb.size(0), dtype=torch.bool, device=xb.device)
-        elif special_masks is not None:
-            attention_disabled_rows = special_masks.attention_disabled_mask
-            attention_dropout_positions = special_masks.attention_dropout_positions
-        logits, _, _ = model.forward_autoreg(
-            xb,
-            targets=yb,
-            disable_context=disable_context,
-            disable_xctx=disable_xctx,
-            attention_disabled_rows=attention_disabled_rows,
-            attention_dropout_positions=attention_dropout_positions,
-            context_disabled_rows=context_disabled_rows,
-            xctx_disabled_rows=xctx_disabled_rows,
-            context_dropout_positions=context_dropout_positions,
-            encoder_mode=encoder_mode,
-        )
-        targets_eval = yb
-        if encoder_mode:
-            mask = torch.full_like(targets_eval, LOSS_IGNORE_INDEX)
-            mask[:, -1] = targets_eval[:, -1]
-            targets_eval = mask
-        loss = F.cross_entropy(
-            logits.view(-1, logits.size(-1)),
-            targets_eval.view(-1),
-            ignore_index=LOSS_IGNORE_INDEX,
-        )
-        ce_losses.append(float(loss.item()))
-    return sum(ce_losses) / max(1, len(ce_losses))
+    special_masks = build_row_type_masks(
+        row_types,
+        block_size,
+        device,
+        context_enabled=context_enabled,
+        xctx_enabled=xctx_enabled,
+    )
+    logits, _, _ = model.forward_autoreg(
+        xb,
+        targets=yb,
+        context_disabled_rows=special_masks.context_disabled_mask,
+        xctx_disabled_rows=special_masks.xctx_disabled_mask,
+        context_dropout_positions=special_masks.context_dropout_positions,
+        attention_disabled_rows=special_masks.attention_disabled_mask,
+        attention_dropout_positions=special_masks.attention_dropout_positions,
+    )
+    per_token = F.cross_entropy(
+        logits.view(-1, logits.size(-1)),
+        yb.view(-1),
+        reduction="none",
+        ignore_index=LOSS_IGNORE_INDEX,
+    )
+    per_token = per_token.view(batch_size, -1)
+    valid_mask = (yb != LOSS_IGNORE_INDEX)
+    return aggregate_row_metrics(row_types, per_token, valid_mask)
 
 def train_model(
     model: GRCEGPT,
@@ -2657,7 +2616,6 @@ def train_model(
     block_size: int,
     batch_size: int,
     eval_interval: int,
-    eval_iters: int,
     start_step: int,
     sample_prompt: torch.Tensor,
     sample_chars: int,
@@ -2674,9 +2632,6 @@ def train_model(
     boundary_blocklist: Sequence[int] | None = None,
     show_train_loss_details: bool = False,
     show_test_loss_details: bool = True,
-    long_loss_log: bool = False,
-    full_eval_stride: int = 1,
-    force_full_eval_first: bool = True,
 ) -> Tuple[int, List[Dict[str, float]], float, float, float, float]:
     """Run the main training loop for a cycle."""
 
@@ -2684,8 +2639,7 @@ def train_model(
     total_steps = start_step
     history_updates: List[Dict[str, float]] = []
     printed_header = False
-    long_log_force = bool(long_loss_log)
-
+    eval_interval = max(1, int(eval_interval))
     if prompt_tracker is not None:
         prompt_queue = prompt_tracker.prompt_queue(reset=reset_prompt_queue)
     else:
@@ -2708,10 +2662,6 @@ def train_model(
     eval_wall_total = 0.0
     eval_cpu_total = 0.0
 
-    full_eval_stride = max(0, int(full_eval_stride))
-    full_eval_enabled = full_eval_stride > 0
-    force_full_eval = bool(force_full_eval_first)
-
     for step in range(1, steps + 1):
         xb, yb = dataset.get_batch(
             "train",
@@ -2728,85 +2678,20 @@ def train_model(
             context_enabled=context_path_enabled,
             xctx_enabled=xctx_enabled,
         )
-        encode_indices = [idx for idx, t in enumerate(row_types) if t == "encode"]
-        encode_index_tensor = torch.tensor(encode_indices, dtype=torch.long, device=xb.device)
-        main_index_tensor = torch.arange(batch_size, device=xb.device)
-        if encode_index_tensor.numel() > 0:
-            mask = torch.ones(batch_size, dtype=torch.bool, device=xb.device)
-            mask[encode_index_tensor] = False
-            main_index_tensor = torch.nonzero(mask, as_tuple=False).squeeze(1)
-
-        def select_rows(tensor: torch.Tensor | None, index: torch.Tensor) -> torch.Tensor | None:
-            if tensor is None:
-                return None
-            if index.numel() == tensor.size(0):
-                return tensor
-            if index.numel() == 0:
-                return None
-            return tensor.index_select(0, index)
-
-        total_loss = torch.tensor(0.0, device=device)
-        token_losses = None
-        if main_index_tensor.numel() > 0:
-            xb_main = xb.index_select(0, main_index_tensor)
-            yb_main = yb.index_select(0, main_index_tensor)
-            context_disabled_mask_main = select_rows(
-                special_masks.context_disabled_mask,
-                main_index_tensor,
-            )
-            xctx_disabled_mask_main = select_rows(
-                special_masks.xctx_disabled_mask,
-                main_index_tensor,
-            )
-            context_dropout_positions_main = select_rows(
-                special_masks.context_dropout_positions,
-                main_index_tensor,
-            )
-            attention_disabled_mask_main = select_rows(
-                special_masks.attention_disabled_mask,
-                main_index_tensor,
-            )
-            attention_dropout_positions_main = select_rows(
-                special_masks.attention_dropout_positions,
-                main_index_tensor,
-            )
-            logits_main, _, _ = model.forward_autoreg(
-                xb_main,
-                targets=yb_main,
-                context_disabled_rows=context_disabled_mask_main,
-                xctx_disabled_rows=xctx_disabled_mask_main,
-                context_dropout_positions=context_dropout_positions_main,
-                attention_disabled_rows=attention_disabled_mask_main,
-                attention_dropout_positions=attention_dropout_positions_main,
-            )
-            logits_flat = logits_main.view(-1, logits_main.size(-1))
-            targets_flat = yb_main.view(-1)
-            loss_main = F.cross_entropy(
-                logits_flat,
-                targets_flat,
-                ignore_index=LOSS_IGNORE_INDEX,
-            )
-            total_loss = total_loss + loss_main
-            token_losses = loss_main.detach()
-
-        if encode_index_tensor.numel() > 0:
-            xb_enc = xb.index_select(0, encode_index_tensor)
-            yb_enc = yb.index_select(0, encode_index_tensor)
-            logits_enc, _, _ = model.forward_autoreg(
-                xb_enc,
-                targets=yb_enc,
-                disable_context=True,
-                disable_xctx=True,
-                encoder_mode=True,
-            )
-            enc_targets = torch.full_like(yb_enc, LOSS_IGNORE_INDEX)
-            enc_targets[:, -1] = yb_enc[:, -1]
-            loss_enc = F.cross_entropy(
-                logits_enc.view(-1, logits_enc.size(-1)),
-                enc_targets.view(-1),
-                ignore_index=LOSS_IGNORE_INDEX,
-            )
-            total_loss = total_loss + loss_enc
+        logits, _, _ = model.forward_autoreg(
+            xb,
+            targets=yb,
+            context_disabled_rows=special_masks.context_disabled_mask,
+            xctx_disabled_rows=special_masks.xctx_disabled_mask,
+            context_dropout_positions=special_masks.context_dropout_positions,
+            attention_disabled_rows=special_masks.attention_disabled_mask,
+            attention_dropout_positions=special_masks.attention_dropout_positions,
+        )
+        total_loss = F.cross_entropy(
+            logits.view(-1, logits.size(-1)),
+            yb.view(-1),
+            ignore_index=LOSS_IGNORE_INDEX,
+        )
 
         optim.zero_grad(set_to_none=True)
         total_loss.backward()
@@ -2816,132 +2701,22 @@ def train_model(
         eval_due = step == 1 or step % eval_interval == 0 or step == steps
         if not eval_due:
             continue
-        full_eval_now = full_eval_enabled and (
-            full_eval_stride > 0 and total_steps % full_eval_stride == 0
-        )
-        if force_full_eval and step == 1:
-            full_eval_now = True
         eval_wall_block = time.time()
         eval_cpu_block = time.process_time()
         model.eval()
+        split_metrics: dict[str, dict[str, float | None]] = {}
         with torch.no_grad():
-            split_metrics: dict[str, dict[str, float]] = {"train": {}, "test": {}}
-            cached_batches: dict[str, list[tuple[torch.Tensor, torch.Tensor]]] = {}
             for split in ("train", "test"):
-                cached_batches[split] = []
-                for _ in range(eval_iters):
-                    cached_batches[split].append(
-                        dataset.get_batch(split, block_size, batch_size, device)
-                    )
-                base_batches = cached_batches[split]
-                split_metrics[split]["target"] = float(
-                    evaluate_split(
-                        model,
-                        dataset,
-                        device,
-                        block_size,
-                        batch_size,
-                        split,
-                        eval_iters,
-                        batches=base_batches,
-                    )
-                )
-                if not full_eval_now:
-                    continue
-                noprev_batches = list(base_batches)
-                split_metrics[split]["noprev"] = float(
-                    evaluate_split(
-                        model,
-                        dataset,
-                        device,
-                        block_size,
-                        batch_size,
-                        split,
-                        eval_iters,
-                        batches=noprev_batches,
-                    )
-                )
-                plain_kwargs = dict(batches=cached_batches[split])
-                split_metrics[split]["plain"] = float(
-                    evaluate_split(
-                        model,
-                        dataset,
-                        device,
-                        block_size,
-                        batch_size,
-                        split,
-                        eval_iters,
-                        disable_context=True,
-                        disable_xctx=True,
-                        **plain_kwargs,
-                    )
-                )
-                split_metrics[split]["normal"] = float(
-                    evaluate_split(
-                        model,
-                        dataset,
-                        device,
-                        block_size,
-                        batch_size,
-                        split,
-                        eval_iters,
-                        **plain_kwargs,
-                    )
-                )
-                split_metrics[split]["noctx"] = float(
-                    evaluate_split(
-                        model,
-                        dataset,
-                        device,
-                        block_size,
-                        batch_size,
-                        split,
-                        eval_iters,
-                        disable_xctx=True,
-                        **plain_kwargs,
-                    )
-                )
-                split_metrics[split]["noatt"] = float(
-                    evaluate_split(
-                        model,
-                        dataset,
-                        device,
-                        block_size,
-                        batch_size,
-                        split,
-                        eval_iters,
-                        disable_attention=True,
-                        **plain_kwargs,
-                    )
-                )
-                split_metrics[split]["none"] = float(
-                    evaluate_split(
-                        model,
-                        dataset,
-                        device,
-                        block_size,
-                        batch_size,
-                        split,
-                        eval_iters,
-                        disable_xctx=True,
-                        disable_attention=True,
-                        **plain_kwargs,
-                    )
-                )
-                split_metrics[split]["encode"] = float(
-                    evaluate_split(
-                        model,
-                        dataset,
-                        device,
-                        block_size,
-                        batch_size,
-                        split,
-                        eval_iters,
-                        disable_context=True,
-                        disable_xctx=True,
-                        encoder_mode=True,
-                        **plain_kwargs,
-                    )
+                split_metrics[split] = evaluate_single_batch(
+                    model,
+                    dataset,
+                    split,
+                    block_size,
+                    batch_size,
+                    device,
+                    row_type_template,
+                    context_enabled=context_path_enabled,
+                    xctx_enabled=xctx_enabled,
                 )
         model.train()
         block_wall = time.time() - eval_wall_block
@@ -3020,31 +2795,21 @@ def train_model(
                 return "-"
             return f"{value:.3f}"
 
+        detail_keys = ROW_METRIC_KEYS
+
         def format_train_line() -> str:
-            if not show_train_loss_details or not full_eval_now:
-                return format_metric("train", "target")
-            primary = " ".join(
-                format_metric("train", key) for key in ("target", "noprev")
-            )
-            diag = " ".join(
-                [format_metric("train", key) for key in ("plain", "encode", "normal")]
-                + ["-"]
-                + [format_metric("train", key) for key in ("noctx", "noatt", "none")]
-            )
-            return f"{primary} : {diag}"
+            base = format_metric("train", "target")
+            if not show_train_loss_details:
+                return base
+            diag = " ".join(format_metric("train", key) for key in detail_keys)
+            return f"{base} : {diag}"
 
         def format_test_line() -> str:
-            if not show_test_loss_details or not full_eval_now:
-                return format_metric("test", "target")
-            primary = " ".join(
-                format_metric("test", key) for key in ("target", "noprev")
-            )
-            diag = " ".join(
-                [format_metric("test", key) for key in ("plain", "encode", "normal")]
-                + ["-"]
-                + [format_metric("test", key) for key in ("noctx", "noatt", "none")]
-            )
-            return f"{primary} : {diag}"
+            base = format_metric("test", "target")
+            if not show_test_loss_details:
+                return base
+            diag = " ".join(format_metric("test", key) for key in detail_keys)
+            return f"{base} : {diag}"
 
         train_values = format_train_line()
         test_values = format_test_line()
@@ -3070,26 +2835,21 @@ def train_model(
 
         record = {
             "step": total_steps,
-            "train_loss": float(split_metrics["train"].get("target", 0.0)),
-            "test_loss": float(split_metrics["test"].get("target", 0.0)),
+            "train_loss": float(split_metrics["train"].get("target", 0.0) or 0.0),
+            "test_loss": float(split_metrics["test"].get("target", 0.0) or 0.0),
             "train_wall_seconds": float(total_wall_seconds),
             "unix_time": float(eval_now),
             "train_cursor": int(dataset.positions.get("train", 0)),
             "test_cursor": int(dataset.positions.get("test", 0)),
         }
-        if full_eval_now:
-            for key in (
-                "target",
-                "noprev",
-                "plain",
-                "normal",
-                "noctx",
-                "noatt",
-                "none",
-                "encode",
-            ):
-                record[f"train_loss_{key}"] = float(split_metrics["train"].get(key, 0.0))
-                record[f"test_loss_{key}"] = float(split_metrics["test"].get(key, 0.0))
+        metric_keys = ["target"] + ROW_METRIC_KEYS
+        for key in metric_keys:
+            train_val = split_metrics["train"].get(key)
+            test_val = split_metrics["test"].get(key)
+            if train_val is not None:
+                record[f"train_loss_{key}"] = float(train_val)
+            if test_val is not None:
+                record[f"test_loss_{key}"] = float(test_val)
         history_updates.append(record)
 
     loop_wall_total = time.time() - loop_wall_start
@@ -3437,9 +3197,15 @@ def grce_main(args: argparse.Namespace) -> int:
         )
 
         def count_eval_calls(steps: int, interval: int) -> int:
-            if steps <= 0 or interval <= 0:
+            if steps <= 0:
                 return 0
-            return 1 + (steps - 1) // interval
+            eval_steps = {1, steps}
+            if interval > 0:
+                current = interval
+                while current <= steps:
+                    eval_steps.add(current)
+                    current += interval
+            return len(eval_steps)
 
 
         def emit_range(label: str, tokens: torch.Tensor, spec: str) -> None:
@@ -3921,10 +3687,11 @@ def grce_main(args: argparse.Namespace) -> int:
             hours = total_train_wall / 3600.0
             days = hours / 24.0
             train_chars_cycle = (args.block_size + 1) * args.batch_size * args.steps
+            eval_calls = max(1, count_eval_calls(args.steps, args.eval_interval))
             test_chars_cycle = (
                 (args.block_size + 1)
                 * args.batch_size
-                * max(1, args.eval_iters * count_eval_calls(args.steps, args.eval_interval))
+                * eval_calls
             )
             train_start = int(dataset.positions.get("train", 0))
             test_start = int(dataset.positions.get("test", 0))
@@ -3986,7 +3753,6 @@ def grce_main(args: argparse.Namespace) -> int:
                 args.block_size,
                 args.batch_size,
                 args.eval_interval,
-                args.eval_iters,
                 total_steps,
                 prompt_tokens,
                 args.generate,
@@ -4002,9 +3768,6 @@ def grce_main(args: argparse.Namespace) -> int:
                 boundary_blocklist=boundary_blocklist,
                 show_train_loss_details=args.train_loss_details,
                 show_test_loss_details=not args.no_test_loss_details,
-                long_loss_log=args.long_loss_log,
-                full_eval_stride=args.eval_full,
-                force_full_eval_first=not args.no_full_eval_first,
             )
             loss_history.extend(updates)
 

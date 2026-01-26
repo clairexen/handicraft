@@ -29,6 +29,10 @@ LEGACY_SPECIAL_FIELDS = {
     "test_loss_plain": "test_plain",
     "train_loss_nogrce": "train_noctx",
     "test_loss_nogrce": "test_noctx",
+    "train_loss_noctx": "train_noctx",
+    "test_loss_noctx": "test_noctx",
+    "train_loss_noxctx": "train_noctx",
+    "test_loss_noxctx": "test_noctx",
     "train_nogrce": "train_noctx",
     "test_nogrce": "test_noctx",
     "train_loss_noatt": "train_noatt",
@@ -69,6 +73,8 @@ class LossRecord:
     test_normal: Optional[List[float]] = None
     train_noctx: Optional[List[float]] = None
     test_noctx: Optional[List[float]] = None
+    train_puxctx: Optional[List[float]] = None
+    test_puxctx: Optional[List[float]] = None
     train_noatt: Optional[List[float]] = None
     test_noatt: Optional[List[float]] = None
     train_none: Optional[List[float]] = None
@@ -126,12 +132,18 @@ def load_records(json_paths: Iterable[pathlib.Path]) -> List[LossRecord]:
         test = test_series or []
         train_noprev = extract_series("train_loss_noprev")
         test_noprev = extract_series("test_loss_noprev")
-        train_ng = extract_series("train_loss_noctx")
+        train_ng = extract_series("train_loss_noxctx")
+        if train_ng is None:
+            train_ng = extract_series("train_loss_noctx")
         if train_ng is None:
             train_ng = extract_series("train_loss_nogrce")
-        test_ng = extract_series("test_loss_noctx")
+        test_ng = extract_series("test_loss_noxctx")
+        if test_ng is None:
+            test_ng = extract_series("test_loss_noctx")
         if test_ng is None:
             test_ng = extract_series("test_loss_nogrce")
+        train_puxctx = extract_series("train_loss_puxctx")
+        test_puxctx = extract_series("test_loss_puxctx")
         train_plain = extract_series("train_loss_plain")
         test_plain = extract_series("test_loss_plain")
         train_normal = extract_series("train_loss_normal")
@@ -168,6 +180,8 @@ def load_records(json_paths: Iterable[pathlib.Path]) -> List[LossRecord]:
                 test_normal=[float(v) for v in test_normal] if test_normal else None,
                 train_noctx=[float(v) for v in train_ng] if train_ng else None,
                 test_noctx=[float(v) for v in test_ng] if test_ng else None,
+                train_puxctx=[float(v) for v in train_puxctx] if train_puxctx else None,
+                test_puxctx=[float(v) for v in test_puxctx] if test_puxctx else None,
                 train_noatt=[float(v) for v in train_noatt] if train_noatt else None,
                 test_noatt=[float(v) for v in test_noatt] if test_noatt else None,
                 train_none=[float(v) for v in train_none] if train_none else None,
