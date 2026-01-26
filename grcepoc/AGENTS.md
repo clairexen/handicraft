@@ -3,12 +3,12 @@
 (Pretty much all code in this repo is AI-generated—but under strong human supervision. ~Claire)
 
 - **Project focus:** Gradient-limited Recurrent Context Encoding (GRCE) end Extended Context (XCTX) atop a picoGPT-style SimpleWiki language model.
-- **Model defaults:** `n_layer=8`, `n_head=8`, `n_embd=192`, `n_grce=96`, `block_size=64`, `dropout=0.05`, `vocab_size=2000`.
+- **Model defaults:** `n_layer=8`, `n_head=8`, `n_embd=192`, `n_grce=96`, `block_size=64`, `block_length=64`, `dropout=0.05`, `vocab_size=2000`.
 - **GRCE geometry:** each layer owns a sampler `LayerNorm → n_embd → n_grce`; sampled vectors are summed, passed through a shared MLP `n_grce → 4*n_grce → ReLU → LayerNorm → n_grce`, then per-layer decoders `n_grce → n_embd` inject the biases.
 - **XCTX geometry:** identical workflow, just swapping `n_grce` for `n_xctx` so the channel has more headroom. The sampler projects down to `n_xctx // n_layer` for every layer before projecting onto `n_xctx`, the bias-injectors project onto `n_xctx // n_layer` for every layer before projecting onto `n_embd`, and the shared MLP uses a reduced hidden width `4*n_xctx//n_layer` so the wide channel keeps its parameter cost in check.
 - **Parameter dominance:** ignoring embeddings, the stack costs `~12 * n_layer * n_embd^2`, and the GRCE path adds `~2 * n_layer * n_embd * n_grce + 4 * n_grce^2` when enabled.
 - **Tokenizer workflow:** Byte-level BPE trained on up to `--vocab-chars` characters; saved to `model/<trainstem>_<limit>_<vocab>.json` alongside checkpoints.
-- **Chunks per cycle:** Train chunk size `(block_size+1)*batch_size*steps`; test chunk size `(block_size+1)*batch_size*eval_calls` (where `eval_calls` covers step 1, every `eval_interval`, and the final step). Each chunk records its absolute corpus offset so the loader can recover the `block_size` tokens immediately before every sample and run the recurrent prefill.
+- **Chunks per cycle:** Train chunk size `(block_length+1)*batch_size*steps`; test chunk size `(block_length+1)*batch_size*eval_calls` (where `eval_calls` covers step 1, every `eval_interval`, and the final step). Each chunk records its absolute corpus offset so the loader can recover the `block_length` tokens immediately before every sample and run the recurrent prefill, while positional offsets are randomized across the full `block_size` window when `block_length < block_size`.
 - **Persistence:** Checkpoints store weights, dataset offsets, total step counter, cumulative wall-clock training seconds, and the loss table; log files mirror console output and capture tokenizer timing when the tokenizer is retrained.
 - **Testing:** Eval prints test/train losses plus a colorized sample; prompts are cyan/green, completions yellow/magenta, and the GRCE-disabled loss is shown for comparison.
 - **Local CPU sanity checks:** run a tiny model to keep turnaround fast:

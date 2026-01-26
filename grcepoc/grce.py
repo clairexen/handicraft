@@ -155,6 +155,7 @@ class Settings:
     cycles: int = 100
     batch_size: int = 32
     eval_interval: int = 10
+    block_length: int = MODEL_CONFIG_DEFAULTS.block_size
 
     # Training Details
     dropout: float = 0.05
@@ -188,6 +189,7 @@ def settings_from_cli_args(args: argparse.Namespace) -> Settings:
         cycles=args.cycles,
         batch_size=args.batch_size,
         eval_interval=args.eval_interval,
+        block_length=args.block_length,
 
         # Training Details
         dropout=args.dropout,
@@ -293,7 +295,7 @@ def build_row_type_template(
 
 def build_row_type_masks(
     row_types: Sequence[str],
-    block_size: int,
+    block_length: int,
     device: torch.device,
     *,
     context_enabled: bool,
@@ -333,7 +335,7 @@ def build_row_type_masks(
                 dtype=torch.long,
                 fill=-1,
             )
-            context_dropout_positions[idx] = random.randrange(max(1, block_size))
+            context_dropout_positions[idx] = random.randrange(max(1, block_length))
             context_special_rows.add(idx)
         elif row_type == "noattn":
             attention_disabled_mask[idx] = True
@@ -344,7 +346,7 @@ def build_row_type_masks(
                 dtype=torch.long,
                 fill=-1,
             )
-            attention_dropout_positions[idx] = random.randrange(max(1, block_size))
+            attention_dropout_positions[idx] = random.randrange(max(1, block_length))
             context_special_rows.add(idx)
     if context_disabled_mask is not None and not context_disabled_mask.any():
         context_disabled_mask = None
@@ -449,7 +451,13 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--block-size",
         type=int,
         default=defaults.block_size,
-        help="Number of tokens per training sample",
+        help="Maximum sequence length supported by the model's positional embeddings",
+    )
+    model_group.add_argument(
+        "--block-length",
+        type=int,
+        default=None,
+        help="Actual tokens-per-sample used during train/eval (defaults to --block-size)",
     )
     model_group.add_argument(
         "--n-layer",
@@ -672,7 +680,7 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
     test_parser = subparsers.add_parser(
         "test",
-        help="Print block_size tokens from the test corpus",
+        help="Print block-length tokens from the test corpus",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     test_parser.set_defaults(command="test")
@@ -780,6 +788,7 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     create_parser.set_defaults(command="create")
 
+    block_length_flag = flag_present("--block-length")
     args = parser.parse_args()
     if args.command is None:
         parser.print_help()
@@ -822,6 +831,13 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             args.eval_interval = 1
         if not flag_present("--corpus"):
             args.corpus = "simplestwiki"
+    if args.block_length is None:
+        args.block_length = args.block_size
+    if args.block_length <= 0:
+        parser.error("--block-length must be positive")
+    if args.block_length > args.block_size:
+        parser.error("--block-length must be <= --block-size")
+    args._block_length_defined = block_length_flag
     return args
 
 
@@ -1729,7 +1745,7 @@ class TextDataset:
     def get_batch(
         self,
         split: str,
-        block_size: int,
+        block_length: int,
         batch_size: int,
         device: torch.device,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -1741,10 +1757,10 @@ class TextDataset:
         chunk_offset = self.chunk_offsets.get(split)
         if chunk_offset is None:
             raise RuntimeError(f"Missing chunk offset for split {split}")
-        span = block_size + 1
+        span = block_length + 1
         if len(chunk) <= span:
             raise ValueError(
-                f"Chunk for {split} must be larger than block size ({len(chunk)} <= {span})."
+                f"Chunk for {split} must be larger than block length ({len(chunk)} <= {span})."
             )
         max_start = len(chunk) - span
         ix = torch.randint(0, max_start + 1, (batch_size,))
@@ -2213,11 +2229,22 @@ class GPTCore(nn.Module):
         attention_dropout_positions: torch.Tensor | None = None,
         full_attention: bool = False,
         target_position: int | None = None,
+        position_ids: torch.Tensor | None = None,
     ) -> Tuple[torch.Tensor, torch.Tensor, List[torch.Tensor], List[torch.Tensor] | None]:
         B, T = idx.shape
         device = idx.device
         tok = self.tok_emb(idx)
-        pos = self.pos_emb(torch.arange(T, device=device))
+        if position_ids is None:
+            base_positions = torch.arange(T, device=device).unsqueeze(0)
+            pos_idx = base_positions.expand(B, -1)
+        else:
+            if position_ids.dim() == 1:
+                pos_idx = position_ids.view(B, T)
+            else:
+                pos_idx = position_ids
+        if torch.any(pos_idx >= self.config.block_size):
+            raise ValueError("position ids exceed configured --block-size")
+        pos = self.pos_emb(pos_idx)
         x = self.drop(tok + pos)
         if attention_disabled_rows is not None:
             attention_disabled_rows = attention_disabled_rows.to(device=device, dtype=torch.bool)
@@ -2427,9 +2454,16 @@ class GRCEGPT(nn.Module):
         initial_context_raw: list[torch.Tensor] | None = None,
         record_final_context: bool = False,
         encoder_mode: bool = False,
+        position_offsets: torch.Tensor | None = None,
     ) -> Tuple[torch.Tensor, torch.Tensor | None, dict | None]:
         B, T = idx.shape
         device = idx.device
+        if position_offsets is None:
+            position_offsets = torch.zeros(B, dtype=torch.long, device=device)
+        else:
+            position_offsets = position_offsets.to(device=device, dtype=torch.long)
+            if position_offsets.dim() != 1 or position_offsets.shape[0] != B:
+                raise ValueError("position_offsets must be 1D with batch_size entries")
         active_channels: list[GRCEContextChannel] = []
         active_indices: list[int] = []
         if not disable_context:
@@ -2517,6 +2551,8 @@ class GRCEGPT(nn.Module):
             if encoder_mode:
                 prefix = idx
                 target_pos = min(prefix.size(1) - 1, t)
+                pos_seq = torch.arange(prefix.size(1), device=device, dtype=torch.long)
+                position_matrix = position_offsets.view(B, 1) + pos_seq.view(1, -1)
             block_biases = None
             if use_context:
                 for channel, state in zip(active_channels, context_states):
@@ -2584,13 +2620,14 @@ class GRCEGPT(nn.Module):
                     attention_dropout_positions=attention_dropout_positions,
                     full_attention=encoder_mode,
                     target_position=target_pos,
+                    position_ids=position_matrix,
                 )
                 step_logits = logits[:, target_pos : target_pos + 1, :]
                 step_hidden = hidden_layer[:, target_pos : target_pos + 1, :]
             else:
                 if caches is None:
                     raise RuntimeError("KV caches were not initialized")
-                position_ids = torch.full((B,), t, dtype=torch.long, device=device)
+                position_ids = position_offsets + t
                 logits_step, hidden_step, block_inputs, layer_masks = self.core.forward_step(
                     idx[:, t],
                     position_ids,
@@ -2708,6 +2745,24 @@ ROW_METRIC_MAP = {
 ROW_METRIC_KEYS = ["normal", "plain", "noxctx", "puxctx", "noatt", "none", "encode"]
 
 
+def sample_position_offsets(
+    batch_size: int,
+    block_size: int,
+    block_length: int,
+    device: torch.device,
+) -> torch.Tensor | None:
+    """Return per-row positional offsets when block_length < block_size."""
+
+    if batch_size <= 0:
+        return None
+    if block_length >= block_size:
+        return None
+    max_offset = block_size - block_length
+    if max_offset <= 0:
+        return None
+    return torch.randint(0, max_offset + 1, (batch_size,), device=device)
+
+
 def aggregate_row_metrics(
     row_types: Sequence[str],
     per_token_losses: torch.Tensor,
@@ -2740,7 +2795,7 @@ def evaluate_single_batch(
     model: GRCEGPT,
     dataset: TextDataset,
     split: str,
-    block_size: int,
+    block_length: int,
     batch_size: int,
     device: torch.device,
     row_type_template: Sequence[str],
@@ -2750,18 +2805,19 @@ def evaluate_single_batch(
 ) -> dict[str, float | None]:
     row_types = list(row_type_template)
     random.shuffle(row_types)
-    xb, yb = dataset.get_batch(
-        split,
-        block_size,
-        batch_size,
-        device,
-    )
+    xb, yb = dataset.get_batch(split, block_length, batch_size, device)
     special_masks = build_row_type_masks(
         row_types,
-        block_size,
+        block_length,
         device,
         context_enabled=context_enabled,
         xctx_enabled=xctx_enabled,
+    )
+    position_offsets = sample_position_offsets(
+        batch_size,
+        model.config.block_size,
+        block_length,
+        device,
     )
     logits, _, _ = model.forward_autoreg(
         xb,
@@ -2771,6 +2827,7 @@ def evaluate_single_batch(
         context_dropout_positions=special_masks.context_dropout_positions,
         attention_disabled_rows=special_masks.attention_disabled_mask,
         attention_dropout_positions=special_masks.attention_dropout_positions,
+        position_offsets=position_offsets,
     )
     per_token = F.cross_entropy(
         logits.view(-1, logits.size(-1)),
@@ -2787,7 +2844,7 @@ def train_model(
     dataset: TextDataset,
     device: torch.device,
     steps: int,
-    block_size: int,
+    block_length: int,
     batch_size: int,
     eval_interval: int,
     start_step: int,
@@ -2837,20 +2894,21 @@ def train_model(
     eval_cpu_total = 0.0
 
     for step in range(1, steps + 1):
-        xb, yb = dataset.get_batch(
-            "train",
-            block_size,
-            batch_size,
-            device,
-        )
+        xb, yb = dataset.get_batch("train", block_length, batch_size, device)
         row_types = list(row_type_template)
         random.shuffle(row_types)
         special_masks = build_row_type_masks(
             row_types,
-            block_size,
+            block_length,
             device,
             context_enabled=context_path_enabled,
             xctx_enabled=xctx_enabled,
+        )
+        position_offsets = sample_position_offsets(
+            batch_size,
+            model.config.block_size,
+            block_length,
+            device,
         )
         logits, _, _ = model.forward_autoreg(
             xb,
@@ -2860,6 +2918,7 @@ def train_model(
             context_dropout_positions=special_masks.context_dropout_positions,
             attention_disabled_rows=special_masks.attention_disabled_mask,
             attention_dropout_positions=special_masks.attention_dropout_positions,
+            position_offsets=position_offsets,
         )
         total_loss = F.cross_entropy(
             logits.view(-1, logits.size(-1)),
@@ -2885,7 +2944,7 @@ def train_model(
                     model,
                     dataset,
                     split,
-                    block_size,
+                    block_length,
                     batch_size,
                     device,
                     row_type_template,
@@ -3109,10 +3168,10 @@ def run_test_slice(
     dataset: TextDataset,
     tokenizer: GPT2TokenizerWrapper,
     model: GRCEGPT,
-    block_size: int,
+    block_length: int,
     start_pos: int,
 ) -> None:
-    tokens = dataset.looped_slice("test", start_pos, block_size)
+    tokens = dataset.looped_slice("test", start_pos, block_length)
     text = tokenizer.decode(tokens)
     print(color_text(f"Test slice @ {start_pos}:", Colors.CYAN))
     print(text)
@@ -3218,6 +3277,10 @@ def grce_main(args: argparse.Namespace) -> int:
                 "tokenizer_json"
             )
             args.block_size = checkpoint_override_config.block_size
+            if not getattr(args, "_block_length_defined", False):
+                args.block_length = args.block_size
+            elif args.block_length > args.block_size:
+                raise ValueError("--block-length cannot exceed checkpoint block size")
             args.n_layer = checkpoint_override_config.n_layer
             args.n_head = checkpoint_override_config.n_head
             args.n_embd = checkpoint_override_config.n_embd
@@ -3835,7 +3898,7 @@ def grce_main(args: argparse.Namespace) -> int:
                 dataset=dataset,
                 tokenizer=tokenizer,
                 model=model,
-                block_size=args.block_size,
+                block_length=args.block_length,
                 start_pos=args.test_start,
             )
             return
@@ -3860,10 +3923,10 @@ def grce_main(args: argparse.Namespace) -> int:
             label = "".join(tags + plus_tags + minus_tags)
             hours = total_train_wall / 3600.0
             days = hours / 24.0
-            train_chars_cycle = (args.block_size + 1) * args.batch_size * args.steps
+            train_chars_cycle = (args.block_length + 1) * args.batch_size * args.steps
             eval_calls = max(1, count_eval_calls(args.steps, args.eval_interval))
             test_chars_cycle = (
-                (args.block_size + 1)
+                (args.block_length + 1)
                 * args.batch_size
                 * eval_calls
             )
@@ -3924,7 +3987,7 @@ def grce_main(args: argparse.Namespace) -> int:
                 dataset,
                 device,
                 args.steps,
-                args.block_size,
+                args.block_length,
                 args.batch_size,
                 args.eval_interval,
                 total_steps,
