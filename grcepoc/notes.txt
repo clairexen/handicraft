@@ -17,7 +17,7 @@ information abou the desired behavior for AI agents (= OpenAI Codex).
 
 GRCE and XCTX both sample the n_layer input vectors to the transformer blocks in the
 stack at a position, mix with a recurrent GRCE or XCTX signal (G or X), remix, and
-update the recurrent signal (G' and X'), and then injects the context information into the
+update the recurrent signal (G' and X'), and then inject the context information into the
 transformer layers at later positions. Each have a per-layer sample stage, a shared
 mix and remix stage, and then per-layer bias-injection stage in the next position.
 
@@ -59,8 +59,8 @@ the attention mechanism that we find in the first half of each block of the
 transformer stack. Note that via the path B_i -> V_j (with i<j) thru the
 transformer, the GRCE path can access compute resources inside the transformer
 stack, and thus only one shared MLP layer is ever needed in the GRCE data path
-itself, for remixing and combining the V_i signals from different layers into a
-single recurrent state vector.
+itself, for remixing the mixed G and V_i signals from different layers into an
+updated single recurrent state vector G'.
 
 The (high-dimensional) XCTX channel (X -> X'):
 Let u := min(n_embd // 2, n_xctx // 2, max(n_embd // 4, n_xctx // n_layer)), an intermediate dimension <n_embd and <n_xctx
@@ -82,10 +82,10 @@ Let W() be a learned linear from n_xctx to n_xctx.
   recurrent vector X'; with RMSNorm (not LN, for better stability in recurrent path):
     X' := RMSNorm(X + W(ReLU(UpX(M))))
 
-So the XCTX architecture uses a similar bias-sample-mix-remix architecture as
+The XCTX architecture uses a similar bias-sample-mix-remix architecture as
 GRCE, but shapes noise, manages dimensionality of updates, and incorporates
 other changes, such as using a direction-preserving norm (RMSNorm instead of
-LN) in the recurrent path, that make XCTX better suited to perform short-term
+LN) in the recurrent path, that makes XCTX better suited to perform short-term
 memory and working memory functions, instead of the position-by-position
 state-machine like functionalities that the GRCE channel can implement better
 and more easily.
@@ -146,10 +146,10 @@ The GRCE channel is low-dimension/low-bandwith and we expect it to learn to
 encode and send forward properties like the "current role" that may be
 stable without "drift" for a certain time, then maybe change sharply whenver
 the role changes, and we also expect it to learn to encode and send forward
-properties that are only useful for the immediate next token, such as
-grammatical context for the next token or word. The remixing stage of the GRCE
-channel is expected to quickly saturate the channel, so that, for the most
-part, only information that is actively pushed forward by each position is
+properties that are only useful for the immediate next token or maybe word,
+such as grammatical context for the next token or word. The remixing stage of
+the GRCE channel is expected to quickly saturate the channel, so that, for the
+most part, only information that is actively pushed forward by each position is
 going to survive. In short: we expect the GRCE channel to implement various
 forms of state machines.
 
@@ -160,7 +160,7 @@ wide channel. There is no down-projection after the ReLU layer, we stay in
 n_xctx, just perform a single linear from n_xctx to n_xctx, and then use a
 direction-preserving norm for the recurrent path, so no noise is introduced
 into the channel that is not intentional signal interaction, because we can
-always learn (almost) n_xctx linear independent row/columns in W, whenever
+always learn n_xctx (almost) linearly independent row/columns in W, whenever
 independent channels in the XCTX recurrent path are desired. This path is meant
 to be able to accumulate information over a span of positions and just carry them
 forward in time for as long as bandwith is available in the path, with new
@@ -216,9 +216,9 @@ and evaluation:
 
 (Or simply put: the *default batch* optimizes for `normal` and `decode`, but
 also adds one of each of the other row-types in each training block, to create
-knock-out type scenarios that drives learning towards robust implementations
+knock-out type scenarios that drive learning towards robust implementations
 that utilize attention, grce, and xctx to stabalize each other and create
-models that are easier to debug.)
+stable models that are easier to debug.)
 
 The reported and logged loss values {train,test}_loss_target are the loss value
 for an evaluation of such a "mixed" batch, our true objective function that we
@@ -240,9 +240,12 @@ from the test corpus (train coprus when `eval --train`), without advancing the
 cursor for that corpus, and the run STEPS batches full of `encode` rows. Then
 log the results and also store them in a `eval_hist` array in the model .pt
 file, using a record with the following fields:
+	step = number of traing steps so far (same as in `loss_hist`)
+	train_wall_seconds = total trainig time so far (same as in `loss_hist`)
+	unix_time = timestamp (same as in `loss_hist`)
 	rowtype =  for example "normal"
-	corpus = "train" or "test"
-	cursor = current cursor position in that corpus
+	train_cursor = current cursor position in train corpus (if --train mode)
+	test_cursor = current cursor position in test corpus (uness --train mode)
 	seq_tokens_losses = array with STEPS*BATCH_SIZE arrays, each with 2*BLOCK_SIZE+1 entries:
 		token_0, loss_0, token_1, loss_1, ... token_{n}, loss_{n}, token_{n+1}
 	min_loss = min of the STEPS*BATCH_SIZE*BLOCK_SIZE loss values
@@ -252,16 +255,17 @@ file, using a record with the following fields:
 	median_loss = median of the STEPS*BATCH_SIZE*BLOCK_SIZE loss values
 
 The tokens in seq_tokens_losses are strings, the loss values are floats. For "encode"
-there is only one loss value for the last position, predicting the first token of the
-next sequence.
+there is only one loss value in the second to last position, for predicting the
+first token of the next sequence, which is found in the last position of the array..
 
 
-## Position embeddings -- (updated; implementation not up-to-date)
+## Rotating position embeddings with paging -- (updated; implementation not up-to-date)
 
 Instead of just BLOCK_SIZE position encodings we reserve BLOCK_SIZE*PAGE_COUNT
 position encodings. (These position encodings form an "infinite loop": the
 successor of the last position encoding is simply the first position encoding again.
-(The default value for PAGE_COUNT is 16.)
+(The default value for PAGE_COUNT is 8, but we only train for sequences up to
+a length of PAGE_COUNT // 2; see below.)
 
 In training we pick a new random start position within the 0 .. BLOCK_SIZE*PAGE_COUNT-1
 range for each sequence, so the entire range incl. "wrap around" at the end of the
@@ -270,9 +274,34 @@ batch.
 
 We define a new batch format to train for larger inputs: the *pages batch*.
 
-A *pages batch* has `normal` rows of length `PAGES_BLOCK_SIZE := min(PAGE_COUNT-1, BATCH_SIZE)*BLOCK_SIZE`,
+A *pages batch* has `normal` rows of length `PAGES_BLOCK_SIZE := min(PAGE_COUNT // 2, BATCH_SIZE)*BLOCK_SIZE`,
 again with random start positions. The effective `PAGES_BATCH_SIZE := BATCH_SIZE*BLOCK_SIZE // PAGES_BLOCK_SIZE`
-for a pages batch is scaled down to keep the total size of a *pages batch* below or equal to that of a default batch.
+for a *pages batch* is scaled down to keep a *pages batch* within the size of a *default batch*.
+
+
+## Training and evaluation with pre-evaluation -- (this is future work)
+
+We add a `--pre-eval` CLI option. For that mode we define a *pre-eval batch*,
+that is evaluated before training on or evaluating a *default batch*.
+
+The *pre-eval batch* contains a 50/50 mix of `encode` and `normal` blocks
+and is evaluated on the current block of tokens for each training step or
+evaluation during training, and then the final recurrent GRCE and XCTX vectors
+generated by the last position of each block are extracted.
+
+Then we create the actual training or eval batch, and we use the extracted GRCE and
+XCTX vectors as recurrent inputs for the first position in the following block,
+in 75% of the cases where that block is a `normal` block. (Note that we can
+never run the first block in a batch with pre-eval input values, because we
+have not evaluated the block before that during pre-eval.) We ensure that there's
+always at least one case of normal-with-encode-pre-eval, one case of
+normal-with-normal-pre-eval, and one case of normal-without-pre-eval in each
+train or eval batch with --pre-eval enabled.
+
+For all reported loss values, in evaluation steps, we calculate the `loss_hist`
+{train,test}_loss_normal values using only the normal-without-pre-eval blocks,
+and add the new {train,test}_loss_pre{norm,enc} values, that are calculated using
+only the normal blocks with normal-pre-eval or encode-pre-eval respectively.
 
 
 ## Thinking Models -- (this is future work)
