@@ -2135,98 +2135,6 @@ class SpecialRowMasks:
     recode_boundaries: torch.Tensor | None
 
 
-def build_special_row_masks(
-    batch_size: int,
-    block_size: int,
-    device: torch.device,
-    *,
-    context_enabled: bool,
-    xctx_enabled: bool,
-) -> SpecialRowMasks:
-    context_special_rows: set[int] = set()
-    context_disabled_mask: torch.Tensor | None = None
-    xctx_disabled_mask: torch.Tensor | None = None
-    context_dropout_positions: torch.Tensor | None = None
-    attention_disabled_mask: torch.Tensor | None = None
-    attention_dropout_positions: torch.Tensor | None = None
-    if batch_size <= 0:
-        return SpecialRowMasks(
-            context_special_rows,
-            context_disabled_mask,
-            None,
-            xctx_disabled_mask,
-            None,
-            context_dropout_positions,
-            attention_disabled_mask,
-            attention_dropout_positions,
-            None,
-            None,
-            None,
-        )
-
-    def pick_row(
-        occupied: set[int], disallowed: set[int] | None = None
-    ) -> int:
-        blocked = set(occupied)
-        if disallowed:
-            blocked |= set(disallowed)
-        available = [idx for idx in range(batch_size) if idx not in blocked]
-        if not available:
-            available = list(range(batch_size))
-        choice = random.choice(available)
-        occupied.add(choice)
-        return choice
-
-    occupied_rows: set[int] = set()
-    if context_enabled:
-        context_disabled_mask = torch.zeros(batch_size, dtype=torch.bool, device=device)
-        full_off = pick_row(occupied_rows)
-        context_disabled_mask[full_off] = True
-        context_special_rows.add(full_off)
-    if xctx_enabled:
-        xctx_disabled_mask = torch.zeros(batch_size, dtype=torch.bool, device=device)
-        context_dropout_positions = torch.full(
-            (batch_size,),
-            -1,
-            dtype=torch.long,
-            device=device,
-        )
-        no_xctx_row = pick_row(occupied_rows)
-        xctx_disabled_mask[no_xctx_row] = True
-        context_special_rows.add(no_xctx_row)
-        puncture_row = pick_row(occupied_rows)
-        drop_position = random.randrange(max(1, block_size))
-        context_dropout_positions[puncture_row] = drop_position
-        context_special_rows.add(puncture_row)
-        attention_disabled_mask = torch.zeros(batch_size, dtype=torch.bool, device=device)
-        attention_dropout_positions = torch.full(
-            (batch_size,),
-            -1,
-            dtype=torch.long,
-            device=device,
-        )
-        att_off = pick_row(occupied_rows)
-        attention_disabled_mask[att_off] = True
-        context_special_rows.add(att_off)
-        att_puncture = pick_row(occupied_rows)
-        att_drop_position = random.randrange(max(1, block_size))
-        attention_dropout_positions[att_puncture] = att_drop_position
-        context_special_rows.add(att_puncture)
-
-    return SpecialRowMasks(
-        context_special_rows,
-        context_disabled_mask,
-        None,
-        xctx_disabled_mask,
-        None,
-        context_dropout_positions,
-        attention_disabled_mask,
-        attention_dropout_positions,
-        None,
-        None,
-        None,
-    )
-
 
 def load_or_prepare_tokens(
     split: str,
@@ -3773,26 +3681,15 @@ class Runtime:
     def __init__(self, settings: Settings):
         self.settings = settings
 
-    def big_fat_old_main(self) -> int:
-        """Dispatch the CLI command selected by :func:`grce_cli_args`.
+    def cancel_timeout(self) -> None:
+        pass
 
-        Handles corpus management, training/reporting flow, and subcommands such
-        as ``size``. When running training it constructs the model/tokenizer and
-        calls :func:`train_model`.
-        """
-
-        # big_fat_old_main() needs cli_args
-        assert self.settings.cli_args is not None
-        args = self.settings.cli_args
-
-        context_dropout_interval = 1
-
-
+    def start_timeout(self, timeout_seconds) -> None:
+        self.cancel_timeout()
 
         class TimeoutAlarm(Exception):
             pass
 
-        timeout_seconds = max(0.0, float(getattr(args, "timeout", 0.0)))
         timeout_method: str | None = None
         prev_sigalrm_handler = None
 
@@ -3820,19 +3717,31 @@ class Runtime:
                 timeout_method = "alarm"
                 signal.alarm(max(1, int(math.ceil(timeout_seconds))))
 
-        selected_action = args.command
+        self.cancel_timeout = cancel_timeout
+
+    def big_fat_old_main(self) -> int:
+        """Dispatch the CLI command selected by :func:`grce_cli_args`.
+
+        Handles corpus management, training/reporting flow, and subcommands such
+        as ``size``. When running training it constructs the model/tokenizer and
+        calls :func:`train_model`.
+        """
+
+        # big_fat_old_main() needs cli_args
+        assert self.settings.cli_args is not None
+        args = self.settings.cli_args
 
         checkpoint_override_payload: dict | None = None
         checkpoint_override_config: ModelConfig | None = None
         checkpoint_override_tokenizer_json: str | None = None
         if args.pt:
-            if selected_action == "train":
+            if args.command == "train":
                 raise ValueError("--pt is only supported for inference/debug commands")
             if args.command == "create" and args.create_args.import_model:
                 raise ValueError("--pt cannot be combined with --import-model")
             skip_checkpoint_load = (
-                (selected_action == "corpus" and getattr(args, "corpus_init", False))
-                or selected_action == "create"
+                (args.command == "corpus" and getattr(args, "corpus_init", False))
+                or args.command == "create"
             )
             if not skip_checkpoint_load:
                 if not args.pt.exists():
@@ -3888,12 +3797,12 @@ class Runtime:
                     pass
 
             must_build_tokenizer = (
-                selected_action == "corpus" and getattr(args, "corpus_init", False)
+                args.command == "corpus" and getattr(args, "corpus_init", False)
             )
             train_cache_path = data_dir / f"{args.corpus}_tokens_train_{args.vocab_size}.pt"
             test_cache_path = data_dir / f"{args.corpus}_tokens_test_{args.vocab_size}.pt"
             need_corpus_for_create = False
-            if selected_action == "create":
+            if args.command == "create":
                 need_corpus_for_create = (
                     not train_cache_path.exists() or not test_cache_path.exists()
                 )
@@ -3916,7 +3825,7 @@ class Runtime:
 
             tokenizer_key = f"{args.corpus}_vocab_{args.vocab_size}"
             tokenizer_path = data_dir / f"{tokenizer_key}.json"
-            if selected_action == "create" and not tokenizer_path.exists():
+            if args.command == "create" and not tokenizer_path.exists():
                 must_build_tokenizer = True
             tokenizer_json = checkpoint_override_tokenizer_json
             if tokenizer_json is None:
@@ -4047,7 +3956,7 @@ class Runtime:
                     text = tokenizer.decode(torch.tensor(chunk_tokens))
                     print(text)
 
-            if selected_action == "corpus":
+            if args.command == "corpus":
                 actions_done = False
                 if getattr(args, "corpus_init", False):
                     print(
@@ -4098,8 +4007,8 @@ class Runtime:
                 log_path = model_dir / f"{prefix}{model_tag}.log"
             print(color_text(f"Model: {model_path}", Colors.CYAN))
             print(color_text(f"Logfile: {log_path}", Colors.BLUE))
-            requires_checkpoint = selected_action in {"train", "report", "test"}
-            if selected_action == "create" and model_path.exists():
+            requires_checkpoint = args.command in {"train", "report", "test"}
+            if args.command == "create" and model_path.exists():
                 raise FileExistsError(
                     f"Checkpoint {model_path} already exists; delete it or pick a new --model directory."
                 )
@@ -4108,7 +4017,7 @@ class Runtime:
                     f"Checkpoint {model_path} not found; run 'create' first to initialize it."
                 )
 
-            if selected_action == "prompts":
+            if args.command == "prompts":
                 target_path = Path(args.target) if args.target else model_path
                 if not target_path.exists():
                     raise FileNotFoundError(f"Checkpoint {target_path} not found")
@@ -4443,7 +4352,7 @@ class Runtime:
                     )
                 )
                 return
-            if selected_action == "create":
+            if args.command == "create":
                 checkpoint_payload = {
                     "model": model.state_dict(),
                     "dataset": dataset.state_dict(),
@@ -4463,7 +4372,7 @@ class Runtime:
                 )
                 return
 
-            if selected_action == "report":
+            if args.command == "report":
                 run_report_mode(
                     model=model,
                     tokenizer=tokenizer,
@@ -4478,7 +4387,7 @@ class Runtime:
                 )
                 return
 
-            if selected_action == "test":
+            if args.command == "test":
                 run_test_slice(
                     settings=self.settings,
                     dataset=dataset,
@@ -4636,8 +4545,7 @@ class Runtime:
             print(color_text("Timeout; exiting cleanly.", Colors.RED, bold=True))
 
         finally:
-            if timeout_method is not None:
-                cancel_timeout()
+            self.cancel_timeout()
             sys.stdout.flush()
             sys.stderr.flush()
             sys.stdout = orig_stdout
@@ -4657,10 +4565,11 @@ def grce_main(args: argparse.Namespae) -> int:
         sys.exit(grce_cli_size(cli_args))
 
     torch.manual_seed(42)
-    random.seed(42)
+    random.seed(time.time())
 
     # otherwise: run the big "default" main
     rt = Runtime(Settings(cli_args))
+    rt.start_timeout(cli_args.timeout)
     return rt.big_fat_old_main()
 
 if __name__ == "__main__":
