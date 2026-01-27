@@ -3709,7 +3709,7 @@ def grce_main(args: argparse.Namespace) -> int:
         test_token_count = int(test_tokens.numel())
         print(
             color_text(
-                f"Dataset size: {train_token_count:,} train tokens, {test_token_count:,} test tokens",
+                f"Corpus size: {train_token_count:,} train tokens, {test_token_count:,} test tokens",
                 Colors.CYAN,
             )
         )
@@ -3928,7 +3928,7 @@ def grce_main(args: argparse.Namespace) -> int:
             summary_items = []
         summary_counts = {entry["label"]: entry["count"] for entry in summary_items}
         total_params = summary_counts.get("total", 0)
-        embedding_params = summary_counts.get("global", 0)
+        embedding_params = summary_counts.get("embeddings", 0)
         non_emb_params = total_params - embedding_params
         print(
             f"Trainable model params: {total_params:,}; "
@@ -4237,9 +4237,9 @@ def grce_main(args: argparse.Namespace) -> int:
 
             def format_range(start: int, span: int) -> str:
                 if span <= 0:
-                    return f"{start}-{start}"
+                    return f"{start:,} - {start:,}"
                 end = start + span - 1
-                return f"{start}-{end}"
+                return f"{start:,} - {end:,}"
 
             train_span = int(train_chunk.size(0)) if train_chunk is not None else 0
             test_span = int(test_chunk.size(0)) if test_chunk is not None else 0
@@ -4259,7 +4259,7 @@ def grce_main(args: argparse.Namespace) -> int:
                     )
             print(
                 color_text(
-                    f"Dataset: train tokens {train_range}, test tokens {test_range}",
+                    f"Corpus slices: train tokens {train_range}, test tokens {test_range}",
                     Colors.CYAN,
                 )
             )
