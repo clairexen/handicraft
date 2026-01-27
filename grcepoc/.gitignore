@@ -2,6 +2,12 @@
 /data/simplerwiki_tokens_train_*.pt
 /data/simplestwiki_tokens_test_*.pt
 /data/simplestwiki_tokens_train_*.pt
+/data/cccc-test.txt.gz
+/data/cccc-train.txt.gz
+/data/cccc_vocab_3000.json
+/data/cccc_tokens_test_3000.pt
+/data/cccc_tokens_train_3000.pt
+/data/dolma-cccc-filtered-0000.json.gz
 /.venv/
 /.backup/
 /model/
