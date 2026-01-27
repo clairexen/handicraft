@@ -494,7 +494,9 @@ as additional args.
 Maybe let's restructure 'create' into grce_cli_create() and grce_cmd_create() first?
 
 
-## Move --import-model etc from top-level args parser into 'create' subcommand
+## Move --import-model etc from top-level args parser into the 'create' subcommand in grce.py
 
 Move the top-level --import-model, --trim-model, --drop-layers, and --add-layers cli options
-from the top-level args parser to be cli options of the 'create' subcommand.
+from the top-level args parser to be cli options of the 'create' subcommand. We should only
+import (and do any of those tweaks) while creating a new model.
+

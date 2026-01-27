@@ -697,28 +697,6 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Append an extra _TAG suffix to the model name (can be repeated)",
     )
     import_group.add_argument(
-        "--import-model",
-        type=pathlib.Path,
-        help="Initialize from another checkpoint when creating a new model",
-    )
-    import_group.add_argument(
-        "--trim-model",
-        action="store_true",
-        help="Allow importing into a smaller model by dropping overflow",
-    )
-    import_group.add_argument(
-        "--drop-layers",
-        type=str,
-        default="",
-        help="Comma-separated layer numbers (1-indexed) to remove during import",
-    )
-    import_group.add_argument(
-        "--add-layers",
-        type=str,
-        default="",
-        help="Comma-separated layer numbers (1-indexed) to insert during import",
-    )
-    import_group.add_argument(
         "--pt",
         type=pathlib.Path,
         help="Load an explicit checkpoint file for inference/debugging commands",
@@ -866,6 +844,33 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     create_parser.set_defaults(command="create")
+    create_import_group = create_parser.add_argument_group("Checkpoint import tweaks")
+    create_import_group.add_argument(
+        "--import-model",
+        dest="create_import_model",
+        type=pathlib.Path,
+        help="Initialize from another checkpoint when creating a new model",
+    )
+    create_import_group.add_argument(
+        "--trim-model",
+        dest="create_trim_model",
+        action="store_true",
+        help="Allow importing into a smaller model by dropping overflow",
+    )
+    create_import_group.add_argument(
+        "--drop-layers",
+        dest="create_drop_layers",
+        type=str,
+        default="",
+        help="Comma-separated layer numbers (1-indexed) to remove during import",
+    )
+    create_import_group.add_argument(
+        "--add-layers",
+        dest="create_add_layers",
+        type=str,
+        default="",
+        help="Comma-separated layer numbers (1-indexed) to insert during import",
+    )
 
     block_length_flag = flag_present("--block-length")
     args = parser.parse_args()
@@ -3619,12 +3624,21 @@ def grce_main(args: argparse.Namespace) -> int:
             raise ValueError(f"{flag} must be a comma-separated list of integers") from exc
         return entries
 
-    args.drop_layers = parse_layer_list(args.drop_layers, "--drop-layers")
-    args.add_layers = parse_layer_list(args.add_layers, "--add-layers")
-    if (args.drop_layers or args.add_layers) and not args.import_model:
-        raise ValueError("--drop-layers/--add-layers are only valid with --import-model")
-    if args.trim_model and not args.import_model:
-        raise ValueError("--trim-model is only valid with --import-model")
+    create_opts: argparse.Namespace | None = None
+    if getattr(args, "command", None) == "create":
+        create_opts = argparse.Namespace(
+            import_model=getattr(args, "create_import_model", None),
+            trim_model=bool(getattr(args, "create_trim_model", False)),
+            drop_layers=getattr(args, "create_drop_layers", ""),
+            add_layers=getattr(args, "create_add_layers", ""),
+        )
+    if create_opts is not None:
+        create_opts.drop_layers = parse_layer_list(create_opts.drop_layers, "--drop-layers")
+        create_opts.add_layers = parse_layer_list(create_opts.add_layers, "--add-layers")
+        if (create_opts.drop_layers or create_opts.add_layers) and not create_opts.import_model:
+            raise ValueError("--drop-layers/--add-layers are only valid with --import-model")
+        if create_opts.trim_model and not create_opts.import_model:
+            raise ValueError("--trim-model is only valid with --import-model")
     args.prompt = normalize_prompt(args.prompt)
     torch.manual_seed(42)
     random.seed(42)
@@ -3661,6 +3675,8 @@ def grce_main(args: argparse.Namespace) -> int:
             signal.alarm(max(1, int(math.ceil(timeout_seconds))))
 
     selected_action = args.command
+    if selected_action != "create":
+        create_opts = None
 
     checkpoint_override_payload: dict | None = None
     checkpoint_override_config: ModelConfig | None = None
@@ -3668,7 +3684,7 @@ def grce_main(args: argparse.Namespace) -> int:
     if args.pt:
         if selected_action == "train":
             raise ValueError("--pt is only supported for inference/debug commands")
-        if args.import_model:
+        if create_opts is not None and create_opts.import_model:
             raise ValueError("--pt cannot be combined with --import-model")
         skip_checkpoint_load = (
             (selected_action == "corpus" and getattr(args, "corpus_init", False))
@@ -4131,7 +4147,7 @@ def grce_main(args: argparse.Namespace) -> int:
         total_train_wall = 0.0
         payload = checkpoint_override_payload
         if payload is None and model_path.exists():
-            if args.import_model:
+            if create_opts and create_opts.import_model:
                 raise ValueError(
                     "--import-model can only be used when no existing checkpoint is present"
                 )
@@ -4220,11 +4236,13 @@ def grce_main(args: argparse.Namespace) -> int:
             except RuntimeError as err:
                 print(color_text("Checkpoint load failed (shape mismatch); starting fresh.", Colors.RED, bold=True))
                 print(color_text(str(err), Colors.RED))
-        elif args.import_model:
+        elif create_opts and create_opts.import_model:
             import_timer = Timer().start()
-            if not args.import_model.exists():
-                raise FileNotFoundError(f"Import checkpoint {args.import_model} not found")
-            source_state, meta = load_checkpoint_payload(args.import_model, device)
+            if not create_opts.import_model.exists():
+                raise FileNotFoundError(
+                    f"Import checkpoint {create_opts.import_model} not found"
+                )
+            source_state, meta = load_checkpoint_payload(create_opts.import_model, device)
             src_config = meta.get("config")
             if src_config is None:
                 raise ValueError(
@@ -4235,18 +4253,18 @@ def grce_main(args: argparse.Namespace) -> int:
             src_layers = src_config.get("n_layer")
             if src_layers is None:
                 src_layers = count_layers_from_state(source_state)
-            print(color_text(f"Importing weights from {args.import_model}", Colors.GREEN))
+            print(color_text(f"Importing weights from {create_opts.import_model}", Colors.GREEN))
             mapping = build_layer_mapping(
                 src_layers,
                 config.n_layer,
-                args.drop_layers,
-                args.add_layers,
-                allow_trim=args.trim_model,
+                create_opts.drop_layers,
+                create_opts.add_layers,
+                allow_trim=create_opts.trim_model,
             )
             apply_imported_state(
                 model,
                 source_state,
-                allow_trim=args.trim_model,
+                allow_trim=create_opts.trim_model,
                 mapping=mapping,
             )
             total_steps = int(meta.get("total_steps", 0))
