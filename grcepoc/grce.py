@@ -998,6 +998,87 @@ class Tee:
         for stream, _ in self.streams:
             stream.flush()
 
+import time
+import threading
+import pynvml
+
+class GpuUtilSampler:
+    def __init__(self, device_index=0, interval_s=0.02):
+        """
+        interval_s: sampling period (20–50 ms is a good sweet spot)
+        """
+        self.interval_s = interval_s
+        self.device_index = device_index
+
+        self.busy_time_s = 0.0
+        self.max_mem_util = 0.0
+
+        self._running = False
+        self._thread = None
+
+    def start(self):
+        assert not self._running
+        pynvml.nvmlInit()
+        self.handle = pynvml.nvmlDeviceGetHandleByIndex(self.device_index)
+
+        self.busy_time_s = 0.0
+        self.max_mem_util = 0.0
+
+        self._running = True
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        assert self._running
+        self._running = False
+        if self._thread:
+            self._thread.join()
+        pynvml.nvmlShutdown()
+
+    def _run(self):
+        last_t = time.time()
+        while self._running:
+            time.sleep(self.interval_s)
+            t = time.time()
+            dt = t - last_t
+            last_t = t
+
+            util = pynvml.nvmlDeviceGetUtilizationRates(self.handle)
+            self.busy_time_s += (util.gpu / 100.0) * dt
+            self.max_mem_util = max(self.max_mem_util, util.memory)
+
+class Timer:
+    def __init__(self):
+        self.gpu_sampler = GpuUtilSampler(interval_s=0.2)
+        self.wall_secs = 0.0
+        self.cpu_secs = 0.0
+        self.gpu_secs = 0.0
+        self.gpu_mem = 0.0
+        self.wall_start = None
+        self.cpu_start = None
+        self.gpu_start = None
+
+    def start(self):
+        assert self.wall_start is None
+        self.wall_start = time.time()
+        self.cpu_start = time.process_time()
+        self.gpu_sampler.start()
+        return self
+
+    def stop(self):
+        assert self.wall_start is not None
+        self.wall_secs += time.time() - self.wall_start
+        self.cpu_secs += time.process_time() - self.cpu_start
+        self.gpu_sampler.stop()
+        self.gpu_secs += self.gpu_sampler.busy_time_s
+        self.gpu_mem = max(self.gpu_mem, self.gpu_sampler.max_mem_util)
+        self.wall_start = None
+        self.cpu_start = None
+        return self
+
+    def __str__(self):
+        return f"{self.wall_secs:.2f}s / {self.cpu_secs:.2f}s / {self.gpu_secs:.2f}s / {self.gpu_mem:.2f}%"
+
 
 # -----------------------------------------------------------------------------
 # GRCE Model Size Information
@@ -3642,8 +3723,7 @@ def grce_main(args: argparse.Namespace) -> int:
                     f"Tokenizer cache {tokenizer_path} not found; run 'corpus --init' first or supply --pt."
                 )
         print(color_text(f"Tokenizer: {tokenizer_path}", Colors.BLUE))
-        tok_wall_start = time.time()
-        tok_cpu_start = time.process_time()
+        tok_timer = Timer().start()
         vocab_source = full_train_text or ""
         reserved_tokens = 1 + len(GPT2TokenizerWrapper.EXTRA_SPECIAL_TOKENS)
         if args.vocab_size <= reserved_tokens:
@@ -3714,7 +3794,10 @@ def grce_main(args: argparse.Namespace) -> int:
             )
         )
         tok_summary = (
-            f"[tokenizer] wall={time.time()-tok_wall_start:.2f}s cpu={time.process_time()-tok_cpu_start:.2f}s\n"
+            color_text(
+                f"[tokenizer time (wall/cpu/gpu/vram)]",
+                Colors.CYAN,
+            ) + f" {tok_timer.stop()}\n"
         )
         print(tok_summary)
 
@@ -4096,8 +4179,7 @@ def grce_main(args: argparse.Namespace) -> int:
                 print(color_text("Checkpoint load failed (shape mismatch); starting fresh.", Colors.RED, bold=True))
                 print(color_text(str(err), Colors.RED))
         elif args.import_model:
-            import_wall = time.time()
-            import_cpu = time.process_time()
+            import_timer = Timer().start()
             if not args.import_model.exists():
                 raise FileNotFoundError(f"Import checkpoint {args.import_model} not found")
             source_state, meta = load_checkpoint_payload(args.import_model, device)
@@ -4128,8 +4210,7 @@ def grce_main(args: argparse.Namespace) -> int:
             total_steps = int(meta.get("total_steps", 0))
             total_train_wall = float(meta.get("train_wall_seconds", 0.0))
             loss_history = []
-            write_wall_start = time.time()
-            write_cpu_start = time.process_time()
+            write_timer = Timer().start()
             torch.save(
                 {
                     "model": model.state_dict(),
@@ -4143,13 +4224,9 @@ def grce_main(args: argparse.Namespace) -> int:
                 },
                 model_path,
             )
-            write_wall = time.time() - write_wall_start
-            write_cpu = time.process_time() - write_cpu_start
-            import_wall = time.time() - import_wall
-            import_cpu = time.process_time() - import_cpu
             print(
                 color_text(
-                    f"[import] total steps: {total_steps}; time spent: wall={import_wall:.2f}s cpu={import_cpu:.2f}s; writing model: wall={write_wall:.2f}s cpu={write_cpu:.2f}s",
+                    f"[import] total steps: {total_steps}; time spent (wall/cpu/gpu/vram): {import_timer.stop()}; writing model: {write_timer.stop()}",
                     Colors.CYAN,
                 )
             )
