@@ -1698,10 +1698,9 @@ class GPT2TokenizerWrapper:
             s = self.decode_one(tok)
             assert s, "got empty token"
             s = s.replace("\n", FANCY_ENTER if settings.escape_newline_tokens else FANCY_ENTER.replace(" ", "\n"))
-            if s == " ":
-                s = FANCY_SPACE
-            else:
-                parts.append(color + s + Colors.RESET)
+            if not s.replace(" ", ""):
+                s = s.replace(" ", FANCY_SPACE)
+            parts.append(color + s + Colors.RESET)
             color, altcolor = altcolor, color
         return "".join(parts)
 
