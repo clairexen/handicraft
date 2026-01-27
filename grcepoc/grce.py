@@ -114,6 +114,7 @@ class ModelConfig:
     n_embd: int = 384       # GPT-2 base uses 768 embedding dims.
     n_grce: int = 64        # Narrow GRCE context dims.
     n_xctx: int = 720       # Wide XCTX context dims.
+    grce_optimized: bool = False  # Use the vectorized GRCE channel implementation.
 
     # FIXME: these should only be part of Settings, not ModelConfig -> remove later
     dropout: float = 0.05
@@ -152,6 +153,7 @@ class Settings:
     n_embd: int = MODEL_CONFIG_DEFAULTS.n_embd
     n_grce: int = MODEL_CONFIG_DEFAULTS.n_grce
     n_xctx: int = MODEL_CONFIG_DEFAULTS.n_xctx
+    grce_optimized: bool = MODEL_CONFIG_DEFAULTS.grce_optimized
 
     # Additional non-geometry "pseudo" model args
     corpus: str = "simplerwiki"
@@ -191,6 +193,7 @@ class Settings:
             n_embd=self.n_embd,
             n_grce=self.n_grce,
             n_xctx=self.n_xctx,
+            grce_optimized=self.grce_optimized,
         )
 
     def __post_init__(self):
@@ -204,6 +207,7 @@ class Settings:
         self.n_embd = args.n_embd
         self.n_grce = args.n_grce
         self.n_xctx = args.n_xctx
+        self.grce_optimized = args.grce_optimized
 
         self.corpus = args.corpus
         self.extra_tags = tuple(args.tag)
@@ -566,6 +570,11 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=int,
         default=defaults.n_grce,
         help="Dimension of the recurrent GRCE context; use 0 to disable the channel.",
+    )
+    model_group.add_argument(
+        "--grce-optimized",
+        action="store_true",
+        help="Use the vectorized GRCE channel implementation (experimental).",
     )
     model_group.add_argument(
         "--n-xctx",
@@ -2703,6 +2712,111 @@ class GRCEContextChannel(BaseContextChannel):
         return self.output_norm(tensor)
 
 
+class GRCEContextChannelOptimized(BaseContextChannel):
+    """Vectorized GRCE channel that batches the per-layer samplers/decoders."""
+
+    def __init__(self, config: ModelConfig) -> None:
+        super().__init__(config, config.n_grce)
+        self.is_xctx = False
+        if self.disabled:
+            return
+        self.layer_count = config.n_layer
+        self.sample_ln_eps = 1e-5
+        emb_dim = config.n_embd
+        ctx_dim = self.context_dim
+        self.sample_ln_weight = nn.Parameter(torch.ones(self.layer_count, emb_dim))
+        self.sample_ln_bias = nn.Parameter(torch.zeros(self.layer_count, emb_dim))
+        self.sample_proj_weight = nn.Parameter(torch.empty(self.layer_count, emb_dim, ctx_dim))
+        self.sample_proj_bias = nn.Parameter(torch.zeros(self.layer_count, ctx_dim))
+        self.bias_norm = nn.LayerNorm(ctx_dim)
+        self.bias_proj_weight = nn.Parameter(torch.empty(self.layer_count, ctx_dim, emb_dim))
+        self.bias_proj_bias = nn.Parameter(torch.zeros(self.layer_count, emb_dim))
+        self.mix_norm = nn.LayerNorm(ctx_dim)
+        hidden = max(1, 4 * ctx_dim)
+        self.mlp_up = nn.Linear(ctx_dim, hidden)
+        self.mlp_down = nn.Linear(hidden, ctx_dim)
+        self.output_norm = nn.LayerNorm(ctx_dim)
+        self.reset_parameters()
+
+    def reset_parameters(self) -> None:
+        self._reset_linear_param(self.sample_proj_weight, self.sample_proj_bias)
+        self._reset_linear_param(self.bias_proj_weight, self.bias_proj_bias)
+
+    def _reset_linear_param(self, weight: torch.Tensor, bias: torch.Tensor) -> None:
+        fan_in = max(1, weight.size(-2))
+        bound = 1.0 / math.sqrt(fan_in)
+        nn.init.uniform_(weight, -bound, bound)
+        nn.init.uniform_(bias, -bound, bound)
+
+    def _layer_norm_stack(self, tensor: torch.Tensor) -> torch.Tensor:
+        mean = tensor.mean(dim=-1, keepdim=True)
+        var = tensor.var(dim=-1, unbiased=False, keepdim=True)
+        normalized = (tensor - mean) / torch.sqrt(var + self.sample_ln_eps)
+        weight = self.sample_ln_weight.unsqueeze(0)
+        bias = self.sample_ln_bias.unsqueeze(0)
+        return normalized * weight + bias
+
+    def project(self, context: torch.Tensor) -> List[torch.Tensor]:
+        if self.disabled:
+            raise RuntimeError("Context channel disabled; project should not be called.")
+        normed = self.bias_norm(context)
+        projected = torch.einsum("bc,lce->ble", normed, self.bias_proj_weight)
+        projected = projected + self.bias_proj_bias.unsqueeze(0)
+        return list(projected.unbind(dim=1))
+
+    def update(
+        self,
+        block_inputs: List[torch.Tensor],
+        *,
+        prev_context: torch.Tensor | None,
+        stop_grad: bool,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if self.disabled:
+            raise RuntimeError("Context channel disabled; update should not be called.")
+        inputs = torch.stack(block_inputs, dim=1)
+        normed = self._layer_norm_stack(inputs)
+        per_layer = torch.einsum("ble,lec->blc", normed, self.sample_proj_weight)
+        per_layer = per_layer + self.sample_proj_bias.unsqueeze(0)
+        fused = per_layer.sum(dim=1)
+        if prev_context is None:
+            combined = fused
+        else:
+            residual = prev_context.detach() if (stop_grad and self.detach_context) else prev_context
+            combined = fused + residual
+        mixed = self.mix_norm(combined)
+        mlp_out = self.mlp_down(F.relu(self.mlp_up(mixed)))
+        raw_context = mixed + mlp_out
+        context = self.output_norm(raw_context)
+        return context, raw_context
+
+    def parameter_breakdown(self) -> dict[str, int]:
+        if self.disabled:
+            return {}
+        sampler = (
+            self.sample_ln_weight.numel()
+            + self.sample_ln_bias.numel()
+            + self.sample_proj_weight.numel()
+            + self.sample_proj_bias.numel()
+        )
+        mlp = (
+            _module_param_count(self.mix_norm)
+            + _module_param_count(self.mlp_up)
+            + _module_param_count(self.mlp_down)
+            + _module_param_count(self.output_norm)
+        )
+        bias = (
+            _module_param_count(self.bias_norm)
+            + self.bias_proj_weight.numel()
+            + self.bias_proj_bias.numel()
+        )
+        return {"samplers": sampler, "mlp": mlp, "bias": bias}
+
+    def normalize_state(self, tensor: torch.Tensor) -> torch.Tensor:
+        if self.disabled:
+            return tensor
+        return self.output_norm(tensor)
+
+
 class XCTXContextChannel(BaseContextChannel):
     def __init__(self, config: ModelConfig) -> None:
         super().__init__(config, config.n_xctx)
@@ -2819,9 +2933,12 @@ class GRCEGPT(nn.Module):
         self.core = GPTCore(config)
         self.context_channels = nn.ModuleList()
         if config.n_grce > 0:
-            self.context_channels.append(
-                GRCEContextChannel(config)
+            channel_cls = (
+                GRCEContextChannelOptimized
+                if getattr(config, "grce_optimized", False)
+                else GRCEContextChannel
             )
+            self.context_channels.append(channel_cls(config))
         if config.n_xctx > 0:
             self.context_channels.append(
                 XCTXContextChannel(config)
