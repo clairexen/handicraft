@@ -102,7 +102,7 @@ open_shell() {
 }
 
 pod_init() {
-        run_ssh "set -ex; mkdir -p $REMOTE_DIR/data $REMOTE_DIR/model; echo $POD_NAME > $REMOTE_DIR/.podname; apt update; apt install -y rsync; pip install tokenizers transformers"
+        run_ssh "set -ex; mkdir -p $REMOTE_DIR/data $REMOTE_DIR/model; echo $POD_NAME > $REMOTE_DIR/.podname; apt update; apt install -y rsync; pip install tokenizers transformers nvidia-ml-py"
 }
 
 rsync_update() {
