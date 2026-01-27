@@ -2988,7 +2988,18 @@ ROW_METRIC_MAP = {
     "recode": "recode",
 }
 
-ROW_METRIC_KEYS = [
+ROW_METRIC_HIST_KEYS = [
+    "normal",
+    "encode",
+    "recode",
+    "decode",
+    "noxctx",
+    "noattn",
+    "puxctx",
+    "puattn",
+]
+
+ROW_METRIC_LOG_KEYS = [
     "normal",
     #"encode",
     #"recode",
@@ -2999,7 +3010,7 @@ ROW_METRIC_KEYS = [
     #"puattn",
 ]
 
-ROW_METRIC_GROUP_START = {
+ROW_METRIC_LOG_GROUP = {
     "normal",
     "noxctx",
 }
@@ -3159,7 +3170,7 @@ def train_model(
     eval_wall_total = 0.0
     eval_cpu_total = 0.0
 
-    long_loss_header = " ".join([""] + [f"{': ' if key in ROW_METRIC_GROUP_START else ''}{key}" for key in ROW_METRIC_KEYS])
+    long_loss_header = " ".join([""] + [f"{': ' if key in ROW_METRIC_LOG_GROUP else ''}{key}" for key in ROW_METRIC_LOG_KEYS])
 
     line_parts: List[str] = []
     if show_time:
@@ -3308,10 +3319,10 @@ def train_model(
             value = split_metrics[split].get(key)
             if value is None:
                 return "-"
-            sep = ": " if key in ROW_METRIC_GROUP_START else ""
+            sep = ": " if key in ROW_METRIC_LOG_GROUP else ""
             return f"{sep}{value:.2f}"
 
-        detail_keys = ROW_METRIC_KEYS
+        detail_keys = ROW_METRIC_LOG_KEYS
 
         def format_train_line() -> str:
             base = format_metric("train", "target")
@@ -3358,7 +3369,7 @@ def train_model(
             "train_cursor": int(dataset.positions.get("train", 0)),
             "test_cursor": int(dataset.positions.get("test", 0)),
         }
-        metric_keys = ["target"] + ROW_METRIC_KEYS
+        metric_keys = ["target"] + ROW_METRIC_HIST_KEYS
         for key in metric_keys:
             train_val = split_metrics["train"].get(key)
             test_val = split_metrics["test"].get(key)
