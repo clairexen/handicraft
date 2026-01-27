@@ -942,13 +942,6 @@ def normalize_prompt(text: str) -> str:
     return text.replace(FANCY_SPACE, " ").replace(FANCY_ENTER, "\n")
 
 
-def fancy_ctrl_chars(text: str) -> str:
-    text = text.replace(" ", FANCY_SPACE)
-    text = text.replace("\n", FANCY_ENTER)
-    return text
-
-def highlight_first_char(text: str) -> str:
-    return f"{Colors.BOLD}{text[0]}{Colors.NOT_BOLD}{text[1:]}" if text else ""
 
 def prompt_needs_boundary(text: str) -> bool:
     trimmed = text.rstrip()
@@ -1317,7 +1310,7 @@ from tokenizers.processors import ByteLevel as ByteLevelProcessor
 from tokenizers.trainers import BpeTrainer
 
 FANCY_SPACE = "\u2423"  # Open Box symbol for visible spaces
-FANCY_ENTER = "\u23CE"  # Return symbol for visible newlines
+FANCY_ENTER = "\u23CE "  # Return symbol for visible newlines
 ASCII_LETTERS = set(string.ascii_letters)
 ASCII_LOWERCASE = set(string.ascii_lowercase)
 
@@ -1607,8 +1600,19 @@ class GPT2TokenizerWrapper:
     def decode_one(self, token: int) -> str:
         return self.tokenizer.decode([token])
 
-    def decode_pretty(self, tokens: torch.Tensor) -> str:
-        return "".join(highlight_first_char(fancy_ctrl_chars(self.decode_one(tok))) for tok in tokens.tolist())
+    def decode_pretty(self, tokens: torch.Tensor, color: str = Colors.MAGENTA, altcolor: str = Colors.GREEN, alt: bool = False) -> str:
+        if alt: color, altcolor =  Colors.YELLOW, Colors.CYAN
+        parts = []
+        for tok in tokens.tolist():
+            s = self.decode_one(tok)
+            assert s, "got empty token"
+            s = s.replace("\n", FANCY_ENTER)
+            if s == " ":
+                s = FANCY_SPACE
+            else:
+                parts.append(color + s + Colors.RESET)
+            color, altcolor = altcolor, color
+        return "".join(parts)
 
 
 class PromptTracker:
@@ -3283,10 +3287,11 @@ def train_model(
                 )
 
         prompt_text = tokenizer.decode_pretty(torch.tensor(prompt_ids))
-        completion_text = tokenizer.decode_pretty(torch.tensor(completion_ids))
+        completion_text = tokenizer.decode_pretty(torch.tensor(completion_ids), alt=True)
         sample_prefix = color_text(prompt_text, Colors.CYAN)
         sample_suffix = color_text(completion_text, Colors.YELLOW)
-        sample_render = f"{sampling_strategy}: " + sample_prefix + sample_suffix
+        sample_render = (Colors.YELLOW if sampling_strategy == 'argmax' else Colors.CYAN) + \
+                        f"{sampling_strategy}:{Colors.RESET} " + sample_prefix + sample_suffix
 
         def format_metric(split: str, key: str) -> str:
             value = split_metrics[split].get(key)
