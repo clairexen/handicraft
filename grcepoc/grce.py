@@ -1058,13 +1058,29 @@ class Timer:
         self.cpu_start = None
         self.gpu_start = None
 
-    def acc(self, other):
+    def add(self, other):
         assert self.wall_start is None
         assert other.wall_start is None
         self.wall_secs += other.wall_secs
         self.cpu_secs += other.cpu_secs
         self.gpu_secs += other.gpu_secs
-        self.gpu_mem = max(self.gpu_mem, other.gpu_mem)
+        if self.gpu_mem is not None and other.gpu_mem is not None:
+            self.gpu_mem = max(self.gpu_mem, other.gpu_mem)
+        return self
+
+    def sub(self, other):
+        assert self.wall_start is None
+        assert other.wall_start is None
+        self.wall_secs = max(0.0, self.wall_secs - other.wall_secs)
+        self.cpu_secs = max(0.0, self.cpu_secs - other.cpu_secs)
+        self.gpu_secs = max(0.0, self.gpu_secs - other.gpu_secs)
+        self.gpu_mem = None
+        return self
+
+    def ratio(self, other):
+        return (f"{self.wall_secs/(other.wall_secs+0.001):.2f}x / "
+                f"{self.cpu_secs/(other.cpu_secs+0.001):.2f}x / "
+                f"{self.gpu_secs/(other.gpu_secs+0.001):.2f}x")
 
     def start(self):
         assert self.wall_start is None
@@ -1079,12 +1095,15 @@ class Timer:
         self.cpu_secs += time.process_time() - self.cpu_start
         self.gpu_sampler.stop()
         self.gpu_secs += self.gpu_sampler.busy_time_s
-        self.gpu_mem = max(self.gpu_mem, self.gpu_sampler.max_mem_util)
+        if self.gpu_mem is not None:
+            self.gpu_mem = max(self.gpu_mem, self.gpu_sampler.max_mem_util)
         self.wall_start = None
         self.cpu_start = None
         return self
 
     def __str__(self):
+        if self.gpu_mem is None:
+            return f"{self.wall_secs:.2f}s / {self.cpu_secs:.2f}s / {self.gpu_secs:.2f}s"
         return f"{self.wall_secs:.2f}s / {self.cpu_secs:.2f}s / {self.gpu_secs:.2f}s / {self.gpu_mem:.2f}%"
 
 
@@ -3234,7 +3253,7 @@ def train_model(
     boundary_blocklist: Sequence[int] | None = None,
     show_train_loss_details: bool = False,
     show_test_loss_details: bool = True,
-) -> Tuple[int, List[Dict[str, float]], float, float, float, float]:
+) -> Tuple[int, List[Dict[str, float]], float, float]:
     """Run the main training loop for a cycle."""
 
     optim = torch.optim.AdamW(model.parameters(), lr=3e-4)
@@ -3259,10 +3278,8 @@ def train_model(
         xctx_enabled=xctx_enabled,
     )
 
-    loop_wall_start = time.time()
-    loop_cpu_start = time.process_time()
-    eval_wall_total = 0.0
-    eval_cpu_total = 0.0
+    loop_timer = Timer().start()
+    eval_timer = Timer()
 
     long_loss_header = " ".join([""] + [f"{': ' if key in ROW_METRIC_LOG_GROUP else ''}{key}" for key in ROW_METRIC_LOG_KEYS])
 
@@ -3321,8 +3338,7 @@ def train_model(
         eval_due = step == 1 or step % eval_interval == 0 or step == steps
         if not eval_due:
             continue
-        eval_wall_block = time.time()
-        eval_cpu_block = time.process_time()
+        eval_timer.start()
         model.eval()
         split_metrics: dict[str, dict[str, float | None]] = {}
         with torch.no_grad():
@@ -3339,10 +3355,7 @@ def train_model(
                     xctx_enabled=xctx_enabled,
                 )
         model.train()
-        block_wall = time.time() - eval_wall_block
-        block_cpu = time.process_time() - eval_cpu_block
-        eval_wall_total += block_wall
-        eval_cpu_total += block_cpu
+        eval_timer.stop()
 
         prompt_input = sample_prompt
         prompt_needs_boundary_flag = default_prompt_boundary and boundary_blocklist is not None
@@ -3473,9 +3486,7 @@ def train_model(
                 record[f"test_loss_{key}"] = float(test_val)
         history_updates.append(record)
 
-    loop_wall_total = time.time() - loop_wall_start
-    loop_cpu_total = time.process_time() - loop_cpu_start
-    return total_steps, history_updates, loop_wall_total, loop_cpu_total, eval_wall_total, eval_cpu_total
+    return total_steps, history_updates, loop_timer.stop(), eval_timer
 
 
 @torch.no_grad()
@@ -4290,10 +4301,8 @@ def grce_main(args: argparse.Namespace) -> int:
             )
             return
 
-        acc_train_wall = 0.0
-        acc_train_cpu = 0.0
-        acc_eval_wall = 0.0
-        acc_eval_cpu = 0.0
+        acc_train = Timer()
+        acc_eval = Timer()
         for cycle in range(1, args.cycles + 1):
             cycle_wall = time.time()
             tags = ["GPT"]
@@ -4365,10 +4374,8 @@ def grce_main(args: argparse.Namespace) -> int:
             (
                 total_steps,
                 updates,
-                cycle_wall_elapsed,
-                cycle_cpu_elapsed,
-                eval_wall_total,
-                eval_cpu_total,
+                train_timer,
+                eval_timer,
             ) = train_model(
                 settings,
                 model,
@@ -4395,18 +4402,10 @@ def grce_main(args: argparse.Namespace) -> int:
                 show_test_loss_details=not args.no_test_loss_details,
             )
             loss_history.extend(updates)
-
-            train_wall = cycle_wall_elapsed
-            train_cpu = cycle_cpu_elapsed
-            eval_wall = eval_wall_total
-            eval_cpu = eval_cpu_total
-            pure_train_wall = max(0.0, train_wall - eval_wall)
-            pure_train_cpu = max(0.0, train_cpu - eval_cpu)
-            acc_train_wall += pure_train_wall
-            acc_train_cpu += pure_train_cpu
-            acc_eval_wall += eval_wall
-            acc_eval_cpu += eval_cpu
-            total_train_wall += train_wall
+            pure_train = Timer().add(train_timer).sub(eval_timer)
+            acc_train.add(pure_train)
+            acc_eval.add(eval_timer)
+            total_train_wall += train_timer.wall_secs
             torch.save(
                 {
                     "model": model.state_dict(),
@@ -4420,37 +4419,17 @@ def grce_main(args: argparse.Namespace) -> int:
                 },
                 model_path,
             )
-            cycle_part = color_text(f"[cycle {cycle}]", Colors.CYAN)
-            train_part = color_text(
-                f" train: wall={pure_train_wall:.2f}s cpu={pure_train_cpu:.2f}s;",
-                Colors.MAGENTA,
-            )
-            eval_part = color_text(
-                f" eval: wall={eval_wall:.2f}s cpu={eval_cpu:.2f}s;",
-                Colors.GREEN,
-            )
-            updated_part = color_text(" model updated.", Colors.YELLOW)
+            cycle_part = color_text(f"[cycle {cycle} (wall/cpu/gpu/vram)]", Colors.CYAN)
+            train_part = color_text(f" train: {pure_train};", Colors.MAGENTA)
+            eval_part = color_text(f" eval: {eval_timer};", Colors.GREEN)
+            updated_part = color_text(" model updated; flushing logs..", Colors.YELLOW)
             print(cycle_part + train_part + eval_part + updated_part)
-            def ratio_text(num: float, denom: float) -> str:
-                if denom <= 0:
-                    if num <= 0:
-                        return "0.0"
-                    return "inf"
-                return f"{num / denom:.2f}"
 
-            wall_ratio = ratio_text(acc_train_wall, acc_eval_wall)
-            cpu_ratio = ratio_text(acc_train_cpu, acc_eval_cpu)
             cumulative_part = color_text("[cumulative]", Colors.CYAN)
-            cum_train_part = color_text(
-                f" train: wall={acc_train_wall:.2f}s cpu={acc_train_cpu:.2f}s;",
-                Colors.MAGENTA,
-            )
-            cum_eval_part = color_text(
-                f" eval: wall={acc_eval_wall:.2f}s cpu={acc_eval_cpu:.2f}s;",
-                Colors.GREEN,
-            )
+            cum_train_part = color_text(f" train: {acc_train};", Colors.MAGENTA)
+            cum_eval_part = color_text(f" eval: wall={acc_eval};", Colors.GREEN)
             ratio_text = color_text(
-                f" train/eval: wall={wall_ratio} cpu={cpu_ratio}",
+                f" train/eval: {acc_train.ratio(acc_eval)}",
                 Colors.CYAN,
             )
             print(cumulative_part + cum_train_part + cum_eval_part + ratio_text)
