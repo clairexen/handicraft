@@ -1102,7 +1102,7 @@ class Timer:
         return self
 
     def __str__(self):
-        if self.gpu_mem is None:
+        if self.gpu_mem is None or True:
             return f"{self.wall_secs:.2f}s / {self.cpu_secs:.2f}s / {self.gpu_secs:.2f}s"
         return f"{self.wall_secs:.2f}s / {self.cpu_secs:.2f}s / {self.gpu_secs:.2f}s / {self.gpu_mem:.2f}%"
 
@@ -3818,10 +3818,8 @@ def grce_main(args: argparse.Namespace) -> int:
             )
         )
         tok_summary = (
-            color_text(
-                f"[tokenizer (wall/cpu/gpu/vram)]",
-                Colors.CYAN,
-            ) + f" {tok_timer.stop()}\n"
+            color_text(f"[tokenizer (wall/cpu/gpu)]", Colors.CYAN) +
+            color_text(f" {tok_timer.stop()}\n", Colors.MAGENTA)
         )
         print(tok_summary)
 
@@ -4250,7 +4248,7 @@ def grce_main(args: argparse.Namespace) -> int:
             )
             print(
                 color_text(
-                    f"[import] total steps: {total_steps}; time spent (wall/cpu/gpu/vram): {import_timer.stop()}; writing model: {write_timer.stop()}",
+                    f"[import] total steps: {total_steps}; time spent (wall/cpu/gpu): {import_timer.stop()}; writing model: {write_timer.stop()}",
                     Colors.CYAN,
                 )
             )
@@ -4419,15 +4417,15 @@ def grce_main(args: argparse.Namespace) -> int:
                 },
                 model_path,
             )
-            cycle_part = color_text(f"[cycle {cycle} (wall/cpu/gpu/vram)]", Colors.CYAN)
+            cycle_part = color_text(f"[cycle {cycle} (wall/cpu/gpu)]", Colors.CYAN)
             train_part = color_text(f" train: {pure_train};", Colors.MAGENTA)
             eval_part = color_text(f" eval: {eval_timer};", Colors.GREEN)
-            updated_part = color_text(" model updated; flushing logs..", Colors.YELLOW)
+            updated_part = color_text(" model updated; flushing logs.", Colors.YELLOW)
             print(cycle_part + train_part + eval_part + updated_part)
 
             cumulative_part = color_text("[cumulative]", Colors.CYAN)
             cum_train_part = color_text(f" train: {acc_train};", Colors.MAGENTA)
-            cum_eval_part = color_text(f" eval: wall={acc_eval};", Colors.GREEN)
+            cum_eval_part = color_text(f" eval: {acc_eval};", Colors.GREEN)
             ratio_text = color_text(
                 f" train/eval: {acc_train.ratio(acc_eval)}",
                 Colors.CYAN,
