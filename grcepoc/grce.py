@@ -443,6 +443,15 @@ def build_row_type_masks(
     )
 
 
+FANCY_SPACE = "\u2423"  # Open Box symbol for visible spaces
+FANCY_ENTER = "\u23CE "  # Return symbol for visible newlines
+
+def normalize_prompt(text: str) -> str:
+    """Map placeholder characters back to literal spaces/newlines."""
+
+    return text.replace(FANCY_SPACE, " ").replace(FANCY_ENTER, "\n")
+
+
 # -----------------------------------------------------------------------------
 # GRCE CLI Argument Parser
 # -----------------------------------------------------------------------------
@@ -872,24 +881,21 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Comma-separated layer numbers (1-indexed) to insert during import",
     )
 
-    block_length_flag = flag_present("--block-length")
+    # --------------------------------------------------------
+    # Run the args parser
+
     args = parser.parse_args()
+
     if args.command is None:
         parser.print_help()
         parser.exit(
             1,
             "\nPlease specify a command (train, report, test, size, corpus, create, or prompts).\n",
         )
-    if args.command == "corpus":
-        has_corpus_action = bool(
-            getattr(args, "corpus_init", False)
-            or getattr(args, "corpus_print_train", None)
-            or getattr(args, "corpus_print_test", None)
-        )
-        if not has_corpus_action:
-            parser.error("corpus command requires --init and/or --print-* options")
-    if args.command == "create" and args.pt:
-        parser.error("--pt cannot be combined with the create command")
+
+    # --------------------------------------------------------
+    # Normalize, tweak, and check global options
+
     if args.tiny:
         if not flag_present("--vocab-size"):
             args.vocab_size = 500
@@ -915,13 +921,60 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             args.eval_interval = 1
         if not flag_present("--corpus"):
             args.corpus = "simplestwiki"
+
+    args._block_length_defined = args.block_length is not None
     if args.block_length is None:
         args.block_length = args.block_size
     if args.block_length <= 0:
         parser.error("--block-length must be positive")
     if args.block_length > args.block_size:
         parser.error("--block-length must be <= --block-size")
-    args._block_length_defined = block_length_flag
+
+    args.prompt = normalize_prompt(args.prompt)
+
+
+    # --------------------------------------------------------
+    # Parse and check "corpus" sub-command args
+
+    if args.command == "corpus":
+        has_corpus_action = bool(
+            args.corpus_init
+            or args.corpus_init_tokenizer
+            or args.corpus_print_train is not None
+            or args.corpus_print_test is not None
+        )
+        if not has_corpus_action:
+            parser.error("corpus command requires --init-tokenizer, --init and/or --print-* options")
+
+
+    # --------------------------------------------------------
+    # Parse "create" sub-command args
+
+    if args.command == "create":
+        if args.pt:
+            parser.error("--pt cannot be combined with the create command")
+
+        def parse_layer_list(value: str, flag: str) -> list[int]:
+            if not value:
+                return []
+            try:
+                entries = [int(part) for part in value.split(",") if part]
+            except ValueError as exc:
+                raise ValueError(f"{flag} must be a comma-separated list of integers") from exc
+            return entries
+
+        args.create_args = argparse.Namespace(
+            import_model=args.create_import_model,
+            trim_model=args.create_trim_model,
+            drop_layers=parse_layer_list(args.create_drop_layers, "--drop-layers"),
+            add_layers=parse_layer_list(args.create_add_layers, "--add-layers"),
+        )
+
+        if (args.create_args.drop_layers or args.create_args.add_layers) and not args.create_args.import_model:
+            raise ValueError("--drop-layers/--add-layers are only valid with --import-model")
+        if args.create_args.trim_model and not args.create_args.import_model:
+            raise ValueError("--trim-model is only valid with --import-model")
+
     return args
 
 
@@ -970,12 +1023,6 @@ def color_text(text: str, color: str, *, bold: bool = False, underline: bool = F
     if underline:
         prefix += Colors.UNDERLINE
     return f"{prefix}{color}{text}{Colors.RESET}"
-
-
-def normalize_prompt(text: str) -> str:
-    """Map placeholder characters back to literal spaces/newlines."""
-
-    return text.replace(FANCY_SPACE, " ").replace(FANCY_ENTER, "\n")
 
 
 
@@ -1452,8 +1499,6 @@ from tokenizers.pre_tokenizers import ByteLevel
 from tokenizers.processors import ByteLevel as ByteLevelProcessor
 from tokenizers.trainers import BpeTrainer
 
-FANCY_SPACE = "\u2423"  # Open Box symbol for visible spaces
-FANCY_ENTER = "\u23CE "  # Return symbol for visible newlines
 ASCII_LETTERS = set(string.ascii_letters)
 ASCII_LOWERCASE = set(string.ascii_lowercase)
 
@@ -3605,904 +3650,893 @@ def run_test_slice(
 import signal
 import traceback
 
-def grce_main(args: argparse.Namespace) -> int:
-    """Dispatch the CLI command selected by :func:`grce_cli_args`.
+class Runtime:
+    def __init__(self, settings: Settings):
+        self.settings = settings
 
-    Handles corpus management, training/reporting flow, and subcommands such
-    as ``size``. When running training it constructs the model/tokenizer and
-    calls :func:`train_model`.
-    """
-    settings = Settings(args)
-    context_dropout_interval = 1
+    def big_fat_old_main(self) -> int:
+        """Dispatch the CLI command selected by :func:`grce_cli_args`.
 
-    def parse_layer_list(value: str, flag: str) -> list[int]:
-        if not value:
-            return []
-        try:
-            entries = [int(part) for part in value.split(",") if part]
-        except ValueError as exc:
-            raise ValueError(f"{flag} must be a comma-separated list of integers") from exc
-        return entries
+        Handles corpus management, training/reporting flow, and subcommands such
+        as ``size``. When running training it constructs the model/tokenizer and
+        calls :func:`train_model`.
+        """
 
-    create_opts: argparse.Namespace | None = None
-    if getattr(args, "command", None) == "create":
-        create_opts = argparse.Namespace(
-            import_model=getattr(args, "create_import_model", None),
-            trim_model=bool(getattr(args, "create_trim_model", False)),
-            drop_layers=getattr(args, "create_drop_layers", ""),
-            add_layers=getattr(args, "create_add_layers", ""),
-        )
-    if create_opts is not None:
-        create_opts.drop_layers = parse_layer_list(create_opts.drop_layers, "--drop-layers")
-        create_opts.add_layers = parse_layer_list(create_opts.add_layers, "--add-layers")
-        if (create_opts.drop_layers or create_opts.add_layers) and not create_opts.import_model:
-            raise ValueError("--drop-layers/--add-layers are only valid with --import-model")
-        if create_opts.trim_model and not create_opts.import_model:
-            raise ValueError("--trim-model is only valid with --import-model")
-    args.prompt = normalize_prompt(args.prompt)
-    torch.manual_seed(42)
-    random.seed(42)
+        # big_fat_old_main() needs cli_args
+        assert self.settings.cli_args is not None
+        args = self.settings.cli_args
 
-    class TimeoutAlarm(Exception):
-        pass
+        context_dropout_interval = 1
 
-    timeout_seconds = max(0.0, float(getattr(args, "timeout", 0.0)))
-    timeout_method: str | None = None
-    prev_sigalrm_handler = None
 
-    def cancel_timeout() -> None:
-        nonlocal timeout_method, prev_sigalrm_handler
-        if timeout_method == "setitimer":
-            signal.setitimer(signal.ITIMER_REAL, 0.0)
-        elif timeout_method == "alarm":
-            signal.alarm(0)
-        if timeout_method is not None:
-            handler = prev_sigalrm_handler or signal.SIG_DFL
-            signal.signal(signal.SIGALRM, handler)
-        timeout_method = None
+
+        class TimeoutAlarm(Exception):
+            pass
+
+        timeout_seconds = max(0.0, float(getattr(args, "timeout", 0.0)))
+        timeout_method: str | None = None
         prev_sigalrm_handler = None
 
-    if timeout_seconds > 0:
-        def handle_timeout(signum: int, frame: object) -> None:
-            raise TimeoutAlarm()
+        def cancel_timeout() -> None:
+            nonlocal timeout_method, prev_sigalrm_handler
+            if timeout_method == "setitimer":
+                signal.setitimer(signal.ITIMER_REAL, 0.0)
+            elif timeout_method == "alarm":
+                signal.alarm(0)
+            if timeout_method is not None:
+                handler = prev_sigalrm_handler or signal.SIG_DFL
+                signal.signal(signal.SIGALRM, handler)
+            timeout_method = None
+            prev_sigalrm_handler = None
 
-        prev_sigalrm_handler = signal.signal(signal.SIGALRM, handle_timeout)
-        try:
-            signal.setitimer(signal.ITIMER_REAL, timeout_seconds)
-            timeout_method = "setitimer"
-        except AttributeError:
-            timeout_method = "alarm"
-            signal.alarm(max(1, int(math.ceil(timeout_seconds))))
+        if timeout_seconds > 0:
+            def handle_timeout(signum: int, frame: object) -> None:
+                raise TimeoutAlarm()
 
-    selected_action = args.command
-    if selected_action != "create":
-        create_opts = None
-
-    checkpoint_override_payload: dict | None = None
-    checkpoint_override_config: ModelConfig | None = None
-    checkpoint_override_tokenizer_json: str | None = None
-    if args.pt:
-        if selected_action == "train":
-            raise ValueError("--pt is only supported for inference/debug commands")
-        if create_opts is not None and create_opts.import_model:
-            raise ValueError("--pt cannot be combined with --import-model")
-        skip_checkpoint_load = (
-            (selected_action == "corpus" and getattr(args, "corpus_init", False))
-            or selected_action == "create"
-        )
-        if not skip_checkpoint_load:
-            if not args.pt.exists():
-                raise FileNotFoundError(f"Checkpoint {args.pt} not found")
-            checkpoint_override_payload = torch.load(
-                args.pt, map_location="cpu", weights_only=False
-            )
-            saved_config = checkpoint_override_payload.get("config")
-            if saved_config is None:
-                raise ValueError(
-                    "Checkpoint lacks config metadata; re-save it with the latest format."
-                )
-            saved_config = dict(saved_config)
-            legacy_xctx = bool(saved_config.pop("grce_xctx", False))
-            if "n_xctx" not in saved_config:
-                if legacy_xctx:
-                    saved_config["n_xctx"] = int(saved_config.get("n_grce", 0))
-                    saved_config["n_grce"] = 0
-                else:
-                    saved_config["n_xctx"] = 0
-            checkpoint_override_config = ModelConfig(**saved_config)
-            checkpoint_override_tokenizer_json = checkpoint_override_payload.get(
-                "tokenizer_json"
-            )
-            args.block_size = checkpoint_override_config.block_size
-            if not getattr(args, "_block_length_defined", False):
-                args.block_length = args.block_size
-            elif args.block_length > args.block_size:
-                raise ValueError("--block-length cannot exceed checkpoint block size")
-            args.n_layer = checkpoint_override_config.n_layer
-            args.n_head = checkpoint_override_config.n_head
-            args.n_embd = checkpoint_override_config.n_embd
-            args.n_grce = checkpoint_override_config.n_grce
-            args.n_xctx = checkpoint_override_config.n_xctx
-            args.dropout = checkpoint_override_config.dropout
-            args.detach_span = checkpoint_override_config.detach_span
-            args.no_detach_ctx = not checkpoint_override_config.detach_context
-            args.detach_layer = checkpoint_override_config.detach_layer
-            args.vocab_size = checkpoint_override_config.vocab_size
-
-    ansi_file = None
-    try:
-        orig_stdout, orig_stderr, log_file = sys.stdout, sys.stderr, None
-
-        data_dir = pathlib.Path(args.data)
-        train_path = data_dir / f"{args.corpus}-train.txt.gz"
-        test_path = data_dir / f"{args.corpus}-test.txt.gz"
-        model_dir = pathlib.Path(args.model)
-        if not model_dir.exists():
+            prev_sigalrm_handler = signal.signal(signal.SIGALRM, handle_timeout)
             try:
-                model_dir.mkdir(parents=True, exist_ok=True)
-            except OSError:
-                pass
+                signal.setitimer(signal.ITIMER_REAL, timeout_seconds)
+                timeout_method = "setitimer"
+            except AttributeError:
+                timeout_method = "alarm"
+                signal.alarm(max(1, int(math.ceil(timeout_seconds))))
 
-        must_build_tokenizer = (
-            selected_action == "corpus" and getattr(args, "corpus_init", False)
-        )
-        train_cache_path = data_dir / f"{args.corpus}_tokens_train_{args.vocab_size}.pt"
-        test_cache_path = data_dir / f"{args.corpus}_tokens_test_{args.vocab_size}.pt"
-        need_corpus_for_create = False
-        if selected_action == "create":
-            need_corpus_for_create = (
-                not train_cache_path.exists() or not test_cache_path.exists()
+        selected_action = args.command
+        if selected_action != "create":
+            create_opts = None
+
+        checkpoint_override_payload: dict | None = None
+        checkpoint_override_config: ModelConfig | None = None
+        checkpoint_override_tokenizer_json: str | None = None
+        if args.pt:
+            if selected_action == "train":
+                raise ValueError("--pt is only supported for inference/debug commands")
+            if create_opts is not None and create_opts.import_model:
+                raise ValueError("--pt cannot be combined with --import-model")
+            skip_checkpoint_load = (
+                (selected_action == "corpus" and getattr(args, "corpus_init", False))
+                or selected_action == "create"
             )
-        must_build_tokenizer = must_build_tokenizer or need_corpus_for_create
-
-        if must_build_tokenizer:
-            full_train_text = load_text_file(train_path)
-            full_test_text = load_text_file(test_path)
-        else:
-            full_train_text = None
-            full_test_text = None
-            if not train_cache_path.exists():
-                raise FileNotFoundError(
-                    f"Train token cache {train_cache_path} not found; run 'corpus --init' first."
+            if not skip_checkpoint_load:
+                if not args.pt.exists():
+                    raise FileNotFoundError(f"Checkpoint {args.pt} not found")
+                checkpoint_override_payload = torch.load(
+                    args.pt, map_location="cpu", weights_only=False
                 )
-            if not test_cache_path.exists():
-                raise FileNotFoundError(
-                    f"Test token cache {test_cache_path} not found; run 'corpus --init' first."
+                saved_config = checkpoint_override_payload.get("config")
+                if saved_config is None:
+                    raise ValueError(
+                        "Checkpoint lacks config metadata; re-save it with the latest format."
+                    )
+                saved_config = dict(saved_config)
+                legacy_xctx = bool(saved_config.pop("grce_xctx", False))
+                if "n_xctx" not in saved_config:
+                    if legacy_xctx:
+                        saved_config["n_xctx"] = int(saved_config.get("n_grce", 0))
+                        saved_config["n_grce"] = 0
+                    else:
+                        saved_config["n_xctx"] = 0
+                checkpoint_override_config = ModelConfig(**saved_config)
+                checkpoint_override_tokenizer_json = checkpoint_override_payload.get(
+                    "tokenizer_json"
                 )
+                args.block_size = checkpoint_override_config.block_size
+                if not getattr(args, "_block_length_defined", False):
+                    args.block_length = args.block_size
+                elif args.block_length > args.block_size:
+                    raise ValueError("--block-length cannot exceed checkpoint block size")
+                args.n_layer = checkpoint_override_config.n_layer
+                args.n_head = checkpoint_override_config.n_head
+                args.n_embd = checkpoint_override_config.n_embd
+                args.n_grce = checkpoint_override_config.n_grce
+                args.n_xctx = checkpoint_override_config.n_xctx
+                args.dropout = checkpoint_override_config.dropout
+                args.detach_span = checkpoint_override_config.detach_span
+                args.no_detach_ctx = not checkpoint_override_config.detach_context
+                args.detach_layer = checkpoint_override_config.detach_layer
+                args.vocab_size = checkpoint_override_config.vocab_size
 
-        tokenizer_key = f"{args.corpus}_vocab_{args.vocab_size}"
-        tokenizer_path = data_dir / f"{tokenizer_key}.json"
-        if selected_action == "create" and not tokenizer_path.exists():
-            must_build_tokenizer = True
-        tokenizer_json = checkpoint_override_tokenizer_json
-        if tokenizer_json is None:
-            if tokenizer_path.exists():
-                tokenizer_json = tokenizer_path.read_text(encoding="utf-8")
-            elif not must_build_tokenizer:
-                raise FileNotFoundError(
-                    f"Tokenizer cache {tokenizer_path} not found; run 'corpus --init' first or supply --pt."
+        ansi_file = None
+        try:
+            orig_stdout, orig_stderr, log_file = sys.stdout, sys.stderr, None
+
+            data_dir = pathlib.Path(args.data)
+            train_path = data_dir / f"{args.corpus}-train.txt.gz"
+            test_path = data_dir / f"{args.corpus}-test.txt.gz"
+            model_dir = pathlib.Path(args.model)
+            if not model_dir.exists():
+                try:
+                    model_dir.mkdir(parents=True, exist_ok=True)
+                except OSError:
+                    pass
+
+            must_build_tokenizer = (
+                selected_action == "corpus" and getattr(args, "corpus_init", False)
+            )
+            train_cache_path = data_dir / f"{args.corpus}_tokens_train_{args.vocab_size}.pt"
+            test_cache_path = data_dir / f"{args.corpus}_tokens_test_{args.vocab_size}.pt"
+            need_corpus_for_create = False
+            if selected_action == "create":
+                need_corpus_for_create = (
+                    not train_cache_path.exists() or not test_cache_path.exists()
                 )
-        print(color_text(f"Tokenizer: {tokenizer_path}", Colors.BLUE))
-        tok_timer = Timer().start()
-        vocab_source = full_train_text or ""
-        reserved_tokens = 1 + len(GPT2TokenizerWrapper.EXTRA_SPECIAL_TOKENS)
-        if args.vocab_size <= reserved_tokens:
-            raise ValueError(
-                f"--vocab-size must exceed reserved tokens ({reserved_tokens}); got {args.vocab_size}"
+            must_build_tokenizer = must_build_tokenizer or need_corpus_for_create
+
+            if must_build_tokenizer:
+                full_train_text = load_text_file(train_path)
+                full_test_text = load_text_file(test_path)
+            else:
+                full_train_text = None
+                full_test_text = None
+                if not train_cache_path.exists():
+                    raise FileNotFoundError(
+                        f"Train token cache {train_cache_path} not found; run 'corpus --init' first."
+                    )
+                if not test_cache_path.exists():
+                    raise FileNotFoundError(
+                        f"Test token cache {test_cache_path} not found; run 'corpus --init' first."
+                    )
+
+            tokenizer_key = f"{args.corpus}_vocab_{args.vocab_size}"
+            tokenizer_path = data_dir / f"{tokenizer_key}.json"
+            if selected_action == "create" and not tokenizer_path.exists():
+                must_build_tokenizer = True
+            tokenizer_json = checkpoint_override_tokenizer_json
+            if tokenizer_json is None:
+                if tokenizer_path.exists():
+                    tokenizer_json = tokenizer_path.read_text(encoding="utf-8")
+                elif not must_build_tokenizer:
+                    raise FileNotFoundError(
+                        f"Tokenizer cache {tokenizer_path} not found; run 'corpus --init' first or supply --pt."
+                    )
+            print(color_text(f"Tokenizer: {tokenizer_path}", Colors.BLUE))
+            tok_timer = Timer().start()
+            vocab_source = full_train_text or ""
+            reserved_tokens = 1 + len(GPT2TokenizerWrapper.EXTRA_SPECIAL_TOKENS)
+            if args.vocab_size <= reserved_tokens:
+                raise ValueError(
+                    f"--vocab-size must exceed reserved tokens ({reserved_tokens}); got {args.vocab_size}"
+                )
+            target_vocab = max(0, args.vocab_size - reserved_tokens)
+            tokenizer = GPT2TokenizerWrapper(
+                vocab_source,
+                tokenizer_path,
+                target_vocab,
+                pretrained_json=tokenizer_json,
             )
-        target_vocab = max(0, args.vocab_size - reserved_tokens)
-        tokenizer = GPT2TokenizerWrapper(
-            vocab_source,
-            tokenizer_path,
-            target_vocab,
-            pretrained_json=tokenizer_json,
-        )
-        expected_vocab_size = args.vocab_size
-        actual_vocab_size = tokenizer.vocab_size
-        if actual_vocab_size != expected_vocab_size:
-            raise ValueError(
-                "Tokenizer size mismatch: expected "
-                f"{expected_vocab_size} tokens but found {actual_vocab_size}. "
-                "Delete the cached tokenizer and re-run 'corpus --init'."
+            expected_vocab_size = args.vocab_size
+            actual_vocab_size = tokenizer.vocab_size
+            if actual_vocab_size != expected_vocab_size:
+                raise ValueError(
+                    "Tokenizer size mismatch: expected "
+                    f"{expected_vocab_size} tokens but found {actual_vocab_size}. "
+                    "Delete the cached tokenizer and re-run 'corpus --init'."
+                )
+            tokenizer_json = tokenizer_json or tokenizer_path.read_text(encoding="utf-8")
+
+            newline_token_id = None
+            newline_tokens = tokenizer.tokenizer.encode("\n", add_special_tokens=False)
+            if newline_tokens:
+                newline_token_id = newline_tokens[0]
+
+            enforce_boundary_guard = not args.no_boundary
+            boundary_blocklist = (
+                tokenizer.leading_alpha_token_ids if enforce_boundary_guard else None
             )
-        tokenizer_json = tokenizer_json or tokenizer_path.read_text(encoding="utf-8")
-
-        newline_token_id = None
-        newline_tokens = tokenizer.tokenizer.encode("\n", add_special_tokens=False)
-        if newline_tokens:
-            newline_token_id = newline_tokens[0]
-
-        enforce_boundary_guard = not args.no_boundary
-        boundary_blocklist = (
-            tokenizer.leading_alpha_token_ids if enforce_boundary_guard else None
-        )
-        default_prompt_boundary = (
-            enforce_boundary_guard
-            and boundary_blocklist is not None
-            and prompt_needs_boundary(args.prompt)
-        )
-
-        train_tokens, train_text, train_bytes, train_inserts = load_or_prepare_tokens(
-            "train",
-            train_path,
-            full_train_text,
-            train_cache_path,
-            tokenizer,
-            seed=1234,
-        )
-
-        test_tokens, test_text, test_bytes, test_inserts = load_or_prepare_tokens(
-            "test",
-            test_path,
-            full_test_text,
-            test_cache_path,
-            tokenizer,
-            seed=5678,
-        )
-
-        if train_text is None and train_bytes == 0:
-            train_bytes = len(train_tokens)  # fallback when text absent
-        if test_text is None and test_bytes == 0:
-            test_bytes = len(test_tokens)
-
-        train_token_count = int(train_tokens.numel())
-        test_token_count = int(test_tokens.numel())
-        print(
-            color_text(
-                f"Corpus size: {train_token_count:,} train tokens, {test_token_count:,} test tokens",
-                Colors.CYAN,
+            default_prompt_boundary = (
+                enforce_boundary_guard
+                and boundary_blocklist is not None
+                and prompt_needs_boundary(args.prompt)
             )
-        )
-        tok_summary = (
-            color_text(f"[tokenizer (wall/cpu/gpu)]", Colors.CYAN) +
-            color_text(f" {tok_timer.stop()}\n", Colors.MAGENTA)
-        )
-        print(tok_summary)
 
-        dataset = TextDataset(
-            train_tokens=train_tokens,
-            test_tokens=test_tokens,
-            train_text=train_text,
-            test_text=test_text,
-            train_bytes=train_bytes,
-            test_bytes=test_bytes,
-            train_path=train_path,
-            test_path=test_path,
-        )
+            train_tokens, train_text, train_bytes, train_inserts = load_or_prepare_tokens(
+                "train",
+                train_path,
+                full_train_text,
+                train_cache_path,
+                tokenizer,
+                seed=1234,
+            )
 
-        def count_eval_calls(steps: int, interval: int) -> int:
-            if steps <= 0:
-                return 0
-            eval_steps = {1, steps}
-            if interval > 0:
-                current = interval
-                while current <= steps:
-                    eval_steps.add(current)
-                    current += interval
-            return len(eval_steps)
+            test_tokens, test_text, test_bytes, test_inserts = load_or_prepare_tokens(
+                "test",
+                test_path,
+                full_test_text,
+                test_cache_path,
+                tokenizer,
+                seed=5678,
+            )
 
+            if train_text is None and train_bytes == 0:
+                train_bytes = len(train_tokens)  # fallback when text absent
+            if test_text is None and test_bytes == 0:
+                test_bytes = len(test_tokens)
 
-        def emit_range(label: str, tokens: torch.Tensor, spec: str) -> None:
-            start, end = parse_range_arg(spec)
-            total = int(tokens.numel())
-            if total == 0:
-                print(color_text(f"{label} corpus is empty", Colors.MAGENTA))
-                return
-            if start < 0 or end < 0 or start >= total or end >= total:
-                raise ValueError(f"{label} range {start}-{end} is outside 0-{total - 1}")
-            subset = tokens[start : end + 1].tolist()
+            train_token_count = int(train_tokens.numel())
+            test_token_count = int(test_tokens.numel())
             print(
                 color_text(
-                    f"{label} tokens {start}-{end} (count {len(subset)}):",
+                    f"Corpus size: {train_token_count:,} train tokens, {test_token_count:,} test tokens",
                     Colors.CYAN,
                 )
             )
-            chunk_size = 128
-            for offset in range(0, len(subset), chunk_size):
-                chunk_tokens = subset[offset : offset + chunk_size]
-                text = tokenizer.decode(torch.tensor(chunk_tokens))
-                print(text)
+            tok_summary = (
+                color_text(f"[tokenizer (wall/cpu/gpu)]", Colors.CYAN) +
+                color_text(f" {tok_timer.stop()}\n", Colors.MAGENTA)
+            )
+            print(tok_summary)
 
-        if selected_action == "corpus":
-            actions_done = False
-            if getattr(args, "corpus_init", False):
+            dataset = TextDataset(
+                train_tokens=train_tokens,
+                test_tokens=test_tokens,
+                train_text=train_text,
+                test_text=test_text,
+                train_bytes=train_bytes,
+                test_bytes=test_bytes,
+                train_path=train_path,
+                test_path=test_path,
+            )
+
+            def count_eval_calls(steps: int, interval: int) -> int:
+                if steps <= 0:
+                    return 0
+                eval_steps = {1, steps}
+                if interval > 0:
+                    current = interval
+                    while current <= steps:
+                        eval_steps.add(current)
+                        current += interval
+                return len(eval_steps)
+
+
+            def emit_range(label: str, tokens: torch.Tensor, spec: str) -> None:
+                start, end = parse_range_arg(spec)
+                total = int(tokens.numel())
+                if total == 0:
+                    print(color_text(f"{label} corpus is empty", Colors.MAGENTA))
+                    return
+                if start < 0 or end < 0 or start >= total or end >= total:
+                    raise ValueError(f"{label} range {start}-{end} is outside 0-{total - 1}")
+                subset = tokens[start : end + 1].tolist()
                 print(
                     color_text(
-                        "Tokenizer initialized and token caches updated; run 'train' to build a model.",
-                        Colors.GREEN,
+                        f"{label} tokens {start}-{end} (count {len(subset)}):",
+                        Colors.CYAN,
                     )
                 )
-                actions_done = True
-            if getattr(args, "corpus_print_train", None):
-                emit_range("Train", train_tokens, args.corpus_print_train)
-                actions_done = True
-            if getattr(args, "corpus_print_test", None):
-                emit_range("Test", test_tokens, args.corpus_print_test)
-                actions_done = True
-            if not actions_done:
-                print(color_text("No corpus action selected", Colors.YELLOW))
-            return
+                chunk_size = 128
+                for offset in range(0, len(subset), chunk_size):
+                    chunk_tokens = subset[offset : offset + chunk_size]
+                    text = tokenizer.decode(torch.tensor(chunk_tokens))
+                    print(text)
 
-        if args.n_xctx > 0 and args.n_xctx % max(1, args.n_layer) != 0:
-            raise ValueError("--n-xctx must be divisible by --n-layer")
-        config = checkpoint_override_config or ModelConfig(
-            vocab_size=tokenizer.vocab_size,
-            block_size=args.block_size,
-            n_layer=args.n_layer,
-            n_head=args.n_head,
-            n_embd=args.n_embd,
-            n_grce=args.n_grce,
-            n_xctx=args.n_xctx,
-            dropout=args.dropout,
-            detach_span=max(0, args.detach_span),
-            detach_context=(not args.no_detach_ctx),
-            detach_layer=max(-1, args.detach_layer),
-        )
-        model_tag = build_model_tag(config)
-        for extra_tag in args.tag:
-            cleaned = re.sub(r"[^0-9A-Za-z]+", "", extra_tag)
-            if cleaned:
-                model_tag += f"_{cleaned}"
-        if args.pt:
-            model_path = args.pt
-            log_path = args.pt.with_suffix(".log")
-            print(color_text(f"Model (--pt): {model_path}", Colors.CYAN))
-            print(color_text(f"Logfile (--pt): {log_path}", Colors.BLUE))
-        else:
-            prefix = f"{args.corpus}_model_"
-            model_path = model_dir / f"{prefix}{model_tag}.pt"
-            log_path = model_dir / f"{prefix}{model_tag}.log"
-        print(color_text(f"Model: {model_path}", Colors.CYAN))
-        print(color_text(f"Logfile: {log_path}", Colors.BLUE))
-        requires_checkpoint = selected_action in {"train", "report", "test"}
-        if selected_action == "create" and model_path.exists():
-            raise FileExistsError(
-                f"Checkpoint {model_path} already exists; delete it or pick a new --model directory."
-            )
-        if requires_checkpoint and not model_path.exists():
-            raise FileNotFoundError(
-                f"Checkpoint {model_path} not found; run 'create' first to initialize it."
-            )
-
-        if selected_action == "prompts":
-            target_path = Path(args.target) if args.target else model_path
-            if not target_path.exists():
-                raise FileNotFoundError(f"Checkpoint {target_path} not found")
-            payload = torch.load(target_path, map_location="cpu", weights_only=False)
-            prompt_state = payload.get("prompt_state") or empty_prompt_state()
-            tracker = PromptTracker(tokenizer, prompt_state)
-            entries = list(tracker.prompts)
-            statuses = list(tracker.status)
-
-            def normalize_statuses() -> None:
-                nonlocal statuses
-                length = len(entries)
-                if len(statuses) < length:
-                    statuses.extend([0] * (length - len(statuses)))
-                elif len(statuses) > length:
-                    statuses = statuses[:length]
-
-            normalize_statuses()
-            changed = False
-            if getattr(args, "reset", False):
-                entries = default_prompt_entries()
-                statuses = [0] * len(entries)
-                changed = True
-            if getattr(args, "clear", False):
-                entries = []
-                statuses = []
-                changed = True
-            removes = sorted(set(getattr(args, "remove", [])), reverse=True)
-            for idx in removes:
-                if idx is None:
-                    continue
-                try:
-                    intval = int(idx)
-                except (TypeError, ValueError):
-                    continue
-                if 0 <= intval < len(entries):
-                    entries.pop(intval)
-                    if len(statuses) > intval:
-                        statuses.pop(intval)
-                    changed = True
-                else:
+            if selected_action == "corpus":
+                actions_done = False
+                if getattr(args, "corpus_init", False):
                     print(
                         color_text(
-                            f"Prompt index {intval} out of range; ignoring remove request.",
+                            "Tokenizer initialized and token caches updated; run 'train' to build a model.",
+                            Colors.GREEN,
+                        )
+                    )
+                    actions_done = True
+                if getattr(args, "corpus_print_train", None):
+                    emit_range("Train", train_tokens, args.corpus_print_train)
+                    actions_done = True
+                if getattr(args, "corpus_print_test", None):
+                    emit_range("Test", test_tokens, args.corpus_print_test)
+                    actions_done = True
+                if not actions_done:
+                    print(color_text("No corpus action selected", Colors.YELLOW))
+                return
+
+            if args.n_xctx > 0 and args.n_xctx % max(1, args.n_layer) != 0:
+                raise ValueError("--n-xctx must be divisible by --n-layer")
+            config = checkpoint_override_config or ModelConfig(
+                vocab_size=tokenizer.vocab_size,
+                block_size=args.block_size,
+                n_layer=args.n_layer,
+                n_head=args.n_head,
+                n_embd=args.n_embd,
+                n_grce=args.n_grce,
+                n_xctx=args.n_xctx,
+                dropout=args.dropout,
+                detach_span=max(0, args.detach_span),
+                detach_context=(not args.no_detach_ctx),
+                detach_layer=max(-1, args.detach_layer),
+            )
+            model_tag = build_model_tag(config)
+            for extra_tag in args.tag:
+                cleaned = re.sub(r"[^0-9A-Za-z]+", "", extra_tag)
+                if cleaned:
+                    model_tag += f"_{cleaned}"
+            if args.pt:
+                model_path = args.pt
+                log_path = args.pt.with_suffix(".log")
+                print(color_text(f"Model (--pt): {model_path}", Colors.CYAN))
+                print(color_text(f"Logfile (--pt): {log_path}", Colors.BLUE))
+            else:
+                prefix = f"{args.corpus}_model_"
+                model_path = model_dir / f"{prefix}{model_tag}.pt"
+                log_path = model_dir / f"{prefix}{model_tag}.log"
+            print(color_text(f"Model: {model_path}", Colors.CYAN))
+            print(color_text(f"Logfile: {log_path}", Colors.BLUE))
+            requires_checkpoint = selected_action in {"train", "report", "test"}
+            if selected_action == "create" and model_path.exists():
+                raise FileExistsError(
+                    f"Checkpoint {model_path} already exists; delete it or pick a new --model directory."
+                )
+            if requires_checkpoint and not model_path.exists():
+                raise FileNotFoundError(
+                    f"Checkpoint {model_path} not found; run 'create' first to initialize it."
+                )
+
+            if selected_action == "prompts":
+                target_path = Path(args.target) if args.target else model_path
+                if not target_path.exists():
+                    raise FileNotFoundError(f"Checkpoint {target_path} not found")
+                payload = torch.load(target_path, map_location="cpu", weights_only=False)
+                prompt_state = payload.get("prompt_state") or empty_prompt_state()
+                tracker = PromptTracker(tokenizer, prompt_state)
+                entries = list(tracker.prompts)
+                statuses = list(tracker.status)
+
+                def normalize_statuses() -> None:
+                    nonlocal statuses
+                    length = len(entries)
+                    if len(statuses) < length:
+                        statuses.extend([0] * (length - len(statuses)))
+                    elif len(statuses) > length:
+                        statuses = statuses[:length]
+
+                normalize_statuses()
+                changed = False
+                if getattr(args, "reset", False):
+                    entries = default_prompt_entries()
+                    statuses = [0] * len(entries)
+                    changed = True
+                if getattr(args, "clear", False):
+                    entries = []
+                    statuses = []
+                    changed = True
+                removes = sorted(set(getattr(args, "remove", [])), reverse=True)
+                for idx in removes:
+                    if idx is None:
+                        continue
+                    try:
+                        intval = int(idx)
+                    except (TypeError, ValueError):
+                        continue
+                    if 0 <= intval < len(entries):
+                        entries.pop(intval)
+                        if len(statuses) > intval:
+                            statuses.pop(intval)
+                        changed = True
+                    else:
+                        print(
+                            color_text(
+                                f"Prompt index {intval} out of range; ignoring remove request.",
+                                Colors.YELLOW,
+                            )
+                        )
+                add_pair = getattr(args, "add", None)
+                if add_pair is not None:
+                    prompt_text, expected_text = add_pair
+                    entries.append((prompt_text, expected_text))
+                    statuses.append(0)
+                    changed = True
+                normalize_statuses()
+                if changed:
+                    new_state = build_prompt_state(entries, statuses)
+                    payload["prompt_state"] = new_state
+                    torch.save(payload, target_path)
+                    print(
+                        color_text(
+                            f"Updated prompts in {target_path}",
+                            Colors.GREEN,
+                        )
+                    )
+                show_list = args.list or (
+                    not getattr(args, "reset", False)
+                    and not getattr(args, "clear", False)
+                    and not removes
+                    and add_pair is None
+                )
+                if show_list:
+                    if not entries:
+                        print(color_text("No prompts stored in checkpoint", Colors.MAGENTA))
+                    else:
+                        print(color_text(f"Prompts in {target_path}:", Colors.CYAN))
+                        for idx, (prompt_text, expected_text) in enumerate(entries):
+                            status_val = statuses[idx] if idx < len(statuses) else 0
+                            if status_val >= 2:
+                                status_label = color_text("argmax", Colors.GREEN)
+                            elif status_val == 1:
+                                status_label = color_text("sample", Colors.YELLOW)
+                            else:
+                                status_label = color_text("pending", Colors.RED)
+                            print(
+                                color_text(f"#{idx}: ", Colors.CYAN)
+                                + status_label
+                                + color_text(
+                                    f" prompt='{prompt_text}' expected='{expected_text}'",
+                                    Colors.CYAN,
+                                )
+                            )
+                return
+            sections = _append_summary_section(
+                _expected_sections(config, config.block_size)
+            )
+            summary_items: list[dict] | None = None
+            for key, _title, items in sections:
+                if key == "summary":
+                    summary_items = items
+                    break
+            if summary_items is None:
+                summary_items = []
+            summary_counts = {entry["label"]: entry["count"] for entry in summary_items}
+            total_params = summary_counts.get("total", 0)
+            embedding_params = summary_counts.get("embeddings", 0)
+            non_emb_params = total_params - embedding_params
+            print(
+                f"Trainable model params: {total_params:,}; "
+                f"excl. embeddings: {non_emb_params:,}"
+            )
+            tok_vecs = config.vocab_size
+            pos_vecs = config.block_size
+            emb_vectors = tok_vecs + pos_vecs
+            emb_params = embedding_params
+            print(
+                f"Learned embedding vectors: {emb_vectors} "
+                f"(token={tok_vecs}, position={pos_vecs}); params={emb_params:,}"
+            )
+
+            cmdline = " ".join(shlex.quote(arg) for arg in sys.argv)
+            timestamp = datetime.now(timezone.utc).isoformat()
+            log_file = log_path.open("a", encoding="utf-8")
+            log_file.write(f"\n[{timestamp}] {cmdline}\n")
+            log_file.flush()
+            if not args.no_ansi:
+                ansi_path = log_path.with_suffix(".ansi")
+                ansi_file = ansi_path.open("a", encoding="utf-8")
+                ansi_file.write(f"\n[{timestamp}] {cmdline}\n")
+                ansi_file.flush()
+
+            stdout_streams = [(orig_stdout, False), (log_file, True)]
+            stderr_streams = [(orig_stderr, False), (log_file, True)]
+            if ansi_file is not None:
+                stdout_streams.append((ansi_file, False))
+                stderr_streams.append((ansi_file, False))
+            sys.stdout = Tee(*stdout_streams)
+            sys.stderr = Tee(*stderr_streams)
+
+            device = torch.device(args.device)
+            try:
+                prompt_tokens = tokenizer.encode(args.prompt)
+            except KeyError as exc:  # pragma: no cover - user misconfiguration
+                raise ValueError(
+                    "Prompt contains characters outside the tokenizer vocabulary. "
+                    "Choose a simpler prompt or extend the dataset."
+                ) from exc
+            try:
+                prompt_tokens = prompt_tokens.unsqueeze(0).to(device)
+            except (AssertionError, RuntimeError) as exc:
+                message = str(exc)
+                if "Torch not compiled with CUDA" in message and args.device != "cpu":
+                    if not args.tiny:
+                        raise RuntimeError(
+                            "CUDA requested but not available; rerun with --device cpu or --tiny."
+                        ) from exc
+                    print(color_text("Torch not compiled with CUDA enabled; switching to CPU", Colors.RED, bold=True))
+                    device = torch.device("cpu")
+                    args.device = "cpu"
+                    prompt_tokens = prompt_tokens.unsqueeze(0).to(device)
+                else:
+                    raise
+            prompt_tracker = PromptTracker(tokenizer)
+
+            try:
+                model = GRCEGPT(config).to(device)
+            except (AssertionError, RuntimeError) as exc:
+                message = str(exc)
+                if "Torch not compiled with CUDA" in message and args.device != "cpu":
+                    if not args.tiny:
+                        raise RuntimeError(
+                            "CUDA requested but not available; rerun with --device cpu or --tiny."
+                        ) from exc
+                    print(color_text("Torch not compiled with CUDA enabled; switching to CPU", Colors.RED, bold=True))
+                    device = torch.device("cpu")
+                    model = GRCEGPT(config).to(device)
+                else:
+                    raise
+            total_steps = 0
+            loss_history: List[Dict[str, float]] = []
+            total_train_wall = 0.0
+            payload = checkpoint_override_payload
+            if payload is None and model_path.exists():
+                if create_opts and create_opts.import_model:
+                    raise ValueError(
+                        "--import-model can only be used when no existing checkpoint is present"
+                    )
+                payload = torch.load(
+                    model_path,
+                    map_location=device,
+                    weights_only=False,  # checkpoints also store dataset offsets/counters
+                )
+            if payload is not None:
+                try:
+                    if isinstance(payload, dict) and "model" in payload:
+                        upgraded = upgrade_state_dict(payload["model"])
+                        payload["model"] = upgraded
+                        model.load_state_dict(upgraded)
+                        if "dataset" in payload:
+                            dataset.load_state(payload["dataset"])
+                        total_steps = int(payload.get("total_steps", 0))
+                        loss_history = list(payload.get("loss_history", []))
+                        total_train_wall = float(payload.get("train_wall_seconds", 0.0))
+                        prompt_tracker.load_state(payload.get("prompt_state"))
+                    else:
+                        model.load_state_dict(upgrade_state_dict(payload))
+                    print(color_text(f"Loaded existing model from {model_path}", Colors.YELLOW))
+                    hours = total_train_wall / 3600.0
+                    days = hours / 24.0
+                    print(
+                        color_text(
+                            f"Total training so far: {total_steps} steps, {hours:.2f} hours ({days:.2f} days)",
                             Colors.YELLOW,
                         )
                     )
-            add_pair = getattr(args, "add", None)
-            if add_pair is not None:
-                prompt_text, expected_text = add_pair
-                entries.append((prompt_text, expected_text))
-                statuses.append(0)
-                changed = True
-            normalize_statuses()
-            if changed:
-                new_state = build_prompt_state(entries, statuses)
-                payload["prompt_state"] = new_state
-                torch.save(payload, target_path)
+                    prompt_total = len(prompt_tracker.prompts)
+                    if prompt_tracker.remaining() < prompt_total:
+                        solved_argmax = [
+                            idx for idx, state in enumerate(prompt_tracker.status) if state == 2
+                        ]
+                        solved_random_only = [
+                            idx for idx, state in enumerate(prompt_tracker.status) if state == 1
+                        ]
+                        if solved_random_only:
+                            lines = []
+                            for idx in solved_random_only:
+                                if 0 <= idx < prompt_total:
+                                    text, expected = prompt_tracker.prompts[idx]
+                                else:
+                                    continue
+                                lines.append(
+                                    color_text(
+                                        f"#{idx + 1}: '{text}' -> '{expected}'",
+                                        Colors.YELLOW,
+                                    )
+                                )
+                            print(
+                                "\n"
+                                + color_text(
+                                    f"Random-only prompts ({len(solved_random_only)}/{prompt_total}):",
+                                    Colors.YELLOW,
+                                    bold=True,
+                                )
+                                + "\n"
+                                + "\n".join(lines)
+                            )
+                        if solved_argmax:
+                            lines = []
+                            for idx in solved_argmax:
+                                if 0 <= idx < prompt_total:
+                                    text, expected = prompt_tracker.prompts[idx]
+                                else:
+                                    continue
+                                lines.append(
+                                    color_text(
+                                        f"#{idx + 1}: '{text}' -> '{expected}'",
+                                        Colors.GREEN,
+                                    )
+                                )
+                            print(
+                                "\n"
+                                + color_text(
+                                    f"Argmax-satisfied prompts ({len(solved_argmax)}/{prompt_total}):",
+                                    Colors.GREEN,
+                                    bold=True,
+                                )
+                                + "\n"
+                                + "\n".join(lines)
+                            )
+                except RuntimeError as err:
+                    print(color_text("Checkpoint load failed (shape mismatch); starting fresh.", Colors.RED, bold=True))
+                    print(color_text(str(err), Colors.RED))
+            elif create_opts and create_opts.import_model:
+                import_timer = Timer().start()
+                if not create_opts.import_model.exists():
+                    raise FileNotFoundError(
+                        f"Import checkpoint {create_opts.import_model} not found"
+                    )
+                source_state, meta = load_checkpoint_payload(create_opts.import_model, device)
+                src_config = meta.get("config")
+                if src_config is None:
+                    raise ValueError(
+                        "Imported checkpoint lacks config metadata; re-save it with the new format"
+                    )
+                if src_config.get("n_head") != config.n_head:
+                    raise ValueError("Cannot import from a checkpoint with a different --n-head value")
+                src_layers = src_config.get("n_layer")
+                if src_layers is None:
+                    src_layers = count_layers_from_state(source_state)
+                print(color_text(f"Importing weights from {create_opts.import_model}", Colors.GREEN))
+                mapping = build_layer_mapping(
+                    src_layers,
+                    config.n_layer,
+                    create_opts.drop_layers,
+                    create_opts.add_layers,
+                    allow_trim=create_opts.trim_model,
+                )
+                apply_imported_state(
+                    model,
+                    source_state,
+                    allow_trim=create_opts.trim_model,
+                    mapping=mapping,
+                )
+                total_steps = int(meta.get("total_steps", 0))
+                total_train_wall = float(meta.get("train_wall_seconds", 0.0))
+                loss_history = []
+                write_timer = Timer().start()
+                torch.save(
+                    {
+                        "model": model.state_dict(),
+                        "dataset": dataset.state_dict(),
+                        "total_steps": total_steps,
+                        "loss_history": loss_history,
+                        "config": asdict(config),
+                        "train_wall_seconds": total_train_wall,
+                        "prompt_state": prompt_tracker.serialize() if prompt_tracker else None,
+                        "tokenizer_json": tokenizer_json,
+                    },
+                    model_path,
+                )
                 print(
                     color_text(
-                        f"Updated prompts in {target_path}",
+                        f"[import] total steps: {total_steps}; time spent (wall/cpu/gpu): {import_timer.stop()}; writing model: {write_timer.stop()}",
+                        Colors.CYAN,
+                    )
+                )
+                return
+            if selected_action == "create":
+                checkpoint_payload = {
+                    "model": model.state_dict(),
+                    "dataset": dataset.state_dict(),
+                    "total_steps": 0,
+                    "loss_history": [],
+                    "config": asdict(config),
+                    "train_wall_seconds": 0.0,
+                    "prompt_state": prompt_tracker.serialize(),
+                    "tokenizer_json": tokenizer_json,
+                }
+                torch.save(checkpoint_payload, model_path)
+                print(
+                    color_text(
+                        f"Created new checkpoint at {model_path}; run 'train' to begin training.",
                         Colors.GREEN,
                     )
                 )
-            show_list = args.list or (
-                not getattr(args, "reset", False)
-                and not getattr(args, "clear", False)
-                and not removes
-                and add_pair is None
-            )
-            if show_list:
-                if not entries:
-                    print(color_text("No prompts stored in checkpoint", Colors.MAGENTA))
-                else:
-                    print(color_text(f"Prompts in {target_path}:", Colors.CYAN))
-                    for idx, (prompt_text, expected_text) in enumerate(entries):
-                        status_val = statuses[idx] if idx < len(statuses) else 0
-                        if status_val >= 2:
-                            status_label = color_text("argmax", Colors.GREEN)
-                        elif status_val == 1:
-                            status_label = color_text("sample", Colors.YELLOW)
-                        else:
-                            status_label = color_text("pending", Colors.RED)
-                        print(
-                            color_text(f"#{idx}: ", Colors.CYAN)
-                            + status_label
-                            + color_text(
-                                f" prompt='{prompt_text}' expected='{expected_text}'",
-                                Colors.CYAN,
-                            )
-                        )
-            return
-        sections = _append_summary_section(
-            _expected_sections(config, config.block_size)
-        )
-        summary_items: list[dict] | None = None
-        for key, _title, items in sections:
-            if key == "summary":
-                summary_items = items
-                break
-        if summary_items is None:
-            summary_items = []
-        summary_counts = {entry["label"]: entry["count"] for entry in summary_items}
-        total_params = summary_counts.get("total", 0)
-        embedding_params = summary_counts.get("embeddings", 0)
-        non_emb_params = total_params - embedding_params
-        print(
-            f"Trainable model params: {total_params:,}; "
-            f"excl. embeddings: {non_emb_params:,}"
-        )
-        tok_vecs = config.vocab_size
-        pos_vecs = config.block_size
-        emb_vectors = tok_vecs + pos_vecs
-        emb_params = embedding_params
-        print(
-            f"Learned embedding vectors: {emb_vectors} "
-            f"(token={tok_vecs}, position={pos_vecs}); params={emb_params:,}"
-        )
+                return
 
-        cmdline = " ".join(shlex.quote(arg) for arg in sys.argv)
-        timestamp = datetime.now(timezone.utc).isoformat()
-        log_file = log_path.open("a", encoding="utf-8")
-        log_file.write(f"\n[{timestamp}] {cmdline}\n")
-        log_file.flush()
-        if not args.no_ansi:
-            ansi_path = log_path.with_suffix(".ansi")
-            ansi_file = ansi_path.open("a", encoding="utf-8")
-            ansi_file.write(f"\n[{timestamp}] {cmdline}\n")
-            ansi_file.flush()
-
-        stdout_streams = [(orig_stdout, False), (log_file, True)]
-        stderr_streams = [(orig_stderr, False), (log_file, True)]
-        if ansi_file is not None:
-            stdout_streams.append((ansi_file, False))
-            stderr_streams.append((ansi_file, False))
-        sys.stdout = Tee(*stdout_streams)
-        sys.stderr = Tee(*stderr_streams)
-
-        device = torch.device(args.device)
-        try:
-            prompt_tokens = tokenizer.encode(args.prompt)
-        except KeyError as exc:  # pragma: no cover - user misconfiguration
-            raise ValueError(
-                "Prompt contains characters outside the tokenizer vocabulary. "
-                "Choose a simpler prompt or extend the dataset."
-            ) from exc
-        try:
-            prompt_tokens = prompt_tokens.unsqueeze(0).to(device)
-        except (AssertionError, RuntimeError) as exc:
-            message = str(exc)
-            if "Torch not compiled with CUDA" in message and args.device != "cpu":
-                if not args.tiny:
-                    raise RuntimeError(
-                        "CUDA requested but not available; rerun with --device cpu or --tiny."
-                    ) from exc
-                print(color_text("Torch not compiled with CUDA enabled; switching to CPU", Colors.RED, bold=True))
-                device = torch.device("cpu")
-                args.device = "cpu"
-                prompt_tokens = prompt_tokens.unsqueeze(0).to(device)
-            else:
-                raise
-        prompt_tracker = PromptTracker(tokenizer)
-
-        try:
-            model = GRCEGPT(config).to(device)
-        except (AssertionError, RuntimeError) as exc:
-            message = str(exc)
-            if "Torch not compiled with CUDA" in message and args.device != "cpu":
-                if not args.tiny:
-                    raise RuntimeError(
-                        "CUDA requested but not available; rerun with --device cpu or --tiny."
-                    ) from exc
-                print(color_text("Torch not compiled with CUDA enabled; switching to CPU", Colors.RED, bold=True))
-                device = torch.device("cpu")
-                model = GRCEGPT(config).to(device)
-            else:
-                raise
-        total_steps = 0
-        loss_history: List[Dict[str, float]] = []
-        total_train_wall = 0.0
-        payload = checkpoint_override_payload
-        if payload is None and model_path.exists():
-            if create_opts and create_opts.import_model:
-                raise ValueError(
-                    "--import-model can only be used when no existing checkpoint is present"
+            if selected_action == "report":
+                run_report_mode(
+                    model=model,
+                    tokenizer=tokenizer,
+                    prompt_tokens=prompt_tokens,
+                    sample_len=args.generate,
+                    count=args.report_count,
+                    device=device,
+                    suppress_newlines=args.no_newlines,
+                    newline_token_id=newline_token_id,
+                    default_prompt_boundary=default_prompt_boundary,
+                    boundary_blocklist=boundary_blocklist,
                 )
-            payload = torch.load(
-                model_path,
-                map_location=device,
-                weights_only=False,  # checkpoints also store dataset offsets/counters
-            )
-        if payload is not None:
-            try:
-                if isinstance(payload, dict) and "model" in payload:
-                    upgraded = upgrade_state_dict(payload["model"])
-                    payload["model"] = upgraded
-                    model.load_state_dict(upgraded)
-                    if "dataset" in payload:
-                        dataset.load_state(payload["dataset"])
-                    total_steps = int(payload.get("total_steps", 0))
-                    loss_history = list(payload.get("loss_history", []))
-                    total_train_wall = float(payload.get("train_wall_seconds", 0.0))
-                    prompt_tracker.load_state(payload.get("prompt_state"))
+                return
+
+            if selected_action == "test":
+                run_test_slice(
+                    settings=self.settings,
+                    dataset=dataset,
+                    tokenizer=tokenizer,
+                    model=model,
+                    block_length=args.block_length,
+                    start_pos=args.test_start,
+                )
+                return
+
+            acc_train = Timer()
+            acc_eval = Timer()
+            for cycle in range(1, args.cycles + 1):
+                cycle_wall = time.time()
+                tags = ["GPT"]
+                plus_tags: list[str] = []
+                minus_tags: list[str] = []
+                if args.n_grce > 0:
+                    plus_tags.append("+GRCE")
                 else:
-                    model.load_state_dict(upgrade_state_dict(payload))
-                print(color_text(f"Loaded existing model from {model_path}", Colors.YELLOW))
+                    minus_tags.append(" wo/GRCE")
+                if args.n_xctx > 0:
+                    plus_tags.append("+XCTX")
+                else:
+                    minus_tags.append(" wo/XCTX")
+                label = "".join(tags + plus_tags + minus_tags)
                 hours = total_train_wall / 3600.0
                 days = hours / 24.0
+                train_chars_cycle = (args.block_length + 1) * args.batch_size * args.steps
+                eval_calls = max(1, count_eval_calls(args.steps, args.eval_interval))
+                test_chars_cycle = (
+                    (args.block_length + 1)
+                    * args.batch_size
+                    * eval_calls
+                )
+                train_start = int(dataset.positions.get("train", 0))
+                test_start = int(dataset.positions.get("test", 0))
+                dataset.prepare_cycle("train", train_chars_cycle)
+                dataset.prepare_cycle("test", test_chars_cycle)
+
+                train_chunk = dataset.chunks.get("train")
+                test_chunk = dataset.chunks.get("test")
+
+                def format_range(start: int, span: int) -> str:
+                    if span <= 0:
+                        return f"{start:,} - {start:,}"
+                    end = start + span - 1
+                    return f"{start:,} - {end:,}"
+
+                train_span = int(train_chunk.size(0)) if train_chunk is not None else 0
+                test_span = int(test_chunk.size(0)) if test_chunk is not None else 0
+                train_range = format_range(train_start, train_span)
+                test_range = format_range(test_start, test_span)
+                print()
+                pod_path = pathlib.Path(".podname")
+                if pod_path.exists():
+                    pod_label = pod_path.read_text(encoding="utf-8").strip()
+                    if pod_label:
+                        print(
+                            color_text(
+                                f"Running on remote pod {pod_label}.",
+                                Colors.RED,
+                                bold=True,
+                            )
+                        )
+                print(color_text(f"Model: {model_path}", Colors.CYAN))
                 print(
                     color_text(
+                        f"Corpus ranges: train tokens {train_range}, test tokens {test_range}",
+                        Colors.CYAN,
+                    )
+                )
+                print(
+                    color_text(
+                        f"[{label}] Training Cycle {cycle}/{args.cycles}. "
                         f"Total training so far: {total_steps} steps, {hours:.2f} hours ({days:.2f} days)",
-                        Colors.YELLOW,
+                        Colors.BLUE,
                     )
                 )
-                prompt_total = len(prompt_tracker.prompts)
-                if prompt_tracker.remaining() < prompt_total:
-                    solved_argmax = [
-                        idx for idx, state in enumerate(prompt_tracker.status) if state == 2
-                    ]
-                    solved_random_only = [
-                        idx for idx, state in enumerate(prompt_tracker.status) if state == 1
-                    ]
-                    if solved_random_only:
-                        lines = []
-                        for idx in solved_random_only:
-                            if 0 <= idx < prompt_total:
-                                text, expected = prompt_tracker.prompts[idx]
-                            else:
-                                continue
-                            lines.append(
-                                color_text(
-                                    f"#{idx + 1}: '{text}' -> '{expected}'",
-                                    Colors.YELLOW,
-                                )
-                            )
-                        print(
-                            "\n"
-                            + color_text(
-                                f"Random-only prompts ({len(solved_random_only)}/{prompt_total}):",
-                                Colors.YELLOW,
-                                bold=True,
-                            )
-                            + "\n"
-                            + "\n".join(lines)
-                        )
-                    if solved_argmax:
-                        lines = []
-                        for idx in solved_argmax:
-                            if 0 <= idx < prompt_total:
-                                text, expected = prompt_tracker.prompts[idx]
-                            else:
-                                continue
-                            lines.append(
-                                color_text(
-                                    f"#{idx + 1}: '{text}' -> '{expected}'",
-                                    Colors.GREEN,
-                                )
-                            )
-                        print(
-                            "\n"
-                            + color_text(
-                                f"Argmax-satisfied prompts ({len(solved_argmax)}/{prompt_total}):",
-                                Colors.GREEN,
-                                bold=True,
-                            )
-                            + "\n"
-                            + "\n".join(lines)
-                        )
-            except RuntimeError as err:
-                print(color_text("Checkpoint load failed (shape mismatch); starting fresh.", Colors.RED, bold=True))
-                print(color_text(str(err), Colors.RED))
-        elif create_opts and create_opts.import_model:
-            import_timer = Timer().start()
-            if not create_opts.import_model.exists():
-                raise FileNotFoundError(
-                    f"Import checkpoint {create_opts.import_model} not found"
+
+                (
+                    total_steps,
+                    updates,
+                    train_timer,
+                    eval_timer,
+                ) = train_model(
+                    self.settings,
+                    model,
+                    dataset,
+                    device,
+                    args.steps,
+                    args.block_length,
+                    args.batch_size,
+                    args.eval_interval,
+                    total_steps,
+                    prompt_tokens,
+                    args.generate,
+                    tokenizer,
+                    suppress_newlines=args.no_newlines,
+                    newline_token_id=newline_token_id,
+                    prompt_tracker=prompt_tracker,
+                    reset_prompt_queue=args.reset_prompt_each_cycle,
+                    cycle_wall_start=cycle_wall,
+                    base_wall_seconds=total_train_wall,
+                    show_time=args.time,
+                    default_prompt_boundary=default_prompt_boundary,
+                    boundary_blocklist=boundary_blocklist,
+                    show_train_loss_details=args.train_loss_details,
+                    show_test_loss_details=not args.no_test_loss_details,
                 )
-            source_state, meta = load_checkpoint_payload(create_opts.import_model, device)
-            src_config = meta.get("config")
-            if src_config is None:
-                raise ValueError(
-                    "Imported checkpoint lacks config metadata; re-save it with the new format"
+                loss_history.extend(updates)
+                pure_train = Timer().add(train_timer).sub(eval_timer)
+                acc_train.add(pure_train)
+                acc_eval.add(eval_timer)
+                total_train_wall += train_timer.wall_secs
+                torch.save(
+                    {
+                        "model": model.state_dict(),
+                        "dataset": dataset.state_dict(),
+                        "total_steps": total_steps,
+                        "loss_history": loss_history,
+                        "config": asdict(config),
+                        "train_wall_seconds": total_train_wall,
+                        "prompt_state": prompt_tracker.serialize() if prompt_tracker else None,
+                        "tokenizer_json": tokenizer_json,
+                    },
+                    model_path,
                 )
-            if src_config.get("n_head") != config.n_head:
-                raise ValueError("Cannot import from a checkpoint with a different --n-head value")
-            src_layers = src_config.get("n_layer")
-            if src_layers is None:
-                src_layers = count_layers_from_state(source_state)
-            print(color_text(f"Importing weights from {create_opts.import_model}", Colors.GREEN))
-            mapping = build_layer_mapping(
-                src_layers,
-                config.n_layer,
-                create_opts.drop_layers,
-                create_opts.add_layers,
-                allow_trim=create_opts.trim_model,
-            )
-            apply_imported_state(
-                model,
-                source_state,
-                allow_trim=create_opts.trim_model,
-                mapping=mapping,
-            )
-            total_steps = int(meta.get("total_steps", 0))
-            total_train_wall = float(meta.get("train_wall_seconds", 0.0))
-            loss_history = []
-            write_timer = Timer().start()
-            torch.save(
-                {
-                    "model": model.state_dict(),
-                    "dataset": dataset.state_dict(),
-                    "total_steps": total_steps,
-                    "loss_history": loss_history,
-                    "config": asdict(config),
-                    "train_wall_seconds": total_train_wall,
-                    "prompt_state": prompt_tracker.serialize() if prompt_tracker else None,
-                    "tokenizer_json": tokenizer_json,
-                },
-                model_path,
-            )
-            print(
-                color_text(
-                    f"[import] total steps: {total_steps}; time spent (wall/cpu/gpu): {import_timer.stop()}; writing model: {write_timer.stop()}",
+                cycle_part = color_text(f"[cycle {cycle} (wall/cpu/gpu)]", Colors.CYAN)
+                train_part = color_text(f" train: {pure_train};", Colors.MAGENTA)
+                eval_part = color_text(f" eval: {eval_timer};", Colors.GREEN)
+                updated_part = color_text(" model updated; flushing logs.", Colors.YELLOW)
+                print(cycle_part + train_part + eval_part + updated_part)
+
+                cumulative_part = color_text("[cumulative]", Colors.CYAN)
+                cum_train_part = color_text(f" train: {acc_train};", Colors.MAGENTA)
+                cum_eval_part = color_text(f" eval: {acc_eval};", Colors.GREEN)
+                ratio_text = color_text(
+                    f" train/eval: {acc_train.ratio(acc_eval)}",
                     Colors.CYAN,
                 )
-            )
-            return
-        if selected_action == "create":
-            checkpoint_payload = {
-                "model": model.state_dict(),
-                "dataset": dataset.state_dict(),
-                "total_steps": 0,
-                "loss_history": [],
-                "config": asdict(config),
-                "train_wall_seconds": 0.0,
-                "prompt_state": prompt_tracker.serialize(),
-                "tokenizer_json": tokenizer_json,
-            }
-            torch.save(checkpoint_payload, model_path)
-            print(
-                color_text(
-                    f"Created new checkpoint at {model_path}; run 'train' to begin training.",
-                    Colors.GREEN,
-                )
-            )
-            return
+                print(cumulative_part + cum_train_part + cum_eval_part + ratio_text)
+                if log_file is not None:
+                    log_file.flush()
+                if ansi_file is not None:
+                    ansi_file.flush()
 
-        if selected_action == "report":
-            run_report_mode(
-                model=model,
-                tokenizer=tokenizer,
-                prompt_tokens=prompt_tokens,
-                sample_len=args.generate,
-                count=args.report_count,
-                device=device,
-                suppress_newlines=args.no_newlines,
-                newline_token_id=newline_token_id,
-                default_prompt_boundary=default_prompt_boundary,
-                boundary_blocklist=boundary_blocklist,
-            )
-            return
+        except KeyboardInterrupt:
+            if args.debug_interrupt:
+                raise
+            # traceback.print_exc()
+            print(color_text("Interrupted by user; exiting cleanly.", Colors.RED, bold=True))
+        except TimeoutAlarm:
+            # traceback.print_exc()
+            print(color_text("Timeout; exiting cleanly.", Colors.RED, bold=True))
 
-        if selected_action == "test":
-            run_test_slice(
-                settings=settings,
-                dataset=dataset,
-                tokenizer=tokenizer,
-                model=model,
-                block_length=args.block_length,
-                start_pos=args.test_start,
-            )
-            return
-
-        acc_train = Timer()
-        acc_eval = Timer()
-        for cycle in range(1, args.cycles + 1):
-            cycle_wall = time.time()
-            tags = ["GPT"]
-            plus_tags: list[str] = []
-            minus_tags: list[str] = []
-            if args.n_grce > 0:
-                plus_tags.append("+GRCE")
-            else:
-                minus_tags.append(" wo/GRCE")
-            if args.n_xctx > 0:
-                plus_tags.append("+XCTX")
-            else:
-                minus_tags.append(" wo/XCTX")
-            label = "".join(tags + plus_tags + minus_tags)
-            hours = total_train_wall / 3600.0
-            days = hours / 24.0
-            train_chars_cycle = (args.block_length + 1) * args.batch_size * args.steps
-            eval_calls = max(1, count_eval_calls(args.steps, args.eval_interval))
-            test_chars_cycle = (
-                (args.block_length + 1)
-                * args.batch_size
-                * eval_calls
-            )
-            train_start = int(dataset.positions.get("train", 0))
-            test_start = int(dataset.positions.get("test", 0))
-            dataset.prepare_cycle("train", train_chars_cycle)
-            dataset.prepare_cycle("test", test_chars_cycle)
-
-            train_chunk = dataset.chunks.get("train")
-            test_chunk = dataset.chunks.get("test")
-
-            def format_range(start: int, span: int) -> str:
-                if span <= 0:
-                    return f"{start:,} - {start:,}"
-                end = start + span - 1
-                return f"{start:,} - {end:,}"
-
-            train_span = int(train_chunk.size(0)) if train_chunk is not None else 0
-            test_span = int(test_chunk.size(0)) if test_chunk is not None else 0
-            train_range = format_range(train_start, train_span)
-            test_range = format_range(test_start, test_span)
-            print()
-            pod_path = pathlib.Path(".podname")
-            if pod_path.exists():
-                pod_label = pod_path.read_text(encoding="utf-8").strip()
-                if pod_label:
-                    print(
-                        color_text(
-                            f"Running on remote pod {pod_label}.",
-                            Colors.RED,
-                            bold=True,
-                        )
-                    )
-            print(color_text(f"Model: {model_path}", Colors.CYAN))
-            print(
-                color_text(
-                    f"Corpus ranges: train tokens {train_range}, test tokens {test_range}",
-                    Colors.CYAN,
-                )
-            )
-            print(
-                color_text(
-                    f"[{label}] Training Cycle {cycle}/{args.cycles}. "
-                    f"Total training so far: {total_steps} steps, {hours:.2f} hours ({days:.2f} days)",
-                    Colors.BLUE,
-                )
-            )
-
-            (
-                total_steps,
-                updates,
-                train_timer,
-                eval_timer,
-            ) = train_model(
-                settings,
-                model,
-                dataset,
-                device,
-                args.steps,
-                args.block_length,
-                args.batch_size,
-                args.eval_interval,
-                total_steps,
-                prompt_tokens,
-                args.generate,
-                tokenizer,
-                suppress_newlines=args.no_newlines,
-                newline_token_id=newline_token_id,
-                prompt_tracker=prompt_tracker,
-                reset_prompt_queue=args.reset_prompt_each_cycle,
-                cycle_wall_start=cycle_wall,
-                base_wall_seconds=total_train_wall,
-                show_time=args.time,
-                default_prompt_boundary=default_prompt_boundary,
-                boundary_blocklist=boundary_blocklist,
-                show_train_loss_details=args.train_loss_details,
-                show_test_loss_details=not args.no_test_loss_details,
-            )
-            loss_history.extend(updates)
-            pure_train = Timer().add(train_timer).sub(eval_timer)
-            acc_train.add(pure_train)
-            acc_eval.add(eval_timer)
-            total_train_wall += train_timer.wall_secs
-            torch.save(
-                {
-                    "model": model.state_dict(),
-                    "dataset": dataset.state_dict(),
-                    "total_steps": total_steps,
-                    "loss_history": loss_history,
-                    "config": asdict(config),
-                    "train_wall_seconds": total_train_wall,
-                    "prompt_state": prompt_tracker.serialize() if prompt_tracker else None,
-                    "tokenizer_json": tokenizer_json,
-                },
-                model_path,
-            )
-            cycle_part = color_text(f"[cycle {cycle} (wall/cpu/gpu)]", Colors.CYAN)
-            train_part = color_text(f" train: {pure_train};", Colors.MAGENTA)
-            eval_part = color_text(f" eval: {eval_timer};", Colors.GREEN)
-            updated_part = color_text(" model updated; flushing logs.", Colors.YELLOW)
-            print(cycle_part + train_part + eval_part + updated_part)
-
-            cumulative_part = color_text("[cumulative]", Colors.CYAN)
-            cum_train_part = color_text(f" train: {acc_train};", Colors.MAGENTA)
-            cum_eval_part = color_text(f" eval: {acc_eval};", Colors.GREEN)
-            ratio_text = color_text(
-                f" train/eval: {acc_train.ratio(acc_eval)}",
-                Colors.CYAN,
-            )
-            print(cumulative_part + cum_train_part + cum_eval_part + ratio_text)
+        finally:
+            if timeout_method is not None:
+                cancel_timeout()
+            sys.stdout.flush()
+            sys.stderr.flush()
+            sys.stdout = orig_stdout
+            sys.stderr = orig_stderr
             if log_file is not None:
-                log_file.flush()
+                log_file.close()
             if ansi_file is not None:
-                ansi_file.flush()
+                ansi_file.close()
 
-    except KeyboardInterrupt:
-        if args.debug_interrupt:
-            raise
-        # traceback.print_exc()
-        print(color_text("Interrupted by user; exiting cleanly.", Colors.RED, bold=True))
-    except TimeoutAlarm:
-        # traceback.print_exc()
-        print(color_text("Timeout; exiting cleanly.", Colors.RED, bold=True))
+        return 0
 
-    finally:
-        if timeout_method is not None:
-            cancel_timeout()
-        sys.stdout.flush()
-        sys.stderr.flush()
-        sys.stdout = orig_stdout
-        sys.stderr = orig_stderr
-        if log_file is not None:
-            log_file.close()
-        if ansi_file is not None:
-            ansi_file.close()
-
-    return 0
-
-if __name__ == "__main__":
+def grce_main(args: argparse.Namespae) -> int:
     # second entry point for "size" subcommand, now with
     # Torch imported; used only in 'size --check' mode
     if cli_args.command == "size":
         assert getattr(cli_args, "check", False)
         sys.exit(grce_cli_size(cli_args))
 
+    torch.manual_seed(42)
+    random.seed(42)
+
     # otherwise: run the big "default" main
+    rt = Runtime(Settings(cli_args))
+    return rt.big_fat_old_main()
+
+if __name__ == "__main__":
     sys.exit(grce_main(cli_args))
