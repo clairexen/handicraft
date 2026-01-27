@@ -128,7 +128,15 @@ MODEL_CONFIG_DEFAULTS = ModelConfig()
 class Settings:
     """Holds the GRCE/XCTX model geometry and all other runtime settings.
 
-    (Most users of ModelConfig should actually be moved to using Settings instead)
+    FIXME: Instead of passing copies of individual runtime settings as individual function
+    arguments, we should always pass this dataclass to the function itself.
+
+    FIXME: Instead of inspectig cli_args all over the place, we should interpret the
+    cli_args only once, in __post_init__() of this class, and everywhere else we
+    should just inspect the members of this class. This creates a clean abstraction
+    between the internal quirks of grce_cli_args() and the rest of the code base,
+    should simplify the code, and make it easier to perform changes in grce_cli_args()
+    without breaking anything in a non-trivial way.
     """
 
     # The grce_cli_args() return value. Initialize this field
@@ -172,6 +180,18 @@ class Settings:
         if self._block_length_arg is not None:
             return self._block_length_arg
         return self.block_size
+
+    @property
+    def model_config(self):
+        return ModelConfig(
+            vocab_size=self.vocab_size,
+            block_size=self.block_size,
+            n_layer=self.n_layer,
+            n_head=self.n_head,
+            n_embd=self.n_embd,
+            n_grce=self.n_grce,
+            n_xctx=self.n_xctx,
+        )
 
     def __post_init__(self):
         if self.cli_args is None: return
