@@ -1721,6 +1721,7 @@ class PromptTracker:
         self._expected_token_ids.clear()
         prompts_state = state.get("prompts") if isinstance(state, dict) else None
         prompt_entries: list[tuple[str, str]] = []
+        cleared_prompts = isinstance(prompts_state, list) and len(prompts_state) == 0
         if isinstance(prompts_state, list):
             for entry in prompts_state:
                 prompt_text = None
@@ -1732,7 +1733,12 @@ class PromptTracker:
                     prompt_text, expected_text = entry[0], entry[1]
                 if isinstance(prompt_text, str) and isinstance(expected_text, str):
                     prompt_entries.append((prompt_text, expected_text))
-        self.prompts = prompt_entries if prompt_entries else default_prompt_entries()
+        if prompt_entries:
+            self.prompts = prompt_entries
+        elif cleared_prompts:
+            self.prompts = []
+        else:
+            self.prompts = default_prompt_entries()
         total = len(self.prompts)
         raw_status: list[int] | None = None
         if state and isinstance(state.get("status"), list):
