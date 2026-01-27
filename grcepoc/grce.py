@@ -914,8 +914,9 @@ ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 class Colors:
     RESET = "\033[0m"
     BOLD = "\033[1m"
+    NOT_BOLD = "\033[22m"
     UNDERLINE = "\033[4m"
-    UNDERLINE = "\033[4m"
+    NO_UNDERLINE = "\033[24m"
     BLUE = "\033[94m"
     CYAN = "\033[96m"
     GREEN = "\033[92m"
@@ -940,6 +941,14 @@ def normalize_prompt(text: str) -> str:
 
     return text.replace(FANCY_SPACE, " ").replace(FANCY_ENTER, "\n")
 
+
+def fancy_ctrl_chars(text: str) -> str:
+    text = text.replace(" ", FANCY_SPACE)
+    text = text.replace("\n", FANCY_ENTER)
+    return text
+
+def highlight_first_char(text: str) -> str:
+    return f"{Colors.BOLD}{text[0]}{Colors.NOT_BOLD}{text[1:]}" if text else ""
 
 def prompt_needs_boundary(text: str) -> bool:
     trimmed = text.rstrip()
@@ -1594,6 +1603,12 @@ class GPT2TokenizerWrapper:
 
     def decode(self, tokens: torch.Tensor) -> str:
         return self.tokenizer.decode(tokens.tolist())
+
+    def decode_one(self, token: int) -> str:
+        return self.tokenizer.decode([token])
+
+    def decode_pretty(self, tokens: torch.Tensor) -> str:
+        return "".join(highlight_first_char(fancy_ctrl_chars(self.decode_one(tok))) for tok in tokens.tolist())
 
 
 class PromptTracker:
@@ -2961,19 +2976,18 @@ ROW_METRIC_MAP = {
 
 ROW_METRIC_KEYS = [
     "normal",
-    "encode",
-    "recode",
+    #"encode",
+    #"recode",
     "decode",
     "noxctx",
-    "puxctx",
     "noattn",
-    "puattn",
+    #"puxctx",
+    #"puattn",
 ]
 
 ROW_METRIC_GROUP_START = {
-    "encode",
+    "normal",
     "noxctx",
-    "noattn",
 }
 
 
@@ -3268,9 +3282,8 @@ def train_model(
                     )
                 )
 
-        sample_text = tokenizer.decode(torch.tensor(sample_ids))
-        prompt_text = tokenizer.decode(torch.tensor(prompt_ids))
-        completion_text = tokenizer.decode(torch.tensor(completion_ids))
+        prompt_text = tokenizer.decode_pretty(torch.tensor(prompt_ids))
+        completion_text = tokenizer.decode_pretty(torch.tensor(completion_ids))
         sample_prefix = color_text(prompt_text, Colors.CYAN)
         sample_suffix = color_text(completion_text, Colors.YELLOW)
         sample_render = f"{sampling_strategy}: " + sample_prefix + sample_suffix
@@ -3426,9 +3439,9 @@ def run_test_slice(
     start_pos: int,
 ) -> None:
     tokens = dataset.looped_slice("test", start_pos, block_length)
-    text = tokenizer.decode(tokens)
+    pretty_text = tokenizer.decode_pretty(tokens)
     print(color_text(f"Test slice @ {start_pos}:", Colors.CYAN))
-    print(text)
+    print(pretty_text)
 
 
 import signal
