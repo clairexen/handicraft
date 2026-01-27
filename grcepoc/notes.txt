@@ -265,6 +265,30 @@ detailed token-level debug information about that evaluation. Use `test --size N
 to artificially reduce the block size to de-clutter the output of the command.
 
 
+## Re-design of GPT(+GRCE+XCTX) PyTorch Model -- (this is future work)
+
+We replace the *default batch* with a pair of new batches types: *decoder batch* and
+*encoder batch*. Each of them has BATCH_SIZE // 2 rows and BLOCK_SIZE (block-length)
+columns, and we run them both in each training step, always the *encoder batch*
+first, and then the *decoder batch*.
+
+There are some "special rows" within each of the batch types, but their layout is
+completely static. (Instead of shuffling the rows around we an always shuffle the
+xy vectors for the rows around. This simplifies a lot and should help streamlinig
+the code..
+
+The *encoder batch* contains a transformer constructed in the "traditional"
+way: from n_layers layers of n_rows x n_cols arrays of transformer blocks.
+
+The *decoder batch* contains a transformer constructed in n_cols steps, with
+n_layers sub-steps each: for each of the n_cols time-position we build a wall
+of transformers that is n_rows wide and n_layers high. We do this by creating
+n_cols wide vectors of transformer blocks, and stacking n_layers of them
+ontop each other.
+
+
+
+
 ## Training and evaluation with pre-evaluation -- (this is future work)
 
 We add a `--pre-eval` CLI option. For that mode we define a *pre-eval batch*,
@@ -492,11 +516,4 @@ function, that receives settings as first arg, and the parsed cli options
 as additional args.
 
 Maybe let's restructure 'create' into grce_cli_create() and grce_cmd_create() first?
-
-
-## Move --import-model etc from top-level args parser into the 'create' subcommand in grce.py
-
-Move the top-level --import-model, --trim-model, --drop-layers, and --add-layers cli options
-from the top-level args parser to be cli options of the 'create' subcommand. We should only
-import (and do any of those tweaks) while creating a new model.
 

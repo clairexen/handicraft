@@ -3681,14 +3681,14 @@ class Runtime:
     def __init__(self, settings: Settings):
         self.settings = settings
 
+    class TimeoutAlarm(Exception):
+        pass
+
     def cancel_timeout(self) -> None:
         pass
 
     def start_timeout(self, timeout_seconds) -> None:
         self.cancel_timeout()
-
-        class TimeoutAlarm(Exception):
-            pass
 
         timeout_method: str | None = None
         prev_sigalrm_handler = None
@@ -3707,7 +3707,7 @@ class Runtime:
 
         if timeout_seconds > 0:
             def handle_timeout(signum: int, frame: object) -> None:
-                raise TimeoutAlarm()
+                raise self.TimeoutAlarm()
 
             prev_sigalrm_handler = signal.signal(signal.SIGALRM, handle_timeout)
             try:
@@ -4540,7 +4540,7 @@ class Runtime:
                 raise
             # traceback.print_exc()
             print(color_text("Interrupted by user; exiting cleanly.", Colors.RED, bold=True))
-        except TimeoutAlarm:
+        except self.TimeoutAlarm:
             # traceback.print_exc()
             print(color_text("Timeout; exiting cleanly.", Colors.RED, bold=True))
 
