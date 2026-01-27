@@ -1058,6 +1058,14 @@ class Timer:
         self.cpu_start = None
         self.gpu_start = None
 
+    def acc(self, other):
+        assert self.wall_start is None
+        assert other.wall_start is None
+        self.wall_secs += other.wall_secs
+        self.cpu_secs += other.cpu_secs
+        self.gpu_secs += other.gpu_secs
+        self.gpu_mem = max(self.gpu_mem, other.gpu_mem)
+
     def start(self):
         assert self.wall_start is None
         self.wall_start = time.time()
@@ -3800,7 +3808,7 @@ def grce_main(args: argparse.Namespace) -> int:
         )
         tok_summary = (
             color_text(
-                f"[tokenizer time (wall/cpu/gpu/vram)]",
+                f"[tokenizer (wall/cpu/gpu/vram)]",
                 Colors.CYAN,
             ) + f" {tok_timer.stop()}\n"
         )
@@ -4339,13 +4347,13 @@ def grce_main(args: argparse.Namespace) -> int:
                             bold=True,
                         )
                     )
+            print(color_text(f"Model: {model_path}", Colors.CYAN))
             print(
                 color_text(
-                    f"Corpus slices: train tokens {train_range}, test tokens {test_range}",
+                    f"Corpus ranges: train tokens {train_range}, test tokens {test_range}",
                     Colors.CYAN,
                 )
             )
-            print(color_text(f"Model: {model_path}", Colors.CYAN))
             print(
                 color_text(
                     f"[{label}] Training Cycle {cycle}/{args.cycles}. "
