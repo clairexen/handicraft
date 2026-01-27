@@ -516,6 +516,7 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Directory containing <corpus>-train.txt.gz and <corpus>-test.txt.gz",
     )
     generic.add_argument("--device", type=str, default="cuda", help="cpu or cuda")
+    generic.add_argument("--torch-compile", type=str, default="off", help="off or default or reduce-overhead")
     generic.add_argument(
         "--model",
         type=str,
@@ -3361,23 +3362,25 @@ def train_model(
     line = " | ".join(line_parts) + " |"
     print(line)
 
+    # use the same fixed batch layout for the entire cycle
+    row_types = list(row_type_template)
+    random.shuffle(row_types)
+    special_masks = build_row_type_masks(
+        row_types,
+        block_length,
+        device,
+        context_enabled=context_path_enabled,
+        xctx_enabled=xctx_enabled,
+    )
+    position_offsets = sample_position_offsets(
+        batch_size,
+        model.config.block_size,
+        block_length,
+        device,
+    )
+
     for step in range(1, steps + 1):
         xb, yb = dataset.get_batch("train", block_length, batch_size, device)
-        row_types = list(row_type_template)
-        random.shuffle(row_types)
-        special_masks = build_row_type_masks(
-            row_types,
-            block_length,
-            device,
-            context_enabled=context_path_enabled,
-            xctx_enabled=xctx_enabled,
-        )
-        position_offsets = sample_position_offsets(
-            batch_size,
-            model.config.block_size,
-            block_length,
-            device,
-        )
         logits, _, _ = model.forward_autoreg(
             xb,
             targets=yb,
@@ -3701,8 +3704,6 @@ class Runtime:
                 signal.alarm(max(1, int(math.ceil(timeout_seconds))))
 
         selected_action = args.command
-        if selected_action != "create":
-            create_opts = None
 
         checkpoint_override_payload: dict | None = None
         checkpoint_override_config: ModelConfig | None = None
@@ -3710,7 +3711,7 @@ class Runtime:
         if args.pt:
             if selected_action == "train":
                 raise ValueError("--pt is only supported for inference/debug commands")
-            if create_opts is not None and create_opts.import_model:
+            if args.command == "create" and args.create_args.import_model:
                 raise ValueError("--pt cannot be combined with --import-model")
             skip_checkpoint_load = (
                 (selected_action == "corpus" and getattr(args, "corpus_init", False))
@@ -4168,12 +4169,20 @@ class Runtime:
                     model = GRCEGPT(config).to(device)
                 else:
                     raise
+
+            if args.torch_compile != "off":
+                model = torch.compile(
+                    model,
+                    mode=args.torch_compile,
+                    fullgraph=False,
+                )
+
             total_steps = 0
             loss_history: List[Dict[str, float]] = []
             total_train_wall = 0.0
             payload = checkpoint_override_payload
             if payload is None and model_path.exists():
-                if create_opts and create_opts.import_model:
+                if args.command == "create" and args.create_args.import_model:
                     raise ValueError(
                         "--import-model can only be used when no existing checkpoint is present"
                     )
@@ -4262,13 +4271,13 @@ class Runtime:
                 except RuntimeError as err:
                     print(color_text("Checkpoint load failed (shape mismatch); starting fresh.", Colors.RED, bold=True))
                     print(color_text(str(err), Colors.RED))
-            elif create_opts and create_opts.import_model:
+            elif args.command == "create" and args.create_args.import_model:
                 import_timer = Timer().start()
-                if not create_opts.import_model.exists():
+                if not args.create_args.import_model.exists():
                     raise FileNotFoundError(
-                        f"Import checkpoint {create_opts.import_model} not found"
+                        f"Import checkpoint {args.create_args.import_model} not found"
                     )
-                source_state, meta = load_checkpoint_payload(create_opts.import_model, device)
+                source_state, meta = load_checkpoint_payload(args.create_args.import_model, device)
                 src_config = meta.get("config")
                 if src_config is None:
                     raise ValueError(
@@ -4279,18 +4288,18 @@ class Runtime:
                 src_layers = src_config.get("n_layer")
                 if src_layers is None:
                     src_layers = count_layers_from_state(source_state)
-                print(color_text(f"Importing weights from {create_opts.import_model}", Colors.GREEN))
+                print(color_text(f"Importing weights from {args.create_args.import_model}", Colors.GREEN))
                 mapping = build_layer_mapping(
                     src_layers,
                     config.n_layer,
-                    create_opts.drop_layers,
-                    create_opts.add_layers,
-                    allow_trim=create_opts.trim_model,
+                    args.create_args.drop_layers,
+                    args.create_args.add_layers,
+                    allow_trim=args.create_args.trim_model,
                 )
                 apply_imported_state(
                     model,
                     source_state,
-                    allow_trim=create_opts.trim_model,
+                    allow_trim=args.create_args.trim_model,
                     mapping=mapping,
                 )
                 total_steps = int(meta.get("total_steps", 0))
