@@ -1511,6 +1511,7 @@ from tokenizers.trainers import BpeTrainer
 
 ASCII_LETTERS = set(string.ascii_letters)
 ASCII_LOWERCASE = set(string.ascii_lowercase)
+TOKENIZER_TRAIN_LIMIT_BYTES = 16 * 1024 * 1024  # 16 MB of corpus text for tokenizer training
 
 class RMSNorm(nn.Module):
     """Root-mean-square norm used by the XCTX recurrent path."""
@@ -1678,6 +1679,19 @@ def _restrict_bpe_training_text(text: str) -> str:
     return "".join(pieces)
 
 
+def _limit_training_text_bytes(text: str, limit_bytes: int = TOKENIZER_TRAIN_LIMIT_BYTES) -> str:
+    if limit_bytes <= 0 or not text:
+        return text
+    try:
+        raw = text.encode("utf-8")
+    except UnicodeEncodeError:
+        return text[:limit_bytes]
+    if len(raw) <= limit_bytes:
+        return text
+    truncated = raw[:limit_bytes]
+    return truncated.decode("utf-8", errors="ignore")
+
+
 # -----------------------------------------------------------------------------
 # Data Utilities
 # -----------------------------------------------------------------------------
@@ -1713,6 +1727,7 @@ class GPT2TokenizerWrapper:
             tok_id for tok_id in range(self.vocab_size) if tok_id not in self.special_ids
         ]
         self.leading_alpha_token_ids = sorted(self._collect_leading_alpha_tokens())
+        self.byte_fallback_encodings = self._build_byte_fallback_encodings()
 
     def _load_or_train(
         self,
@@ -1737,8 +1752,13 @@ class GPT2TokenizerWrapper:
         tokenizer = Tokenizer(BPE(unk_token=None))
         tokenizer.pre_tokenizer = ByteLevel(add_prefix_space=False)
         tokenizer.decoder = ByteLevelDecoder()
-        byte_values = sorted(set(train_text.encode("utf-8")))
-        initial_alphabet = [chr(b) for b in byte_values] or ByteLevel.alphabet()
+        byte_level_alphabet = ByteLevel.alphabet()
+        if byte_level_alphabet:
+            initial_alphabet = byte_level_alphabet
+        else:
+            byte_values = sorted(set(train_text.encode("utf-8")))
+            observed_alphabet = [chr(b) for b in byte_values]
+            initial_alphabet = observed_alphabet or [chr(b) for b in range(256)]
         # Reserve one additional slot beyond the requested vocab size to compensate
         # for the underlying trainer implicitly injecting an end-of-input token.
         trainer_vocab_size = vocab_size + 1
@@ -1748,7 +1768,8 @@ class GPT2TokenizerWrapper:
             special_tokens=[],
             initial_alphabet=initial_alphabet,
         )
-        sanitized = _restrict_bpe_training_text(train_text)
+        limited_text = _limit_training_text_bytes(train_text)
+        sanitized = _restrict_bpe_training_text(limited_text)
         tokenizer.train_from_iterator([sanitized], trainer=trainer)
         tokenizer.post_processor = ByteLevelProcessor(trim_offsets=False)
         if extra_special_tokens:
@@ -1778,6 +1799,28 @@ class GPT2TokenizerWrapper:
             if first in ASCII_LOWERCASE:
                 token_ids.add(tok_id)
         return token_ids
+
+    def _build_byte_fallback_encodings(self) -> list[tuple[int, ...]]:
+        encodings: list[tuple[int, ...]] = []
+        for value in range(256):
+            byte_text = bytes([value]).decode("latin-1")
+            try:
+                tokens = self.tokenizer.encode(byte_text, add_special_tokens=False)
+            except Exception as exc:  # pragma: no cover - defensive guard
+                raise ValueError(
+                    f"Tokenizer could not encode byte {value}; delete {self.cache_path} and rebuild the tokenizer cache"
+                ) from exc
+            cleaned = tuple(int(tok) for tok in tokens)
+            if not cleaned:
+                raise ValueError(
+                    f"Tokenizer produced no tokens for byte {value}; delete {self.cache_path} and rebuild the tokenizer cache"
+                )
+            if any(tok in self.special_ids for tok in cleaned):
+                raise ValueError(
+                    f"Tokenizer fallback for byte {value} relies on a special token; delete {self.cache_path} and rebuild the tokenizer cache"
+                )
+            encodings.append(cleaned)
+        return encodings
 
     def encode(self, text: str) -> torch.Tensor:
         ids = self.tokenizer.encode(text, add_special_tokens=False)
