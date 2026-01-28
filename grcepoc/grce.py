@@ -2148,10 +2148,8 @@ def load_or_prepare_tokens(
         payload = torch.load(cache_path)
         tokens = payload["tokens"].long()
         bytes_count = int(payload.get("bytes", 0))
-        inserts = int(payload.get("inserts", 0))
-        trimmed_text = text
         print(color_text(f"Loaded cached {split} tokens from {cache_path}", Colors.YELLOW))
-        return tokens, trimmed_text, bytes_count, inserts
+        return tokens, text, bytes_count
 
     print(color_text(f"Tokenizing raw {split} data: {text_path}...", Colors.BLUE))
 
@@ -2159,15 +2157,11 @@ def load_or_prepare_tokens(
         raise FileNotFoundError(
             f"No cached tokens at {cache_path} and source text missing for {split}."
         )
-    trimmed_text = text
-    if not trimmed_text:
-        raise ValueError(f"Text for {split} split is empty")
-    tokens = tokenizer.encode_corpus(trimmed_text)
-    bytes_count = len(trimmed_text.encode("utf-8"))
-    inserts = 0
-    torch.save({"tokens": tokens, "bytes": bytes_count, "inserts": inserts}, cache_path)
+    tokens = tokenizer.encode_corpus(text).type(torch.uint16)
+    bytes_count = len(text.encode("utf-8"))
+    torch.save({"tokens": tokens, "bytes": bytes_count}, cache_path)
     print(color_text(f"Saved {split} token cache to {cache_path}", Colors.YELLOW))
-    return tokens, trimmed_text, bytes_count, inserts
+    return tokens, text, bytes_count
 
 
 # -----------------------------------------------------------------------------
@@ -3875,7 +3869,7 @@ class Runtime:
                 and prompt_needs_boundary(args.prompt)
             )
 
-            train_tokens, train_text, train_bytes, train_inserts = load_or_prepare_tokens(
+            train_tokens, train_text, train_bytes = load_or_prepare_tokens(
                 "train",
                 train_path,
                 full_train_text,
@@ -3884,7 +3878,7 @@ class Runtime:
                 seed=1234,
             )
 
-            test_tokens, test_text, test_bytes, test_inserts = load_or_prepare_tokens(
+            test_tokens, test_text, test_bytes = load_or_prepare_tokens(
                 "test",
                 test_path,
                 full_test_text,
