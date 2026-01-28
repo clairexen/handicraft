@@ -10,8 +10,8 @@
 /data/dolma-cccc-filtered-0000.json.gz
 /data/simplearith-test.txt.gz
 /data/simplearith-train.txt.gz
-/data/simplearith_tokens_test_*.txt.gz
-/data/simplearith_tokens_train_*.txt.gz
+/data/simplearith_tokens_test_*.pt
+/data/simplearith_tokens_train_*.pt
 /.venv/
 /.backup/
 /model/

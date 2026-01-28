@@ -592,6 +592,14 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "--n-embd 8 --n-grce 4 --n-xctx 9 --steps 2 --cycles 1 --eval-interval 1 --corpus simplestwiki"
         ),
     )
+    model_group.add_argument(
+        "--arith",
+        action="store_true",
+        help=(
+            "Shortcut for --vocab-size 500 --batch-size 700 --block-size 64 --n-layer 10 --n-head 4 "
+            "--n-embd 128 --n-grce 32 --n-xctx 720 --corpus simplearith"
+        ),
+    )
 
     training_group = parser.add_argument_group("Training schedule")
     training_group.add_argument("--steps", type=int, default=defaults.steps, help="Training steps per cycle")
@@ -931,6 +939,26 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             args.eval_interval = 1
         if not flag_present("--corpus"):
             args.corpus = "simplestwiki"
+
+    if args.arith:
+        if not flag_present("--vocab-size"):
+            args.vocab_size = 313
+        if not flag_present("--batch-size"):
+            args.batch_size = 128
+        if not flag_present("--block-size"):
+            args.block_size = 64
+        if not flag_present("--n-layer"):
+            args.n_layer = 10
+        if not flag_present("--n-head"):
+            args.n_head = 4
+        if not flag_present("--n-embd"):
+            args.n_embd = 128
+        if not flag_present("--n-grce"):
+            args.n_grce = 32
+        if not flag_present("--n-xctx"):
+            args.n_xctx = 720
+        if not flag_present("--corpus"):
+            args.corpus = "simplearith"
 
     args._block_length_defined = args.block_length is not None
     if args.block_length is None:
