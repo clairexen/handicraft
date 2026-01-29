@@ -1755,7 +1755,7 @@ class GPT2TokenizerWrapper:
             tok_id for tok_id in range(self.vocab_size) if tok_id not in self.special_ids
         ]
         self.leading_alpha_token_ids = sorted(self._collect_leading_alpha_tokens())
-        self.byte_fallback_encodings = self._build_byte_fallback_encodings()
+        #self.byte_fallback_encodings = self._build_byte_fallback_encodings()
 
     def _load_or_train(
         self,
