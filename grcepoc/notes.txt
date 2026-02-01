@@ -265,7 +265,7 @@ detailed token-level debug information about that evaluation. Use `test --size N
 to artificially reduce the block size to de-clutter the output of the command.
 
 
-## Re-design of PyTorch Model and new method of batch creation -- (this is future work)
+## Re-design of PyTorch Model and new method of batch creation -- (as implemented in grce_ng.py)
 
 ### TransformerStackGrid
 
