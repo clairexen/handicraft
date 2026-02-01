@@ -3145,6 +3145,20 @@ def sample_position_offsets(
     return torch.randint(0, max_offset + 1, (batch_size,), device=device)
 
 
+def count_eval_calls(steps: int, interval: int) -> int:
+    """Return how many evaluation batches run in a training cycle."""
+
+    if steps <= 0:
+        return 0
+    eval_steps = {1, steps}
+    if interval > 0:
+        current = interval
+        while current <= steps:
+            eval_steps.add(current)
+            current += interval
+    return len(eval_steps)
+
+
 def evaluate_single_batch(
     model: GRCEGPT,
     dataset: TextDataset,
@@ -3608,6 +3622,16 @@ import traceback
 class Runtime:
     def __init__(self, settings: Settings):
         self.settings = settings
+        self.tokenizer: GPT2TokenizerWrapper | None = None
+        self.dataset: TextDataset | None = None
+        self._train_tokens: torch.Tensor | None = None
+        self._test_tokens: torch.Tensor | None = None
+        self.newline_token_id: int | None = None
+        self.boundary_blocklist: Sequence[int] | None = None
+        self.default_prompt_boundary: bool = False
+        self.model_path: pathlib.Path | None = None
+        self.log_path: pathlib.Path | None = None
+        self.tokenizer_json: str | None = None
 
     class TimeoutAlarm(Exception):
         pass
@@ -3647,6 +3671,226 @@ class Runtime:
 
         self.cancel_timeout = cancel_timeout
 
+    def _prepare_corpus(
+        self,
+    ) -> tuple[
+        GPT2TokenizerWrapper,
+        TextDataset,
+        torch.Tensor,
+        torch.Tensor,
+        int | None,
+        Sequence[int] | None,
+        bool,
+        str,
+    ]:
+        assert self.settings.cli_args is not None
+        args = self.settings.cli_args
+
+        data_dir = pathlib.Path(args.data)
+        train_path = data_dir / f"{args.corpus}-train.txt.gz"
+        test_path = data_dir / f"{args.corpus}-test.txt.gz"
+        model_dir = pathlib.Path(args.model)
+        if not model_dir.exists():
+            try:
+                model_dir.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                pass
+
+        must_build_tokenizer = (
+            args.command == "corpus" and getattr(args, "corpus_init", False)
+        )
+        train_cache_path = data_dir / f"{args.corpus}_tokens_train_{args.vocab_size}.pt"
+        test_cache_path = data_dir / f"{args.corpus}_tokens_test_{args.vocab_size}.pt"
+        need_corpus_for_create = False
+        if args.command == "create":
+            need_corpus_for_create = (
+                not train_cache_path.exists() or not test_cache_path.exists()
+            )
+        must_build_tokenizer = must_build_tokenizer or need_corpus_for_create
+
+        if must_build_tokenizer:
+            full_train_text = load_text_file(train_path)
+            full_test_text = load_text_file(test_path)
+        else:
+            full_train_text = None
+            full_test_text = None
+            if not train_cache_path.exists():
+                raise FileNotFoundError(
+                    f"Train token cache {train_cache_path} not found; run 'corpus --init' first."
+                )
+            if not test_cache_path.exists():
+                raise FileNotFoundError(
+                    f"Test token cache {test_cache_path} not found; run 'corpus --init' first."
+                )
+
+        tokenizer_key = f"{args.corpus}_vocab_{args.vocab_size}"
+        tokenizer_path = data_dir / f"{tokenizer_key}.json"
+        if args.command == "create" and not tokenizer_path.exists():
+            must_build_tokenizer = True
+        tokenizer_json = getattr(args, "tokenizer_json_override", None)
+        if tokenizer_json is None:
+            if tokenizer_path.exists():
+                tokenizer_json = tokenizer_path.read_text(encoding="utf-8")
+            elif not must_build_tokenizer:
+                raise FileNotFoundError(
+                    f"Tokenizer cache {tokenizer_path} not found; run 'corpus --init' first or supply --pt."
+                )
+        print(color_text(f"Tokenizer: {tokenizer_path}", Colors.BLUE))
+        tok_timer = Timer().start()
+        vocab_source = full_train_text or ""
+        reserved_tokens = 1 + len(GPT2TokenizerWrapper.EXTRA_SPECIAL_TOKENS)
+        if args.vocab_size <= reserved_tokens:
+            raise ValueError(
+                f"--vocab-size must exceed reserved tokens ({reserved_tokens}); got {args.vocab_size}"
+            )
+        target_vocab = max(0, args.vocab_size - reserved_tokens)
+        tokenizer = GPT2TokenizerWrapper(
+            vocab_source,
+            tokenizer_path,
+            target_vocab,
+            pretrained_json=tokenizer_json,
+        )
+        expected_vocab_size = args.vocab_size
+        actual_vocab_size = tokenizer.vocab_size
+        if actual_vocab_size != expected_vocab_size:
+            raise ValueError(
+                "Tokenizer size mismatch: expected "
+                f"{expected_vocab_size} tokens but found {actual_vocab_size}. "
+                "Delete the cached tokenizer and re-run 'corpus --init'."
+            )
+        tokenizer_json = tokenizer_json or tokenizer_path.read_text(encoding="utf-8")
+
+        newline_token_id = None
+        newline_tokens = tokenizer.tokenizer.encode("\n", add_special_tokens=False)
+        if newline_tokens:
+            newline_token_id = newline_tokens[0]
+
+        enforce_boundary_guard = not args.no_boundary
+        boundary_blocklist = (
+            tokenizer.leading_alpha_token_ids if enforce_boundary_guard else None
+        )
+        default_prompt_boundary = (
+            enforce_boundary_guard
+            and boundary_blocklist is not None
+            and prompt_needs_boundary(args.prompt)
+        )
+
+        train_tokens, train_text, train_bytes = load_or_prepare_tokens(
+            "train",
+            train_path,
+            full_train_text,
+            train_cache_path,
+            tokenizer,
+            seed=1234,
+        )
+
+        test_tokens, test_text, test_bytes = load_or_prepare_tokens(
+            "test",
+            test_path,
+            full_test_text,
+            test_cache_path,
+            tokenizer,
+            seed=5678,
+        )
+
+        if train_text is None and train_bytes == 0:
+            train_bytes = len(train_tokens)
+        if test_text is None and test_bytes == 0:
+            test_bytes = len(test_tokens)
+
+        train_token_count = int(train_tokens.numel())
+        test_token_count = int(test_tokens.numel())
+        print(
+            color_text(
+                f"Corpus size: {train_token_count:,} train tokens, {test_token_count:,} test tokens",
+                Colors.CYAN,
+            )
+        )
+        tok_summary = (
+            color_text(f"[tokenizer (wall/cpu/gpu)]", Colors.CYAN)
+            + color_text(f" {tok_timer.stop()}\n", Colors.MAGENTA)
+        )
+        print(tok_summary)
+
+        dataset = TextDataset(
+            train_tokens=train_tokens,
+            test_tokens=test_tokens,
+            train_text=train_text,
+            test_text=test_text,
+            train_bytes=train_bytes,
+            test_bytes=test_bytes,
+            train_path=train_path,
+            test_path=test_path,
+        )
+
+        self.tokenizer = tokenizer
+        self.dataset = dataset
+        self._train_tokens = train_tokens
+        self._test_tokens = test_tokens
+        self.newline_token_id = newline_token_id
+        self.boundary_blocklist = boundary_blocklist
+        self.default_prompt_boundary = default_prompt_boundary
+        self.tokenizer_json = tokenizer_json
+        return (
+            tokenizer,
+            dataset,
+            train_tokens,
+            test_tokens,
+            newline_token_id,
+            boundary_blocklist,
+            default_prompt_boundary,
+            tokenizer_json,
+        )
+
+    def cli_corpus(
+        self,
+        tokenizer: GPT2TokenizerWrapper,
+        train_tokens: torch.Tensor,
+        test_tokens: torch.Tensor,
+    ) -> int:
+        assert self.settings.cli_args is not None
+        args = self.settings.cli_args
+
+        def emit_range(label: str, tokens: torch.Tensor, spec: str) -> None:
+            start, end = parse_range_arg(spec)
+            total = int(tokens.numel())
+            if total == 0:
+                print(color_text(f"{label} corpus is empty", Colors.MAGENTA))
+                return
+            if start < 0 or end < 0 or start >= total or end >= total:
+                raise ValueError(f"{label} range {start}-{end} is outside 0-{total - 1}")
+            subset = tokens[start : end + 1].tolist()
+            print(
+                color_text(
+                    f"{label} tokens {start}-{end} (count {len(subset)}):",
+                    Colors.CYAN,
+                )
+            )
+            chunk_size = 128
+            for offset in range(0, len(subset), chunk_size):
+                chunk_tokens = subset[offset : offset + chunk_size]
+                text = tokenizer.decode(torch.tensor(chunk_tokens))
+                print(text)
+
+        actions_done = False
+        if getattr(args, "corpus_init", False):
+            print(
+                color_text(
+                    "Tokenizer initialized and token caches updated; run 'train' to build a model.",
+                    Colors.GREEN,
+                )
+            )
+            actions_done = True
+        if getattr(args, "corpus_print_train", None):
+            emit_range("Train", train_tokens, args.corpus_print_train)
+            actions_done = True
+        if getattr(args, "corpus_print_test", None):
+            emit_range("Test", test_tokens, args.corpus_print_test)
+            actions_done = True
+        if not actions_done:
+            print(color_text("No corpus action selected", Colors.YELLOW))
+        return 0
+
     def big_fat_old_main(self) -> int:
         """Dispatch the CLI command selected by :func:`grce_cli_args`.
 
@@ -3659,201 +3903,24 @@ class Runtime:
         assert self.settings.cli_args is not None
         args = self.settings.cli_args
 
-        preprocess_runtime_settings(args)
-
         ansi_file = None
         try:
             orig_stdout, orig_stderr, log_file = sys.stdout, sys.stderr, None
 
-            data_dir = pathlib.Path(args.data)
-            train_path = data_dir / f"{args.corpus}-train.txt.gz"
-            test_path = data_dir / f"{args.corpus}-test.txt.gz"
+            (
+                tokenizer,
+                dataset,
+                train_tokens,
+                test_tokens,
+                newline_token_id,
+                boundary_blocklist,
+                default_prompt_boundary,
+                tokenizer_json,
+            ) = self._prepare_corpus()
             model_dir = pathlib.Path(args.model)
-            if not model_dir.exists():
-                try:
-                    model_dir.mkdir(parents=True, exist_ok=True)
-                except OSError:
-                    pass
-
-            must_build_tokenizer = (
-                args.command == "corpus" and getattr(args, "corpus_init", False)
-            )
-            train_cache_path = data_dir / f"{args.corpus}_tokens_train_{args.vocab_size}.pt"
-            test_cache_path = data_dir / f"{args.corpus}_tokens_test_{args.vocab_size}.pt"
-            need_corpus_for_create = False
-            if args.command == "create":
-                need_corpus_for_create = (
-                    not train_cache_path.exists() or not test_cache_path.exists()
-                )
-            must_build_tokenizer = must_build_tokenizer or need_corpus_for_create
-
-            if must_build_tokenizer:
-                full_train_text = load_text_file(train_path)
-                full_test_text = load_text_file(test_path)
-            else:
-                full_train_text = None
-                full_test_text = None
-                if not train_cache_path.exists():
-                    raise FileNotFoundError(
-                        f"Train token cache {train_cache_path} not found; run 'corpus --init' first."
-                    )
-                if not test_cache_path.exists():
-                    raise FileNotFoundError(
-                        f"Test token cache {test_cache_path} not found; run 'corpus --init' first."
-                    )
-
-            tokenizer_key = f"{args.corpus}_vocab_{args.vocab_size}"
-            tokenizer_path = data_dir / f"{tokenizer_key}.json"
-            if args.command == "create" and not tokenizer_path.exists():
-                must_build_tokenizer = True
-            tokenizer_json = getattr(args, "tokenizer_json_override", None)
-            if tokenizer_json is None:
-                if tokenizer_path.exists():
-                    tokenizer_json = tokenizer_path.read_text(encoding="utf-8")
-                elif not must_build_tokenizer:
-                    raise FileNotFoundError(
-                        f"Tokenizer cache {tokenizer_path} not found; run 'corpus --init' first or supply --pt."
-                    )
-            print(color_text(f"Tokenizer: {tokenizer_path}", Colors.BLUE))
-            tok_timer = Timer().start()
-            vocab_source = full_train_text or ""
-            reserved_tokens = 1 + len(GPT2TokenizerWrapper.EXTRA_SPECIAL_TOKENS)
-            if args.vocab_size <= reserved_tokens:
-                raise ValueError(
-                    f"--vocab-size must exceed reserved tokens ({reserved_tokens}); got {args.vocab_size}"
-                )
-            target_vocab = max(0, args.vocab_size - reserved_tokens)
-            tokenizer = GPT2TokenizerWrapper(
-                vocab_source,
-                tokenizer_path,
-                target_vocab,
-                pretrained_json=tokenizer_json,
-            )
-            expected_vocab_size = args.vocab_size
-            actual_vocab_size = tokenizer.vocab_size
-            if actual_vocab_size != expected_vocab_size:
-                raise ValueError(
-                    "Tokenizer size mismatch: expected "
-                    f"{expected_vocab_size} tokens but found {actual_vocab_size}. "
-                    "Delete the cached tokenizer and re-run 'corpus --init'."
-                )
-            tokenizer_json = tokenizer_json or tokenizer_path.read_text(encoding="utf-8")
-
-            newline_token_id = None
-            newline_tokens = tokenizer.tokenizer.encode("\n", add_special_tokens=False)
-            if newline_tokens:
-                newline_token_id = newline_tokens[0]
-
-            enforce_boundary_guard = not args.no_boundary
-            boundary_blocklist = (
-                tokenizer.leading_alpha_token_ids if enforce_boundary_guard else None
-            )
-            default_prompt_boundary = (
-                enforce_boundary_guard
-                and boundary_blocklist is not None
-                and prompt_needs_boundary(args.prompt)
-            )
-
-            train_tokens, train_text, train_bytes = load_or_prepare_tokens(
-                "train",
-                train_path,
-                full_train_text,
-                train_cache_path,
-                tokenizer,
-                seed=1234,
-            )
-
-            test_tokens, test_text, test_bytes = load_or_prepare_tokens(
-                "test",
-                test_path,
-                full_test_text,
-                test_cache_path,
-                tokenizer,
-                seed=5678,
-            )
-
-            if train_text is None and train_bytes == 0:
-                train_bytes = len(train_tokens)  # fallback when text absent
-            if test_text is None and test_bytes == 0:
-                test_bytes = len(test_tokens)
-
-            train_token_count = int(train_tokens.numel())
-            test_token_count = int(test_tokens.numel())
-            print(
-                color_text(
-                    f"Corpus size: {train_token_count:,} train tokens, {test_token_count:,} test tokens",
-                    Colors.CYAN,
-                )
-            )
-            tok_summary = (
-                color_text(f"[tokenizer (wall/cpu/gpu)]", Colors.CYAN) +
-                color_text(f" {tok_timer.stop()}\n", Colors.MAGENTA)
-            )
-            print(tok_summary)
-
-            dataset = TextDataset(
-                train_tokens=train_tokens,
-                test_tokens=test_tokens,
-                train_text=train_text,
-                test_text=test_text,
-                train_bytes=train_bytes,
-                test_bytes=test_bytes,
-                train_path=train_path,
-                test_path=test_path,
-            )
-
-            def count_eval_calls(steps: int, interval: int) -> int:
-                if steps <= 0:
-                    return 0
-                eval_steps = {1, steps}
-                if interval > 0:
-                    current = interval
-                    while current <= steps:
-                        eval_steps.add(current)
-                        current += interval
-                return len(eval_steps)
-
-
-            def emit_range(label: str, tokens: torch.Tensor, spec: str) -> None:
-                start, end = parse_range_arg(spec)
-                total = int(tokens.numel())
-                if total == 0:
-                    print(color_text(f"{label} corpus is empty", Colors.MAGENTA))
-                    return
-                if start < 0 or end < 0 or start >= total or end >= total:
-                    raise ValueError(f"{label} range {start}-{end} is outside 0-{total - 1}")
-                subset = tokens[start : end + 1].tolist()
-                print(
-                    color_text(
-                        f"{label} tokens {start}-{end} (count {len(subset)}):",
-                        Colors.CYAN,
-                    )
-                )
-                chunk_size = 128
-                for offset in range(0, len(subset), chunk_size):
-                    chunk_tokens = subset[offset : offset + chunk_size]
-                    text = tokenizer.decode(torch.tensor(chunk_tokens))
-                    print(text)
 
             if args.command == "corpus":
-                actions_done = False
-                if getattr(args, "corpus_init", False):
-                    print(
-                        color_text(
-                            "Tokenizer initialized and token caches updated; run 'train' to build a model.",
-                            Colors.GREEN,
-                        )
-                    )
-                    actions_done = True
-                if getattr(args, "corpus_print_train", None):
-                    emit_range("Train", train_tokens, args.corpus_print_train)
-                    actions_done = True
-                if getattr(args, "corpus_print_test", None):
-                    emit_range("Test", test_tokens, args.corpus_print_test)
-                    actions_done = True
-                if not actions_done:
-                    print(color_text("No corpus action selected", Colors.YELLOW))
-                return
+                return self.cli_corpus(tokenizer, train_tokens, test_tokens)
 
             if args.n_xctx > 0 and args.n_xctx % max(1, args.n_layer) != 0:
                 raise ValueError("--n-xctx must be divisible by --n-layer")
