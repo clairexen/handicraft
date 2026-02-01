@@ -107,6 +107,7 @@ class ModelConfig:
     tokenizer builder, :func:`describe_model_size`, and :func:`grce_main`.
     """
 
+    # model geometry
     vocab_size: int = 5000  # GPT-2 base supports ~50k merges; we stay small for the PoC.
     block_size: int = 256   # GPT-2 base uses 1024 tokens.
     n_layer: int = 8        # GPT-2 base uses 12 layers.
@@ -114,14 +115,14 @@ class ModelConfig:
     n_embd: int = 384       # GPT-2 base uses 768 embedding dims.
     n_grce: int = 64        # Narrow GRCE context dims.
     n_xctx: int = 720       # Wide XCTX context dims.
-    grce_optimized: bool = False  # Use the vectorized GRCE channel implementation.
-    disable_kv_rebalance: bool = False
 
-    # FIXME: these should only be part of Settings, not ModelConfig -> remove later
+    # non-geometry model configuration
     dropout: float = 0.05
     detach_span: int = 0    # Detach gradients every N positions (0 disables detaching).
     detach_context: bool = True  # Whether to detach recurring context when span triggers.
     detach_layer: int = -1       # Layer index (1-based) after which to detach Transformer grads.
+    grce_optimized: bool = False  # Use the vectorized GRCE channel implementation.
+    disable_kv_rebalance: bool = False
 
 MODEL_CONFIG_DEFAULTS = ModelConfig()
 
@@ -171,10 +172,10 @@ class Settings:
     disable_kv_rebalance: bool = False
 
     # Training Details
-    dropout: float = 0.05
-    detach_span: int = 0
-    detach_context: bool = False
-    detach_layer: int = -1
+    dropout: float = MODEL_CONFIG_DEFAULTS.dropout
+    detach_span: int = MODEL_CONFIG_DEFAULTS.detach_span
+    detach_context: bool = MODEL_CONFIG_DEFAULTS.detach_context
+    detach_layer: int = MODEL_CONFIG_DEFAULTS.detach_layer
 
     # Logging and diagnostics
     escape_newline_tokens: bool = True
@@ -208,6 +209,10 @@ class Settings:
             n_embd=self.n_embd,
             n_grce=self.n_grce,
             n_xctx=self.n_xctx,
+            dropout=self.dropout,
+            detach_span=self.detach_span,
+            detach_context=self.detach_context,
+            detach_layer=self.detach_layer,
             grce_optimized=self.grce_optimized,
             disable_kv_rebalance=self.disable_kv_rebalance,
         )
