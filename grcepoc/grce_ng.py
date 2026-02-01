@@ -107,7 +107,7 @@ class ModelConfig:
     tokenizer builder, :func:`describe_model_size`, and :func:`grce_main`.
     """
 
-    vocab_size: int = 3000  # GPT-2 base supports ~50k merges; we stay small for the PoC.
+    vocab_size: int = 5000  # GPT-2 base supports ~50k merges; we stay small for the PoC.
     block_size: int = 256   # GPT-2 base uses 1024 tokens.
     n_layer: int = 8        # GPT-2 base uses 12 layers.
     n_head: int = 6         # GPT-2 base uses 12 attention heads.
@@ -156,13 +156,13 @@ class Settings:
     grce_optimized: bool = MODEL_CONFIG_DEFAULTS.grce_optimized
 
     # Additional non-geometry "pseudo" model args
-    corpus: str = "simplerwiki"
+    corpus: str = "cccc"
     extra_tags: tuple[str] = ()
 
     # Training Loop
     steps: int = 100
     cycles: int = 100
-    batch_size: int = 32
+    batch_size: int = 256
     eval_interval: int = 10
     _block_length_arg: int | None = None
 
