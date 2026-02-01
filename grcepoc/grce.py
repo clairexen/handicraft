@@ -260,10 +260,10 @@ def compute_row_type_counts(batch_size: int) -> dict[str, int]:
     """Return the simplified row-type counts for a batch size."""
 
     total = max(0, int(batch_size))
-    quarter = total // 4
+    n_forward = max(1, total // 2)
     counts: dict[str, int] = {
-        "n_forward": total - quarter,
-        "n_decode": quarter,
+        "n_forward": n_forward,
+        "n_decode": total - n_forward,
         "n_total": total,
     }
     return counts
@@ -2389,6 +2389,7 @@ class TransformerGRCE(nn.Module):
         self.context_dim = config.n_grce
         self.n_layers = config.n_layer
         self.n_embd = config.n_embd
+        self.detach_span = max(0, int(getattr(config, "detach_span", 0)))
         if self.disabled:
             return
         self.sample_norms = nn.ModuleList(
@@ -2422,12 +2423,16 @@ class TransformerGRCE(nn.Module):
         self,
         grce_state: torch.Tensor,
         samples: Sequence[torch.Tensor],
+        position: int,
     ) -> torch.Tensor:
         if self.disabled:
             return grce_state
+        should_detach = self.detach_span > 0 and (position % self.detach_span) == 0
         messages: list[torch.Tensor] = []
         for layer_idx in range(self.n_layers):
             layer_sample = samples[layer_idx][:, -1, :]
+            if should_detach:
+                layer_sample = layer_sample.detach()
             reduced = self.sample_norms[layer_idx](layer_sample)
             messages.append(self.sample_projections[layer_idx](reduced))
         fused = torch.stack(messages, dim=0).sum(dim=0)
@@ -2462,6 +2467,7 @@ class TransformerXCTX(nn.Module):
         self.context_dim = config.n_xctx
         self.inner_dim = _get_inner_xctx_width(config)
         self.squeeze_dim = max(1, self.context_dim // 2)
+        self.detach_span = max(0, int(getattr(config, "detach_span", 0)))
         if self.disabled:
             return
         self.sample_linear = nn.ModuleList(
@@ -2506,12 +2512,16 @@ class TransformerXCTX(nn.Module):
         self,
         xctx_state: torch.Tensor,
         samples: Sequence[torch.Tensor],
+        position: int,
     ) -> torch.Tensor:
         if self.disabled:
             return xctx_state
+        should_detach = self.detach_span > 0 and (position % self.detach_span) == 0
         messages: list[torch.Tensor] = []
         for idx in range(self.n_layers):
             layer_sample = samples[idx][:, -1, :]
+            if should_detach:
+                layer_sample = layer_sample.detach()
             reduced = self.sample_linear[idx](layer_sample)
             normed = self.sample_norms[idx](reduced)
             messages.append(self.expand_linear[idx](normed))
@@ -2612,9 +2622,9 @@ class TransformerStackSequence(nn.Module):
             )
             outputs.append(column_output)
             if self.grce is not None and grce_state is not None:
-                grce_state = self.grce.sample_forward(grce_state, samples)
+                grce_state = self.grce.sample_forward(grce_state, samples, col)
             if self.xctx is not None and xctx_state is not None:
-                xctx_state = self.xctx.sample_forward(xctx_state, samples)
+                xctx_state = self.xctx.sample_forward(xctx_state, samples, col)
         stacked = torch.cat(outputs, dim=1)
         return stacked, grce_state, xctx_state, []
 
