@@ -107,7 +107,7 @@ class ModelConfig:
     tokenizer builder, :func:`describe_model_size`, and :func:`grce_main`.
     """
 
-    vocab_size: int = 3000  # GPT-2 base supports ~50k merges; we stay small for the PoC.
+    vocab_size: int = 5000  # GPT-2 base supports ~50k merges; we stay small for the PoC.
     block_size: int = 256   # GPT-2 base uses 1024 tokens.
     n_layer: int = 8        # GPT-2 base uses 12 layers.
     n_head: int = 6         # GPT-2 base uses 12 attention heads.
@@ -115,6 +115,7 @@ class ModelConfig:
     n_grce: int = 64        # Narrow GRCE context dims.
     n_xctx: int = 720       # Wide XCTX context dims.
     grce_optimized: bool = False  # Use the vectorized GRCE channel implementation.
+    disable_kv_rebalance: bool = False
 
     # FIXME: these should only be part of Settings, not ModelConfig -> remove later
     dropout: float = 0.05
@@ -156,15 +157,18 @@ class Settings:
     grce_optimized: bool = MODEL_CONFIG_DEFAULTS.grce_optimized
 
     # Additional non-geometry "pseudo" model args
-    corpus: str = "simplerwiki"
+    corpus: str = "cccc"
     extra_tags: tuple[str] = ()
 
     # Training Loop
     steps: int = 100
     cycles: int = 100
-    batch_size: int = 32
+    batch_size: int = 256
     eval_interval: int = 10
     _block_length_arg: int | None = None
+    restart_optimizer_each_cycle: bool = False
+    checkpoint_optimizer_state: bool = False
+    disable_kv_rebalance: bool = False
 
     # Training Details
     dropout: float = 0.05
@@ -176,12 +180,23 @@ class Settings:
     escape_newline_tokens: bool = True
     show_train_loss_details: bool = False
     show_test_loss_details: bool = True
+    skip_model_update: bool = False
+    only_normal_batches: bool = False
+    only_decode_batches: bool = False
 
     @property
     def block_length(self):
         if self._block_length_arg is not None:
             return self._block_length_arg
         return self.block_size
+
+    @property
+    def batch_mode_override(self) -> str | None:
+        if self.only_decode_batches:
+            return "decode"
+        if self.only_normal_batches:
+            return "normal"
+        return None
 
     @property
     def model_config(self):
@@ -194,6 +209,7 @@ class Settings:
             n_grce=self.n_grce,
             n_xctx=self.n_xctx,
             grce_optimized=self.grce_optimized,
+            disable_kv_rebalance=self.disable_kv_rebalance,
         )
 
     def __post_init__(self):
@@ -217,6 +233,9 @@ class Settings:
         self.batch_size = args.batch_size
         self.eval_interval = args.eval_interval
         self._block_length_arg = args.block_length
+        self.restart_optimizer_each_cycle = args.restart_optimizer
+        self.checkpoint_optimizer_state = args.checkpoint_optimizer
+        self.disable_kv_rebalance = args.no_kv_rebalance
 
         self.dropout = args.dropout
         self.detach_span = args.detach_span
@@ -226,6 +245,9 @@ class Settings:
         self.escape_newline_tokens = not args.no_escape_newline_tokens
         self.show_train_loss_details = args.train_loss_details
         self.show_test_loss_details = not args.no_test_loss_details
+        self.skip_model_update = args.no_model_update
+        self.only_normal_batches = args.only_normal
+        self.only_decode_batches = args.only_decode
 
 SETTINGS_DEFAULTS = Settings()
 
@@ -235,216 +257,31 @@ SETTINGS_DEFAULTS = Settings()
 # -----------------------------------------------------------------------------
 
 def compute_row_type_counts(batch_size: int) -> dict[str, int]:
-    """Return the deterministic row-type counts for a batch size."""
+    """Return the simplified row-type counts for a batch size."""
 
     total = max(0, int(batch_size))
-    if total == 0:
-        return {
-            "n_decode": 0,
-            "n_encode": 0,
-            "n_recode": 0,
-            "n_noxctx": 0,
-            "n_puxctx": 0,
-            "n_noattn": 0,
-            "n_puattn": 0,
-            "n_normal": 0,
-            "n_total": 0,
-        }
-
+    quarter = total // 4
     counts: dict[str, int] = {
-        "n_decode": 0,
-        "n_encode": 0,
-        "n_recode": 0,
-        "n_noxctx": 0,
-        "n_puxctx": 0,
-        "n_noattn": 0,
-        "n_puattn": 0,
-        "n_normal": 0,
+        "n_normal": total - quarter,
+        "n_decode": quarter,
+        "n_total": total,
     }
-    remaining = total
-    special_order = [
-        "n_encode",
-        "n_recode",
-        "n_noxctx",
-        "n_puxctx",
-        "n_noattn",
-        "n_puattn",
-    ]
-    for key in special_order:
-        if remaining <= 0:
-            break
-        counts[key] = 1
-        remaining -= 1
-    if remaining > 0:
-        decode = max(1, remaining // 2)
-        decode = min(decode, remaining)
-        counts["n_decode"] = decode
-        remaining -= decode
-    counts["n_normal"] = remaining
-    counts["n_total"] = total
-    row_sum = sum(
-        value for key, value in counts.items() if key.startswith("n_") and key != "n_total"
-    )
-    if row_sum != total:
-        raise ValueError(
-            f"Row-type composition mismatch: sum={row_sum} differs from n_total={total}"
-        )
     return counts
 
 
-def build_row_type_template(
-    row_counts: dict[str, int],
-    batch_size: int,
-    *,
-    context_enabled: bool,
-    xctx_enabled: bool,
-) -> list[str]:
-    """Expand row counts into a shuffled template for a batch.
+def batch_mode_specs(batch_size: int, mode_override: str | None = None) -> list[tuple[str, int]]:
+    """Return ordered (mode, rows) pairs for the current batch size."""
 
-    :func:`train_model` calls this helper before mask creation so every batch
-    follows the README-specified composition.
-    """
-
-    template: list[str] = []
-
-    def allocate(name: str, supported: bool) -> None:
-        count = int(max(0, row_counts.get(f"n_{name}", 0)))
-        if count <= 0:
-            return
-        if not supported:
-            return
-        template.extend([name] * count)
-
-    allocate("decode", context_enabled)
-    allocate("noxctx", context_enabled and xctx_enabled)
-    allocate("puxctx", context_enabled and xctx_enabled)
-    allocate("noattn", True)
-    allocate("puattn", True)
-    allocate("encode", True)
-    allocate("recode", True)
-    normal_count = max(0, int(row_counts.get("n_normal", 0)))
-    template.extend(["normal"] * normal_count)
-    if len(template) > batch_size:
-        raise ValueError(
-            f"Row-type template exceeded batch size: built {len(template)} entries for n_total={batch_size}"
-        )
-    if len(template) < batch_size:
-        template.extend(["normal"] * (batch_size - len(template)))
-    return template
-
-
-def build_row_type_masks(
-    row_types: Sequence[str],
-    block_length: int,
-    device: torch.device,
-    *,
-    context_enabled: bool,
-    xctx_enabled: bool,
-) -> SpecialRowMasks:
-    """Create the per-row masks for a row template.
-
-    The returned :class:`SpecialRowMasks` structure is consumed by
-    :func:`train_model` to disable GRCE, XCTX, or attention for specific rows.
-    """
-    batch_size = len(row_types)
-    context_special_rows: set[int] = set()
-    context_disabled_mask = (
-        torch.zeros(batch_size, dtype=torch.bool, device=device) if context_enabled else None
-    )
-    context_bias_disabled_mask: torch.Tensor | None = None
-    xctx_disabled_mask = (
-        torch.zeros(batch_size, dtype=torch.bool, device=device) if xctx_enabled else None
-    )
-    xctx_bias_disabled_mask: torch.Tensor | None = None
-    context_dropout_positions = None
-    attention_disabled_mask = torch.zeros(batch_size, dtype=torch.bool, device=device)
-    attention_dropout_positions = None
-    encode_rows = torch.zeros(batch_size, dtype=torch.bool, device=device)
-    recode_rows = torch.zeros(batch_size, dtype=torch.bool, device=device)
-    recode_boundaries = torch.full(
-        (batch_size,),
-        -1,
-        dtype=torch.long,
-        device=device,
-    )
-
-    def ensure_mask(mask: torch.Tensor | None) -> torch.Tensor:
-        if mask is None:
-            return torch.zeros(batch_size, dtype=torch.bool, device=device)
-        return mask
-    def ensure_tensor(tensor: torch.Tensor | None, *, dtype, fill) -> torch.Tensor:
-        if tensor is None:
-            return torch.full((batch_size,), fill, dtype=dtype, device=device)
-        return tensor
-
-    for idx, row_type in enumerate(row_types):
-        if row_type in {"decode", "encode"} and context_enabled and context_disabled_mask is not None:
-            context_disabled_mask[idx] = True
-            context_special_rows.add(idx)
-            context_bias_disabled_mask = ensure_mask(context_bias_disabled_mask)
-            context_bias_disabled_mask[idx] = True
-        if row_type in {"decode", "encode"} and xctx_enabled and xctx_disabled_mask is not None:
-            xctx_disabled_mask[idx] = True
-            context_special_rows.add(idx)
-            xctx_bias_disabled_mask = ensure_mask(xctx_bias_disabled_mask)
-            xctx_bias_disabled_mask[idx] = True
-        if row_type == "encode":
-            encode_rows[idx] = True
-        if row_type == "recode":
-            recode_rows[idx] = True
-            recode_boundaries[idx] = max(1, block_length // 2)
-        elif row_type == "puxctx" and xctx_enabled:
-            context_dropout_positions = ensure_tensor(
-                context_dropout_positions,
-                dtype=torch.long,
-                fill=-1,
-            )
-            context_dropout_positions[idx] = random.randrange(max(1, block_length))
-            context_special_rows.add(idx)
-        elif row_type == "noattn":
-            attention_disabled_mask[idx] = True
-            context_special_rows.add(idx)
-        elif row_type == "puattn":
-            attention_dropout_positions = ensure_tensor(
-                attention_dropout_positions,
-                dtype=torch.long,
-                fill=-1,
-            )
-            attention_dropout_positions[idx] = random.randrange(max(1, block_length))
-            context_special_rows.add(idx)
-    if context_disabled_mask is not None and not context_disabled_mask.any():
-        context_disabled_mask = None
-    if context_bias_disabled_mask is not None and not context_bias_disabled_mask.any():
-        context_bias_disabled_mask = None
-    if xctx_disabled_mask is not None and not xctx_disabled_mask.any():
-        xctx_disabled_mask = None
-    if xctx_bias_disabled_mask is not None and not xctx_bias_disabled_mask.any():
-        xctx_bias_disabled_mask = None
-    if context_dropout_positions is not None and (context_dropout_positions < 0).all():
-        context_dropout_positions = None
-    if not attention_disabled_mask.any():
-        attention_disabled_mask = None
-    if attention_dropout_positions is not None and (attention_dropout_positions < 0).all():
-        attention_dropout_positions = None
-    if not encode_rows.any():
-        encode_rows = None
-    if not recode_rows.any():
-        recode_rows = None
-        recode_boundaries = None
-
-    return SpecialRowMasks(
-        context_special_rows,
-        context_disabled_mask,
-        context_bias_disabled_mask,
-        xctx_disabled_mask,
-        xctx_bias_disabled_mask,
-        context_dropout_positions,
-        attention_disabled_mask,
-        attention_dropout_positions,
-        encode_rows,
-        recode_rows,
-        recode_boundaries,
-    )
+    total = max(0, int(batch_size))
+    if mode_override == "normal":
+        return [("normal", total)]
+    if mode_override == "decode":
+        return [("decode", total)]
+    counts = compute_row_type_counts(batch_size)
+    return [
+        ("normal", max(0, int(counts.get("n_normal", 0)))),
+        ("decode", max(0, int(counts.get("n_decode", 0)))),
+    ]
 
 
 FANCY_SPACE = "\u2423"  # Open Box symbol for visible spaces
@@ -472,7 +309,6 @@ import time
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from typing import Dict, List, Tuple, Sequence
-from collections import defaultdict
 
 
 def parse_range_arg(value: str) -> tuple[int, int]:
@@ -616,6 +452,37 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Number of sequences per optimization step.",
     )
     training_group.add_argument(
+        "--no-model-update",
+        action="store_true",
+        help="Skip overwriting the checkpoint at the end of each training cycle",
+    )
+    training_group.add_argument(
+        "--only-decode",
+        action="store_true",
+        help="Create batches that only contain the decode half",
+    )
+    training_group.add_argument(
+        "--only-normal",
+        dest="only_normal",
+        action="store_true",
+        help="Create batches that only contain the normal half",
+    )
+    training_group.add_argument(
+        "--restart-optimizer",
+        action="store_true",
+        help="Reinitialize the optimizer at the beginning of every cycle",
+    )
+    training_group.add_argument(
+        "--checkpoint-optimizer",
+        action="store_true",
+        help="Serialize optimizer state to checkpoints so runs can resume without momentum reset",
+    )
+    training_group.add_argument(
+        "--no-kv-rebalance",
+        action="store_true",
+        help="Disable binary-segment merging in KV caches (debug/perf testing)",
+    )
+    training_group.add_argument(
         "--detach-span",
         type=int,
         default=defaults.detach_span,
@@ -726,7 +593,7 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     import_group.add_argument(
         "--pt",
         type=pathlib.Path,
-        help="Load an explicit checkpoint file for inference/debugging commands",
+        help="Load an explicit checkpoint file instead of the default model path",
     )
     subparsers = parser.add_subparsers(
         dest="command",
@@ -775,6 +642,13 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=0,
         help="Cursor offset within the test corpus to begin printing",
     )
+
+    profile_parser = subparsers.add_parser(
+        "profile",
+        help="Run a warm-up and profiled training step, then dump profiler stats",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    profile_parser.set_defaults(command="profile")
 
     size_parser = subparsers.add_parser(
         "size",
@@ -914,6 +788,9 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     # --------------------------------------------------------
     # Normalize, tweak, and check global options
 
+    if args.only_decode and args.only_normal:
+        parser.error("--only-decode and --only-normal cannot be combined")
+
     if args.tiny:
         if not flag_present("--vocab-size"):
             args.vocab_size = 500
@@ -989,9 +866,6 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     # Parse "create" sub-command args
 
     if args.command == "create":
-        if args.pt:
-            parser.error("--pt cannot be combined with the create command")
-
         def parse_layer_list(value: str, flag: str) -> list[int]:
             if not value:
                 return []
@@ -2191,21 +2065,6 @@ class TextDataset:
 
 
 
-@dataclass
-class SpecialRowMasks:
-    context_special_rows: set[int]
-    context_disabled_mask: torch.Tensor | None
-    context_bias_disabled_mask: torch.Tensor | None
-    xctx_disabled_mask: torch.Tensor | None
-    xctx_bias_disabled_mask: torch.Tensor | None
-    context_dropout_positions: torch.Tensor | None
-    attention_disabled_mask: torch.Tensor | None
-    attention_dropout_positions: torch.Tensor | None
-    encode_rows: torch.Tensor | None
-    recode_rows: torch.Tensor | None
-    recode_boundaries: torch.Tensor | None
-
-
 
 def load_or_prepare_tokens(
     split: str,
@@ -2325,11 +2184,8 @@ class CausalSelfAttention(nn.Module):
         k_new = k_full.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
         key_append = k_new.squeeze(2).unsqueeze(2)
         value_append = v.squeeze(2).unsqueeze(2)
-        cache.key = torch.cat([cache.key, key_append], dim=2)
-        cache.value = torch.cat([cache.value, value_append], dim=2)
-        cache.length = cache.key.size(2)
-        k = cache.key
-        v = cache.value
+        cache.append(key_append, value_append)
+        k, v = cache.tensors()
         att = (q @ k.transpose(-2, -1)) / math.sqrt(k.size(-1))
         if puncture_mask is not None:
             att = att.masked_fill(puncture_mask[:, None, None, :], float("-inf"))
@@ -2422,11 +2278,381 @@ class Block(nn.Module):
         return x, cache, mask
 
 
+def _merge_bias_list(
+    bias_list: Sequence[torch.Tensor],
+    rows: int,
+    cols: int,
+    n_layers: int,
+    n_embd: int,
+    device: torch.device,
+    dtype: torch.dtype,
+) -> torch.Tensor | None:
+    """Sum a list of optional bias tensors into a single tensor."""
+
+    if not bias_list:
+        return None
+    merged = torch.zeros(rows, cols, n_layers, n_embd, device=device, dtype=dtype)
+    for bias in bias_list:
+        if bias is None:
+            continue
+        b = bias.to(device=device, dtype=dtype)
+        b_rows, b_cols, b_layers, _ = b.shape
+        take_cols = min(cols, b_cols)
+        take_layers = min(n_layers, b_layers)
+        merged[:, :take_cols, :take_layers, :] += b[:, :take_cols, :take_layers, :]
+    return merged
+
+
+class RMSNorm(nn.Module):
+    def __init__(self, dim: int, eps: float = 1e-6) -> None:
+        super().__init__()
+        self.eps = eps
+        self.scale = nn.Parameter(torch.ones(dim))
+
+    def forward(self, tensor: torch.Tensor) -> torch.Tensor:
+        norm = tensor.pow(2).mean(dim=-1, keepdim=True)
+        inv = torch.rsqrt(norm + self.eps)
+        return self.scale * tensor * inv
+
+
+class TransformerStackCore(nn.Module):
+    """Shared Transformer backbone used by both grid and sequence modes."""
+
+    def __init__(self, config: ModelConfig) -> None:
+        super().__init__()
+        self.config = config
+        self.tok_emb = nn.Embedding(config.vocab_size, config.n_embd)
+        self.pos_emb = nn.Embedding(config.block_size, config.n_embd)
+        self.drop = nn.Dropout(config.dropout)
+        self.blocks = nn.ModuleList([Block(config) for _ in range(config.n_layer)])
+        self.ln_f = nn.LayerNorm(config.n_embd)
+        self.head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+
+    def forward_grid(
+        self,
+        x: torch.Tensor,
+        bias_list_in: Sequence[torch.Tensor] | None = None,
+        *,
+        masked: bool = True,
+    ) -> tuple[torch.Tensor, list[torch.Tensor]]:
+        rows, cols, _ = x.shape
+        bias_tensor = _merge_bias_list(
+            bias_list_in or [],
+            rows,
+            cols,
+            self.config.n_layer,
+            self.config.n_embd,
+            x.device,
+            x.dtype,
+        )
+        current = x
+        samples: list[torch.Tensor] = [current]
+        for layer_idx, block in enumerate(self.blocks):
+            layer_bias = None
+            if bias_tensor is not None:
+                layer_bias = bias_tensor[:, :, layer_idx, :]
+            block_input = current if layer_bias is None else current + layer_bias
+            current, _ = block(
+                block_input,
+                full_attention=not masked,
+            )
+            samples.append(current)
+        return current, samples
+
+
+class TransformerStackGrid(nn.Module):
+    def __init__(self, core: TransformerStackCore) -> None:
+        super().__init__()
+        self.core = core
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        bias_list_in: Sequence[torch.Tensor] | None = None,
+        kv_cache_list_in: Sequence[Sequence[tuple[torch.Tensor, torch.Tensor]]] | None = None,
+        *,
+        qh_query_callback=None,
+        masked: bool = True,
+    ) -> tuple[torch.Tensor, list[torch.Tensor], list]:
+        if kv_cache_list_in:
+            raise NotImplementedError("kv_cache_list_in not supported in grid mode yet")
+        if qh_query_callback is not None:
+            raise NotImplementedError("qh_query_callback not supported in grid mode yet")
+        output, samples = self.core.forward_grid(x, bias_list_in=bias_list_in, masked=masked)
+        return output, samples, []
+
+
+class TransformerGRCE(nn.Module):
+    def __init__(self, config: ModelConfig) -> None:
+        super().__init__()
+        self.disabled = config.n_grce <= 0
+        self.context_dim = config.n_grce
+        self.n_layers = config.n_layer
+        self.n_embd = config.n_embd
+        if self.disabled:
+            return
+        self.sample_norms = nn.ModuleList(
+            nn.LayerNorm(self.n_embd) for _ in range(self.n_layers)
+        )
+        self.sample_projections = nn.ModuleList(
+            nn.Linear(self.n_embd, self.context_dim) for _ in range(self.n_layers)
+        )
+        self.bias_norm = nn.LayerNorm(self.context_dim)
+        self.bias_projections = nn.ModuleList(
+            nn.Linear(self.context_dim, self.n_embd) for _ in range(self.n_layers)
+        )
+        self.mix_norm = nn.LayerNorm(self.context_dim)
+        hidden = max(1, 4 * self.context_dim)
+        self.mlp_up = nn.Linear(self.context_dim, hidden)
+        self.mlp_down = nn.Linear(hidden, self.context_dim)
+        self.output_norm = nn.LayerNorm(self.context_dim)
+
+    def initial_state(self, batch: int, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
+        return torch.zeros(batch, self.context_dim, device=device, dtype=dtype)
+
+    def bias_forward(self, grce_state: torch.Tensor) -> torch.Tensor:
+        if self.disabled:
+            raise RuntimeError("GRCE disabled")
+        normed = self.bias_norm(grce_state)
+        per_layer = [proj(normed) for proj in self.bias_projections]
+        stacked = torch.stack(per_layer, dim=1)
+        return stacked.unsqueeze(1)
+
+    def sample_forward(
+        self,
+        grce_state: torch.Tensor,
+        samples: Sequence[torch.Tensor],
+    ) -> torch.Tensor:
+        if self.disabled:
+            return grce_state
+        messages: list[torch.Tensor] = []
+        for layer_idx in range(self.n_layers):
+            layer_sample = samples[layer_idx][:, -1, :]
+            reduced = self.sample_norms[layer_idx](layer_sample)
+            messages.append(self.sample_projections[layer_idx](reduced))
+        fused = torch.stack(messages, dim=0).sum(dim=0)
+        combined = fused + grce_state
+        mixed = self.mix_norm(combined)
+        mlp_out = self.mlp_down(F.relu(self.mlp_up(mixed)))
+        return self.output_norm(mixed + mlp_out)
+
+    def parameter_breakdown(self) -> dict[str, int]:
+        if self.disabled:
+            return {}
+        sampler = (
+            _module_list_param_count(self.sample_norms)
+            + _module_list_param_count(self.sample_projections)
+        )
+        mlp = (
+            _module_param_count(self.mix_norm)
+            + _module_param_count(self.mlp_up)
+            + _module_param_count(self.mlp_down)
+            + _module_param_count(self.output_norm)
+        )
+        bias = _module_param_count(self.bias_norm) + _module_list_param_count(self.bias_projections)
+        return {"samplers": sampler, "mlp": mlp, "bias": bias}
+
+
+class TransformerXCTX(nn.Module):
+    def __init__(self, config: ModelConfig) -> None:
+        super().__init__()
+        self.disabled = config.n_xctx <= 0
+        self.n_layers = config.n_layer
+        self.n_embd = config.n_embd
+        self.context_dim = config.n_xctx
+        self.inner_dim = _get_inner_xctx_width(config)
+        self.squeeze_dim = max(1, self.context_dim // 2)
+        if self.disabled:
+            return
+        self.sample_linear = nn.ModuleList(
+            nn.Linear(self.n_embd, self.inner_dim) for _ in range(self.n_layers)
+        )
+        self.sample_norms = nn.ModuleList(
+            nn.LayerNorm(self.inner_dim) for _ in range(self.n_layers)
+        )
+        self.expand_linear = nn.ModuleList(
+            nn.Linear(self.inner_dim, self.context_dim) for _ in range(self.n_layers)
+        )
+        self.bias_down = nn.ModuleList(
+            nn.Linear(self.context_dim, self.inner_dim) for _ in range(self.n_layers)
+        )
+        self.bias_norms = nn.ModuleList(
+            nn.LayerNorm(self.inner_dim) for _ in range(self.n_layers)
+        )
+        self.bias_up = nn.ModuleList(
+            nn.Linear(self.inner_dim, self.n_embd) for _ in range(self.n_layers)
+        )
+        self.mix_down = nn.Linear(self.context_dim, self.squeeze_dim)
+        self.mix_norm = nn.LayerNorm(self.squeeze_dim)
+        self.mix_up = nn.Linear(self.squeeze_dim, self.context_dim)
+        self.mix_proj = nn.Linear(self.context_dim, self.context_dim)
+        self.output_norm = RMSNorm(self.context_dim)
+
+    def initial_state(self, batch: int, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
+        return torch.zeros(batch, self.context_dim, device=device, dtype=dtype)
+
+    def bias_forward(self, xctx_state: torch.Tensor) -> torch.Tensor:
+        if self.disabled:
+            raise RuntimeError("XCTX disabled")
+        per_layer: list[torch.Tensor] = []
+        for idx in range(self.n_layers):
+            reduced = self.bias_down[idx](xctx_state)
+            normed = self.bias_norms[idx](reduced)
+            per_layer.append(self.bias_up[idx](normed))
+        stacked = torch.stack(per_layer, dim=1)
+        return stacked.unsqueeze(1)
+
+    def sample_forward(
+        self,
+        xctx_state: torch.Tensor,
+        samples: Sequence[torch.Tensor],
+    ) -> torch.Tensor:
+        if self.disabled:
+            return xctx_state
+        messages: list[torch.Tensor] = []
+        for idx in range(self.n_layers):
+            layer_sample = samples[idx][:, -1, :]
+            reduced = self.sample_linear[idx](layer_sample)
+            normed = self.sample_norms[idx](reduced)
+            messages.append(self.expand_linear[idx](normed))
+        fused = torch.stack(messages, dim=0).sum(dim=0)
+        combined = xctx_state + fused
+        squeezed = self.mix_norm(self.mix_down(combined))
+        mlp = self.mix_up(F.relu(squeezed))
+        projected = self.mix_proj(mlp)
+        return self.output_norm(xctx_state + projected)
+
+    def parameter_breakdown(self) -> dict[str, int]:
+        if self.disabled:
+            return {}
+        sampler = (
+            _module_list_param_count(self.sample_linear)
+            + _module_list_param_count(self.sample_norms)
+            + _module_list_param_count(self.expand_linear)
+        )
+        bias = (
+            _module_list_param_count(self.bias_down)
+            + _module_list_param_count(self.bias_norms)
+            + _module_list_param_count(self.bias_up)
+        )
+        mixer = (
+            _module_param_count(self.mix_down)
+            + _module_param_count(self.mix_norm)
+            + _module_param_count(self.mix_up)
+            + _module_param_count(self.mix_proj)
+            + _module_param_count(self.output_norm)
+        )
+        return {"samplers": sampler, "bias": bias, "mlp": mixer}
+
+
+class TransformerStackSequence(nn.Module):
+    def __init__(self, config: ModelConfig, core: TransformerStackCore) -> None:
+        super().__init__()
+        self.core = core
+        self.n_layers = config.n_layer
+        self.n_embd = config.n_embd
+        self.grce = TransformerGRCE(config) if config.n_grce > 0 else None
+        self.xctx = TransformerXCTX(config) if config.n_xctx > 0 else None
+        modules = [m for m in (self.grce, self.xctx) if m is not None]
+        self.context_modules = nn.ModuleList(modules)
+
+    def _ensure_state(
+        self,
+        module: nn.Module | None,
+        state: torch.Tensor | None,
+        rows: int,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> torch.Tensor | None:
+        if module is None:
+            return None
+        if state is None:
+            return module.initial_state(rows, device, dtype)
+        return state
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        grce_in: torch.Tensor | None = None,
+        xctx_in: torch.Tensor | None = None,
+        bias_list_in: Sequence[torch.Tensor] | None = None,
+        kv_cache_list_in: Sequence[Sequence[tuple[torch.Tensor, torch.Tensor]]] | None = None,
+        *,
+        qh_query_callback=None,
+    ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None, list]:
+        if kv_cache_list_in:
+            raise NotImplementedError("kv_cache_list_in not supported in sequence mode yet")
+        if qh_query_callback is not None:
+            raise NotImplementedError("qh_query_callback not supported in sequence mode yet")
+        rows, cols, _ = x.shape
+        device = x.device
+        dtype = x.dtype
+        outputs: list[torch.Tensor] = []
+        grce_state = self._ensure_state(self.grce, grce_in, rows, device, dtype)
+        xctx_state = self._ensure_state(self.xctx, xctx_in, rows, device, dtype)
+        for col in range(cols):
+            column_biases: list[torch.Tensor] = []
+            if bias_list_in:
+                for bias in bias_list_in:
+                    if bias is None or bias.size(1) == 0:
+                        continue
+                    if bias.size(1) == 1:
+                        column_biases.append(bias)
+                    elif col < bias.size(1):
+                        column_biases.append(bias[:, col : col + 1, :, :])
+            if self.grce is not None and grce_state is not None:
+                column_biases.append(self.grce.bias_forward(grce_state))
+            if self.xctx is not None and xctx_state is not None:
+                column_biases.append(self.xctx.bias_forward(xctx_state))
+            column_input = x[:, col : col + 1, :]
+            column_output, samples = self.core.forward_grid(
+                column_input,
+                bias_list_in=column_biases,
+                masked=True,
+            )
+            outputs.append(column_output)
+            if self.grce is not None and grce_state is not None:
+                grce_state = self.grce.sample_forward(grce_state, samples)
+            if self.xctx is not None and xctx_state is not None:
+                xctx_state = self.xctx.sample_forward(xctx_state, samples)
+        stacked = torch.cat(outputs, dim=1)
+        return stacked, grce_state, xctx_state, []
+
+
 @dataclass
 class LayerCache:
-    key: torch.Tensor
-    value: torch.Tensor
+    segments: list[tuple[torch.Tensor, torch.Tensor]] = field(default_factory=list)
     length: int = 0
+    allow_rebalance: bool = True
+
+    def append(self, key_chunk: torch.Tensor, value_chunk: torch.Tensor) -> None:
+        if key_chunk.size(2) != value_chunk.size(2):
+            raise ValueError("Key/value chunks must share the same length")
+        self.segments.append((key_chunk, value_chunk))
+        self.length += key_chunk.size(2)
+        if self.allow_rebalance:
+            self._rebalance_segments()
+
+    def _rebalance_segments(self) -> None:
+        while len(self.segments) >= 2:
+            key_b, value_b = self.segments[-1]
+            key_a, value_a = self.segments[-2]
+            if key_a.size(2) != key_b.size(2):
+                break
+            merged_key = torch.cat([key_a, key_b], dim=2)
+            merged_value = torch.cat([value_a, value_b], dim=2)
+            self.segments.pop()
+            self.segments.pop()
+            self.segments.append((merged_key, merged_value))
+
+    def tensors(self) -> tuple[torch.Tensor, torch.Tensor]:
+        if not self.segments:
+            raise RuntimeError("LayerCache is empty; call append() before tensors().")
+        if len(self.segments) == 1:
+            return self.segments[0]
+        keys = torch.cat([seg[0] for seg in self.segments], dim=2)
+        values = torch.cat([seg[1] for seg in self.segments], dim=2)
+        return keys, values
 
 
 class GPTCore(nn.Module):
@@ -2449,20 +2675,12 @@ class GPTCore(nn.Module):
         max_seq_len: int,
         device: torch.device,
     ) -> list[LayerCache]:
-        head_dim = self.config.n_embd // self.config.n_head
-        dtype = self.tok_emb.weight.dtype
+        allow_rebalance = not getattr(self.config, "disable_kv_rebalance", False)
         caches: list[LayerCache] = []
         for _ in range(len(self.blocks)):
-            key = torch.empty(
-                batch_size,
-                self.config.n_head,
-                0,
-                head_dim,
-                device=device,
-                dtype=dtype,
-            )
-            value = torch.empty_like(key)
-            caches.append(LayerCache(key=key, value=value, length=0))
+            cache = LayerCache()
+            cache.allow_rebalance = allow_rebalance
+            caches.append(cache)
         return caches
 
     def _build_puncture_mask(
@@ -2903,331 +3121,61 @@ class GRCEGPT(nn.Module):
     def __init__(self, config: ModelConfig) -> None:
         super().__init__()
         self.config = config
-        self.core = GPTCore(config)
-        self.context_channels = nn.ModuleList()
-        if config.n_grce > 0:
-            channel_cls = (
-                GRCEContextChannelOptimized
-                if getattr(config, "grce_optimized", False)
-                else GRCEContextChannel
-            )
-            self.context_channels.append(channel_cls(config))
-        if config.n_xctx > 0:
-            self.context_channels.append(
-                XCTXContextChannel(config)
-            )
+        self.core = TransformerStackCore(config)
+        self.stack_grid = TransformerStackGrid(self.core)
+        self.stack_sequence = TransformerStackSequence(config, self.core)
+        self.context_channels = self.stack_sequence.context_modules
+
+    def _position_ids(
+        self,
+        length: int,
+        batch_size: int,
+        device: torch.device,
+        position_offsets: torch.Tensor | None,
+    ) -> torch.Tensor:
+        base = torch.arange(length, device=device).unsqueeze(0).expand(batch_size, -1)
+        if position_offsets is None:
+            return base
+        offsets = position_offsets.to(device=device, dtype=torch.long)
+        if offsets.dim() != 1 or offsets.shape[0] != batch_size:
+            raise ValueError("position_offsets must be 1D with batch_size entries")
+        return base + offsets.view(batch_size, 1)
 
     def forward_autoreg(
         self,
         idx: torch.Tensor,
         targets: torch.Tensor | None = None,
         *,
-        disable_context: bool = False,
-        capture_activations: bool = False,
-        collect_relu_mask: bool = False,
-        context_disabled_rows: torch.Tensor | None = None,
-        context_bias_disabled_rows: torch.Tensor | None = None,
-        xctx_disabled_rows: torch.Tensor | None = None,
-        xctx_bias_disabled_rows: torch.Tensor | None = None,
-        context_dropout_positions: torch.Tensor | None = None,
-        disable_xctx: bool = False,
-        attention_disabled_rows: torch.Tensor | None = None,
-        attention_dropout_positions: torch.Tensor | None = None,
-        initial_context_raw: list[torch.Tensor] | None = None,
-        record_final_context: bool = False,
-        encoder_mode: bool = False,
+        mode: str = "normal",
         position_offsets: torch.Tensor | None = None,
-        encode_rows: torch.Tensor | None = None,
-        recode_rows: torch.Tensor | None = None,
-        recode_boundaries: torch.Tensor | None = None,
     ) -> Tuple[torch.Tensor, torch.Tensor | None, dict | None]:
+        del targets  # unused but kept for API compatibility
         B, T = idx.shape
         device = idx.device
-        if position_offsets is None:
-            position_offsets = torch.zeros(B, dtype=torch.long, device=device)
+        pos_idx = self._position_ids(T, B, device, position_offsets)
+        if torch.any(pos_idx >= self.config.block_size):
+            raise ValueError("position ids exceed configured --block-size")
+        tok = self.core.tok_emb(idx)
+        pos = self.core.pos_emb(pos_idx)
+        x = self.core.drop(tok + pos)
+        context_info: dict[str, torch.Tensor] | None = None
+        if mode == "normal":
+            sequence_output, grce_out, xctx_out, _ = self.stack_sequence.forward(x)
+            hidden = sequence_output
+            context_info = {}
+            if grce_out is not None:
+                context_info["grce"] = grce_out
+            if xctx_out is not None:
+                context_info["xctx"] = xctx_out
+            if not context_info:
+                context_info = None
+        elif mode == "decode":
+            decode_output, _, _ = self.stack_grid.forward(x, masked=True)
+            hidden = decode_output
         else:
-            position_offsets = position_offsets.to(device=device, dtype=torch.long)
-            if position_offsets.dim() != 1 or position_offsets.shape[0] != B:
-                raise ValueError("position_offsets must be 1D with batch_size entries")
-        active_channels: list[GRCEContextChannel] = []
-        active_indices: list[int] = []
-        if not disable_context:
-            for ch_idx, channel in enumerate(self.context_channels):
-                if channel.is_xctx and disable_xctx:
-                    continue
-                if channel.disabled:
-                    continue
-                active_channels.append(channel)
-                active_indices.append(ch_idx)
-        use_context = bool(active_channels)
-        if context_disabled_rows is not None:
-            context_disabled_rows = context_disabled_rows.to(device=device, dtype=torch.bool)
-        if context_disabled_rows is None or not use_context:
-            context_disabled_rows = torch.zeros(B, dtype=torch.bool, device=device)
-        if context_bias_disabled_rows is not None:
-            context_bias_disabled_rows = context_bias_disabled_rows.to(device=device, dtype=torch.bool)
-        if not use_context:
-            context_bias_disabled_rows = None
-        if xctx_disabled_rows is not None:
-            xctx_disabled_rows = xctx_disabled_rows.to(device=device, dtype=torch.bool)
-        if xctx_disabled_rows is None or not use_context:
-            xctx_disabled_rows = torch.zeros(B, dtype=torch.bool, device=device)
-        if xctx_bias_disabled_rows is not None:
-            xctx_bias_disabled_rows = xctx_bias_disabled_rows.to(device=device, dtype=torch.bool)
-        if not use_context:
-            xctx_bias_disabled_rows = None
-        if context_dropout_positions is not None:
-            context_dropout_positions = context_dropout_positions.to(device=device, dtype=torch.long).clone()
-        if attention_disabled_rows is not None:
-            attention_disabled_rows = attention_disabled_rows.to(device=device, dtype=torch.bool)
-        else:
-            attention_disabled_rows = torch.zeros(B, dtype=torch.bool, device=device)
-        if attention_dropout_positions is not None:
-            attention_dropout_positions = attention_dropout_positions.to(device=device, dtype=torch.long).clone()
-        if encode_rows is not None:
-            encode_rows = encode_rows.to(device=device, dtype=torch.bool)
-        if recode_rows is not None:
-            recode_rows = recode_rows.to(device=device, dtype=torch.bool)
-        if recode_boundaries is not None:
-            recode_boundaries = recode_boundaries.to(device=device, dtype=torch.long)
-        def ensure_dynamic_mask(mask: torch.Tensor | None) -> torch.Tensor:
-            if mask is None:
-                return torch.zeros(B, dtype=torch.bool, device=device)
-            return mask
-        base_context_bias_mask = context_bias_disabled_rows
-        base_xctx_bias_mask = xctx_bias_disabled_rows
-        context_states: list[torch.Tensor] = []
-        effective_initial_context: list[torch.Tensor] | None = None
-        if use_context:
-            for channel in active_channels:
-                context_states.append(torch.zeros(B, channel.context_dim, device=device))
-            if initial_context_raw is not None:
-                source = initial_context_raw
-                if len(source) == len(self.context_channels) and active_indices:
-                    source = [source[i] for i in active_indices]
-                if len(source) != len(active_channels):
-                    raise ValueError(
-                        "initial_context_raw must match number of active context channels"
-                    )
-                effective_initial_context = source
-                for idx_ch, (channel, init_raw) in enumerate(
-                    zip(active_channels, effective_initial_context)
-                ):
-                    if init_raw is None:
-                        continue
-                    if init_raw.device != device:
-                        init_raw = init_raw.to(device)
-                    expected = (B, channel.context_dim)
-                    if init_raw.shape != expected:
-                        raise ValueError(
-                            f"initial context shape {init_raw.shape} does not match {expected}"
-                        )
-                    context_states[idx_ch] = channel.normalize_state(init_raw)
-        logits_steps = []
-        hidden_steps = []
-        activation_store: dict | None = None
-        need_store = capture_activations or collect_relu_mask
-        relu_activity: list[list[torch.Tensor | None]] | None = [] if collect_relu_mask else None
-        final_context_raw: list[torch.Tensor | None] | None = (
-            [None for _ in active_channels] if (record_final_context and use_context) else None
-        )
-        if capture_activations:
-            activation_store = {
-                "block_norms": [[] for _ in range(self.config.n_layer)],
-                "context_norms": [],
-            }
-        base_context_mask = context_disabled_rows
-        base_context_mask_has = bool(base_context_mask.any().item())
-        base_xctx_mask = xctx_disabled_rows
-        base_xctx_mask_has = bool(base_xctx_mask.any().item())
-        caches = None
-        if not encoder_mode:
-            caches = self.core.allocate_kv_caches(B, T, device=device)
-
-        for t in range(T):
-            context_bias_mask = (
-                base_context_bias_mask.clone() if base_context_bias_mask is not None else None
-            )
-            xctx_bias_mask = (
-                base_xctx_bias_mask.clone() if base_xctx_bias_mask is not None else None
-            )
-            xctx_step_mask = None
-            xctx_mask_has = False
-            if context_dropout_positions is not None:
-                step_mask = context_dropout_positions == t
-                if step_mask.any():
-                    context_dropout_positions[step_mask] = -1
-                    xctx_step_mask = step_mask
-                    xctx_mask_has = True
-            recode_encode_mask = None
-            if recode_rows is not None and recode_boundaries is not None:
-                recode_encode_mask = recode_rows & (recode_boundaries > t)
-                if recode_encode_mask.any():
-                    context_bias_mask = ensure_dynamic_mask(context_bias_mask)
-                    context_bias_mask[recode_encode_mask] = True
-                    xctx_bias_mask = ensure_dynamic_mask(xctx_bias_mask)
-                    xctx_bias_mask[recode_encode_mask] = True
-            if encoder_mode:
-                prefix = idx
-                target_pos = min(prefix.size(1) - 1, t)
-                pos_seq = torch.arange(prefix.size(1), device=device, dtype=torch.long)
-                position_matrix = position_offsets.view(B, 1) + pos_seq.view(1, -1)
-            block_biases = None
-            if use_context:
-                for channel, state in zip(active_channels, context_states):
-                    state_mask = base_context_mask
-                    state_mask_has = base_context_mask_has
-                    bias_mask = context_bias_mask
-                    if channel.is_xctx:
-                        state_mask = base_xctx_mask
-                        state_mask_has = base_xctx_mask_has
-                        bias_mask = xctx_bias_mask
-                        if xctx_mask_has:
-                            state_mask = (
-                                (state_mask | xctx_step_mask)
-                                if state_mask_has
-                                else xctx_step_mask
-                            )
-                            state_mask_has = True
-                    state_for_bias = state
-                    if state_mask_has:
-                        state_for_bias = state_for_bias.clone()
-                        state_for_bias[state_mask] = 0
-                    bias_vectors = channel.project(state_for_bias)
-                    bias_mask_has = bool(bias_mask is not None and bias_mask.any())
-                    channel_biases: list[torch.Tensor] = []
-                    if encoder_mode:
-                        for bias_vec in bias_vectors:
-                            if state_mask_has:
-                                bias_vec = bias_vec.clone()
-                                bias_vec[state_mask] = 0
-                            if bias_mask_has:
-                                bias_vec = bias_vec.clone()
-                                bias_vec[bias_mask] = 0
-                            full = torch.zeros(
-                                B,
-                                prefix.size(1),
-                                self.config.n_embd,
-                                device=device,
-                                dtype=bias_vec.dtype,
-                            )
-                            full[:, target_pos, :] = bias_vec
-                            channel_biases.append(full)
-                    else:
-                        for bias_vec in bias_vectors:
-                            working = bias_vec
-                            if state_mask_has:
-                                working = working.clone()
-                                working[state_mask] = 0
-                            if bias_mask_has:
-                                working = working.clone()
-                                working[bias_mask] = 0
-                            channel_biases.append(working)
-                    if block_biases is None:
-                        block_biases = channel_biases
-                    else:
-                        for layer_idx in range(len(block_biases)):
-                            block_biases[layer_idx] = (
-                                block_biases[layer_idx] + channel_biases[layer_idx]
-                            )
-            if encoder_mode:
-                logits, hidden_layer, block_inputs, layer_masks = self.core(
-                    prefix,
-                    block_biases=block_biases,
-                    record_relu_mask=collect_relu_mask,
-                    attention_disabled_rows=attention_disabled_rows,
-                    attention_dropout_positions=attention_dropout_positions,
-                    full_attention=encoder_mode,
-                    target_position=target_pos,
-                    position_ids=position_matrix,
-                )
-                step_logits = logits[:, target_pos : target_pos + 1, :]
-                step_hidden = hidden_layer[:, target_pos : target_pos + 1, :]
-            else:
-                if caches is None:
-                    raise RuntimeError("KV caches were not initialized")
-                position_ids = position_offsets + t
-                logits_step, hidden_step, block_inputs, layer_masks = self.core.forward_step(
-                    idx[:, t],
-                    position_ids,
-                    caches,
-                    block_biases=block_biases,
-                    record_relu_mask=collect_relu_mask,
-                    attention_disabled_rows=attention_disabled_rows,
-                    puncture_positions=attention_dropout_positions,
-                )
-                step_logits = logits_step.unsqueeze(1)
-                step_hidden = hidden_step.unsqueeze(1)
-            if relu_activity is not None:
-                relu_activity.append(layer_masks)
-            if activation_store is not None:
-                for layer_idx, block_inp in enumerate(block_inputs):
-                    norms = torch.linalg.vector_norm(block_inp.detach(), dim=-1)
-                    activation_store["block_norms"][layer_idx].extend(
-                        norms.cpu().tolist()
-                    )
-            logits_steps.append(step_logits)
-            hidden_steps.append(step_hidden)
-            if use_context:
-                for idx_ch, channel in enumerate(active_channels):
-                    span = channel.detach_span
-                    if span <= 0:
-                        stop_grad = False
-                    elif span == 1:
-                        stop_grad = True
-                    else:
-                        stop_grad = (t % span == 0)
-                    prev_context = context_states[idx_ch]
-                    channel_mask = base_context_mask
-                    channel_mask_has = base_context_mask_has
-                    if channel.is_xctx:
-                        if base_xctx_mask_has:
-                            channel_mask = (
-                                (channel_mask | base_xctx_mask)
-                                if channel_mask_has
-                                else base_xctx_mask
-                            )
-                            channel_mask_has = True
-                        if xctx_mask_has:
-                            channel_mask = (
-                                (channel_mask | xctx_step_mask)
-                                if channel_mask_has
-                                else xctx_step_mask
-                            )
-                            channel_mask_has = True
-                    if channel_mask_has:
-                        prev_context = prev_context.clone()
-                        prev_context[channel_mask] = 0
-                    new_state, raw_context = channel.update(
-                        block_inputs,
-                        prev_context=prev_context,
-                        stop_grad=stop_grad,
-                    )
-                    if channel_mask_has:
-                        new_state = new_state.clone()
-                        new_state[channel_mask] = 0
-                        raw_context = raw_context.clone()
-                        raw_context[channel_mask] = 0
-                    context_states[idx_ch] = new_state
-                    if final_context_raw is not None:
-                        final_context_raw[idx_ch] = raw_context.detach()
-                    if activation_store is not None:
-                        ctx_norms = torch.linalg.vector_norm(raw_context.detach(), dim=-1)
-                        activation_store["context_norms"].extend(ctx_norms.cpu().tolist())
-        logits = torch.cat(logits_steps, dim=1)
-        hidden = torch.cat(hidden_steps, dim=1)
-        if relu_activity is not None:
-            if activation_store is None and need_store:
-                activation_store = {}
-            if activation_store is not None:
-                activation_store.setdefault("relu_activity", relu_activity)
-        if final_context_raw is not None:
-            if activation_store is None:
-                activation_store = {}
-            activation_store["final_context_raw"] = [
-                ctx.clone() if ctx is not None else None for ctx in final_context_raw
-            ]
-        return logits, hidden, activation_store
+            raise ValueError(f"Unknown forward_autoreg mode: {mode}")
+        logits = self.core.head(self.core.ln_f(hidden))
+        return logits, None, context_info
 
 
 def build_model_tag(config: ModelConfig) -> str:
@@ -3250,42 +3198,18 @@ LOSS_IGNORE_INDEX = -100
 # -----------------------------------------------------------------------------
 
 
-ROW_METRIC_MAP = {
-    "normal": "normal",
-    "decode": "decode",
-    "noxctx": "noxctx",
-    "puxctx": "puxctx",
-    "noattn": "noattn",
-    "puattn": "puattn",
-    "encode": "encode",
-    "recode": "recode",
-}
-
 ROW_METRIC_HIST_KEYS = [
     "normal",
-    "encode",
-    "recode",
     "decode",
-    "noxctx",
-    "noattn",
-    "puxctx",
-    "puattn",
 ]
 
 ROW_METRIC_LOG_KEYS = [
     "normal",
-    #"encode",
-    #"recode",
     "decode",
-    "noxctx",
-    "noattn",
-    #"puxctx",
-    #"puattn",
 ]
 
 ROW_METRIC_LOG_GROUP = {
     "normal",
-    "noxctx",
 }
 
 
@@ -3307,32 +3231,18 @@ def sample_position_offsets(
     return torch.randint(0, max_offset + 1, (batch_size,), device=device)
 
 
-def aggregate_row_metrics(
-    row_types: Sequence[str],
-    per_token_losses: torch.Tensor,
-    valid_mask: torch.Tensor,
-) -> dict[str, float | None]:
-    loss_sum = float((per_token_losses * valid_mask).sum().item())
-    token_count = int(valid_mask.sum().item())
-    metrics: dict[str, float | None] = {"target": loss_sum / max(1, token_count)}
+def count_eval_calls(steps: int, interval: int) -> int:
+    """Return how many evaluation batches run in a training cycle."""
 
-    bucket_sum: dict[str, float] = defaultdict(float)
-    bucket_count: dict[str, int] = defaultdict(int)
-    for idx, row_type in enumerate(row_types):
-        mask = valid_mask[idx]
-        count = int(mask.sum().item())
-        if count <= 0:
-            continue
-        bucket_sum[row_type] += float((per_token_losses[idx] * mask).sum().item())
-        bucket_count[row_type] += count
-
-    for row_type, metric_name in ROW_METRIC_MAP.items():
-        denom = bucket_count.get(row_type, 0)
-        if denom:
-            metrics[metric_name] = bucket_sum[row_type] / denom
-        else:
-            metrics[metric_name] = None
-    return metrics
+    if steps <= 0:
+        return 0
+    eval_steps = {1, steps}
+    if interval > 0:
+        current = interval
+        while current <= steps:
+            eval_steps.add(current)
+            current += interval
+    return len(eval_steps)
 
 
 def evaluate_single_batch(
@@ -3342,51 +3252,55 @@ def evaluate_single_batch(
     block_length: int,
     batch_size: int,
     device: torch.device,
-    row_type_template: Sequence[str],
     *,
-    context_enabled: bool,
-    xctx_enabled: bool,
+    target_mode: str | None = None,
 ) -> dict[str, float | None]:
-    row_types = list(row_type_template)
-    random.shuffle(row_types)
-    xb, yb = dataset.get_batch(split, block_length, batch_size, device)
-    special_masks = build_row_type_masks(
-        row_types,
-        block_length,
-        device,
-        context_enabled=context_enabled,
-        xctx_enabled=xctx_enabled,
-    )
-    position_offsets = sample_position_offsets(
-        batch_size,
-        model.config.block_size,
-        block_length,
-        device,
-    )
-    logits, _, _ = model.forward_autoreg(
-        xb,
-        targets=yb,
-        context_disabled_rows=special_masks.context_disabled_mask,
-        context_bias_disabled_rows=special_masks.context_bias_disabled_mask,
-        xctx_disabled_rows=special_masks.xctx_disabled_mask,
-        xctx_bias_disabled_rows=special_masks.xctx_bias_disabled_mask,
-        context_dropout_positions=special_masks.context_dropout_positions,
-        attention_disabled_rows=special_masks.attention_disabled_mask,
-        attention_dropout_positions=special_masks.attention_dropout_positions,
-        position_offsets=position_offsets,
-        encode_rows=special_masks.encode_rows,
-        recode_rows=special_masks.recode_rows,
-        recode_boundaries=special_masks.recode_boundaries,
-    )
-    per_token = F.cross_entropy(
-        logits.view(-1, logits.size(-1)),
-        yb.view(-1),
-        reduction="none",
-        ignore_index=LOSS_IGNORE_INDEX,
-    )
-    per_token = per_token.view(batch_size, -1)
-    valid_mask = (yb != LOSS_IGNORE_INDEX)
-    return aggregate_row_metrics(row_types, per_token, valid_mask)
+    metrics: dict[str, float | None] = {key: None for key in ROW_METRIC_LOG_KEYS}
+    metrics["target"] = None
+    total_loss = 0.0
+    total_tokens = 0
+    for mode, rows in batch_mode_specs(batch_size):
+        if rows <= 0:
+            continue
+        xb, yb = dataset.get_batch(split, block_length, rows, device)
+        position_offsets = sample_position_offsets(
+            rows,
+            model.config.block_size,
+            block_length,
+            device,
+        )
+        logits, _, _ = model.forward_autoreg(
+            xb,
+            targets=yb,
+            mode=mode,
+            position_offsets=position_offsets,
+        )
+        per_token = F.cross_entropy(
+            logits.view(-1, logits.size(-1)),
+            yb.view(-1),
+            reduction="none",
+            ignore_index=LOSS_IGNORE_INDEX,
+        )
+        per_token = per_token.view(rows, -1)
+        valid_mask = (yb != LOSS_IGNORE_INDEX)
+        loss_sum = float((per_token * valid_mask).sum().item())
+        token_count = int(valid_mask.sum().item())
+        if token_count <= 0:
+            continue
+        metrics[mode] = loss_sum / token_count
+        total_loss += loss_sum
+        total_tokens += token_count
+    mix_loss = None
+    if total_tokens > 0:
+        mix_loss = total_loss / total_tokens
+        metrics["target"] = mix_loss
+    if target_mode in {"normal", "decode"}:
+        selected = metrics.get(target_mode)
+        if selected is not None:
+            metrics["target"] = selected
+        elif mix_loss is not None:
+            metrics["target"] = mix_loss
+    return metrics
 
 def train_model(
     settings: Settings,
@@ -3398,6 +3312,7 @@ def train_model(
     batch_size: int,
     eval_interval: int,
     start_step: int,
+    optimizer: torch.optim.Optimizer,
     sample_prompt: torch.Tensor,
     sample_chars: int,
     tokenizer: GPT2TokenizerWrapper,
@@ -3416,7 +3331,8 @@ def train_model(
 ) -> Tuple[int, List[Dict[str, float]], float, float]:
     """Run the main training loop for a cycle."""
 
-    optim = torch.optim.AdamW(model.parameters(), lr=3e-4)
+    if optimizer is None:
+        raise ValueError("train_model requires an initialized optimizer instance")
     total_steps = start_step
     history_updates: List[Dict[str, float]] = []
     printed_header = False
@@ -3426,17 +3342,8 @@ def train_model(
     else:
         prompt_queue = []
 
-    context_path_enabled = bool(model.context_channels)
-    xctx_enabled = any(
-        getattr(channel, "is_xctx", False) for channel in getattr(model, "context_channels", [])
-    )
-    row_counts = compute_row_type_counts(batch_size)
-    row_type_template = build_row_type_template(
-        row_counts,
-        batch_size,
-        context_enabled=context_path_enabled,
-        xctx_enabled=xctx_enabled,
-    )
+    mode_override = settings.batch_mode_override
+    mode_specs = batch_mode_specs(batch_size, mode_override=mode_override)
 
     loop_timer = Timer().start()
     eval_timer = Timer()
@@ -3452,49 +3359,45 @@ def train_model(
     line = " | ".join(line_parts) + " |"
     print(line)
 
-    # use the same fixed batch layout for the entire cycle
-    row_types = list(row_type_template)
-    random.shuffle(row_types)
-    special_masks = build_row_type_masks(
-        row_types,
-        block_length,
-        device,
-        context_enabled=context_path_enabled,
-        xctx_enabled=xctx_enabled,
-    )
-    position_offsets = sample_position_offsets(
-        batch_size,
-        model.config.block_size,
-        block_length,
-        device,
-    )
-
     for step in range(1, steps + 1):
-        xb, yb = dataset.get_batch("train", block_length, batch_size, device)
-        logits, _, _ = model.forward_autoreg(
-            xb,
-            targets=yb,
-            context_disabled_rows=special_masks.context_disabled_mask,
-            context_bias_disabled_rows=special_masks.context_bias_disabled_mask,
-            xctx_disabled_rows=special_masks.xctx_disabled_mask,
-            xctx_bias_disabled_rows=special_masks.xctx_bias_disabled_mask,
-            context_dropout_positions=special_masks.context_dropout_positions,
-            attention_disabled_rows=special_masks.attention_disabled_mask,
-            attention_dropout_positions=special_masks.attention_dropout_positions,
-            position_offsets=position_offsets,
-            encode_rows=special_masks.encode_rows,
-            recode_rows=special_masks.recode_rows,
-            recode_boundaries=special_masks.recode_boundaries,
-        )
-        total_loss = F.cross_entropy(
-            logits.view(-1, logits.size(-1)),
-            yb.view(-1),
-            ignore_index=LOSS_IGNORE_INDEX,
-        )
+        total_loss_sum: torch.Tensor | None = None
+        total_tokens = 0
+        for mode, rows in mode_specs:
+            if rows <= 0:
+                continue
+            xb, yb = dataset.get_batch("train", block_length, rows, device)
+            position_offsets = sample_position_offsets(
+                rows,
+                model.config.block_size,
+                block_length,
+                device,
+            )
+            logits, _, _ = model.forward_autoreg(
+                xb,
+                targets=yb,
+                mode=mode,
+                position_offsets=position_offsets,
+            )
+            loss_sum = F.cross_entropy(
+                logits.view(-1, logits.size(-1)),
+                yb.view(-1),
+                reduction="sum",
+                ignore_index=LOSS_IGNORE_INDEX,
+            )
+            if total_loss_sum is None:
+                total_loss_sum = loss_sum
+            else:
+                total_loss_sum = total_loss_sum + loss_sum
+            token_count = int((yb != LOSS_IGNORE_INDEX).sum().item())
+            total_tokens += token_count
+        if total_loss_sum is None:
+            raise RuntimeError("No tokens processed in training step")
+        denom = float(max(total_tokens, 1))
+        total_loss = total_loss_sum / denom
 
-        optim.zero_grad(set_to_none=True)
+        optimizer.zero_grad(set_to_none=True)
         total_loss.backward()
-        optim.step()
+        optimizer.step()
         total_steps += 1
 
         eval_due = step == 1 or step % eval_interval == 0 or step == steps
@@ -3512,9 +3415,7 @@ def train_model(
                     block_length,
                     batch_size,
                     device,
-                    row_type_template,
-                    context_enabled=context_path_enabled,
-                    xctx_enabled=xctx_enabled,
+                    target_mode=mode_override,
                 )
         model.train()
         eval_timer.stop()
@@ -3651,6 +3552,88 @@ def train_model(
     return total_steps, history_updates, loop_timer.stop(), eval_timer
 
 
+def run_profile_mode(
+    settings: Settings,
+    dataset: TextDataset,
+    model: GRCEGPT,
+    optimizer: torch.optim.Optimizer,
+    *,
+    block_length: int,
+    batch_size: int,
+    device: torch.device,
+    block_size: int,
+) -> None:
+    """Warm up once, profile a second training step, and report CUDA stats."""
+
+    try:
+        from torch.profiler import ProfilerActivity, profile, record_function
+    except ImportError as exc:  # pragma: no cover - environment-dependent
+        raise RuntimeError(
+            "torch.profiler is unavailable; upgrade to PyTorch 1.8+ to use 'profile'."
+        ) from exc
+
+    mode_override = settings.batch_mode_override
+    mode_specs = batch_mode_specs(batch_size, mode_override=mode_override)
+    if not mode_specs:
+        raise ValueError("Batch size must be >0 to run the profiler")
+
+    train_chars = (block_length + 1) * batch_size * 2
+    dataset.prepare_cycle("train", train_chars)
+
+    def train_step(tag: str) -> float:
+        model.train()
+        total_loss_sum: torch.Tensor | None = None
+        total_tokens = 0
+        for mode, rows in mode_specs:
+            if rows <= 0:
+                continue
+            xb, yb = dataset.get_batch("train", block_length, rows, device)
+            position_offsets = sample_position_offsets(
+                rows,
+                block_size,
+                block_length,
+                device,
+            )
+            logits, _, _ = model.forward_autoreg(
+                xb,
+                targets=yb,
+                mode=mode,
+                position_offsets=position_offsets,
+            )
+            loss_sum = F.cross_entropy(
+                logits.view(-1, logits.size(-1)),
+                yb.view(-1),
+                reduction="sum",
+                ignore_index=LOSS_IGNORE_INDEX,
+            )
+            if total_loss_sum is None:
+                total_loss_sum = loss_sum
+            else:
+                total_loss_sum = total_loss_sum + loss_sum
+            total_tokens += int((yb != LOSS_IGNORE_INDEX).sum().item())
+        if total_loss_sum is None or total_tokens <= 0:
+            raise RuntimeError("No tokens processed during profiling step")
+        loss = total_loss_sum / float(total_tokens)
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        optimizer.step()
+        return float(loss.item())
+
+    warm_loss = train_step("warmup")
+    print(color_text(f"Warm-up step loss: {warm_loss:.4f}", Colors.CYAN))
+
+    with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=True) as prof:
+        with record_function("profile_train_step"):
+            prof_loss = train_step("profile")
+
+    print(color_text(f"Profiled step loss: {prof_loss:.4f}", Colors.CYAN))
+    cuda_events = sum(
+        1 for evt in prof.events() if getattr(evt, "device_type", None) == ProfilerActivity.CUDA
+    )
+    print(color_text(f"CUDA kernel launches: {cuda_events}", Colors.MAGENTA))
+    print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=20))
+
+
 @torch.no_grad()
 def generate(
     model: GRCEGPT,
@@ -3739,12 +3722,98 @@ def run_test_slice(
     print(pretty_text)
 
 
+def preprocess_runtime_settings(args: argparse.Namespace) -> None:
+    """Resolve checkpoint overrides and derived paths before runtime spins up."""
+
+    if getattr(args, "_checkpoint_preprocessed", False):
+        return
+    args._checkpoint_preprocessed = True
+
+    args.model_path_override = None
+    args.log_path_override = None
+    args.checkpoint_payload_override = None
+    args.checkpoint_config_override = None
+    args.tokenizer_json_override = None
+
+    if args.pt:
+        checkpoint_path = args.pt
+        if not checkpoint_path.exists():
+            raise FileNotFoundError(f"Checkpoint {checkpoint_path} not found")
+        payload = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+        saved_config = payload.get("config")
+        if saved_config is None:
+            raise ValueError(
+                "Checkpoint lacks config metadata; re-save it with the latest format."
+            )
+        saved = dict(saved_config)
+        legacy_xctx = bool(saved.pop("grce_xctx", False))
+        if "n_xctx" not in saved:
+            if legacy_xctx:
+                saved["n_xctx"] = int(saved.get("n_grce", 0))
+                saved["n_grce"] = 0
+            else:
+                saved["n_xctx"] = 0
+        config = ModelConfig(**saved)
+        args.checkpoint_payload_override = payload
+        args.checkpoint_config_override = config
+        args.tokenizer_json_override = payload.get("tokenizer_json")
+        args.block_size = config.block_size
+        if not getattr(args, "_block_length_defined", False):
+            args.block_length = config.block_size
+        elif args.block_length > config.block_size:
+            raise ValueError("--block-length cannot exceed checkpoint block size")
+        args.n_layer = config.n_layer
+        args.n_head = config.n_head
+        args.n_embd = config.n_embd
+        args.n_grce = config.n_grce
+        args.n_xctx = config.n_xctx
+        args.dropout = config.dropout
+        args.detach_span = config.detach_span
+        args.no_detach_ctx = not config.detach_context
+        args.detach_layer = config.detach_layer
+        args.vocab_size = config.vocab_size
+        args.model_path_override = checkpoint_path
+        args.log_path_override = checkpoint_path.with_suffix(".log")
+        return
+
+    inferred = ModelConfig(
+        vocab_size=args.vocab_size,
+        block_size=args.block_size,
+        n_layer=args.n_layer,
+        n_head=args.n_head,
+        n_embd=args.n_embd,
+        n_grce=args.n_grce,
+        n_xctx=args.n_xctx,
+        grce_optimized=getattr(args, "grce_optimized", MODEL_CONFIG_DEFAULTS.grce_optimized),
+    )
+    tag = build_model_tag(inferred)
+    for extra_tag in args.tag:
+        cleaned = re.sub(r"[^0-9A-Za-z]+", "", extra_tag)
+        if cleaned:
+            tag += f"_{cleaned}"
+    model_dir = pathlib.Path(args.model)
+    prefix = f"{args.corpus}_model_"
+    model_path = model_dir / f"{prefix}{tag}.pt"
+    args.model_path_override = model_path
+    args.log_path_override = model_path.with_suffix(".log")
+
+
 import signal
 import traceback
 
 class Runtime:
     def __init__(self, settings: Settings):
         self.settings = settings
+        self.tokenizer: GPT2TokenizerWrapper | None = None
+        self.dataset: TextDataset | None = None
+        self._train_tokens: torch.Tensor | None = None
+        self._test_tokens: torch.Tensor | None = None
+        self.newline_token_id: int | None = None
+        self.boundary_blocklist: Sequence[int] | None = None
+        self.default_prompt_boundary: bool = False
+        self.model_path: pathlib.Path | None = None
+        self.log_path: pathlib.Path | None = None
+        self.tokenizer_json: str | None = None
 
     class TimeoutAlarm(Exception):
         pass
@@ -3784,6 +3853,326 @@ class Runtime:
 
         self.cancel_timeout = cancel_timeout
 
+    def _prepare_corpus(
+        self,
+    ) -> tuple[
+        GPT2TokenizerWrapper,
+        TextDataset,
+        torch.Tensor,
+        torch.Tensor,
+        int | None,
+        Sequence[int] | None,
+        bool,
+        str,
+    ]:
+        assert self.settings.cli_args is not None
+        args = self.settings.cli_args
+
+        data_dir = pathlib.Path(args.data)
+        train_path = data_dir / f"{args.corpus}-train.txt.gz"
+        test_path = data_dir / f"{args.corpus}-test.txt.gz"
+        model_dir = pathlib.Path(args.model)
+        if not model_dir.exists():
+            try:
+                model_dir.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                pass
+
+        must_build_tokenizer = (
+            args.command == "corpus" and getattr(args, "corpus_init", False)
+        )
+        train_cache_path = data_dir / f"{args.corpus}_tokens_train_{args.vocab_size}.pt"
+        test_cache_path = data_dir / f"{args.corpus}_tokens_test_{args.vocab_size}.pt"
+        need_corpus_for_create = False
+        if args.command == "create":
+            need_corpus_for_create = (
+                not train_cache_path.exists() or not test_cache_path.exists()
+            )
+        must_build_tokenizer = must_build_tokenizer or need_corpus_for_create
+
+        if must_build_tokenizer:
+            full_train_text = load_text_file(train_path)
+            full_test_text = load_text_file(test_path)
+        else:
+            full_train_text = None
+            full_test_text = None
+            if not train_cache_path.exists():
+                raise FileNotFoundError(
+                    f"Train token cache {train_cache_path} not found; run 'corpus --init' first."
+                )
+            if not test_cache_path.exists():
+                raise FileNotFoundError(
+                    f"Test token cache {test_cache_path} not found; run 'corpus --init' first."
+                )
+
+        tokenizer_key = f"{args.corpus}_vocab_{args.vocab_size}"
+        tokenizer_path = data_dir / f"{tokenizer_key}.json"
+        if args.command == "create" and not tokenizer_path.exists():
+            must_build_tokenizer = True
+        tokenizer_json = getattr(args, "tokenizer_json_override", None)
+        if tokenizer_json is None:
+            if tokenizer_path.exists():
+                tokenizer_json = tokenizer_path.read_text(encoding="utf-8")
+            elif not must_build_tokenizer:
+                raise FileNotFoundError(
+                    f"Tokenizer cache {tokenizer_path} not found; run 'corpus --init' first or supply --pt."
+                )
+        print(color_text(f"Tokenizer: {tokenizer_path}", Colors.BLUE))
+        tok_timer = Timer().start()
+        vocab_source = full_train_text or ""
+        reserved_tokens = 1 + len(GPT2TokenizerWrapper.EXTRA_SPECIAL_TOKENS)
+        if args.vocab_size <= reserved_tokens:
+            raise ValueError(
+                f"--vocab-size must exceed reserved tokens ({reserved_tokens}); got {args.vocab_size}"
+            )
+        target_vocab = max(0, args.vocab_size - reserved_tokens)
+        tokenizer = GPT2TokenizerWrapper(
+            vocab_source,
+            tokenizer_path,
+            target_vocab,
+            pretrained_json=tokenizer_json,
+        )
+        expected_vocab_size = args.vocab_size
+        actual_vocab_size = tokenizer.vocab_size
+        if actual_vocab_size != expected_vocab_size:
+            raise ValueError(
+                "Tokenizer size mismatch: expected "
+                f"{expected_vocab_size} tokens but found {actual_vocab_size}. "
+                "Delete the cached tokenizer and re-run 'corpus --init'."
+            )
+        tokenizer_json = tokenizer_json or tokenizer_path.read_text(encoding="utf-8")
+
+        newline_token_id = None
+        newline_tokens = tokenizer.tokenizer.encode("\n", add_special_tokens=False)
+        if newline_tokens:
+            newline_token_id = newline_tokens[0]
+
+        enforce_boundary_guard = not args.no_boundary
+        boundary_blocklist = (
+            tokenizer.leading_alpha_token_ids if enforce_boundary_guard else None
+        )
+        default_prompt_boundary = (
+            enforce_boundary_guard
+            and boundary_blocklist is not None
+            and prompt_needs_boundary(args.prompt)
+        )
+
+        train_tokens, train_text, train_bytes = load_or_prepare_tokens(
+            "train",
+            train_path,
+            full_train_text,
+            train_cache_path,
+            tokenizer,
+            seed=1234,
+        )
+
+        test_tokens, test_text, test_bytes = load_or_prepare_tokens(
+            "test",
+            test_path,
+            full_test_text,
+            test_cache_path,
+            tokenizer,
+            seed=5678,
+        )
+
+        if train_text is None and train_bytes == 0:
+            train_bytes = len(train_tokens)
+        if test_text is None and test_bytes == 0:
+            test_bytes = len(test_tokens)
+
+        train_token_count = int(train_tokens.numel())
+        test_token_count = int(test_tokens.numel())
+        print(
+            color_text(
+                f"Corpus size: {train_token_count:,} train tokens, {test_token_count:,} test tokens",
+                Colors.CYAN,
+            )
+        )
+        tok_summary = (
+            color_text(f"[tokenizer (wall/cpu/gpu)]", Colors.CYAN)
+            + color_text(f" {tok_timer.stop()}\n", Colors.MAGENTA)
+        )
+        print(tok_summary)
+
+        dataset = TextDataset(
+            train_tokens=train_tokens,
+            test_tokens=test_tokens,
+            train_text=train_text,
+            test_text=test_text,
+            train_bytes=train_bytes,
+            test_bytes=test_bytes,
+            train_path=train_path,
+            test_path=test_path,
+        )
+
+        self.tokenizer = tokenizer
+        self.dataset = dataset
+        self._train_tokens = train_tokens
+        self._test_tokens = test_tokens
+        self.newline_token_id = newline_token_id
+        self.boundary_blocklist = boundary_blocklist
+        self.default_prompt_boundary = default_prompt_boundary
+        self.tokenizer_json = tokenizer_json
+        return (
+            tokenizer,
+            dataset,
+            train_tokens,
+            test_tokens,
+            newline_token_id,
+            boundary_blocklist,
+            default_prompt_boundary,
+            tokenizer_json,
+        )
+
+    def cli_corpus(
+        self,
+        tokenizer: GPT2TokenizerWrapper,
+        train_tokens: torch.Tensor,
+        test_tokens: torch.Tensor,
+    ) -> int:
+        assert self.settings.cli_args is not None
+        args = self.settings.cli_args
+
+        def emit_range(label: str, tokens: torch.Tensor, spec: str) -> None:
+            start, end = parse_range_arg(spec)
+            total = int(tokens.numel())
+            if total == 0:
+                print(color_text(f"{label} corpus is empty", Colors.MAGENTA))
+                return
+            if start < 0 or end < 0 or start >= total or end >= total:
+                raise ValueError(f"{label} range {start}-{end} is outside 0-{total - 1}")
+            subset = tokens[start : end + 1].tolist()
+            print(
+                color_text(
+                    f"{label} tokens {start}-{end} (count {len(subset)}):",
+                    Colors.CYAN,
+                )
+            )
+            chunk_size = 128
+            for offset in range(0, len(subset), chunk_size):
+                chunk_tokens = subset[offset : offset + chunk_size]
+                text = tokenizer.decode(torch.tensor(chunk_tokens))
+                print(text)
+
+        actions_done = False
+        if getattr(args, "corpus_init", False):
+            print(
+                color_text(
+                    "Tokenizer initialized and token caches updated; run 'train' to build a model.",
+                    Colors.GREEN,
+                )
+            )
+            actions_done = True
+        if getattr(args, "corpus_print_train", None):
+            emit_range("Train", train_tokens, args.corpus_print_train)
+            actions_done = True
+        if getattr(args, "corpus_print_test", None):
+            emit_range("Test", test_tokens, args.corpus_print_test)
+            actions_done = True
+        if not actions_done:
+            print(color_text("No corpus action selected", Colors.YELLOW))
+        return 0
+
+    def cli_prompts(
+        self,
+        tokenizer: GPT2TokenizerWrapper,
+        model_path: pathlib.Path,
+    ) -> int:
+        assert self.settings.cli_args is not None
+        args = self.settings.cli_args
+        target_path = Path(args.target) if args.target else model_path
+        if not target_path.exists():
+            raise FileNotFoundError(f"Checkpoint {target_path} not found")
+        payload = torch.load(target_path, map_location="cpu", weights_only=False)
+        prompt_state = payload.get("prompt_state") or empty_prompt_state()
+        tracker = PromptTracker(tokenizer, prompt_state)
+        entries = list(tracker.prompts)
+        statuses = list(tracker.status)
+
+        def normalize_statuses() -> None:
+            nonlocal statuses
+            length = len(entries)
+            if len(statuses) < length:
+                statuses.extend([0] * (length - len(statuses)))
+            elif len(statuses) > length:
+                statuses = statuses[:length]
+
+        normalize_statuses()
+        changed = False
+        if getattr(args, "reset", False):
+            entries = default_prompt_entries()
+            statuses = [0] * len(entries)
+            changed = True
+        if getattr(args, "clear", False):
+            entries = []
+            statuses = []
+            changed = True
+        removes = sorted(set(getattr(args, "remove", [])), reverse=True)
+        for idx in removes:
+            if idx is None:
+                continue
+            try:
+                intval = int(idx)
+            except (TypeError, ValueError):
+                continue
+            if 0 <= intval < len(entries):
+                entries.pop(intval)
+                if len(statuses) > intval:
+                    statuses.pop(intval)
+                changed = True
+            else:
+                print(
+                    color_text(
+                        f"Prompt index {intval} out of range; ignoring remove request.",
+                        Colors.YELLOW,
+                    )
+                )
+        add_pair = getattr(args, "add", None)
+        if add_pair is not None:
+            prompt_text, expected_text = add_pair
+            entries.append((prompt_text, expected_text))
+            statuses.append(0)
+            changed = True
+        normalize_statuses()
+        if changed:
+            new_state = build_prompt_state(entries, statuses)
+            payload["prompt_state"] = new_state
+            torch.save(payload, target_path)
+            print(
+                color_text(
+                    f"Updated prompts in {target_path}",
+                    Colors.GREEN,
+                )
+            )
+        show_list = args.list or (
+            not getattr(args, "reset", False)
+            and not getattr(args, "clear", False)
+            and not removes
+            and add_pair is None
+        )
+        if show_list:
+            if not entries:
+                print(color_text("No prompts stored in checkpoint", Colors.MAGENTA))
+            else:
+                print(color_text(f"Prompts in {target_path}:", Colors.CYAN))
+                for idx, (prompt_text, expected_text) in enumerate(entries):
+                    status_val = statuses[idx] if idx < len(statuses) else 0
+                    if status_val >= 2:
+                        status_label = color_text("argmax", Colors.GREEN)
+                    elif status_val == 1:
+                        status_label = color_text("sample", Colors.YELLOW)
+                    else:
+                        status_label = color_text("pending", Colors.RED)
+                    print(
+                        color_text(f"#{idx}: ", Colors.CYAN)
+                        + status_label
+                        + color_text(
+                            f" prompt='{prompt_text}' expected='{expected_text}'",
+                            Colors.CYAN,
+                        )
+                    )
+        return 0
+
     def big_fat_old_main(self) -> int:
         """Dispatch the CLI command selected by :func:`grce_cli_args`.
 
@@ -3796,254 +4185,29 @@ class Runtime:
         assert self.settings.cli_args is not None
         args = self.settings.cli_args
 
-        checkpoint_override_payload: dict | None = None
-        checkpoint_override_config: ModelConfig | None = None
-        checkpoint_override_tokenizer_json: str | None = None
-        if args.pt:
-            if args.command == "train":
-                raise ValueError("--pt is only supported for inference/debug commands")
-            if args.command == "create" and args.create_args.import_model:
-                raise ValueError("--pt cannot be combined with --import-model")
-            skip_checkpoint_load = (
-                (args.command == "corpus" and getattr(args, "corpus_init", False))
-                or args.command == "create"
-            )
-            if not skip_checkpoint_load:
-                if not args.pt.exists():
-                    raise FileNotFoundError(f"Checkpoint {args.pt} not found")
-                checkpoint_override_payload = torch.load(
-                    args.pt, map_location="cpu", weights_only=False
-                )
-                saved_config = checkpoint_override_payload.get("config")
-                if saved_config is None:
-                    raise ValueError(
-                        "Checkpoint lacks config metadata; re-save it with the latest format."
-                    )
-                saved_config = dict(saved_config)
-                legacy_xctx = bool(saved_config.pop("grce_xctx", False))
-                if "n_xctx" not in saved_config:
-                    if legacy_xctx:
-                        saved_config["n_xctx"] = int(saved_config.get("n_grce", 0))
-                        saved_config["n_grce"] = 0
-                    else:
-                        saved_config["n_xctx"] = 0
-                checkpoint_override_config = ModelConfig(**saved_config)
-                checkpoint_override_tokenizer_json = checkpoint_override_payload.get(
-                    "tokenizer_json"
-                )
-                args.block_size = checkpoint_override_config.block_size
-                if not getattr(args, "_block_length_defined", False):
-                    args.block_length = args.block_size
-                elif args.block_length > args.block_size:
-                    raise ValueError("--block-length cannot exceed checkpoint block size")
-                args.n_layer = checkpoint_override_config.n_layer
-                args.n_head = checkpoint_override_config.n_head
-                args.n_embd = checkpoint_override_config.n_embd
-                args.n_grce = checkpoint_override_config.n_grce
-                args.n_xctx = checkpoint_override_config.n_xctx
-                args.dropout = checkpoint_override_config.dropout
-                args.detach_span = checkpoint_override_config.detach_span
-                args.no_detach_ctx = not checkpoint_override_config.detach_context
-                args.detach_layer = checkpoint_override_config.detach_layer
-                args.vocab_size = checkpoint_override_config.vocab_size
-
         ansi_file = None
         try:
             orig_stdout, orig_stderr, log_file = sys.stdout, sys.stderr, None
 
-            data_dir = pathlib.Path(args.data)
-            train_path = data_dir / f"{args.corpus}-train.txt.gz"
-            test_path = data_dir / f"{args.corpus}-test.txt.gz"
+            (
+                tokenizer,
+                dataset,
+                train_tokens,
+                test_tokens,
+                newline_token_id,
+                boundary_blocklist,
+                default_prompt_boundary,
+                tokenizer_json,
+            ) = self._prepare_corpus()
             model_dir = pathlib.Path(args.model)
-            if not model_dir.exists():
-                try:
-                    model_dir.mkdir(parents=True, exist_ok=True)
-                except OSError:
-                    pass
-
-            must_build_tokenizer = (
-                args.command == "corpus" and getattr(args, "corpus_init", False)
-            )
-            train_cache_path = data_dir / f"{args.corpus}_tokens_train_{args.vocab_size}.pt"
-            test_cache_path = data_dir / f"{args.corpus}_tokens_test_{args.vocab_size}.pt"
-            need_corpus_for_create = False
-            if args.command == "create":
-                need_corpus_for_create = (
-                    not train_cache_path.exists() or not test_cache_path.exists()
-                )
-            must_build_tokenizer = must_build_tokenizer or need_corpus_for_create
-
-            if must_build_tokenizer:
-                full_train_text = load_text_file(train_path)
-                full_test_text = load_text_file(test_path)
-            else:
-                full_train_text = None
-                full_test_text = None
-                if not train_cache_path.exists():
-                    raise FileNotFoundError(
-                        f"Train token cache {train_cache_path} not found; run 'corpus --init' first."
-                    )
-                if not test_cache_path.exists():
-                    raise FileNotFoundError(
-                        f"Test token cache {test_cache_path} not found; run 'corpus --init' first."
-                    )
-
-            tokenizer_key = f"{args.corpus}_vocab_{args.vocab_size}"
-            tokenizer_path = data_dir / f"{tokenizer_key}.json"
-            if args.command == "create" and not tokenizer_path.exists():
-                must_build_tokenizer = True
-            tokenizer_json = checkpoint_override_tokenizer_json
-            if tokenizer_json is None:
-                if tokenizer_path.exists():
-                    tokenizer_json = tokenizer_path.read_text(encoding="utf-8")
-                elif not must_build_tokenizer:
-                    raise FileNotFoundError(
-                        f"Tokenizer cache {tokenizer_path} not found; run 'corpus --init' first or supply --pt."
-                    )
-            print(color_text(f"Tokenizer: {tokenizer_path}", Colors.BLUE))
-            tok_timer = Timer().start()
-            vocab_source = full_train_text or ""
-            reserved_tokens = 1 + len(GPT2TokenizerWrapper.EXTRA_SPECIAL_TOKENS)
-            if args.vocab_size <= reserved_tokens:
-                raise ValueError(
-                    f"--vocab-size must exceed reserved tokens ({reserved_tokens}); got {args.vocab_size}"
-                )
-            target_vocab = max(0, args.vocab_size - reserved_tokens)
-            tokenizer = GPT2TokenizerWrapper(
-                vocab_source,
-                tokenizer_path,
-                target_vocab,
-                pretrained_json=tokenizer_json,
-            )
-            expected_vocab_size = args.vocab_size
-            actual_vocab_size = tokenizer.vocab_size
-            if actual_vocab_size != expected_vocab_size:
-                raise ValueError(
-                    "Tokenizer size mismatch: expected "
-                    f"{expected_vocab_size} tokens but found {actual_vocab_size}. "
-                    "Delete the cached tokenizer and re-run 'corpus --init'."
-                )
-            tokenizer_json = tokenizer_json or tokenizer_path.read_text(encoding="utf-8")
-
-            newline_token_id = None
-            newline_tokens = tokenizer.tokenizer.encode("\n", add_special_tokens=False)
-            if newline_tokens:
-                newline_token_id = newline_tokens[0]
-
-            enforce_boundary_guard = not args.no_boundary
-            boundary_blocklist = (
-                tokenizer.leading_alpha_token_ids if enforce_boundary_guard else None
-            )
-            default_prompt_boundary = (
-                enforce_boundary_guard
-                and boundary_blocklist is not None
-                and prompt_needs_boundary(args.prompt)
-            )
-
-            train_tokens, train_text, train_bytes = load_or_prepare_tokens(
-                "train",
-                train_path,
-                full_train_text,
-                train_cache_path,
-                tokenizer,
-                seed=1234,
-            )
-
-            test_tokens, test_text, test_bytes = load_or_prepare_tokens(
-                "test",
-                test_path,
-                full_test_text,
-                test_cache_path,
-                tokenizer,
-                seed=5678,
-            )
-
-            if train_text is None and train_bytes == 0:
-                train_bytes = len(train_tokens)  # fallback when text absent
-            if test_text is None and test_bytes == 0:
-                test_bytes = len(test_tokens)
-
-            train_token_count = int(train_tokens.numel())
-            test_token_count = int(test_tokens.numel())
-            print(
-                color_text(
-                    f"Corpus size: {train_token_count:,} train tokens, {test_token_count:,} test tokens",
-                    Colors.CYAN,
-                )
-            )
-            tok_summary = (
-                color_text(f"[tokenizer (wall/cpu/gpu)]", Colors.CYAN) +
-                color_text(f" {tok_timer.stop()}\n", Colors.MAGENTA)
-            )
-            print(tok_summary)
-
-            dataset = TextDataset(
-                train_tokens=train_tokens,
-                test_tokens=test_tokens,
-                train_text=train_text,
-                test_text=test_text,
-                train_bytes=train_bytes,
-                test_bytes=test_bytes,
-                train_path=train_path,
-                test_path=test_path,
-            )
-
-            def count_eval_calls(steps: int, interval: int) -> int:
-                if steps <= 0:
-                    return 0
-                eval_steps = {1, steps}
-                if interval > 0:
-                    current = interval
-                    while current <= steps:
-                        eval_steps.add(current)
-                        current += interval
-                return len(eval_steps)
-
-
-            def emit_range(label: str, tokens: torch.Tensor, spec: str) -> None:
-                start, end = parse_range_arg(spec)
-                total = int(tokens.numel())
-                if total == 0:
-                    print(color_text(f"{label} corpus is empty", Colors.MAGENTA))
-                    return
-                if start < 0 or end < 0 or start >= total or end >= total:
-                    raise ValueError(f"{label} range {start}-{end} is outside 0-{total - 1}")
-                subset = tokens[start : end + 1].tolist()
-                print(
-                    color_text(
-                        f"{label} tokens {start}-{end} (count {len(subset)}):",
-                        Colors.CYAN,
-                    )
-                )
-                chunk_size = 128
-                for offset in range(0, len(subset), chunk_size):
-                    chunk_tokens = subset[offset : offset + chunk_size]
-                    text = tokenizer.decode(torch.tensor(chunk_tokens))
-                    print(text)
 
             if args.command == "corpus":
-                actions_done = False
-                if getattr(args, "corpus_init", False):
-                    print(
-                        color_text(
-                            "Tokenizer initialized and token caches updated; run 'train' to build a model.",
-                            Colors.GREEN,
-                        )
-                    )
-                    actions_done = True
-                if getattr(args, "corpus_print_train", None):
-                    emit_range("Train", train_tokens, args.corpus_print_train)
-                    actions_done = True
-                if getattr(args, "corpus_print_test", None):
-                    emit_range("Test", test_tokens, args.corpus_print_test)
-                    actions_done = True
-                if not actions_done:
-                    print(color_text("No corpus action selected", Colors.YELLOW))
-                return
+                return self.cli_corpus(tokenizer, train_tokens, test_tokens)
 
             if args.n_xctx > 0 and args.n_xctx % max(1, args.n_layer) != 0:
                 raise ValueError("--n-xctx must be divisible by --n-layer")
-            config = checkpoint_override_config or ModelConfig(
+            override_config = getattr(args, "checkpoint_config_override", None)
+            config = override_config or ModelConfig(
                 vocab_size=tokenizer.vocab_size,
                 block_size=args.block_size,
                 n_layer=args.n_layer,
@@ -4061,15 +4225,14 @@ class Runtime:
                 cleaned = re.sub(r"[^0-9A-Za-z]+", "", extra_tag)
                 if cleaned:
                     model_tag += f"_{cleaned}"
-            if args.pt:
-                model_path = args.pt
-                log_path = args.pt.with_suffix(".log")
-                print(color_text(f"Model (--pt): {model_path}", Colors.CYAN))
-                print(color_text(f"Logfile (--pt): {log_path}", Colors.BLUE))
-            else:
+            model_path = getattr(args, "model_path_override", None)
+            log_path = getattr(args, "log_path_override", None)
+            if model_path is None or log_path is None:
                 prefix = f"{args.corpus}_model_"
                 model_path = model_dir / f"{prefix}{model_tag}.pt"
                 log_path = model_dir / f"{prefix}{model_tag}.log"
+                args.model_path_override = model_path
+                args.log_path_override = log_path
             print(color_text(f"Model: {model_path}", Colors.CYAN))
             print(color_text(f"Logfile: {log_path}", Colors.BLUE))
             requires_checkpoint = args.command in {"train", "report", "test"}
@@ -4083,98 +4246,7 @@ class Runtime:
                 )
 
             if args.command == "prompts":
-                target_path = Path(args.target) if args.target else model_path
-                if not target_path.exists():
-                    raise FileNotFoundError(f"Checkpoint {target_path} not found")
-                payload = torch.load(target_path, map_location="cpu", weights_only=False)
-                prompt_state = payload.get("prompt_state") or empty_prompt_state()
-                tracker = PromptTracker(tokenizer, prompt_state)
-                entries = list(tracker.prompts)
-                statuses = list(tracker.status)
-
-                def normalize_statuses() -> None:
-                    nonlocal statuses
-                    length = len(entries)
-                    if len(statuses) < length:
-                        statuses.extend([0] * (length - len(statuses)))
-                    elif len(statuses) > length:
-                        statuses = statuses[:length]
-
-                normalize_statuses()
-                changed = False
-                if getattr(args, "reset", False):
-                    entries = default_prompt_entries()
-                    statuses = [0] * len(entries)
-                    changed = True
-                if getattr(args, "clear", False):
-                    entries = []
-                    statuses = []
-                    changed = True
-                removes = sorted(set(getattr(args, "remove", [])), reverse=True)
-                for idx in removes:
-                    if idx is None:
-                        continue
-                    try:
-                        intval = int(idx)
-                    except (TypeError, ValueError):
-                        continue
-                    if 0 <= intval < len(entries):
-                        entries.pop(intval)
-                        if len(statuses) > intval:
-                            statuses.pop(intval)
-                        changed = True
-                    else:
-                        print(
-                            color_text(
-                                f"Prompt index {intval} out of range; ignoring remove request.",
-                                Colors.YELLOW,
-                            )
-                        )
-                add_pair = getattr(args, "add", None)
-                if add_pair is not None:
-                    prompt_text, expected_text = add_pair
-                    entries.append((prompt_text, expected_text))
-                    statuses.append(0)
-                    changed = True
-                normalize_statuses()
-                if changed:
-                    new_state = build_prompt_state(entries, statuses)
-                    payload["prompt_state"] = new_state
-                    torch.save(payload, target_path)
-                    print(
-                        color_text(
-                            f"Updated prompts in {target_path}",
-                            Colors.GREEN,
-                        )
-                    )
-                show_list = args.list or (
-                    not getattr(args, "reset", False)
-                    and not getattr(args, "clear", False)
-                    and not removes
-                    and add_pair is None
-                )
-                if show_list:
-                    if not entries:
-                        print(color_text("No prompts stored in checkpoint", Colors.MAGENTA))
-                    else:
-                        print(color_text(f"Prompts in {target_path}:", Colors.CYAN))
-                        for idx, (prompt_text, expected_text) in enumerate(entries):
-                            status_val = statuses[idx] if idx < len(statuses) else 0
-                            if status_val >= 2:
-                                status_label = color_text("argmax", Colors.GREEN)
-                            elif status_val == 1:
-                                status_label = color_text("sample", Colors.YELLOW)
-                            else:
-                                status_label = color_text("pending", Colors.RED)
-                            print(
-                                color_text(f"#{idx}: ", Colors.CYAN)
-                                + status_label
-                                + color_text(
-                                    f" prompt='{prompt_text}' expected='{expected_text}'",
-                                    Colors.CYAN,
-                                )
-                            )
-                return
+                return self.cli_prompts(tokenizer, model_path)
             sections = _append_summary_section(
                 _expected_sections(config, config.block_size)
             )
@@ -4271,7 +4343,8 @@ class Runtime:
             total_steps = 0
             loss_history: List[Dict[str, float]] = []
             total_train_wall = 0.0
-            payload = checkpoint_override_payload
+            payload = getattr(args, "checkpoint_payload_override", None)
+            optimizer_state = None
             if payload is None and model_path.exists():
                 if args.command == "create" and args.create_args.import_model:
                     raise ValueError(
@@ -4294,6 +4367,8 @@ class Runtime:
                         loss_history = list(payload.get("loss_history", []))
                         total_train_wall = float(payload.get("train_wall_seconds", 0.0))
                         prompt_tracker.load_state(payload.get("prompt_state"))
+                        if args.checkpoint_optimizer:
+                            optimizer_state = payload.get("optimizer")
                     else:
                         model.load_state_dict(upgrade_state_dict(payload))
                     print(color_text(f"Loaded existing model from {model_path}", Colors.YELLOW))
@@ -4463,6 +4538,50 @@ class Runtime:
                 )
                 return
 
+            if args.command == "profile":
+                optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
+                if args.checkpoint_optimizer and optimizer_state:
+                    try:
+                        optimizer.load_state_dict(optimizer_state)
+                    except Exception as err:  # pragma: no cover - logging
+                        print(
+                            color_text(
+                                f"Warning: could not load optimizer state ({err}); starting fresh",
+                                Colors.RED,
+                            )
+                        )
+                run_profile_mode(
+                    self.settings,
+                    dataset,
+                    model,
+                    optimizer,
+                    block_length=args.block_length,
+                    batch_size=args.batch_size,
+                    device=device,
+                    block_size=args.block_size,
+                )
+                return
+
+            def build_optimizer() -> torch.optim.Optimizer:
+                return torch.optim.AdamW(model.parameters(), lr=3e-4)
+
+            shared_optimizer: torch.optim.Optimizer | None = None
+            if not args.restart_optimizer:
+                shared_optimizer = build_optimizer()
+                if optimizer_state:
+                    try:
+                        shared_optimizer.load_state_dict(optimizer_state)
+                    except Exception as err:  # pragma: no cover - logging
+                        print(
+                            color_text(
+                                f"Warning: could not load optimizer state ({err}); starting fresh",
+                                Colors.RED,
+                            )
+                        )
+                optimizer_state = None
+            else:
+                optimizer_state = None
+
             acc_train = Timer()
             acc_eval = Timer()
             for cycle in range(1, args.cycles + 1):
@@ -4533,6 +4652,13 @@ class Runtime:
                     )
                 )
 
+                if args.restart_optimizer:
+                    optimizer = build_optimizer()
+                else:
+                    if shared_optimizer is None:
+                        shared_optimizer = build_optimizer()
+                    optimizer = shared_optimizer
+
                 (
                     total_steps,
                     updates,
@@ -4548,6 +4674,7 @@ class Runtime:
                     args.batch_size,
                     args.eval_interval,
                     total_steps,
+                    optimizer,
                     prompt_tokens,
                     args.generate,
                     tokenizer,
@@ -4568,23 +4695,32 @@ class Runtime:
                 acc_train.add(pure_train)
                 acc_eval.add(eval_timer)
                 total_train_wall += train_timer.wall_secs
-                torch.save(
-                    {
-                        "model": model.state_dict(),
-                        "dataset": dataset.state_dict(),
-                        "total_steps": total_steps,
-                        "loss_history": loss_history,
-                        "config": asdict(config),
-                        "train_wall_seconds": total_train_wall,
-                        "prompt_state": prompt_tracker.serialize() if prompt_tracker else None,
-                        "tokenizer_json": tokenizer_json,
-                    },
-                    model_path,
-                )
+                if not args.no_model_update:
+                    torch.save(
+                        {
+                            "model": model.state_dict(),
+                            "dataset": dataset.state_dict(),
+                            "total_steps": total_steps,
+                            "loss_history": loss_history,
+                            "config": asdict(config),
+                            "train_wall_seconds": total_train_wall,
+                            "prompt_state": prompt_tracker.serialize() if prompt_tracker else None,
+                            "tokenizer_json": tokenizer_json,
+                            **(
+                                {"optimizer": optimizer.state_dict()}
+                                if args.checkpoint_optimizer and not args.restart_optimizer
+                                else {}
+                            ),
+                        },
+                        model_path,
+                    )
                 cycle_part = color_text(f"[cycle {cycle} (wall/cpu/gpu)]", Colors.CYAN)
                 train_part = color_text(f" train: {pure_train};", Colors.MAGENTA)
                 eval_part = color_text(f" eval: {eval_timer};", Colors.GREEN)
-                updated_part = color_text(" model updated; flushing logs.", Colors.YELLOW)
+                if args.no_model_update:
+                    updated_part = color_text(" model update skipped; flushing logs.", Colors.YELLOW)
+                else:
+                    updated_part = color_text(" model updated; flushing logs.", Colors.YELLOW)
                 print(cycle_part + train_part + eval_part + updated_part)
 
                 cumulative_part = color_text("[cumulative]", Colors.CYAN)
@@ -4599,6 +4735,10 @@ class Runtime:
                     log_file.flush()
                 if ansi_file is not None:
                     ansi_file.flush()
+
+                if args.restart_optimizer:
+                    # Drop the cycle-local optimizer before the next pass
+                    optimizer = None
 
         except KeyboardInterrupt:
             if args.debug_interrupt:
@@ -4628,6 +4768,8 @@ def grce_main(args: argparse.Namespae) -> int:
     if cli_args.command == "size":
         assert getattr(cli_args, "check", False)
         sys.exit(grce_cli_size(cli_args))
+
+    preprocess_runtime_settings(cli_args)
 
     torch.manual_seed(42)
     random.seed(time.time())
