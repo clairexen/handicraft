@@ -176,12 +176,23 @@ class Settings:
     escape_newline_tokens: bool = True
     show_train_loss_details: bool = False
     show_test_loss_details: bool = True
+    skip_model_update: bool = False
+    only_normal_batches: bool = False
+    only_decode_batches: bool = False
 
     @property
     def block_length(self):
         if self._block_length_arg is not None:
             return self._block_length_arg
         return self.block_size
+
+    @property
+    def batch_mode_override(self) -> str | None:
+        if self.only_decode_batches:
+            return "decode"
+        if self.only_normal_batches:
+            return "normal"
+        return None
 
     @property
     def model_config(self):
@@ -226,6 +237,9 @@ class Settings:
         self.escape_newline_tokens = not args.no_escape_newline_tokens
         self.show_train_loss_details = args.train_loss_details
         self.show_test_loss_details = not args.no_test_loss_details
+        self.skip_model_update = args.no_model_update
+        self.only_normal_batches = args.only_normal
+        self.only_decode_batches = args.only_decode
 
 SETTINGS_DEFAULTS = Settings()
 
@@ -247,9 +261,14 @@ def compute_row_type_counts(batch_size: int) -> dict[str, int]:
     return counts
 
 
-def batch_mode_specs(batch_size: int) -> list[tuple[str, int]]:
+def batch_mode_specs(batch_size: int, mode_override: str | None = None) -> list[tuple[str, int]]:
     """Return ordered (mode, rows) pairs for the current batch size."""
 
+    total = max(0, int(batch_size))
+    if mode_override == "normal":
+        return [("normal", total)]
+    if mode_override == "decode":
+        return [("decode", total)]
     counts = compute_row_type_counts(batch_size)
     return [
         ("normal", max(0, int(counts.get("n_normal", 0)))),
@@ -423,6 +442,21 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=int,
         default=defaults.batch_size,
         help="Number of sequences per optimization step.",
+    )
+    training_group.add_argument(
+        "--no-model-update",
+        action="store_true",
+        help="Skip overwriting the checkpoint at the end of each training cycle",
+    )
+    training_group.add_argument(
+        "--only-decode",
+        action="store_true",
+        help="Create batches that only contain the decode half",
+    )
+    training_group.add_argument(
+        "--only-normal",
+        action="store_true",
+        help="Create batches that only contain the normal half",
     )
     training_group.add_argument(
         "--detach-span",
@@ -722,6 +756,9 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
     # --------------------------------------------------------
     # Normalize, tweak, and check global options
+
+    if args.only_decode and args.only_normal:
+        parser.error("--only-decode and --only-normal cannot be combined")
 
     if args.tiny:
         if not flag_present("--vocab-size"):
@@ -3166,12 +3203,14 @@ def evaluate_single_batch(
     block_length: int,
     batch_size: int,
     device: torch.device,
+    *,
+    mode_override: str | None = None,
 ) -> dict[str, float | None]:
     metrics: dict[str, float | None] = {key: None for key in ROW_METRIC_LOG_KEYS}
     metrics["target"] = None
     total_loss = 0.0
     total_tokens = 0
-    for mode, rows in batch_mode_specs(batch_size):
+    for mode, rows in batch_mode_specs(batch_size, mode_override=mode_override):
         if rows <= 0:
             continue
         xb, yb = dataset.get_batch(split, block_length, rows, device)
@@ -3244,7 +3283,8 @@ def train_model(
     else:
         prompt_queue = []
 
-    mode_specs = batch_mode_specs(batch_size)
+    mode_override = settings.batch_mode_override
+    mode_specs = batch_mode_specs(batch_size, mode_override=mode_override)
 
     loop_timer = Timer().start()
     eval_timer = Timer()
@@ -3316,6 +3356,7 @@ def train_model(
                     block_length,
                     batch_size,
                     device,
+                    mode_override=mode_override,
                 )
         model.train()
         eval_timer.stop()
@@ -4458,23 +4499,27 @@ class Runtime:
                 acc_train.add(pure_train)
                 acc_eval.add(eval_timer)
                 total_train_wall += train_timer.wall_secs
-                torch.save(
-                    {
-                        "model": model.state_dict(),
-                        "dataset": dataset.state_dict(),
-                        "total_steps": total_steps,
-                        "loss_history": loss_history,
-                        "config": asdict(config),
-                        "train_wall_seconds": total_train_wall,
-                        "prompt_state": prompt_tracker.serialize() if prompt_tracker else None,
-                        "tokenizer_json": tokenizer_json,
-                    },
-                    model_path,
-                )
+                if not args.no_model_update:
+                    torch.save(
+                        {
+                            "model": model.state_dict(),
+                            "dataset": dataset.state_dict(),
+                            "total_steps": total_steps,
+                            "loss_history": loss_history,
+                            "config": asdict(config),
+                            "train_wall_seconds": total_train_wall,
+                            "prompt_state": prompt_tracker.serialize() if prompt_tracker else None,
+                            "tokenizer_json": tokenizer_json,
+                        },
+                        model_path,
+                    )
                 cycle_part = color_text(f"[cycle {cycle} (wall/cpu/gpu)]", Colors.CYAN)
                 train_part = color_text(f" train: {pure_train};", Colors.MAGENTA)
                 eval_part = color_text(f" eval: {eval_timer};", Colors.GREEN)
-                updated_part = color_text(" model updated; flushing logs.", Colors.YELLOW)
+                if args.no_model_update:
+                    updated_part = color_text(" model update skipped; flushing logs.", Colors.YELLOW)
+                else:
+                    updated_part = color_text(" model updated; flushing logs.", Colors.YELLOW)
                 print(cycle_part + train_part + eval_part + updated_part)
 
                 cumulative_part = color_text("[cumulative]", Colors.CYAN)
