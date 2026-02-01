@@ -247,42 +247,14 @@ def compute_row_type_counts(batch_size: int) -> dict[str, int]:
     return counts
 
 
-def build_row_type_template(
-    row_counts: dict[str, int],
-    batch_size: int,
-    *,
-    context_enabled: bool,
-    xctx_enabled: bool,
-) -> list[str]:
-    """Expand the simplified row counts into a template."""
+def batch_mode_specs(batch_size: int) -> list[tuple[str, int]]:
+    """Return ordered (mode, rows) pairs for the current batch size."""
 
-    normal = max(0, int(row_counts.get("n_normal", 0)))
-    decode = max(0, int(row_counts.get("n_decode", 0)))
-    template = ["normal"] * normal + ["decode"] * decode
-    if len(template) < batch_size:
-        template.extend(["normal"] * (batch_size - len(template)))
-    elif len(template) > batch_size:
-        template = template[:batch_size]
-    return template
-
-
-def build_row_type_masks(
-    row_types: Sequence[str],
-    block_length: int,
-    device: torch.device,
-    *,
-    context_enabled: bool,
-    xctx_enabled: bool,
-) -> SpecialRowMasks:
-    """Return a compact structure describing the row layout."""
-
-    decode_mask = torch.tensor(
-        [row == "decode" for row in row_types],
-        dtype=torch.bool,
-        device=device,
-    )
-    normal_mask = ~decode_mask
-    return SpecialRowMasks(list(row_types), normal_mask, decode_mask)
+    counts = compute_row_type_counts(batch_size)
+    return [
+        ("normal", max(0, int(counts.get("n_normal", 0)))),
+        ("decode", max(0, int(counts.get("n_decode", 0)))),
+    ]
 
 
 FANCY_SPACE = "\u2423"  # Open Box symbol for visible spaces
@@ -310,7 +282,6 @@ import time
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from typing import Dict, List, Tuple, Sequence
-from collections import defaultdict
 
 
 def parse_range_arg(value: str) -> tuple[int, int]:
@@ -2029,13 +2000,6 @@ class TextDataset:
 
 
 
-@dataclass
-class SpecialRowMasks:
-    row_types: list[str]
-    normal_rows: torch.Tensor
-    decode_rows: torch.Tensor
-
-
 
 def load_or_prepare_tokens(
     split: str,
@@ -3079,16 +3043,6 @@ class GRCEGPT(nn.Module):
         self.stack_sequence = TransformerStackSequence(config, self.core)
         self.context_channels = self.stack_sequence.context_modules
 
-    def _resolve_row_types(self, batch_size: int, row_types: Sequence[str] | None) -> list[str]:
-        if row_types is None:
-            return ["normal"] * batch_size
-        resolved = list(row_types)
-        if len(resolved) != batch_size:
-            raise ValueError(
-                f"row_types expects {batch_size} entries, received {len(resolved)}"
-            )
-        return resolved
-
     def _position_ids(
         self,
         length: int,
@@ -3109,39 +3063,36 @@ class GRCEGPT(nn.Module):
         idx: torch.Tensor,
         targets: torch.Tensor | None = None,
         *,
-        row_types: Sequence[str] | None = None,
+        mode: str = "normal",
         position_offsets: torch.Tensor | None = None,
     ) -> Tuple[torch.Tensor, torch.Tensor | None, dict | None]:
         del targets  # unused but kept for API compatibility
         B, T = idx.shape
         device = idx.device
-        rows = self._resolve_row_types(B, row_types)
         pos_idx = self._position_ids(T, B, device, position_offsets)
         if torch.any(pos_idx >= self.config.block_size):
             raise ValueError("position ids exceed configured --block-size")
         tok = self.core.tok_emb(idx)
         pos = self.core.pos_emb(pos_idx)
         x = self.core.drop(tok + pos)
-        decode_mask = torch.tensor([row == "decode" for row in rows], device=device, dtype=torch.bool)
-        normal_mask = ~decode_mask
-        hidden = torch.zeros_like(x)
-        context_info: dict[str, torch.Tensor] = {}
-        if normal_mask.any():
-            normal_rows = normal_mask.nonzero(as_tuple=False).view(-1)
-            normal_input = torch.index_select(x, 0, normal_rows)
-            normal_output, grce_out, xctx_out, _ = self.stack_sequence.forward(normal_input)
-            hidden.index_copy_(0, normal_rows, normal_output)
+        context_info: dict[str, torch.Tensor] | None = None
+        if mode == "normal":
+            sequence_output, grce_out, xctx_out, _ = self.stack_sequence.forward(x)
+            hidden = sequence_output
+            context_info = {}
             if grce_out is not None:
                 context_info["grce"] = grce_out
             if xctx_out is not None:
                 context_info["xctx"] = xctx_out
-        if decode_mask.any():
-            decode_rows = decode_mask.nonzero(as_tuple=False).view(-1)
-            decode_input = torch.index_select(x, 0, decode_rows)
-            decode_output, _, _ = self.stack_grid.forward(decode_input, masked=True)
-            hidden.index_copy_(0, decode_rows, decode_output)
+            if not context_info:
+                context_info = None
+        elif mode == "decode":
+            decode_output, _, _ = self.stack_grid.forward(x, masked=True)
+            hidden = decode_output
+        else:
+            raise ValueError(f"Unknown forward_autoreg mode: {mode}")
         logits = self.core.head(self.core.ln_f(hidden))
-        return logits, None, context_info or None
+        return logits, None, context_info
 
 
 def build_model_tag(config: ModelConfig) -> str:
@@ -3163,11 +3114,6 @@ LOSS_IGNORE_INDEX = -100
 # Training / Generation Helpers
 # -----------------------------------------------------------------------------
 
-
-ROW_METRIC_MAP = {
-    "normal": "normal",
-    "decode": "decode",
-}
 
 ROW_METRIC_HIST_KEYS = [
     "normal",
@@ -3202,34 +3148,6 @@ def sample_position_offsets(
     return torch.randint(0, max_offset + 1, (batch_size,), device=device)
 
 
-def aggregate_row_metrics(
-    row_types: Sequence[str],
-    per_token_losses: torch.Tensor,
-    valid_mask: torch.Tensor,
-) -> dict[str, float | None]:
-    loss_sum = float((per_token_losses * valid_mask).sum().item())
-    token_count = int(valid_mask.sum().item())
-    metrics: dict[str, float | None] = {"target": loss_sum / max(1, token_count)}
-
-    bucket_sum: dict[str, float] = defaultdict(float)
-    bucket_count: dict[str, int] = defaultdict(int)
-    for idx, row_type in enumerate(row_types):
-        mask = valid_mask[idx]
-        count = int(mask.sum().item())
-        if count <= 0:
-            continue
-        bucket_sum[row_type] += float((per_token_losses[idx] * mask).sum().item())
-        bucket_count[row_type] += count
-
-    for row_type, metric_name in ROW_METRIC_MAP.items():
-        denom = bucket_count.get(row_type, 0)
-        if denom:
-            metrics[metric_name] = bucket_sum[row_type] / denom
-        else:
-            metrics[metric_name] = None
-    return metrics
-
-
 def evaluate_single_batch(
     model: GRCEGPT,
     dataset: TextDataset,
@@ -3237,42 +3155,45 @@ def evaluate_single_batch(
     block_length: int,
     batch_size: int,
     device: torch.device,
-    row_type_template: Sequence[str],
-    *,
-    context_enabled: bool,
-    xctx_enabled: bool,
 ) -> dict[str, float | None]:
-    row_types = list(row_type_template)
-    random.shuffle(row_types)
-    xb, yb = dataset.get_batch(split, block_length, batch_size, device)
-    row_layout = build_row_type_masks(
-        row_types,
-        block_length,
-        device,
-        context_enabled=context_enabled,
-        xctx_enabled=xctx_enabled,
-    )
-    position_offsets = sample_position_offsets(
-        batch_size,
-        model.config.block_size,
-        block_length,
-        device,
-    )
-    logits, _, _ = model.forward_autoreg(
-        xb,
-        targets=yb,
-        row_types=row_layout.row_types,
-        position_offsets=position_offsets,
-    )
-    per_token = F.cross_entropy(
-        logits.view(-1, logits.size(-1)),
-        yb.view(-1),
-        reduction="none",
-        ignore_index=LOSS_IGNORE_INDEX,
-    )
-    per_token = per_token.view(batch_size, -1)
-    valid_mask = (yb != LOSS_IGNORE_INDEX)
-    return aggregate_row_metrics(row_layout.row_types, per_token, valid_mask)
+    metrics: dict[str, float | None] = {key: None for key in ROW_METRIC_LOG_KEYS}
+    metrics["target"] = None
+    total_loss = 0.0
+    total_tokens = 0
+    for mode, rows in batch_mode_specs(batch_size):
+        if rows <= 0:
+            continue
+        xb, yb = dataset.get_batch(split, block_length, rows, device)
+        position_offsets = sample_position_offsets(
+            rows,
+            model.config.block_size,
+            block_length,
+            device,
+        )
+        logits, _, _ = model.forward_autoreg(
+            xb,
+            targets=yb,
+            mode=mode,
+            position_offsets=position_offsets,
+        )
+        per_token = F.cross_entropy(
+            logits.view(-1, logits.size(-1)),
+            yb.view(-1),
+            reduction="none",
+            ignore_index=LOSS_IGNORE_INDEX,
+        )
+        per_token = per_token.view(rows, -1)
+        valid_mask = (yb != LOSS_IGNORE_INDEX)
+        loss_sum = float((per_token * valid_mask).sum().item())
+        token_count = int(valid_mask.sum().item())
+        if token_count <= 0:
+            continue
+        metrics[mode] = loss_sum / token_count
+        total_loss += loss_sum
+        total_tokens += token_count
+    if total_tokens > 0:
+        metrics["target"] = total_loss / total_tokens
+    return metrics
 
 def train_model(
     settings: Settings,
@@ -3312,17 +3233,7 @@ def train_model(
     else:
         prompt_queue = []
 
-    context_path_enabled = bool(model.context_channels)
-    xctx_enabled = any(
-        getattr(channel, "is_xctx", False) for channel in getattr(model, "context_channels", [])
-    )
-    row_counts = compute_row_type_counts(batch_size)
-    row_type_template = build_row_type_template(
-        row_counts,
-        batch_size,
-        context_enabled=context_path_enabled,
-        xctx_enabled=xctx_enabled,
-    )
+    mode_specs = batch_mode_specs(batch_size)
 
     loop_timer = Timer().start()
     eval_timer = Timer()
@@ -3338,36 +3249,41 @@ def train_model(
     line = " | ".join(line_parts) + " |"
     print(line)
 
-    # use the same fixed batch layout for the entire cycle
-    row_types = list(row_type_template)
-    random.shuffle(row_types)
-    row_layout = build_row_type_masks(
-        row_types,
-        block_length,
-        device,
-        context_enabled=context_path_enabled,
-        xctx_enabled=xctx_enabled,
-    )
-    position_offsets = sample_position_offsets(
-        batch_size,
-        model.config.block_size,
-        block_length,
-        device,
-    )
-
     for step in range(1, steps + 1):
-        xb, yb = dataset.get_batch("train", block_length, batch_size, device)
-        logits, _, _ = model.forward_autoreg(
-            xb,
-            targets=yb,
-            row_types=row_layout.row_types,
-            position_offsets=position_offsets,
-        )
-        total_loss = F.cross_entropy(
-            logits.view(-1, logits.size(-1)),
-            yb.view(-1),
-            ignore_index=LOSS_IGNORE_INDEX,
-        )
+        total_loss_sum: torch.Tensor | None = None
+        total_tokens = 0
+        for mode, rows in mode_specs:
+            if rows <= 0:
+                continue
+            xb, yb = dataset.get_batch("train", block_length, rows, device)
+            position_offsets = sample_position_offsets(
+                rows,
+                model.config.block_size,
+                block_length,
+                device,
+            )
+            logits, _, _ = model.forward_autoreg(
+                xb,
+                targets=yb,
+                mode=mode,
+                position_offsets=position_offsets,
+            )
+            loss_sum = F.cross_entropy(
+                logits.view(-1, logits.size(-1)),
+                yb.view(-1),
+                reduction="sum",
+                ignore_index=LOSS_IGNORE_INDEX,
+            )
+            if total_loss_sum is None:
+                total_loss_sum = loss_sum
+            else:
+                total_loss_sum = total_loss_sum + loss_sum
+            token_count = int((yb != LOSS_IGNORE_INDEX).sum().item())
+            total_tokens += token_count
+        if total_loss_sum is None:
+            raise RuntimeError("No tokens processed in training step")
+        denom = float(max(total_tokens, 1))
+        total_loss = total_loss_sum / denom
 
         optim.zero_grad(set_to_none=True)
         total_loss.backward()
@@ -3389,9 +3305,6 @@ def train_model(
                     block_length,
                     batch_size,
                     device,
-                    row_type_template,
-                    context_enabled=context_path_enabled,
-                    xctx_enabled=xctx_enabled,
                 )
         model.train()
         eval_timer.stop()
