@@ -3891,6 +3891,106 @@ class Runtime:
             print(color_text("No corpus action selected", Colors.YELLOW))
         return 0
 
+    def cli_prompts(
+        self,
+        tokenizer: GPT2TokenizerWrapper,
+        model_path: pathlib.Path,
+    ) -> int:
+        assert self.settings.cli_args is not None
+        args = self.settings.cli_args
+        target_path = Path(args.target) if args.target else model_path
+        if not target_path.exists():
+            raise FileNotFoundError(f"Checkpoint {target_path} not found")
+        payload = torch.load(target_path, map_location="cpu", weights_only=False)
+        prompt_state = payload.get("prompt_state") or empty_prompt_state()
+        tracker = PromptTracker(tokenizer, prompt_state)
+        entries = list(tracker.prompts)
+        statuses = list(tracker.status)
+
+        def normalize_statuses() -> None:
+            nonlocal statuses
+            length = len(entries)
+            if len(statuses) < length:
+                statuses.extend([0] * (length - len(statuses)))
+            elif len(statuses) > length:
+                statuses = statuses[:length]
+
+        normalize_statuses()
+        changed = False
+        if getattr(args, "reset", False):
+            entries = default_prompt_entries()
+            statuses = [0] * len(entries)
+            changed = True
+        if getattr(args, "clear", False):
+            entries = []
+            statuses = []
+            changed = True
+        removes = sorted(set(getattr(args, "remove", [])), reverse=True)
+        for idx in removes:
+            if idx is None:
+                continue
+            try:
+                intval = int(idx)
+            except (TypeError, ValueError):
+                continue
+            if 0 <= intval < len(entries):
+                entries.pop(intval)
+                if len(statuses) > intval:
+                    statuses.pop(intval)
+                changed = True
+            else:
+                print(
+                    color_text(
+                        f"Prompt index {intval} out of range; ignoring remove request.",
+                        Colors.YELLOW,
+                    )
+                )
+        add_pair = getattr(args, "add", None)
+        if add_pair is not None:
+            prompt_text, expected_text = add_pair
+            entries.append((prompt_text, expected_text))
+            statuses.append(0)
+            changed = True
+        normalize_statuses()
+        if changed:
+            new_state = build_prompt_state(entries, statuses)
+            payload["prompt_state"] = new_state
+            torch.save(payload, target_path)
+            print(
+                color_text(
+                    f"Updated prompts in {target_path}",
+                    Colors.GREEN,
+                )
+            )
+        show_list = args.list or (
+            not getattr(args, "reset", False)
+            and not getattr(args, "clear", False)
+            and not removes
+            and add_pair is None
+        )
+        if show_list:
+            if not entries:
+                print(color_text("No prompts stored in checkpoint", Colors.MAGENTA))
+            else:
+                print(color_text(f"Prompts in {target_path}:", Colors.CYAN))
+                for idx, (prompt_text, expected_text) in enumerate(entries):
+                    status_val = statuses[idx] if idx < len(statuses) else 0
+                    if status_val >= 2:
+                        status_label = color_text("argmax", Colors.GREEN)
+                    elif status_val == 1:
+                        status_label = color_text("sample", Colors.YELLOW)
+                    else:
+                        status_label = color_text("pending", Colors.RED)
+                    print(
+                        color_text(f"#{idx}: ", Colors.CYAN)
+                        + status_label
+                        + color_text(
+                            f" prompt='{prompt_text}' expected='{expected_text}'",
+                            Colors.CYAN,
+                        )
+                    )
+        return 0
+
     def big_fat_old_main(self) -> int:
         """Dispatch the CLI command selected by :func:`grce_cli_args`.
 
@@ -3964,98 +4064,7 @@ class Runtime:
                 )
 
             if args.command == "prompts":
-                target_path = Path(args.target) if args.target else model_path
-                if not target_path.exists():
-                    raise FileNotFoundError(f"Checkpoint {target_path} not found")
-                payload = torch.load(target_path, map_location="cpu", weights_only=False)
-                prompt_state = payload.get("prompt_state") or empty_prompt_state()
-                tracker = PromptTracker(tokenizer, prompt_state)
-                entries = list(tracker.prompts)
-                statuses = list(tracker.status)
-
-                def normalize_statuses() -> None:
-                    nonlocal statuses
-                    length = len(entries)
-                    if len(statuses) < length:
-                        statuses.extend([0] * (length - len(statuses)))
-                    elif len(statuses) > length:
-                        statuses = statuses[:length]
-
-                normalize_statuses()
-                changed = False
-                if getattr(args, "reset", False):
-                    entries = default_prompt_entries()
-                    statuses = [0] * len(entries)
-                    changed = True
-                if getattr(args, "clear", False):
-                    entries = []
-                    statuses = []
-                    changed = True
-                removes = sorted(set(getattr(args, "remove", [])), reverse=True)
-                for idx in removes:
-                    if idx is None:
-                        continue
-                    try:
-                        intval = int(idx)
-                    except (TypeError, ValueError):
-                        continue
-                    if 0 <= intval < len(entries):
-                        entries.pop(intval)
-                        if len(statuses) > intval:
-                            statuses.pop(intval)
-                        changed = True
-                    else:
-                        print(
-                            color_text(
-                                f"Prompt index {intval} out of range; ignoring remove request.",
-                                Colors.YELLOW,
-                            )
-                        )
-                add_pair = getattr(args, "add", None)
-                if add_pair is not None:
-                    prompt_text, expected_text = add_pair
-                    entries.append((prompt_text, expected_text))
-                    statuses.append(0)
-                    changed = True
-                normalize_statuses()
-                if changed:
-                    new_state = build_prompt_state(entries, statuses)
-                    payload["prompt_state"] = new_state
-                    torch.save(payload, target_path)
-                    print(
-                        color_text(
-                            f"Updated prompts in {target_path}",
-                            Colors.GREEN,
-                        )
-                    )
-                show_list = args.list or (
-                    not getattr(args, "reset", False)
-                    and not getattr(args, "clear", False)
-                    and not removes
-                    and add_pair is None
-                )
-                if show_list:
-                    if not entries:
-                        print(color_text("No prompts stored in checkpoint", Colors.MAGENTA))
-                    else:
-                        print(color_text(f"Prompts in {target_path}:", Colors.CYAN))
-                        for idx, (prompt_text, expected_text) in enumerate(entries):
-                            status_val = statuses[idx] if idx < len(statuses) else 0
-                            if status_val >= 2:
-                                status_label = color_text("argmax", Colors.GREEN)
-                            elif status_val == 1:
-                                status_label = color_text("sample", Colors.YELLOW)
-                            else:
-                                status_label = color_text("pending", Colors.RED)
-                            print(
-                                color_text(f"#{idx}: ", Colors.CYAN)
-                                + status_label
-                                + color_text(
-                                    f" prompt='{prompt_text}' expected='{expected_text}'",
-                                    Colors.CYAN,
-                                )
-                            )
-                return
+                return self.cli_prompts(tokenizer, model_path)
             sections = _append_summary_section(
                 _expected_sections(config, config.block_size)
             )
