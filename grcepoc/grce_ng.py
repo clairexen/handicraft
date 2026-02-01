@@ -455,6 +455,7 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     training_group.add_argument(
         "--only-normal",
+        dest="only_normal",
         action="store_true",
         help="Create batches that only contain the normal half",
     )
@@ -3204,13 +3205,13 @@ def evaluate_single_batch(
     batch_size: int,
     device: torch.device,
     *,
-    mode_override: str | None = None,
+    target_mode: str | None = None,
 ) -> dict[str, float | None]:
     metrics: dict[str, float | None] = {key: None for key in ROW_METRIC_LOG_KEYS}
     metrics["target"] = None
     total_loss = 0.0
     total_tokens = 0
-    for mode, rows in batch_mode_specs(batch_size, mode_override=mode_override):
+    for mode, rows in batch_mode_specs(batch_size):
         if rows <= 0:
             continue
         xb, yb = dataset.get_batch(split, block_length, rows, device)
@@ -3241,8 +3242,16 @@ def evaluate_single_batch(
         metrics[mode] = loss_sum / token_count
         total_loss += loss_sum
         total_tokens += token_count
+    mix_loss = None
     if total_tokens > 0:
-        metrics["target"] = total_loss / total_tokens
+        mix_loss = total_loss / total_tokens
+        metrics["target"] = mix_loss
+    if target_mode in {"normal", "decode"}:
+        selected = metrics.get(target_mode)
+        if selected is not None:
+            metrics["target"] = selected
+        elif mix_loss is not None:
+            metrics["target"] = mix_loss
     return metrics
 
 def train_model(
@@ -3356,7 +3365,7 @@ def train_model(
                     block_length,
                     batch_size,
                     device,
-                    mode_override=mode_override,
+                    target_mode=mode_override,
                 )
         model.train()
         eval_timer.stop()
