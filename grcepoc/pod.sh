@@ -110,12 +110,23 @@ rsync_update() {
 }
 
 rsync_put() {
-    rsync_update
-    if [[ -d "$ROOT_DIR/data" ]]; then
-        rsync "${RSYNC_COMMON[@]}" -e "$(join_cmd "${RSYNC_SSH[@]}")" "$ROOT_DIR/data/" "${REMOTE_HOST}:${REMOTE_DIR}/data/"
-    else
+    local dataset_filter="${1:-}"
+    if [[ ! -d "$ROOT_DIR/data" ]]; then
         echo "Warning: $ROOT_DIR/data directory not found; skipping." >&2
+        return
     fi
+    if [[ -z "$dataset_filter" ]]; then
+        rsync "${RSYNC_COMMON[@]}" -e "$(join_cmd "${RSYNC_SSH[@]}")" "$ROOT_DIR/data/" "${REMOTE_HOST}:${REMOTE_DIR}/data/"
+        return
+    fi
+    shopt -s nullglob
+    local matches=("$ROOT_DIR/data/${dataset_filter}_"*)
+    shopt -u nullglob
+    if [[ ${#matches[@]} -eq 0 ]]; then
+        echo "Warning: No files matched data/${dataset_filter}_*; nothing uploaded." >&2
+        return
+    fi
+    rsync "${RSYNC_COMMON[@]}" -e "$(join_cmd "${RSYNC_SSH[@]}")" "${matches[@]}" "${REMOTE_HOST}:${REMOTE_DIR}/data/"
 }
 
 rsync_push() {
@@ -134,8 +145,7 @@ rsync_pull() {
 case "${1:-}" in
     go)
         pod_init
-        rsync_put
-        rsync_push
+        rsync_update
 	open_shell
         ;;
     init)
@@ -148,7 +158,8 @@ case "${1:-}" in
         rsync_update
         ;;
     put)
-        rsync_put
+        shift
+        rsync_put "$@"
         ;;
     push)
         rsync_push
