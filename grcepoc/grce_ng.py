@@ -535,7 +535,7 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     import_group.add_argument(
         "--pt",
         type=pathlib.Path,
-        help="Load an explicit checkpoint file for inference/debugging commands",
+        help="Load an explicit checkpoint file instead of the default model path",
     )
     subparsers = parser.add_subparsers(
         dest="command",
@@ -798,9 +798,6 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     # Parse "create" sub-command args
 
     if args.command == "create":
-        if args.pt:
-            parser.error("--pt cannot be combined with the create command")
-
         def parse_layer_list(value: str, flag: str) -> list[int]:
             if not value:
                 return []
@@ -3529,6 +3526,82 @@ def run_test_slice(
     print(pretty_text)
 
 
+def preprocess_runtime_settings(args: argparse.Namespace) -> None:
+    """Resolve checkpoint overrides and derived paths before runtime spins up."""
+
+    if getattr(args, "_checkpoint_preprocessed", False):
+        return
+    args._checkpoint_preprocessed = True
+
+    args.model_path_override = None
+    args.log_path_override = None
+    args.checkpoint_payload_override = None
+    args.checkpoint_config_override = None
+    args.tokenizer_json_override = None
+
+    if args.pt:
+        checkpoint_path = args.pt
+        if not checkpoint_path.exists():
+            raise FileNotFoundError(f"Checkpoint {checkpoint_path} not found")
+        payload = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+        saved_config = payload.get("config")
+        if saved_config is None:
+            raise ValueError(
+                "Checkpoint lacks config metadata; re-save it with the latest format."
+            )
+        saved = dict(saved_config)
+        legacy_xctx = bool(saved.pop("grce_xctx", False))
+        if "n_xctx" not in saved:
+            if legacy_xctx:
+                saved["n_xctx"] = int(saved.get("n_grce", 0))
+                saved["n_grce"] = 0
+            else:
+                saved["n_xctx"] = 0
+        config = ModelConfig(**saved)
+        args.checkpoint_payload_override = payload
+        args.checkpoint_config_override = config
+        args.tokenizer_json_override = payload.get("tokenizer_json")
+        args.block_size = config.block_size
+        if not getattr(args, "_block_length_defined", False):
+            args.block_length = config.block_size
+        elif args.block_length > config.block_size:
+            raise ValueError("--block-length cannot exceed checkpoint block size")
+        args.n_layer = config.n_layer
+        args.n_head = config.n_head
+        args.n_embd = config.n_embd
+        args.n_grce = config.n_grce
+        args.n_xctx = config.n_xctx
+        args.dropout = config.dropout
+        args.detach_span = config.detach_span
+        args.no_detach_ctx = not config.detach_context
+        args.detach_layer = config.detach_layer
+        args.vocab_size = config.vocab_size
+        args.model_path_override = checkpoint_path
+        args.log_path_override = checkpoint_path.with_suffix(".log")
+        return
+
+    inferred = ModelConfig(
+        vocab_size=args.vocab_size,
+        block_size=args.block_size,
+        n_layer=args.n_layer,
+        n_head=args.n_head,
+        n_embd=args.n_embd,
+        n_grce=args.n_grce,
+        n_xctx=args.n_xctx,
+        grce_optimized=getattr(args, "grce_optimized", MODEL_CONFIG_DEFAULTS.grce_optimized),
+    )
+    tag = build_model_tag(inferred)
+    for extra_tag in args.tag:
+        cleaned = re.sub(r"[^0-9A-Za-z]+", "", extra_tag)
+        if cleaned:
+            tag += f"_{cleaned}"
+    model_dir = pathlib.Path(args.model)
+    prefix = f"{args.corpus}_model_"
+    model_path = model_dir / f"{prefix}{tag}.pt"
+    args.model_path_override = model_path
+    args.log_path_override = model_path.with_suffix(".log")
+
+
 import signal
 import traceback
 
@@ -3586,56 +3659,7 @@ class Runtime:
         assert self.settings.cli_args is not None
         args = self.settings.cli_args
 
-        checkpoint_override_payload: dict | None = None
-        checkpoint_override_config: ModelConfig | None = None
-        checkpoint_override_tokenizer_json: str | None = None
-        if args.pt:
-            if args.command == "train":
-                raise ValueError("--pt is only supported for inference/debug commands")
-            if args.command == "create" and args.create_args.import_model:
-                raise ValueError("--pt cannot be combined with --import-model")
-            skip_checkpoint_load = (
-                (args.command == "corpus" and getattr(args, "corpus_init", False))
-                or args.command == "create"
-            )
-            if not skip_checkpoint_load:
-                if not args.pt.exists():
-                    raise FileNotFoundError(f"Checkpoint {args.pt} not found")
-                checkpoint_override_payload = torch.load(
-                    args.pt, map_location="cpu", weights_only=False
-                )
-                saved_config = checkpoint_override_payload.get("config")
-                if saved_config is None:
-                    raise ValueError(
-                        "Checkpoint lacks config metadata; re-save it with the latest format."
-                    )
-                saved_config = dict(saved_config)
-                legacy_xctx = bool(saved_config.pop("grce_xctx", False))
-                if "n_xctx" not in saved_config:
-                    if legacy_xctx:
-                        saved_config["n_xctx"] = int(saved_config.get("n_grce", 0))
-                        saved_config["n_grce"] = 0
-                    else:
-                        saved_config["n_xctx"] = 0
-                checkpoint_override_config = ModelConfig(**saved_config)
-                checkpoint_override_tokenizer_json = checkpoint_override_payload.get(
-                    "tokenizer_json"
-                )
-                args.block_size = checkpoint_override_config.block_size
-                if not getattr(args, "_block_length_defined", False):
-                    args.block_length = args.block_size
-                elif args.block_length > args.block_size:
-                    raise ValueError("--block-length cannot exceed checkpoint block size")
-                args.n_layer = checkpoint_override_config.n_layer
-                args.n_head = checkpoint_override_config.n_head
-                args.n_embd = checkpoint_override_config.n_embd
-                args.n_grce = checkpoint_override_config.n_grce
-                args.n_xctx = checkpoint_override_config.n_xctx
-                args.dropout = checkpoint_override_config.dropout
-                args.detach_span = checkpoint_override_config.detach_span
-                args.no_detach_ctx = not checkpoint_override_config.detach_context
-                args.detach_layer = checkpoint_override_config.detach_layer
-                args.vocab_size = checkpoint_override_config.vocab_size
+        preprocess_runtime_settings(args)
 
         ansi_file = None
         try:
@@ -3682,7 +3706,7 @@ class Runtime:
             tokenizer_path = data_dir / f"{tokenizer_key}.json"
             if args.command == "create" and not tokenizer_path.exists():
                 must_build_tokenizer = True
-            tokenizer_json = checkpoint_override_tokenizer_json
+            tokenizer_json = getattr(args, "tokenizer_json_override", None)
             if tokenizer_json is None:
                 if tokenizer_path.exists():
                     tokenizer_json = tokenizer_path.read_text(encoding="utf-8")
@@ -3833,7 +3857,8 @@ class Runtime:
 
             if args.n_xctx > 0 and args.n_xctx % max(1, args.n_layer) != 0:
                 raise ValueError("--n-xctx must be divisible by --n-layer")
-            config = checkpoint_override_config or ModelConfig(
+            override_config = getattr(args, "checkpoint_config_override", None)
+            config = override_config or ModelConfig(
                 vocab_size=tokenizer.vocab_size,
                 block_size=args.block_size,
                 n_layer=args.n_layer,
@@ -3851,15 +3876,14 @@ class Runtime:
                 cleaned = re.sub(r"[^0-9A-Za-z]+", "", extra_tag)
                 if cleaned:
                     model_tag += f"_{cleaned}"
-            if args.pt:
-                model_path = args.pt
-                log_path = args.pt.with_suffix(".log")
-                print(color_text(f"Model (--pt): {model_path}", Colors.CYAN))
-                print(color_text(f"Logfile (--pt): {log_path}", Colors.BLUE))
-            else:
+            model_path = getattr(args, "model_path_override", None)
+            log_path = getattr(args, "log_path_override", None)
+            if model_path is None or log_path is None:
                 prefix = f"{args.corpus}_model_"
                 model_path = model_dir / f"{prefix}{model_tag}.pt"
                 log_path = model_dir / f"{prefix}{model_tag}.log"
+                args.model_path_override = model_path
+                args.log_path_override = log_path
             print(color_text(f"Model: {model_path}", Colors.CYAN))
             print(color_text(f"Logfile: {log_path}", Colors.BLUE))
             requires_checkpoint = args.command in {"train", "report", "test"}
@@ -4061,7 +4085,7 @@ class Runtime:
             total_steps = 0
             loss_history: List[Dict[str, float]] = []
             total_train_wall = 0.0
-            payload = checkpoint_override_payload
+            payload = getattr(args, "checkpoint_payload_override", None)
             if payload is None and model_path.exists():
                 if args.command == "create" and args.create_args.import_model:
                     raise ValueError(
@@ -4418,6 +4442,8 @@ def grce_main(args: argparse.Namespae) -> int:
     if cli_args.command == "size":
         assert getattr(cli_args, "check", False)
         sys.exit(grce_cli_size(cli_args))
+
+    preprocess_runtime_settings(cli_args)
 
     torch.manual_seed(42)
     random.seed(time.time())
