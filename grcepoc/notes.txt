@@ -271,7 +271,7 @@ to artificially reduce the block size to de-clutter the output of the command.
 
 We create the following TransformerStackBlock(nn.Module) class:
 
-	stackgrid = TransformerStackGrid(config)
+	stackgrid = TransformerStackGrid(settings)
 	y, s_out, kv_out = stackgrid.forward(x,
 			bias_list_in=[], kv_cache_list_in=[],
 			qh_query_callback=None, masked=True)
@@ -330,6 +330,64 @@ blocks in the grid. Sampling is done before the biases in b_in are being added
 to the transformer block inputs for the next stage. Note that te first element
 in 's_out' is simply the input 'x' and the last element is simply the
 "transformed" output 'y'.
+
+### GRCE and XCTX shims
+
+With GRCE and/or XCTX enabld we can not create an entire multi-column grid
+at once, because the recurrent GRCE/XCTX channels force us to evaluate the
+transformers sequentially, one time-position at once.
+
+We create pairs of GRCE and XCTX "bias" shims with almost identical interfaces:
+
+	grce = TransformerGRCE(settings)
+	xctx = TransformerXCTX(settings)
+
+	b_out = grce.bias_forward(grce_in)
+	b_out = xctx.bias_forward(xctx_in)
+
+The 'grce_in' and 'xctx_in' signals are the recurrent GRCE or XCTX inputs.
+Their size is [rows, n_grce] or [rows, n_xctx]. The 'b_out' outputs can be
+inserted directly in the 'bias_list_in' argument of stackgrid.forward().
+These 'b_out' outputs have size [rows, 1, n_layers, n_embd].
+
+	grce_out = grce.sample_forward(grce_in, S_in)
+	xctx_out = xctx.sample_forward(xctx_in, S_in)
+
+These calculate the recurrent GRCE/XCTX outputs based on the recurrent input
+and the sampled values from the stack in 'S_in'. (Note that tensors in the
+'S_in' list may have a 'cols' dimension > 1, but for convenience these two
+functions are only ever using the _last_ entry in the 'cols' dimension. This
+means only S_in[:][:, -1, i, :] is ever read by sample_forward().)
+
+In summary: bias_forward() always consumes the recurrent state from the
+previous position; sample_forward() produces the recurrent state for the next
+position.
+
+### TransformerStackColumn and TransformerStackSequence
+
+TransformerStackColumn simply is a grid with cols=1, and added GRCE and XCTX
+bias and sample shims.
+
+TransformerStackSequence is a 2-D (rows x cols) sequence of such columns,
+resambling a StackGrid, but with added GRCE and XCTX channels:
+
+	seq = TransformerStackSequence(settings)
+	y, grce_out, xctx_out, kv_out = seq.forward(x, grce_in, xctx_in,
+			bias_list_in=[], kv_cache_list_in=[],
+			qh_query_callback=None)
+
+With {grce,xctx}_{in,out} of size [rows, n_{grce,xctx}]. (So {grce,xctx}_out
+are the final recurrent states after the last column.)
+
+Columns are evaluated strictly left-to-right, and GRCE/XCTX state updates from
+column t are visible only to column t+1.
+
+With GRCE and XCTX disabled (n_grce=0 and n_xctx=0), TransformerStackSequence
+is functionally equivalent to evaluating a TransformerStackGrid with the same
+inputs.
+
+The values from 'bias_list_in' are applied per column: biases for column t are
+applied to TransformerStackColumn[t] in the same way as in TransformerStackGrid.
 
 
 ## Training and evaluation with pre-evaluation -- (this is future work)
