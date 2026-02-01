@@ -115,6 +115,7 @@ class ModelConfig:
     n_grce: int = 64        # Narrow GRCE context dims.
     n_xctx: int = 720       # Wide XCTX context dims.
     grce_optimized: bool = False  # Use the vectorized GRCE channel implementation.
+    disable_kv_rebalance: bool = False
 
     # FIXME: these should only be part of Settings, not ModelConfig -> remove later
     dropout: float = 0.05
@@ -167,6 +168,7 @@ class Settings:
     _block_length_arg: int | None = None
     restart_optimizer_each_cycle: bool = False
     checkpoint_optimizer_state: bool = False
+    disable_kv_rebalance: bool = False
 
     # Training Details
     dropout: float = 0.05
@@ -207,6 +209,7 @@ class Settings:
             n_grce=self.n_grce,
             n_xctx=self.n_xctx,
             grce_optimized=self.grce_optimized,
+            disable_kv_rebalance=self.disable_kv_rebalance,
         )
 
     def __post_init__(self):
@@ -232,6 +235,7 @@ class Settings:
         self._block_length_arg = args.block_length
         self.restart_optimizer_each_cycle = args.restart_optimizer
         self.checkpoint_optimizer_state = args.checkpoint_optimizer
+        self.disable_kv_rebalance = args.no_kv_rebalance
 
         self.dropout = args.dropout
         self.detach_span = args.detach_span
@@ -472,6 +476,11 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--checkpoint-optimizer",
         action="store_true",
         help="Serialize optimizer state to checkpoints so runs can resume without momentum reset",
+    )
+    training_group.add_argument(
+        "--no-kv-rebalance",
+        action="store_true",
+        help="Disable binary-segment merging in KV caches (debug/perf testing)",
     )
     training_group.add_argument(
         "--detach-span",
@@ -2175,11 +2184,8 @@ class CausalSelfAttention(nn.Module):
         k_new = k_full.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
         key_append = k_new.squeeze(2).unsqueeze(2)
         value_append = v.squeeze(2).unsqueeze(2)
-        cache.key = torch.cat([cache.key, key_append], dim=2)
-        cache.value = torch.cat([cache.value, value_append], dim=2)
-        cache.length = cache.key.size(2)
-        k = cache.key
-        v = cache.value
+        cache.append(key_append, value_append)
+        k, v = cache.tensors()
         att = (q @ k.transpose(-2, -1)) / math.sqrt(k.size(-1))
         if puncture_mask is not None:
             att = att.masked_fill(puncture_mask[:, None, None, :], float("-inf"))
@@ -2615,9 +2621,38 @@ class TransformerStackSequence(nn.Module):
 
 @dataclass
 class LayerCache:
-    key: torch.Tensor
-    value: torch.Tensor
+    segments: list[tuple[torch.Tensor, torch.Tensor]] = field(default_factory=list)
     length: int = 0
+    allow_rebalance: bool = True
+
+    def append(self, key_chunk: torch.Tensor, value_chunk: torch.Tensor) -> None:
+        if key_chunk.size(2) != value_chunk.size(2):
+            raise ValueError("Key/value chunks must share the same length")
+        self.segments.append((key_chunk, value_chunk))
+        self.length += key_chunk.size(2)
+        if self.allow_rebalance:
+            self._rebalance_segments()
+
+    def _rebalance_segments(self) -> None:
+        while len(self.segments) >= 2:
+            key_b, value_b = self.segments[-1]
+            key_a, value_a = self.segments[-2]
+            if key_a.size(2) != key_b.size(2):
+                break
+            merged_key = torch.cat([key_a, key_b], dim=2)
+            merged_value = torch.cat([value_a, value_b], dim=2)
+            self.segments.pop()
+            self.segments.pop()
+            self.segments.append((merged_key, merged_value))
+
+    def tensors(self) -> tuple[torch.Tensor, torch.Tensor]:
+        if not self.segments:
+            raise RuntimeError("LayerCache is empty; call append() before tensors().")
+        if len(self.segments) == 1:
+            return self.segments[0]
+        keys = torch.cat([seg[0] for seg in self.segments], dim=2)
+        values = torch.cat([seg[1] for seg in self.segments], dim=2)
+        return keys, values
 
 
 class GPTCore(nn.Module):
@@ -2640,20 +2675,12 @@ class GPTCore(nn.Module):
         max_seq_len: int,
         device: torch.device,
     ) -> list[LayerCache]:
-        head_dim = self.config.n_embd // self.config.n_head
-        dtype = self.tok_emb.weight.dtype
+        allow_rebalance = not getattr(self.config, "disable_kv_rebalance", False)
         caches: list[LayerCache] = []
         for _ in range(len(self.blocks)):
-            key = torch.empty(
-                batch_size,
-                self.config.n_head,
-                0,
-                head_dim,
-                device=device,
-                dtype=dtype,
-            )
-            value = torch.empty_like(key)
-            caches.append(LayerCache(key=key, value=value, length=0))
+            cache = LayerCache()
+            cache.allow_rebalance = allow_rebalance
+            caches.append(cache)
         return caches
 
     def _build_puncture_mask(

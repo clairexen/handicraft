@@ -397,7 +397,6 @@ other half are in "decode" mode (one big TransformerStackGrid with mask=True).
 
 (Thus we drop "encode", "recode", "noxctx", "noattn", "puxctx" and "puattn".)
 
-
 ## Training and evaluation with pre-evaluation -- (this is future work)
 
 We add a `--pre-eval` CLI option. For that mode we define a *pre-eval batch*,
