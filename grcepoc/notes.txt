@@ -389,6 +389,14 @@ inputs.
 The values from 'bias_list_in' are applied per column: biases for column t are
 applied to TransformerStackColumn[t] in the same way as in TransformerStackGrid.
 
+### New composition of training batches
+
+We dtrastically simplify how training baches are composed. Now half of the
+rows are in "normal" mode (just one big TransformerStackSequence) and the
+other half are in "decode" mode (one big TransformerStackGrid with mask=True).
+
+(Thus we drop "encode", "recode", "noxctx", "noattn", "puxctx" and "puattn".)
+
 
 ## Training and evaluation with pre-evaluation -- (this is future work)
 
