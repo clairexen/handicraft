@@ -181,7 +181,7 @@ class Settings:
     show_train_loss_details: bool = False
     show_test_loss_details: bool = True
     skip_model_update: bool = False
-    only_normal_batches: bool = False
+    only_forward_batches: bool = False
     only_decode_batches: bool = False
 
     @property
@@ -194,8 +194,8 @@ class Settings:
     def batch_mode_override(self) -> str | None:
         if self.only_decode_batches:
             return "decode"
-        if self.only_normal_batches:
-            return "normal"
+        if self.only_forward_batches:
+            return "forward"
         return None
 
     @property
@@ -246,7 +246,7 @@ class Settings:
         self.show_train_loss_details = args.train_loss_details
         self.show_test_loss_details = not args.no_test_loss_details
         self.skip_model_update = args.no_model_update
-        self.only_normal_batches = args.only_normal
+        self.only_forward_batches = args.only_forward
         self.only_decode_batches = args.only_decode
 
 SETTINGS_DEFAULTS = Settings()
@@ -262,7 +262,7 @@ def compute_row_type_counts(batch_size: int) -> dict[str, int]:
     total = max(0, int(batch_size))
     quarter = total // 4
     counts: dict[str, int] = {
-        "n_normal": total - quarter,
+        "n_forward": total - quarter,
         "n_decode": quarter,
         "n_total": total,
     }
@@ -273,13 +273,13 @@ def batch_mode_specs(batch_size: int, mode_override: str | None = None) -> list[
     """Return ordered (mode, rows) pairs for the current batch size."""
 
     total = max(0, int(batch_size))
-    if mode_override == "normal":
-        return [("normal", total)]
+    if mode_override == "forward":
+        return [("forward", total)]
     if mode_override == "decode":
         return [("decode", total)]
     counts = compute_row_type_counts(batch_size)
     return [
-        ("normal", max(0, int(counts.get("n_normal", 0)))),
+        ("forward", max(0, int(counts.get("n_forward", 0)))),
         ("decode", max(0, int(counts.get("n_decode", 0)))),
     ]
 
@@ -462,10 +462,10 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Create batches that only contain the decode half",
     )
     training_group.add_argument(
-        "--only-normal",
-        dest="only_normal",
+        "--only-forward",
+        dest="only_forward",
         action="store_true",
-        help="Create batches that only contain the normal half",
+        help="Create batches that only contain the forward half",
     )
     training_group.add_argument(
         "--restart-optimizer",
@@ -788,8 +788,8 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     # --------------------------------------------------------
     # Normalize, tweak, and check global options
 
-    if args.only_decode and args.only_normal:
-        parser.error("--only-decode and --only-normal cannot be combined")
+    if args.only_decode and args.only_forward:
+        parser.error("--only-decode and --only-forward cannot be combined")
 
     if args.tiny:
         if not flag_present("--vocab-size"):
@@ -3146,7 +3146,7 @@ class GRCEGPT(nn.Module):
         idx: torch.Tensor,
         targets: torch.Tensor | None = None,
         *,
-        mode: str = "normal",
+        mode: str = "forward",
         position_offsets: torch.Tensor | None = None,
     ) -> Tuple[torch.Tensor, torch.Tensor | None, dict | None]:
         del targets  # unused but kept for API compatibility
@@ -3159,7 +3159,7 @@ class GRCEGPT(nn.Module):
         pos = self.core.pos_emb(pos_idx)
         x = self.core.drop(tok + pos)
         context_info: dict[str, torch.Tensor] | None = None
-        if mode == "normal":
+        if mode == "forward":
             sequence_output, grce_out, xctx_out, _ = self.stack_sequence.forward(x)
             hidden = sequence_output
             context_info = {}
@@ -3199,17 +3199,17 @@ LOSS_IGNORE_INDEX = -100
 
 
 ROW_METRIC_HIST_KEYS = [
-    "normal",
+    "forward",
     "decode",
 ]
 
 ROW_METRIC_LOG_KEYS = [
-    "normal",
+    "forward",
     "decode",
 ]
 
 ROW_METRIC_LOG_GROUP = {
-    "normal",
+    "forward",
 }
 
 
@@ -3294,7 +3294,7 @@ def evaluate_single_batch(
     if total_tokens > 0:
         mix_loss = total_loss / total_tokens
         metrics["target"] = mix_loss
-    if target_mode in {"normal", "decode"}:
+    if target_mode in {"forward", "decode"}:
         selected = metrics.get(target_mode)
         if selected is not None:
             metrics["target"] = selected
