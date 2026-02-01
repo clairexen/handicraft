@@ -106,7 +106,7 @@ pod_init() {
 }
 
 rsync_update() {
-    rsync "${RSYNC_COMMON[@]}" -e "$(join_cmd "${RSYNC_SSH[@]}")" "$ROOT_DIR/grce_ng.py" "${REMOTE_HOST}:${REMOTE_DIR}/"
+    rsync "${RSYNC_COMMON[@]}" -e "$(join_cmd "${RSYNC_SSH[@]}")" "$ROOT_DIR/grce.py" "${REMOTE_HOST}:${REMOTE_DIR}/"
 }
 
 rsync_put() {

@@ -38,42 +38,13 @@ Because both channels bolt onto the same Transformer spine, we can vary their wi
 
 One way to view this geometry is that attention “killed” classic recurrence by rotating the computation over depth and letting every position look backward. GRCE rotates a slim slice of that structure back into the time axis, but it keeps the Transformer philosophy—tight bottlenecks, shared emitters/decoders, and a single shared nonlinear mix—so gradients never have to walk through time. The heavy lifting stays inside the per-token Transformer blocks; the recurrent shortcut simply recycles whatever features those blocks already distilled.
 
-## Sequence boundaries and recurrent prefill
-
-The corpus is stored with a trailing record separator so it is always safe to treat it as a looped scroll. All low-level slice helpers accept windows that cross the file boundary (even negative offsets) and quietly wrap the indices. Every sampled batch therefore knows both its `(block_size + 1)` training window and the `block_size` tokens that immediately preceded it in the corpus.
-
-Before running the “real” block we feed that preceding window through the model exactly once (with the usual settings) and capture the raw GRCE/XCTX vectors emitted by the last position—these are the fused, pre-LayerNorm values that would otherwise become the residual input to the next step. Those raw vectors are saved per channel and injected into the actual block so each layer’s bias generator sees the same recurrent state it would have seen if we had streamed tokens through continuously. All later special-row experiments (context dropout, attention punctures, additional evaluation modes, etc.) reuse the cached vectors, so the prefill happens just once per batch regardless of how many forward passes we run.
-
-This means any layer at position N can send a context-related message to any layer at position N+1, and the training signal never has to cross the position boundary: by the time we emit the message, the previous stack has already computed everything it needs to predict the next token. In practice (see the sweeps in this repo), even `--detach-span 1`—which suppresses cross-position gradients entirely—matches the default span: the channel just learns how to sample the information that already exists inside the previous position’s layers.
-
-## GRCE row types, training target, and losses reported during training
-
-### Row types in GRCE batches
-
-Training and evaluation revolve around *row types*—deterministic ways of mutating a batch so the model practices specific failure modes:
-
-- **`decode`** – disables both GRCE and XCTX entirely so the GPT core behaves like a pure Transformer. Used as one of the stress rows and for the dedicated “decode” evaluation column.
-- **`normal`** – the baseline path: GRCE, XCTX, and attention all enabled with the standard causal mask.
-- **`encode`** – identical to `decode` in that both GRCE and XCTX are disabled; retained as a dedicated diagnostic row so logs remain comparable to older runs.
-- **`recode`** – hybrid rows whose first half behaves like an `encode` sub-block and whose second half behaves like a normal row; used to train the channels to hand off information between encoder/decoder phases.
-- **`noxctx` / `puxctx`** – remove the wide XCTX signal either for the entire row (`noxctx`) or by puncturing it at a single random timestep (`puxctx`) while GRCE remains active.
-- **`noattn` / `puattn`** – shut attention off entirely (`noattn`) or mask a single timestep’s ability to transmit forward (`puattn`) so the recurrent channels have to carry the load.
-
-### How these row types shape a training batch
-
-Let `n_total` be the batch size. Each batch is a fixed mixture of row types:
-
-- `n_encode = n_recode = n_noxctx = n_puxctx = n_noattn = n_puattn = 1`
-- Of the remaining slots, half (rounded down) become `decode` rows and the rest stay `normal` so the optimizer keeps seeing baseline sequences.
-
-That means every batch carries exactly one copy of each structural ablation (pure Transformer, no-XCTX, punctured-XCTX, no-attention, punctured-attention) plus a healthy mix of `normal` rows. The ordering varies per batch because we randomly assign row indices when building the masks, but the counts above remain fixed.
-
-### Loss reporting
+## Loss reporting
 
 The live log and checkpoint history capture two views of the training objective:
 
 1. **Training target (`target`).** This is the exact loss the optimizer just saw on the mixed batch of row types.
-2. **Row-type diagnostics.** During evaluation we reuse that same batch and aggregate the per-row losses to expose conditional metrics for `normal`, `decode`, `noxctx`, `puxctx`, `noatt`, `none` (the attention-punctured row), `encode`, and `recode`. Because every value comes from a single forward pass, all reported losses are directly comparable slices of the training objective.
+2. **normal.** Loss on the model in "fully functional" mode with both GRCE and XCTX enabled.
+2. **decode.** Loss on the model in "standard transformer" mode with GRCE and XCTX disabled.
 
 ## Parameter count (dominant terms)
 
