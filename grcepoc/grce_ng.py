@@ -634,6 +634,13 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Cursor offset within the test corpus to begin printing",
     )
 
+    profile_parser = subparsers.add_parser(
+        "profile",
+        help="Run a warm-up and profiled training step, then dump profiler stats",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    profile_parser.set_defaults(command="profile")
+
     size_parser = subparsers.add_parser(
         "size",
         help="Print parameter breakdown for the configured model and exit",
@@ -3518,6 +3525,88 @@ def train_model(
     return total_steps, history_updates, loop_timer.stop(), eval_timer
 
 
+def run_profile_mode(
+    settings: Settings,
+    dataset: TextDataset,
+    model: GRCEGPT,
+    optimizer: torch.optim.Optimizer,
+    *,
+    block_length: int,
+    batch_size: int,
+    device: torch.device,
+    block_size: int,
+) -> None:
+    """Warm up once, profile a second training step, and report CUDA stats."""
+
+    try:
+        from torch.profiler import ProfilerActivity, profile, record_function
+    except ImportError as exc:  # pragma: no cover - environment-dependent
+        raise RuntimeError(
+            "torch.profiler is unavailable; upgrade to PyTorch 1.8+ to use 'profile'."
+        ) from exc
+
+    mode_override = settings.batch_mode_override
+    mode_specs = batch_mode_specs(batch_size, mode_override=mode_override)
+    if not mode_specs:
+        raise ValueError("Batch size must be >0 to run the profiler")
+
+    train_chars = (block_length + 1) * batch_size * 2
+    dataset.prepare_cycle("train", train_chars)
+
+    def train_step(tag: str) -> float:
+        model.train()
+        total_loss_sum: torch.Tensor | None = None
+        total_tokens = 0
+        for mode, rows in mode_specs:
+            if rows <= 0:
+                continue
+            xb, yb = dataset.get_batch("train", block_length, rows, device)
+            position_offsets = sample_position_offsets(
+                rows,
+                block_size,
+                block_length,
+                device,
+            )
+            logits, _, _ = model.forward_autoreg(
+                xb,
+                targets=yb,
+                mode=mode,
+                position_offsets=position_offsets,
+            )
+            loss_sum = F.cross_entropy(
+                logits.view(-1, logits.size(-1)),
+                yb.view(-1),
+                reduction="sum",
+                ignore_index=LOSS_IGNORE_INDEX,
+            )
+            if total_loss_sum is None:
+                total_loss_sum = loss_sum
+            else:
+                total_loss_sum = total_loss_sum + loss_sum
+            total_tokens += int((yb != LOSS_IGNORE_INDEX).sum().item())
+        if total_loss_sum is None or total_tokens <= 0:
+            raise RuntimeError("No tokens processed during profiling step")
+        loss = total_loss_sum / float(total_tokens)
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        optimizer.step()
+        return float(loss.item())
+
+    warm_loss = train_step("warmup")
+    print(color_text(f"Warm-up step loss: {warm_loss:.4f}", Colors.CYAN))
+
+    with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=True) as prof:
+        with record_function("profile_train_step"):
+            prof_loss = train_step("profile")
+
+    print(color_text(f"Profiled step loss: {prof_loss:.4f}", Colors.CYAN))
+    cuda_events = sum(
+        1 for evt in prof.events() if getattr(evt, "device_type", None) == ProfilerActivity.CUDA
+    )
+    print(color_text(f"CUDA kernel launches: {cuda_events}", Colors.MAGENTA))
+    print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=20))
+
+
 @torch.no_grad()
 def generate(
     model: GRCEGPT,
@@ -4419,6 +4508,30 @@ class Runtime:
                     model=model,
                     block_length=args.block_length,
                     start_pos=args.test_start,
+                )
+                return
+
+            if args.command == "profile":
+                optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
+                if args.checkpoint_optimizer and optimizer_state:
+                    try:
+                        optimizer.load_state_dict(optimizer_state)
+                    except Exception as err:  # pragma: no cover - logging
+                        print(
+                            color_text(
+                                f"Warning: could not load optimizer state ({err}); starting fresh",
+                                Colors.RED,
+                            )
+                        )
+                run_profile_mode(
+                    self.settings,
+                    dataset,
+                    model,
+                    optimizer,
+                    block_length=args.block_length,
+                    batch_size=args.batch_size,
+                    device=device,
+                    block_size=args.block_size,
                 )
                 return
 
