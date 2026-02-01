@@ -293,13 +293,33 @@ inputs.
 The values from 'bias_list_in' are applied per column: biases for column t are
 applied to TransformerStackColumn[t] in the same way as in TransformerStackGrid.
 
-### New composition of training batches
+### Composition of training and evaluation batches
 
-We dtrastically simplify how training baches are composed. Now half of the
-rows are in "normal" mode (just one big TransformerStackSequence) and the
-other half are in "decode" mode (one big TransformerStackGrid with mask=True).
+Half of the rows are in "normal" mode (just one big TransformerStackSequence)
+and the other half are in "decode" mode (one big TransformerStackGrid with
+mask=True).
 
-(Thus we drop "encode", "recode", "noxctx", "noattn", "puxctx" and "puattn".)
+There are two mechanisms to manage the kv-cache. Either as list of 2- tuples of
+tensors, re-balanced unless --no-kv-rebalance, or via a kv-detached cache,
+when --detach-kv-cache, in which case a pre-alocated tensor is filled with
+detached copies of the k/v falues, and each stack is passed a slice of that
+large tensor. Each of those modes are available in training! kv-detached
+cache is NOT just meant inference-only optimization. Instead, we can use it to
+speed up training for rows with GRCE/XCTX. In those cases, with detached
+kv-caches, we simply rely on the rows in "decode" mode to train for good K/V
+values.
+
+We also add a single "noattn" row, that is equivalent to "forward", except
+it has all attention except self-attention disabled, by not maintaining
+either form of k/v cache. (Note that "forward" row are constructed with
+TransformerStackSequence, which contains single-column TransformerStackGrids,
+so there is no attention within the contained grid except self-attention
+for that column.)
+
+(With --only-forward or --only-decode we create training batches that
+only contain that row type. But for evaluation we always create the
+mix of three row types as described above.)
+
 
 ## Training and evaluation with pre-evaluation -- (this is future work)
 

@@ -273,10 +273,13 @@ def compute_row_type_counts(batch_size: int) -> dict[str, int]:
     """Return the simplified row-type counts for a batch size."""
 
     total = max(0, int(batch_size))
-    n_forward = max(1, total // 2)
+    n_noattn = 1 if total > 0 else 0
+    remaining = total - n_noattn
+    n_forward = max(1, remaining // 2) if remaining > 0 else 0
     counts: dict[str, int] = {
         "n_forward": n_forward,
-        "n_decode": total - n_forward,
+        "n_decode": max(0, total - n_forward - n_noattn),
+        "n_noattn": n_noattn,
         "n_total": total,
     }
     return counts
@@ -294,6 +297,7 @@ def batch_mode_specs(batch_size: int, mode_override: str | None = None) -> list[
     return [
         ("forward", max(0, int(counts.get("n_forward", 0)))),
         ("decode", max(0, int(counts.get("n_decode", 0)))),
+        ("noattn", max(0, int(counts.get("n_noattn", 0)))),
     ]
 
 
@@ -828,7 +832,7 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         if not flag_present("--n-layer"):
             args.n_layer = 3
         if not flag_present("--n-bias"):
-            args.n_layer = 2
+            args.n_bias = 2
         if not flag_present("--n-head"):
             args.n_head = 2
         if not flag_present("--n-embd"):
@@ -856,7 +860,7 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         if not flag_present("--n-layer"):
             args.n_layer = 10
         if not flag_present("--n-bias"):
-            args.n_layer = 8
+            args.n_bias = 8
         if not flag_present("--n-head"):
             args.n_head = 4
         if not flag_present("--n-embd"):
@@ -2215,6 +2219,7 @@ class CausalSelfAttention(nn.Module):
         *,
         puncture_mask: torch.Tensor | None = None,
         disable_rows: torch.Tensor | None = None,
+        write_cache: bool = True,
     ) -> tuple[torch.Tensor, "LayerCache"]:
         if x.size(1) != 1:
             raise ValueError("Incremental attention expects a single-token sequence")
@@ -2226,8 +2231,11 @@ class CausalSelfAttention(nn.Module):
         k_new = k_full.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
         key_append = k_new.squeeze(2).unsqueeze(2)
         value_append = v.squeeze(2).unsqueeze(2)
-        cache.append(key_append, value_append)
-        k, v = cache.tensors()
+        if write_cache:
+            cache.append(key_append, value_append)
+            k, v = cache.tensors()
+        else:
+            k, v = key_append, value_append
         att = (q @ k.transpose(-2, -1)) / math.sqrt(k.size(-1))
         if puncture_mask is not None:
             att = att.masked_fill(puncture_mask[:, None, None, :], float("-inf"))
@@ -2303,12 +2311,14 @@ class Block(nn.Module):
         record_mask: bool = False,
         attention_disabled_rows: torch.Tensor | None = None,
         puncture_mask: torch.Tensor | None = None,
+        write_cache: bool = True,
     ) -> tuple[torch.Tensor, LayerCache, torch.Tensor | None]:
         attn_out, cache = self.attn.forward_incremental(
             self.ln1(x),
             cache,
             puncture_mask=puncture_mask,
             disable_rows=attention_disabled_rows,
+            write_cache=write_cache,
         )
         if attention_disabled_rows is not None and attention_disabled_rows.any():
             mask = (~attention_disabled_rows).view(-1, 1, 1).to(attn_out.dtype)
@@ -2637,6 +2647,7 @@ class TransformerStackSequence(nn.Module):
         kv_cache_list_in: Sequence[Sequence[tuple[torch.Tensor, torch.Tensor]]] | None = None,
         *,
         qh_query_callback=None,
+        write_kv_cache: bool = True,
     ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None, list]:
         if kv_cache_list_in:
             raise NotImplementedError("kv_cache_list_in not supported in sequence mode yet")
@@ -2648,6 +2659,30 @@ class TransformerStackSequence(nn.Module):
         outputs: list[torch.Tensor] = []
         grce_state = self._ensure_state(self.grce, grce_in, rows, device, dtype)
         xctx_state = self._ensure_state(self.xctx, xctx_in, rows, device, dtype)
+        config = self.core.config
+        caches: list[LayerCache] = []
+        if write_kv_cache and cols > 0:
+            allow_rebalance = not getattr(config, "disable_kv_rebalance", False)
+            detach_kv_cache = bool(getattr(config, "detach_kv_cache", False))
+            head_dim = config.n_embd // max(1, config.n_head)
+            cache_dtype = dtype
+            for _ in range(self.n_layers):
+                cache = LayerCache()
+                cache.allow_rebalance = allow_rebalance and not detach_kv_cache
+                if detach_kv_cache:
+                    key_buffer = torch.empty(
+                        rows,
+                        config.n_head,
+                        cols,
+                        head_dim,
+                        device=device,
+                        dtype=cache_dtype,
+                    )
+                    value_buffer = torch.empty_like(key_buffer)
+                    cache.configure_detached_buffer(key_buffer, value_buffer)
+                caches.append(cache)
+        else:
+            caches = [LayerCache() for _ in range(self.n_layers)]
         for col in range(cols):
             column_biases: list[torch.Tensor] = []
             if bias_list_in:
@@ -2663,11 +2698,29 @@ class TransformerStackSequence(nn.Module):
             if self.xctx is not None and xctx_state is not None:
                 column_biases.append(self.xctx.bias_forward(xctx_state))
             column_input = x[:, col : col + 1, :]
-            column_output, samples = self.core.forward_grid(
-                column_input,
-                bias_list_in=column_biases,
-                masked=True,
-            )
+            column_bias_tensor = None
+            if column_biases:
+                column_bias_tensor = _merge_bias_list(
+                    column_biases,
+                    rows,
+                    1,
+                    self.n_layers,
+                    self.n_embd,
+                    device,
+                    dtype,
+                )
+            column_current = column_input
+            samples: list[torch.Tensor] = [column_current]
+            for layer_idx, block in enumerate(self.core.blocks):
+                if column_bias_tensor is not None:
+                    column_current = column_current + column_bias_tensor[:, :, layer_idx, :]
+                column_current, caches[layer_idx], _ = block.forward_incremental(
+                    column_current,
+                    caches[layer_idx],
+                    write_cache=write_kv_cache,
+                )
+                samples.append(column_current)
+            column_output = column_current
             outputs.append(column_output)
             if self.grce is not None and grce_state is not None:
                 grce_state = self.grce.sample_forward(grce_state, samples, col)
@@ -2915,6 +2968,7 @@ class GPTCore(nn.Module):
                 record_mask=record_relu_mask,
                 attention_disabled_rows=attention_disabled_rows,
                 puncture_mask=puncture_mask,
+                write_cache=True,
             )
             if self.detach_layer > 0 and (layer_idx + 1) == self.detach_layer:
                 x = x.detach()
@@ -3287,8 +3341,11 @@ class GRCEGPT(nn.Module):
         pos = self.core.pos_emb(pos_idx)
         x = self.core.drop(tok + pos)
         context_info: dict[str, torch.Tensor] | None = None
-        if mode == "forward":
-            sequence_output, grce_out, xctx_out, _ = self.stack_sequence.forward(x)
+        if mode in {"forward", "noattn"}:
+            sequence_output, grce_out, xctx_out, _ = self.stack_sequence.forward(
+                x,
+                write_kv_cache=(mode != "noattn"),
+            )
             hidden = sequence_output
             context_info = {}
             if grce_out is not None:
@@ -3331,11 +3388,13 @@ LOSS_IGNORE_INDEX = -100
 ROW_METRIC_HIST_KEYS = [
     "forward",
     "decode",
+    "noattn",
 ]
 
 ROW_METRIC_LOG_KEYS = [
     "forward",
     "decode",
+    "noattn",
 ]
 
 ROW_METRIC_LOG_GROUP = {
@@ -3424,7 +3483,7 @@ def evaluate_single_batch(
     if total_tokens > 0:
         mix_loss = total_loss / total_tokens
         metrics["target"] = mix_loss
-    if target_mode in {"forward", "decode"}:
+    if target_mode in {"forward", "decode", "noattn"}:
         selected = metrics.get(target_mode)
         if selected is not None:
             metrics["target"] = selected
