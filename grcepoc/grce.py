@@ -123,6 +123,7 @@ class ModelConfig:
     detach_layer: int = -1       # Layer index (1-based) after which to detach Transformer grads.
     grce_optimized: bool = False  # Use the vectorized GRCE channel implementation.
     disable_kv_rebalance: bool = False
+    detach_kv_cache: bool = False  # Store detached KV buffers instead of concatenating segments.
 
 MODEL_CONFIG_DEFAULTS = ModelConfig()
 
@@ -170,6 +171,7 @@ class Settings:
     restart_optimizer_each_cycle: bool = False
     checkpoint_optimizer_state: bool = False
     disable_kv_rebalance: bool = False
+    detach_kv_cache: bool = False
 
     # Training Details
     dropout: float = MODEL_CONFIG_DEFAULTS.dropout
@@ -215,6 +217,7 @@ class Settings:
             detach_layer=self.detach_layer,
             grce_optimized=self.grce_optimized,
             disable_kv_rebalance=self.disable_kv_rebalance,
+            detach_kv_cache=self.detach_kv_cache,
         )
 
     def __post_init__(self):
@@ -241,6 +244,7 @@ class Settings:
         self.restart_optimizer_each_cycle = args.restart_optimizer
         self.checkpoint_optimizer_state = args.checkpoint_optimizer
         self.disable_kv_rebalance = args.no_kv_rebalance
+        self.detach_kv_cache = args.detach_kv_cache
 
         self.dropout = args.dropout
         self.detach_span = args.detach_span
@@ -486,6 +490,14 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--no-kv-rebalance",
         action="store_true",
         help="Disable binary-segment merging in KV caches (debug/perf testing)",
+    )
+    training_group.add_argument(
+        "--detach-kv-cache",
+        action="store_true",
+        help=(
+            "Detach KV cache tensors into a preallocated buffer so incremental decoding doesn't"
+            " backprop through previous steps"
+        ),
     )
     training_group.add_argument(
         "--detach-span",
@@ -2639,16 +2651,40 @@ class LayerCache:
     segments: list[tuple[torch.Tensor, torch.Tensor]] = field(default_factory=list)
     length: int = 0
     allow_rebalance: bool = True
+    use_buffer: bool = False
+    key_buffer: torch.Tensor | None = None
+    value_buffer: torch.Tensor | None = None
+    buffer_position: int = 0
+
+    def configure_detached_buffer(
+        self,
+        key_buffer: torch.Tensor,
+        value_buffer: torch.Tensor,
+    ) -> None:
+        if key_buffer.shape != value_buffer.shape:
+            raise ValueError("Key/value buffers must share the same shape")
+        self.segments.clear()
+        self.length = 0
+        self.buffer_position = 0
+        self.use_buffer = True
+        self.allow_rebalance = False
+        self.key_buffer = key_buffer
+        self.value_buffer = value_buffer
 
     def append(self, key_chunk: torch.Tensor, value_chunk: torch.Tensor) -> None:
         if key_chunk.size(2) != value_chunk.size(2):
             raise ValueError("Key/value chunks must share the same length")
+        if self.use_buffer:
+            self._append_to_buffer(key_chunk, value_chunk)
+            return
         self.segments.append((key_chunk, value_chunk))
         self.length += key_chunk.size(2)
         if self.allow_rebalance:
             self._rebalance_segments()
 
     def _rebalance_segments(self) -> None:
+        if self.use_buffer:
+            return
         while len(self.segments) >= 2:
             key_b, value_b = self.segments[-1]
             key_a, value_a = self.segments[-2]
@@ -2660,7 +2696,28 @@ class LayerCache:
             self.segments.pop()
             self.segments.append((merged_key, merged_value))
 
+    def _append_to_buffer(self, key_chunk: torch.Tensor, value_chunk: torch.Tensor) -> None:
+        if self.key_buffer is None or self.value_buffer is None:
+            raise RuntimeError("Detached KV cache buffers not initialized")
+        chunk = key_chunk.size(2)
+        start = self.buffer_position
+        end = start + chunk
+        if end > self.key_buffer.size(2):
+            raise RuntimeError("Detached KV cache exhausted; increase max sequence length")
+        with torch.no_grad():
+            self.key_buffer[:, :, start:end, :].copy_(key_chunk.detach())
+            self.value_buffer[:, :, start:end, :].copy_(value_chunk.detach())
+        self.buffer_position = end
+        self.length = end
+
     def tensors(self) -> tuple[torch.Tensor, torch.Tensor]:
+        if self.use_buffer:
+            if self.key_buffer is None or self.value_buffer is None or self.length <= 0:
+                raise RuntimeError("LayerCache is empty; call append() before tensors().")
+            return (
+                self.key_buffer[:, :, : self.length, :],
+                self.value_buffer[:, :, : self.length, :],
+            )
         if not self.segments:
             raise RuntimeError("LayerCache is empty; call append() before tensors().")
         if len(self.segments) == 1:
@@ -2691,10 +2748,26 @@ class GPTCore(nn.Module):
         device: torch.device,
     ) -> list[LayerCache]:
         allow_rebalance = not getattr(self.config, "disable_kv_rebalance", False)
+        detach_kv_cache = bool(getattr(self.config, "detach_kv_cache", False))
+        if detach_kv_cache and max_seq_len <= 0:
+            raise ValueError("max_seq_len must be positive when --detach-kv-cache is set")
+        head_dim = self.config.n_embd // self.config.n_head
+        cache_dtype = self.tok_emb.weight.dtype
         caches: list[LayerCache] = []
         for _ in range(len(self.blocks)):
             cache = LayerCache()
-            cache.allow_rebalance = allow_rebalance
+            cache.allow_rebalance = allow_rebalance and not detach_kv_cache
+            if detach_kv_cache:
+                key_buffer = torch.empty(
+                    batch_size,
+                    self.config.n_head,
+                    max_seq_len,
+                    head_dim,
+                    device=device,
+                    dtype=cache_dtype,
+                )
+                value_buffer = torch.empty_like(key_buffer)
+                cache.configure_detached_buffer(key_buffer, value_buffer)
             caches.append(cache)
         return caches
 
