@@ -165,6 +165,8 @@ class Settings:
     batch_size: int = 256
     eval_interval: int = 10
     _block_length_arg: int | None = None
+    restart_optimizer_each_cycle: bool = False
+    checkpoint_optimizer_state: bool = False
 
     # Training Details
     dropout: float = 0.05
@@ -228,6 +230,8 @@ class Settings:
         self.batch_size = args.batch_size
         self.eval_interval = args.eval_interval
         self._block_length_arg = args.block_length
+        self.restart_optimizer_each_cycle = args.restart_optimizer
+        self.checkpoint_optimizer_state = args.checkpoint_optimizer
 
         self.dropout = args.dropout
         self.detach_span = args.detach_span
@@ -458,6 +462,16 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         dest="only_normal",
         action="store_true",
         help="Create batches that only contain the normal half",
+    )
+    training_group.add_argument(
+        "--restart-optimizer",
+        action="store_true",
+        help="Reinitialize the optimizer at the beginning of every cycle",
+    )
+    training_group.add_argument(
+        "--checkpoint-optimizer",
+        action="store_true",
+        help="Serialize optimizer state to checkpoints so runs can resume without momentum reset",
     )
     training_group.add_argument(
         "--detach-span",
@@ -3264,6 +3278,7 @@ def train_model(
     batch_size: int,
     eval_interval: int,
     start_step: int,
+    optimizer: torch.optim.Optimizer,
     sample_prompt: torch.Tensor,
     sample_chars: int,
     tokenizer: GPT2TokenizerWrapper,
@@ -3282,7 +3297,8 @@ def train_model(
 ) -> Tuple[int, List[Dict[str, float]], float, float]:
     """Run the main training loop for a cycle."""
 
-    optim = torch.optim.AdamW(model.parameters(), lr=3e-4)
+    if optimizer is None:
+        raise ValueError("train_model requires an initialized optimizer instance")
     total_steps = start_step
     history_updates: List[Dict[str, float]] = []
     printed_header = False
@@ -3345,9 +3361,9 @@ def train_model(
         denom = float(max(total_tokens, 1))
         total_loss = total_loss_sum / denom
 
-        optim.zero_grad(set_to_none=True)
+        optimizer.zero_grad(set_to_none=True)
         total_loss.backward()
-        optim.step()
+        optimizer.step()
         total_steps += 1
 
         eval_due = step == 1 or step % eval_interval == 0 or step == steps
@@ -4212,6 +4228,7 @@ class Runtime:
             loss_history: List[Dict[str, float]] = []
             total_train_wall = 0.0
             payload = getattr(args, "checkpoint_payload_override", None)
+            optimizer_state = None
             if payload is None and model_path.exists():
                 if args.command == "create" and args.create_args.import_model:
                     raise ValueError(
@@ -4234,6 +4251,8 @@ class Runtime:
                         loss_history = list(payload.get("loss_history", []))
                         total_train_wall = float(payload.get("train_wall_seconds", 0.0))
                         prompt_tracker.load_state(payload.get("prompt_state"))
+                        if args.checkpoint_optimizer:
+                            optimizer_state = payload.get("optimizer")
                     else:
                         model.load_state_dict(upgrade_state_dict(payload))
                     print(color_text(f"Loaded existing model from {model_path}", Colors.YELLOW))
@@ -4403,6 +4422,26 @@ class Runtime:
                 )
                 return
 
+            def build_optimizer() -> torch.optim.Optimizer:
+                return torch.optim.AdamW(model.parameters(), lr=3e-4)
+
+            shared_optimizer: torch.optim.Optimizer | None = None
+            if not args.restart_optimizer:
+                shared_optimizer = build_optimizer()
+                if optimizer_state:
+                    try:
+                        shared_optimizer.load_state_dict(optimizer_state)
+                    except Exception as err:  # pragma: no cover - logging
+                        print(
+                            color_text(
+                                f"Warning: could not load optimizer state ({err}); starting fresh",
+                                Colors.RED,
+                            )
+                        )
+                optimizer_state = None
+            else:
+                optimizer_state = None
+
             acc_train = Timer()
             acc_eval = Timer()
             for cycle in range(1, args.cycles + 1):
@@ -4473,6 +4512,13 @@ class Runtime:
                     )
                 )
 
+                if args.restart_optimizer:
+                    optimizer = build_optimizer()
+                else:
+                    if shared_optimizer is None:
+                        shared_optimizer = build_optimizer()
+                    optimizer = shared_optimizer
+
                 (
                     total_steps,
                     updates,
@@ -4488,6 +4534,7 @@ class Runtime:
                     args.batch_size,
                     args.eval_interval,
                     total_steps,
+                    optimizer,
                     prompt_tokens,
                     args.generate,
                     tokenizer,
@@ -4519,6 +4566,11 @@ class Runtime:
                             "train_wall_seconds": total_train_wall,
                             "prompt_state": prompt_tracker.serialize() if prompt_tracker else None,
                             "tokenizer_json": tokenizer_json,
+                            **(
+                                {"optimizer": optimizer.state_dict()}
+                                if args.checkpoint_optimizer and not args.restart_optimizer
+                                else {}
+                            ),
                         },
                         model_path,
                     )
@@ -4543,6 +4595,10 @@ class Runtime:
                     log_file.flush()
                 if ansi_file is not None:
                     ansi_file.flush()
+
+                if args.restart_optimizer:
+                    # Drop the cycle-local optimizer before the next pass
+                    optimizer = None
 
         except KeyboardInterrupt:
             if args.debug_interrupt:
