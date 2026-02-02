@@ -2219,6 +2219,7 @@ class CausalSelfAttention(nn.Module):
         *,
         puncture_mask: torch.Tensor | None = None,
         disable_rows: torch.Tensor | None = None,
+        write_cache: bool = True,
     ) -> tuple[torch.Tensor, "LayerCache"]:
         if x.size(1) != 1:
             raise ValueError("Incremental attention expects a single-token sequence")
@@ -2230,8 +2231,11 @@ class CausalSelfAttention(nn.Module):
         k_new = k_full.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
         key_append = k_new.squeeze(2).unsqueeze(2)
         value_append = v.squeeze(2).unsqueeze(2)
-        cache.append(key_append, value_append)
-        k, v = cache.tensors()
+        if write_cache:
+            cache.append(key_append, value_append)
+            k, v = cache.tensors()
+        else:
+            k, v = key_append, value_append
         att = (q @ k.transpose(-2, -1)) / math.sqrt(k.size(-1))
         if puncture_mask is not None:
             att = att.masked_fill(puncture_mask[:, None, None, :], float("-inf"))
@@ -2307,12 +2311,14 @@ class Block(nn.Module):
         record_mask: bool = False,
         attention_disabled_rows: torch.Tensor | None = None,
         puncture_mask: torch.Tensor | None = None,
+        write_cache: bool = True,
     ) -> tuple[torch.Tensor, LayerCache, torch.Tensor | None]:
         attn_out, cache = self.attn.forward_incremental(
             self.ln1(x),
             cache,
             puncture_mask=puncture_mask,
             disable_rows=attention_disabled_rows,
+            write_cache=write_cache,
         )
         if attention_disabled_rows is not None and attention_disabled_rows.any():
             mask = (~attention_disabled_rows).view(-1, 1, 1).to(attn_out.dtype)
@@ -2919,6 +2925,7 @@ class GPTCore(nn.Module):
                 record_mask=record_relu_mask,
                 attention_disabled_rows=attention_disabled_rows,
                 puncture_mask=puncture_mask,
+                write_cache=True,
             )
             if self.detach_layer > 0 and (layer_idx + 1) == self.detach_layer:
                 x = x.detach()
