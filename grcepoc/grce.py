@@ -22,9 +22,8 @@ Recurrent Context Encoding (GRCE) and XCTX channels. It exposes the full CLI,
 training loop, evaluation utilities, and reporting helpers used by the
 ``grce.py`` entry point. Key entities:
 
-* :class:`ModelConfig` – dataclass that defines the model geometry and feeds
-into tokenizer/model builders, :func:`describe_model_size`, and
-:func:`grce_main`.
+* :class:`Settings` – runtime configuration passed into tokenizer/model builders,
+  :func:`describe_model_size`, and :func:`grce_main`.
 * :func:`grce_cli_args` – constructs the CLI parser; invoked at startup and by
 external tooling to mirror the binary interface. Its result is consumed by
 :func:`grce_main`.
@@ -33,7 +32,7 @@ handles batching, diagnostics, and logging.
 * :func:`evaluate_single_batch` – computes evaluation metrics from a single
 forward pass that mirrors the training row-type composition.
 * :func:`describe_model_size` – backs the ``size`` subcommand by combining
-  :class:`ModelConfig` metadata with :func:`compute_row_type_counts`.
+  :class:`ModelGeometry` metadata with :func:`compute_row_type_counts`.
 
 Call tree (simplified)::
 
@@ -100,14 +99,9 @@ SPECIAL_TOKENS = """
 from dataclasses import dataclass
 
 @dataclass
-class ModelConfig:
-    """Holds the GPT+GRCE+XCTX model geometry.
+class ModelGeometry:
+    """Holds the GPT+GRCE+XCTX model geometry."""
 
-    Instances are created in :func:`grce_cli_args` and threaded through the
-    tokenizer builder, :func:`describe_model_size`, and :func:`grce_main`.
-    """
-
-    # model geometry
     vocab_size: int = 5000  # GPT-2 base supports ~50k merges; we stay small for the PoC.
     block_size: int = 256   # GPT-2 base uses 1024 tokens.
     n_layer: int = 8        # GPT-2 base uses 12 layers.
@@ -117,16 +111,8 @@ class ModelConfig:
     n_xctx: int = 720       # Wide XCTX context dims.
     n_bias: int = 4         # Layers that accept GRCE/XCTX bias injections (0 = all).
 
-    # non-geometry model configuration
-    dropout: float = 0.05
-    detach_span: int = 0    # Detach gradients every N positions (0 disables detaching).
-    detach_context: bool = True  # Whether to detach recurring context when span triggers.
-    detach_layer: int = -1       # Layer index (1-based) after which to detach Transformer grads.
-    grce_optimized: bool = False  # Use the vectorized GRCE channel implementation.
-    disable_kv_rebalance: bool = False
-    detach_kv_cache: bool = False  # Store detached KV buffers instead of concatenating segments.
 
-MODEL_CONFIG_DEFAULTS = ModelConfig()
+MODEL_GEOMETRY_DEFAULTS = ModelGeometry()
 
 
 @dataclass
@@ -150,15 +136,15 @@ class Settings:
     cli_args: argparse.Namespace | None = None
 
     # Model Geometry
-    vocab_size: int = MODEL_CONFIG_DEFAULTS.vocab_size
-    block_size: int = MODEL_CONFIG_DEFAULTS.block_size
-    n_layer: int = MODEL_CONFIG_DEFAULTS.n_layer
-    n_head: int = MODEL_CONFIG_DEFAULTS.n_head
-    n_embd: int = MODEL_CONFIG_DEFAULTS.n_embd
-    n_grce: int = MODEL_CONFIG_DEFAULTS.n_grce
-    n_xctx: int = MODEL_CONFIG_DEFAULTS.n_xctx
-    n_bias: int = MODEL_CONFIG_DEFAULTS.n_bias
-    grce_optimized: bool = MODEL_CONFIG_DEFAULTS.grce_optimized
+    vocab_size: int = MODEL_GEOMETRY_DEFAULTS.vocab_size
+    block_size: int = MODEL_GEOMETRY_DEFAULTS.block_size
+    n_layer: int = MODEL_GEOMETRY_DEFAULTS.n_layer
+    n_head: int = MODEL_GEOMETRY_DEFAULTS.n_head
+    n_embd: int = MODEL_GEOMETRY_DEFAULTS.n_embd
+    n_grce: int = MODEL_GEOMETRY_DEFAULTS.n_grce
+    n_xctx: int = MODEL_GEOMETRY_DEFAULTS.n_xctx
+    n_bias: int = MODEL_GEOMETRY_DEFAULTS.n_bias
+    grce_optimized: bool = False
 
     # Additional non-geometry "pseudo" model args
     corpus: str = "cccc"
@@ -176,10 +162,10 @@ class Settings:
     detach_kv_cache: bool = False
 
     # Training Details
-    dropout: float = MODEL_CONFIG_DEFAULTS.dropout
-    detach_span: int = MODEL_CONFIG_DEFAULTS.detach_span
-    detach_context: bool = MODEL_CONFIG_DEFAULTS.detach_context
-    detach_layer: int = MODEL_CONFIG_DEFAULTS.detach_layer
+    dropout: float = 0.05
+    detach_span: int = 0
+    detach_context: bool = True
+    detach_layer: int = -1
 
     # Logging and diagnostics
     escape_newline_tokens: bool = True
@@ -203,9 +189,8 @@ class Settings:
             return "forward"
         return None
 
-    @property
-    def model_config(self):
-        return ModelConfig(
+    def model_geometry(self) -> ModelGeometry:
+        return ModelGeometry(
             vocab_size=self.vocab_size,
             block_size=self.block_size,
             n_layer=self.n_layer,
@@ -214,13 +199,6 @@ class Settings:
             n_grce=self.n_grce,
             n_xctx=self.n_xctx,
             n_bias=self.n_bias,
-            dropout=self.dropout,
-            detach_span=self.detach_span,
-            detach_context=self.detach_context,
-            detach_layer=self.detach_layer,
-            grce_optimized=self.grce_optimized,
-            disable_kv_rebalance=self.disable_kv_rebalance,
-            detach_kv_cache=self.detach_kv_cache,
         )
 
     def __post_init__(self):
@@ -263,6 +241,8 @@ class Settings:
         self.only_decode_batches = args.only_decode
 
 SETTINGS_DEFAULTS = Settings()
+
+GeometryLike = ModelGeometry | Settings
 
 
 # -----------------------------------------------------------------------------
@@ -1130,11 +1110,11 @@ class Timer:
 # GRCE Model Size Information
 # -----------------------------------------------------------------------------
 
-def _get_inner_xctx_width(config: ModelConfig) -> int:
+def _get_inner_xctx_width(config: GeometryLike) -> int:
     return min(config.n_embd // 2, config.n_xctx // 2, max(config.n_embd // 4, config.n_xctx // config.n_layer))
 
 
-def _get_bias_layer_count(config: ModelConfig) -> int:
+def _get_bias_layer_count(config: GeometryLike) -> int:
     """Return how many Transformer layers accept GRCE/XCTX bias injections."""
 
     limit = int(getattr(config, "n_bias", 0))
@@ -1142,7 +1122,7 @@ def _get_bias_layer_count(config: ModelConfig) -> int:
         return max(0, config.n_layer)
     return max(0, min(config.n_layer, limit))
 
-def _build_geometry(config: ModelConfig, block_size: int) -> list[tuple[str, str, int]]:
+def _build_geometry(config: GeometryLike, block_size: int) -> list[tuple[str, str, int]]:
     return [
         ("V", "vocab size", config.vocab_size),
         ("B", "block size", block_size),
@@ -1155,7 +1135,7 @@ def _build_geometry(config: ModelConfig, block_size: int) -> list[tuple[str, str
         ("C", "bias limit (0=all)", config.n_bias),
     ]
 
-def _expected_sections(config: ModelConfig, block_size: int) -> list[tuple[str, str, list[dict]]]:
+def _expected_sections(config: GeometryLike, block_size: int) -> list[tuple[str, str, list[dict]]]:
     V = config.vocab_size
     B = block_size
     L = max(1, config.n_layer)
@@ -1305,7 +1285,7 @@ def _flatten_expected(sections: list[tuple[str, str, list[dict]]]) -> dict[tuple
     return mapping
 
 
-def _compute_actual_counts(config: ModelConfig) -> dict[tuple[str, str], int]:
+def _compute_actual_counts(config: GeometryLike) -> dict[tuple[str, str], int]:
     model = GRCEGPT(config)
     counts: dict[tuple[str, str], int] = {}
 
@@ -1339,7 +1319,7 @@ def _compute_actual_counts(config: ModelConfig) -> dict[tuple[str, str], int]:
     return counts
 
 
-def _dominant_estimates(config: ModelConfig) -> list[tuple[str, int, str]]:
+def _dominant_estimates(config: GeometryLike) -> list[tuple[str, int, str]]:
     L = config.n_layer
     E = config.n_embd
     G = config.n_grce
@@ -1370,14 +1350,14 @@ def _dominant_estimates(config: ModelConfig) -> list[tuple[str, int, str]]:
 
 
 def grce_cmd_size(
-    settings: ModelConfig,
+    settings: GeometryLike,
     *,
     check: bool = False,
     estimate: bool = False,
 ) -> None:
     """Emit the ``size`` subcommand report.
 
-    print the standard parameter breakdown based on :class:`ModelConfig`.
+    Print the standard parameter breakdown based on :class:`ModelGeometry`.
     Called exclusively from :func:`grce_main`.
     """
     print()
@@ -2162,8 +2142,9 @@ def _module_list_param_count(modules: nn.ModuleList) -> int:
 
 
 class CausalSelfAttention(nn.Module):
-    def __init__(self, config: ModelConfig) -> None:
+    def __init__(self, settings: Settings) -> None:
         super().__init__()
+        config = settings
         assert config.n_embd % config.n_head == 0
         self.n_head = config.n_head
         self.key = nn.Linear(config.n_embd, config.n_embd)
@@ -2250,8 +2231,9 @@ class CausalSelfAttention(nn.Module):
 
 
 class FeedForward(nn.Module):
-    def __init__(self, config: ModelConfig) -> None:
+    def __init__(self, settings: Settings) -> None:
         super().__init__()
+        config = settings
         hidden = 4 * config.n_embd
         self.fc1 = nn.Linear(config.n_embd, hidden)
         self.act = nn.GELU()
@@ -2272,8 +2254,9 @@ class FeedForward(nn.Module):
 
 
 class Block(nn.Module):
-    def __init__(self, config: ModelConfig) -> None:
+    def __init__(self, settings: Settings) -> None:
         super().__init__()
+        config = settings
         self.ln1 = nn.LayerNorm(config.n_embd)
         self.attn = CausalSelfAttention(config)
         self.ln2 = nn.LayerNorm(config.n_embd)
@@ -2370,8 +2353,9 @@ class RMSNorm(nn.Module):
 class TransformerStackCore(nn.Module):
     """Shared Transformer backbone used by both grid and sequence modes."""
 
-    def __init__(self, config: ModelConfig) -> None:
+    def __init__(self, settings: Settings) -> None:
         super().__init__()
+        config = settings
         self.config = config
         self.tok_emb = nn.Embedding(config.vocab_size, config.n_embd)
         self.pos_emb = nn.Embedding(config.block_size, config.n_embd)
@@ -2435,8 +2419,9 @@ class TransformerStackGrid(nn.Module):
 
 
 class TransformerGRCE(nn.Module):
-    def __init__(self, config: ModelConfig) -> None:
+    def __init__(self, settings: Settings) -> None:
         super().__init__()
+        config = settings
         self.disabled = config.n_grce <= 0
         self.context_dim = config.n_grce
         self.n_layers = config.n_layer
@@ -2514,8 +2499,9 @@ class TransformerGRCE(nn.Module):
 
 
 class TransformerXCTX(nn.Module):
-    def __init__(self, config: ModelConfig) -> None:
+    def __init__(self, settings: Settings) -> None:
         super().__init__()
+        config = settings
         self.disabled = config.n_xctx <= 0
         self.n_layers = config.n_layer
         self.n_embd = config.n_embd
@@ -2614,9 +2600,10 @@ class TransformerXCTX(nn.Module):
 
 
 class TransformerStackSequence(nn.Module):
-    def __init__(self, config: ModelConfig, core: TransformerStackCore) -> None:
+    def __init__(self, settings: Settings, core: TransformerStackCore) -> None:
         super().__init__()
         self.core = core
+        config = settings
         self.n_layers = config.n_layer
         self.n_embd = config.n_embd
         self.grce = TransformerGRCE(config) if config.n_grce > 0 else None
@@ -2769,8 +2756,9 @@ class LayerCache:
 
 
 class GPTCore(nn.Module):
-    def __init__(self, config: ModelConfig) -> None:
+    def __init__(self, settings: Settings) -> None:
         super().__init__()
+        config = settings
         self.config = config
         self.tok_emb = nn.Embedding(config.vocab_size, config.n_embd)
         self.pos_emb = nn.Embedding(config.block_size, config.n_embd)
@@ -2937,8 +2925,9 @@ class GPTCore(nn.Module):
 
 
 class BaseContextChannel(nn.Module):
-    def __init__(self, config: ModelConfig, width: int) -> None:
+    def __init__(self, settings: Settings, width: int) -> None:
         super().__init__()
+        config = settings
         self.config = config
         self.context_dim = int(width)
         self.disabled = self.context_dim <= 0
@@ -2961,8 +2950,9 @@ class BaseContextChannel(nn.Module):
 
 
 class GRCEContextChannel(BaseContextChannel):
-    def __init__(self, config: ModelConfig) -> None:
-        super().__init__(config, config.n_grce)
+    def __init__(self, settings: Settings) -> None:
+        super().__init__(settings, settings.n_grce)
+        config = settings
         self.is_xctx = False
         self.bias_layers = _get_bias_layer_count(config)
         if self.disabled:
@@ -3039,8 +3029,9 @@ class GRCEContextChannel(BaseContextChannel):
 class GRCEContextChannelOptimized(BaseContextChannel):
     """Vectorized GRCE channel that batches the per-layer samplers/decoders."""
 
-    def __init__(self, config: ModelConfig) -> None:
-        super().__init__(config, config.n_grce)
+    def __init__(self, settings: Settings) -> None:
+        super().__init__(settings, settings.n_grce)
+        config = settings
         self.is_xctx = False
         if self.disabled:
             return
@@ -3145,8 +3136,9 @@ class GRCEContextChannelOptimized(BaseContextChannel):
 
 
 class XCTXContextChannel(BaseContextChannel):
-    def __init__(self, config: ModelConfig) -> None:
-        super().__init__(config, config.n_xctx)
+    def __init__(self, settings: Settings) -> None:
+        super().__init__(settings, settings.n_xctx)
+        config = settings
         self.is_xctx = True
         self.bias_layers = _get_bias_layer_count(config)
         if self.disabled:
@@ -3257,12 +3249,12 @@ class XCTXContextChannel(BaseContextChannel):
 
 
 class GRCEGPT(nn.Module):
-    def __init__(self, config: ModelConfig) -> None:
+    def __init__(self, settings: Settings) -> None:
         super().__init__()
-        self.config = config
-        self.core = TransformerStackCore(config)
+        self.config = settings
+        self.core = TransformerStackCore(settings)
         self.stack_grid = TransformerStackGrid(self.core)
-        self.stack_sequence = TransformerStackSequence(config, self.core)
+        self.stack_sequence = TransformerStackSequence(settings, self.core)
         self.context_channels = self.stack_sequence.context_modules
 
     def _position_ids(
@@ -3317,7 +3309,7 @@ class GRCEGPT(nn.Module):
         return logits, None, context_info
 
 
-def build_model_tag(config: ModelConfig) -> str:
+def build_model_tag(config: GeometryLike) -> str:
     tag = (
         f"v{config.vocab_size}_bs{config.block_size}_emb{config.n_embd}_"
         f"layers{config.n_layer}_heads{config.n_head}"
@@ -3875,7 +3867,6 @@ def preprocess_runtime_settings(args: argparse.Namespace) -> None:
     args.model_path_override = None
     args.log_path_override = None
     args.checkpoint_payload_override = None
-    args.checkpoint_config_override = None
     args.tokenizer_json_override = None
 
     if args.pt:
@@ -3896,9 +3887,8 @@ def preprocess_runtime_settings(args: argparse.Namespace) -> None:
                 saved["n_grce"] = 0
             else:
                 saved["n_xctx"] = 0
-        config = ModelConfig(**saved)
+        config = ModelGeometry(**saved)
         args.checkpoint_payload_override = payload
-        args.checkpoint_config_override = config
         args.tokenizer_json_override = payload.get("tokenizer_json")
         args.block_size = config.block_size
         if not getattr(args, "_block_length_defined", False):
@@ -3911,16 +3901,12 @@ def preprocess_runtime_settings(args: argparse.Namespace) -> None:
         args.n_grce = config.n_grce
         args.n_xctx = config.n_xctx
         args.n_bias = config.n_bias
-        args.dropout = config.dropout
-        args.detach_span = config.detach_span
-        args.no_detach_ctx = not config.detach_context
-        args.detach_layer = config.detach_layer
         args.vocab_size = config.vocab_size
         args.model_path_override = checkpoint_path
         args.log_path_override = checkpoint_path.with_suffix(".log")
         return
 
-    inferred = ModelConfig(
+    inferred = ModelGeometry(
         vocab_size=args.vocab_size,
         block_size=args.block_size,
         n_layer=args.n_layer,
@@ -3929,7 +3915,6 @@ def preprocess_runtime_settings(args: argparse.Namespace) -> None:
         n_grce=args.n_grce,
         n_xctx=args.n_xctx,
         n_bias=args.n_bias,
-        grce_optimized=getattr(args, "grce_optimized", MODEL_CONFIG_DEFAULTS.grce_optimized),
     )
     tag = build_model_tag(inferred)
     for extra_tag in args.tag:
@@ -4344,6 +4329,7 @@ class Runtime:
                 default_prompt_boundary,
                 tokenizer_json,
             ) = self._prepare_corpus()
+            self.settings.vocab_size = tokenizer.vocab_size
             model_dir = pathlib.Path(args.model)
 
             if args.command == "corpus":
@@ -4351,21 +4337,7 @@ class Runtime:
 
             if args.n_xctx > 0 and args.n_xctx % max(1, args.n_layer) != 0:
                 raise ValueError("--n-xctx must be divisible by --n-layer")
-            override_config = getattr(args, "checkpoint_config_override", None)
-            config = override_config or ModelConfig(
-                vocab_size=tokenizer.vocab_size,
-                block_size=args.block_size,
-                n_layer=args.n_layer,
-                n_head=args.n_head,
-                n_embd=args.n_embd,
-                n_grce=args.n_grce,
-                n_xctx=args.n_xctx,
-                n_bias=args.n_bias,
-                dropout=args.dropout,
-                detach_span=max(0, args.detach_span),
-                detach_context=(not args.no_detach_ctx),
-                detach_layer=max(-1, args.detach_layer),
-            )
+            config = self.settings
             model_tag = build_model_tag(config)
             for extra_tag in args.tag:
                 cleaned = re.sub(r"[^0-9A-Za-z]+", "", extra_tag)
@@ -4624,7 +4596,7 @@ class Runtime:
                         "dataset": dataset.state_dict(),
                         "total_steps": total_steps,
                         "loss_history": loss_history,
-                        "config": asdict(config),
+                        "config": asdict(self.settings.model_geometry()),
                         "train_wall_seconds": total_train_wall,
                         "prompt_state": prompt_tracker.serialize() if prompt_tracker else None,
                         "tokenizer_json": tokenizer_json,
@@ -4644,7 +4616,7 @@ class Runtime:
                     "dataset": dataset.state_dict(),
                     "total_steps": 0,
                     "loss_history": [],
-                    "config": asdict(config),
+                    "config": asdict(self.settings.model_geometry()),
                     "train_wall_seconds": 0.0,
                     "prompt_state": prompt_tracker.serialize(),
                     "tokenizer_json": tokenizer_json,
@@ -4848,7 +4820,7 @@ class Runtime:
                             "dataset": dataset.state_dict(),
                             "total_steps": total_steps,
                             "loss_history": loss_history,
-                            "config": asdict(config),
+                            "config": asdict(self.settings.model_geometry()),
                             "train_wall_seconds": total_train_wall,
                             "prompt_state": prompt_tracker.serialize() if prompt_tracker else None,
                             "tokenizer_json": tokenizer_json,
