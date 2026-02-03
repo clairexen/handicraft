@@ -204,6 +204,8 @@ from typing import Dict, List, Tuple, Sequence
 
 
 def parse_range_arg(value: str) -> tuple[int, int]:
+    """Parse ``START-END`` strings for :meth:`Runtime.cli_corpus` emitters."""
+
     parts = value.replace(" ", "").split("-", 1)
     if len(parts) != 2:
         raise ValueError(f"Invalid range '{value}'. Expected format START-END.")
@@ -825,6 +827,12 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
 
 
 def args_to_model_geometry(args: Args):
+    """Project the parsed CLI namespace into :class:`ModelGeometry` metadata.
+
+    ``Runtime`` uses this helper when saving checkpoints or describing models
+    so downstream tools and :func:`grce_main` can reload consistent geometry.
+    """
+
     return ModelGeometry(
         vocab_size=args.vocab_size,
         block_size=args.block_size,
@@ -845,6 +853,8 @@ if __name__ == "__main__":
 # -----------------------------------------------------------------------------
 
 def load_text_file(path: pathlib.Path) -> str:
+    """Load raw corpus text for tokenizer prep and CLI corpus utilities."""
+
     if not path.exists():
         raise FileNotFoundError(f"Could not find {path}. Provide a text file path.")
     if path.suffix == ".gz":
@@ -859,6 +869,8 @@ ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 
 class Colors:
+    """ANSI escape helpers consumed by :func:`color_text` and CLI logging."""
+
     RESET = "\033[0m"
     BOLD = "\033[1m"
     NOT_BOLD = "\033[22m"
@@ -875,6 +887,8 @@ class Colors:
 
 
 def color_text(text: str, color: str, *, bold: bool = False, underline: bool = False) -> str:
+    """Render text with ANSI styles for reporters such as :class:`Runtime`."""
+
     prefix = ""
     if bold:
         prefix += Colors.BOLD
@@ -885,6 +899,8 @@ def color_text(text: str, color: str, *, bold: bool = False, underline: bool = F
 
 
 def prompt_needs_boundary(text: str) -> bool:
+    """Return True when :class:`PromptTracker` should append boundary tokens."""
+
     trimmed = text.rstrip()
     if not trimmed:
         return False
@@ -914,6 +930,8 @@ def upgrade_state_dict(state: dict[str, torch.Tensor]) -> dict[str, torch.Tensor
 
 
 class Tee:
+    """Mirror stdout/stderr for :class:`Runtime` logging capture."""
+
     def __init__(self, *streams: tuple):
         self.streams = streams
 
@@ -933,6 +951,8 @@ import threading
 import pynvml
 
 class GpuUtilSampler:
+    """Background NVML sampler used by :func:`generate`/profiling utilities."""
+
     def __init__(self, device_index=0, interval_s=0.02):
         """
         interval_s: sampling period (20–50 ms is a good sweet spot)
@@ -978,6 +998,8 @@ class GpuUtilSampler:
             self.max_mem_util = max(self.max_mem_util, util.memory)
 
 class Timer:
+    """Wall/CPU/GPU timer aggregated by :class:`Runtime` for progress logs."""
+
     def __init__(self):
         self.gpu_sampler = GpuUtilSampler(interval_s=0.2)
         self.wall_secs = 0.0
@@ -1042,10 +1064,18 @@ class Timer:
 # -----------------------------------------------------------------------------
 
 def _get_inner_xctx_width(config: GeometryLike) -> int:
-    return min(config.n_embd // 2, config.n_xctx // 2, max(config.n_embd // 4, config.n_xctx // config.n_layer))
+    """Return the XCTX inner width used by :class:`TransformerXCTX` samplers."""
+
+    return min(
+        config.n_embd // 2,
+        config.n_xctx // 2,
+        max(config.n_embd // 4, config.n_xctx // config.n_layer),
+    )
 
 
 def _build_geometry(config: GeometryLike, block_size: int) -> list[tuple[str, str, int]]:
+    """Assemble the (label, description, value) tuples for ``size`` reports."""
+
     return [
         ("V", "vocab size", config.vocab_size),
         ("B", "block size", block_size),
@@ -1058,6 +1088,8 @@ def _build_geometry(config: GeometryLike, block_size: int) -> list[tuple[str, st
     ]
 
 def _expected_sections(config: GeometryLike, block_size: int) -> list[tuple[str, str, list[dict]]]:
+    """Return analytic section breakdown consumed by :func:`grce_cmd_size`."""
+
     V = config.vocab_size
     B = block_size
     L = config.n_layer
@@ -1156,7 +1188,11 @@ def _expected_sections(config: GeometryLike, block_size: int) -> list[tuple[str,
     return sections
 
 
-def _append_summary_section(sections: list[tuple[str, str, list[dict]]]) -> list[tuple[str, str, list[dict]]]:
+def _append_summary_section(
+    sections: list[tuple[str, str, list[dict]]],
+) -> list[tuple[str, str, list[dict]]]:
+    """Add the total row used in :func:`grce_cmd_size` output."""
+
     totals: dict[str, int] = {}
     for key, _title, items in sections:
         totals[key] = sum(item["count"] for item in items)
@@ -1177,12 +1213,16 @@ def _append_summary_section(sections: list[tuple[str, str, list[dict]]]) -> list
 
 
 def _print_geometry(geometry: list[tuple[str, str, int]]) -> None:
+    """Render the geometry table for :func:`grce_cmd_size`."""
+
     print(color_text("Model Geometry", Colors.CYAN, bold=True))
     for var, desc, value in geometry:
         print(f"  {var} ({desc:<17s}): {value}")
 
 
 def _print_section(title: str, items: list[dict]) -> int:
+    """Print a single section inside :func:`grce_cmd_size`."""
+
     print(color_text(title, Colors.CYAN, bold=True))
     if not items:
         print("  disabled")
@@ -1201,7 +1241,11 @@ def _print_section(title: str, items: list[dict]) -> int:
     return total
 
 
-def _flatten_expected(sections: list[tuple[str, str, list[dict]]]) -> dict[tuple[str, str], int]:
+def _flatten_expected(
+    sections: list[tuple[str, str, list[dict]]],
+) -> dict[tuple[str, str], int]:
+    """Map ``(section, label)`` keys to analytic counts for size checking."""
+
     mapping: dict[tuple[str, str], int] = {}
     for key, _title, items in sections:
         if key == "summary":
@@ -1212,6 +1256,8 @@ def _flatten_expected(sections: list[tuple[str, str, list[dict]]]) -> dict[tuple
 
 
 def _compute_actual_counts(config: GeometryLike) -> dict[tuple[str, str], int]:
+    """Instantiate :class:`GRCEGPT` to validate :func:`grce_cmd_size` numbers."""
+
     model = GRCEGPT(config)
     counts: dict[tuple[str, str], int] = {}
 
@@ -1246,6 +1292,8 @@ def _compute_actual_counts(config: GeometryLike) -> dict[tuple[str, str], int]:
 
 
 def _dominant_estimates(config: GeometryLike) -> list[tuple[str, int, str]]:
+    """Return asymptotic parameter counts shown by ``size --estimate``."""
+
     L = config.n_layer
     E = config.n_embd
     G = config.n_grce
@@ -1333,6 +1381,8 @@ def grce_cmd_size(
     return 0
 
 def grce_cli_size(args: Args):
+    """Thin wrapper invoked by ``grce.py size`` before torch imports."""
+
     assert args.command == "size"
     return grce_cmd_size(args,
         check=args.size_check,
@@ -1458,14 +1508,20 @@ class GPT2TokenizerFast:
         self._tokenizer.save(file)
 
 def default_prompt_entries() -> list[tuple[str, str]]:
+    """Return the built-in prompt catalog used by :class:`PromptTracker`."""
+
     return [(prompt, expected) for prompt, expected in PROMPT_GOALS]
 
 
 def serialized_prompts(entries: list[tuple[str, str]]) -> list[dict[str, str]]:
+    """Convert prompt tuples into checkpoint-friendly dictionaries."""
+
     return [{"prompt": prompt, "expected": expected} for prompt, expected in entries]
 
 
 def empty_prompt_state(entries: list[tuple[str, str]] | None = None) -> dict:
+    """Create a fresh tracker state for :class:`Runtime` prompt persistence."""
+
     prompts = entries if entries is not None else default_prompt_entries()
     serialized = serialized_prompts(prompts)
     return {
@@ -1478,6 +1534,8 @@ def empty_prompt_state(entries: list[tuple[str, str]] | None = None) -> dict:
 def build_prompt_state(
     entries: list[tuple[str, str]], statuses: list[int] | None = None
 ) -> dict:
+    """Combine prompts and status overrides for :class:`PromptTracker`."""
+
     serialized = serialized_prompts(entries)
     total = len(serialized)
     cleaned: list[int] = []
@@ -1505,6 +1563,8 @@ def build_prompt_state(
 
 
 def _restrict_bpe_training_text(text: str) -> str:
+    """Normalize raw text prior to tokenizer training in :class:`Runtime`."""
+
     pieces: list[str] = []
     i = 0
     length = len(text)
@@ -1532,7 +1592,12 @@ def _restrict_bpe_training_text(text: str) -> str:
     return "".join(pieces)
 
 
-def _limit_training_text_bytes(text: str, limit_bytes: int = TOKENIZER_TRAIN_LIMIT_BYTES) -> str:
+def _limit_training_text_bytes(
+    text: str,
+    limit_bytes: int = TOKENIZER_TRAIN_LIMIT_BYTES,
+) -> str:
+    """Clamp tokenizer training data size for :class:`GPT2TokenizerWrapper`."""
+
     if limit_bytes <= 0 or not text:
         return text
     try:
@@ -1551,6 +1616,8 @@ def _limit_training_text_bytes(text: str, limit_bytes: int = TOKENIZER_TRAIN_LIM
 
 
 class GPT2TokenizerWrapper:
+    """Tokenizer shim used wherever :class:`Runtime` needs GPT-2 style BPE."""
+
     EXTRA_SPECIAL_TOKENS = list(SPECIAL_TOKENS)
 
     def __init__(
@@ -1708,6 +1775,8 @@ class GPT2TokenizerWrapper:
 
 
 class PromptTracker:
+    """Maintains evaluation prompts reused by :class:`Runtime` diagnostics."""
+
     def __init__(self, tokenizer: GPT2TokenizerWrapper, state: dict | None = None) -> None:
         self.tokenizer = tokenizer
         self.prompts: list[tuple[str, str]] = []
@@ -1861,6 +1930,8 @@ class PromptTracker:
 
 @dataclass
 class TextDataset:
+    """Holds rolling corpus state for :class:`Runtime` training/eval loops."""
+
     train_tokens: torch.Tensor
     test_tokens: torch.Tensor
     train_text: str | None
@@ -2025,6 +2096,8 @@ def load_or_prepare_tokens(
     tokenizer: GPT2TokenizerWrapper,
     seed: int,
 ) -> Tuple[torch.Tensor, str | None, int, int]:
+    """Load cached token tensors or create them for :class:`Runtime` setups."""
+
     if cache_path.exists():
         payload = torch.load(cache_path)
         tokens = payload["tokens"].long()
@@ -2050,23 +2123,21 @@ def load_or_prepare_tokens(
 # -----------------------------------------------------------------------------
 
 
-def _linear_params(in_dim: int, out_dim: int) -> int:
-    return in_dim * out_dim + out_dim
-
-
-def _layernorm_params(dim: int) -> int:
-    return 2 * dim
-
-
 def _module_param_count(module: nn.Module) -> int:
+    """Return ``sum(p.numel())`` for :func:`grce_cmd_size` sanity checks."""
+
     return sum(p.numel() for p in module.parameters() if p.requires_grad)
 
 
 def _module_list_param_count(modules: nn.ModuleList) -> int:
+    """Aggregate :func:`_module_param_count` across ``ModuleList`` members."""
+
     return sum(_module_param_count(m) for m in modules)
 
 
 class CausalSelfAttention(nn.Module):
+    """GPT-style attention block used inside :class:`Block`."""
+
     def __init__(self, args: Args) -> None:
         super().__init__()
         config = args
@@ -2156,6 +2227,8 @@ class CausalSelfAttention(nn.Module):
 
 
 class FeedForward(nn.Module):
+    """Position-wise MLP reused by every :class:`Block`."""
+
     def __init__(self, args: Args) -> None:
         super().__init__()
         config = args
@@ -2179,6 +2252,8 @@ class FeedForward(nn.Module):
 
 
 class Block(nn.Module):
+    """Transformer block consumed by :class:`TransformerStackCore` and :class:`GPTCore`."""
+
     def __init__(self, args: Args) -> None:
         super().__init__()
         config = args
@@ -2276,6 +2351,8 @@ def _merge_bias_list(
 
 
 class RMSNorm(nn.Module):
+    """RMS normalization used by the recurrent :class:`TransformerXCTX` path."""
+
     def __init__(self, dim: int, eps: float = 1e-6) -> None:
         super().__init__()
         self.eps = eps
@@ -2334,6 +2411,8 @@ class TransformerStackCore(nn.Module):
 
 
 class TransformerStackGrid(nn.Module):
+    """Evaluate :class:`TransformerStackCore` over short masked grids for GRCE."""
+
     def __init__(self, core: TransformerStackCore) -> None:
         super().__init__()
         self.core = core
@@ -2356,6 +2435,8 @@ class TransformerStackGrid(nn.Module):
 
 
 class TransformerGRCE(nn.Module):
+    """Implements the GRCE channel invoked by :class:`TransformerStackSequence`."""
+
     def __init__(self, args: Args) -> None:
         super().__init__()
         config = args
@@ -2435,6 +2516,8 @@ class TransformerGRCE(nn.Module):
 
 
 class TransformerXCTX(nn.Module):
+    """Implements the XCTX channel consumed by :class:`TransformerStackSequence`."""
+
     def __init__(self, args: Args) -> None:
         super().__init__()
         config = args
@@ -2535,6 +2618,8 @@ class TransformerXCTX(nn.Module):
 
 
 class TransformerStackSequence(nn.Module):
+    """Compose the core stack with GRCE/XCTX channels for sequential grids."""
+
     def __init__(self, args: Args, core: TransformerStackCore) -> None:
         super().__init__()
         self.core = core
@@ -2611,6 +2696,8 @@ class TransformerStackSequence(nn.Module):
 
 @dataclass
 class LayerCache:
+    """Per-layer KV cache container used by :class:`GPTCore`."""
+
     segments: list[tuple[torch.Tensor, torch.Tensor]] = field(default_factory=list)
     length: int = 0
     allow_rebalance: bool = True
@@ -2691,6 +2778,8 @@ class LayerCache:
 
 
 class GRCEGPT(nn.Module):
+    """Top-level model instantiated by training/eval helpers and :func:`grce_main`."""
+
     def __init__(self, args: Args) -> None:
         super().__init__()
         self.config = args
@@ -2752,6 +2841,8 @@ class GRCEGPT(nn.Module):
 
 
 def build_model_tag(config: GeometryLike) -> str:
+    """Build the filename tag used by ``train``/``create`` checkpoints."""
+
     tag = (
         f"v{config.vocab_size}_bs{config.block_size}_emb{config.n_embd}_"
         f"layers{config.n_layer}_heads{config.n_head}"
@@ -2830,6 +2921,8 @@ def evaluate_single_batch(
     *,
     target_batch_config: str | None = None,
 ) -> dict[str, float | None]:
+    """Mirror :func:`train_model`'s row mix for evaluation checkpoints."""
+
     metrics: dict[str, float | None] = {key: None for key in ROW_METRIC_LOG_KEYS}
     metrics["target"] = None
     total_loss = 0.0
@@ -3218,6 +3311,8 @@ def generate(
     first_token_blocklist: Sequence[int] | None = None,
     sampling_strategy: str = "sample",
 ) -> tuple[torch.Tensor, int]:
+    """Autoregressively sample tokens for CLI reports and prompt tests."""
+
     model.eval()
     idx = idx.clone()
     prompt_len = idx.size(1)
@@ -3262,6 +3357,8 @@ def run_report_mode(
     default_prompt_boundary: bool,
     boundary_blocklist: Sequence[int] | None,
 ) -> None:
+    """Emit CLI prompt samples used by ``train --report`` and prompt tools."""
+
     prompt_tokens = prompt_tokens.to(device)
     prompt_text = tokenizer.decode(prompt_tokens[0])
     needs_boundary = default_prompt_boundary and boundary_blocklist is not None
@@ -3289,6 +3386,8 @@ def run_test_slice(
     block_length: int,
     start_pos: int,
 ) -> None:
+    """Print a colored snippet from the test set for ``train --test-slice``."""
+
     tokens = dataset.looped_slice("test", start_pos, block_length)
     pretty_text = tokenizer.decode_pretty(args, tokens)
     print(color_text(f"Test slice @ {start_pos}:", Colors.CYAN))
@@ -3368,6 +3467,8 @@ import signal
 import traceback
 
 class Runtime:
+    """Coordinates CLI commands and training loops for :func:`grce_main`."""
+
     def __init__(self, args: Args):
         self.args = args
         self.tokenizer: GPT2TokenizerWrapper | None = None
@@ -4304,7 +4405,9 @@ class Runtime:
 
         return 0
 
-def grce_main(args: argparse.Namespae) -> int:
+def grce_main(args: argparse.Namespace) -> int:
+    """Primary entry point invoked from the CLI and unit tests."""
+
     # second entry point for "size" subcommand, now with
     # Torch imported; used only in 'size --check' mode
     if args.command == "size":
