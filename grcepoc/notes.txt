@@ -373,14 +373,41 @@ used as detached values when training the recurrent channel.
 
 ### Composition of training and evaluation batches
 
-We construct a training scenario by appending TransformerStackSequence
-blocks of different modes in the following sequence order:
+We distinguish two different types of batches: 1) "split" and 2) "stacked".
+Each of them uses a different scheme to combine different sequence modes
+in a single (training) batch:
+
+1) For a "split" batch we divide the batch-size into smaller chunks for the
+different modes, and then create a TransformerStackSequence for each chunk mode
+and chunk, that spans chunk-size rows and has block-size cols.
+
+To create a "split" batch we determine the number of rows per mode:
+  rows_encode, rows_decode, rows_forward, rows_noattn
+
+(The numbers are chosen randomly so they add up to batch_size. It's possible to
+"pin" some of these values with --rows-encode N etc CLI options.)
+
+2) For a "stacked" batch we concatenate TransformerStackSequences in the "time"
+(columns) dimension. So in this case each component spans batch-size rows,
+but only spans a sub block of (<block-size) columns.
+
+So this time we determine the random number of cols per mode in the batch:
+  cols__encode, cols__decode, cols__forward, cols__noattn
+
+(The numbers are chosen randomly so they add up to batch_size. It's possible to
+"pin" some of these values with --cols-encode N etc CLI options.)
+
+The sequences are attached to each other in the following order:
 
   encode -> decode -> forward -> noattn
 
-From a given block_size we first allocate max(1, allocate block_size // 8)
-columns to each of the 4 modes, then we randomly assign the remaining cols
-to the 4 sequences.
+In this succession of sequences:
+- decode is called with the kv_out from the encode block.
+- forward is called with kv_out from both encode end decode
+- noattn isn't called with any kv-cache, so there's only self-attention there
+- there's GRCE and XCTX paths going thru tyhe entire flow, but "encode"
+  and "decode" generate the GRCE and XCTX signals "blindly", as mentioned
+  in the instruction
 
 Note that for the "encode" sequence we must only use the prediction from the
 very last position, that predicts the next token after the encode block
