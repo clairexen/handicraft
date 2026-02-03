@@ -294,7 +294,7 @@ resambling a StackGrid, but with added GRCE and XCTX channels:
 	y, grce_out, xctx_out, kv_out = seq.forward(x, grce_in, xctx_in,
 			bias_list_in=[], kv_cache_list_in=[], qh_query_callback=None,
 			mode="forward", detach_internal_kv_cache=False,
-			detach_span_S=0, detach_span_grce=0, detach_span_xctx=0)
+			detach_samples_span=0, detach_grce_span=0, detach_xctx_span=0)
 
 With {grce,xctx}_{in,out} of size [rows, n_{grce,xctx}]. (So {grce,xctx}_out
 are the final recurrent states after the last column.)
@@ -324,9 +324,9 @@ only inject that bias into the first position. After running .forward()
 for the grid we call .sample_forward() for each channel and position to
 calculate the values for 'grce_out' and 'xctx_out'.
 
-When detach_span_*>0 then the recurrent path or S-sampling is detached every
-detach_span positions. So detach_span_S=1 will detach S-sampling at every
-position, but allow full backprop on the recurrent XCTX and GRCE signals.
+When detach_*_span>0 then the recurrent path or S-sampling is detached every
+detach_span positions. So detach_samples_span=1 will detach S-sampling at every
+position, but still allow full backprop on the recurrent XCTX and GRCE signals.
 
 ### Management and balancing of k/v-caches in sequences
 
