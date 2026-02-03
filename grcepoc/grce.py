@@ -22,7 +22,7 @@ Recurrent Context Encoding (GRCE) and XCTX channels. It exposes the full CLI,
 training loop, evaluation utilities, and reporting helpers used by the
 ``grce.py`` entry point. Key entities:
 
-* :class:`Settings` – runtime configuration passed into tokenizer/model builders,
+* :class:`Args` – runtime configuration passed into tokenizer/model builders,
   :func:`describe_model_size`, and :func:`grce_main`.
 * :func:`grce_cli_args` – constructs the CLI parser; invoked at startup and by
 external tooling to mirror the binary interface. Its result is consumed by
@@ -111,31 +111,13 @@ class ModelGeometry:
     n_xctx: int = 720       # Wide XCTX context dims.
     n_bias: int = 4         # Layers that accept GRCE/XCTX bias injections (0 = all).
 
-
 MODEL_GEOMETRY_DEFAULTS = ModelGeometry()
 
 
 @dataclass
-class Settings:
-    """Holds the GRCE/XCTX model geometry and all other runtime settings.
+class Defaults:
+    """Default Settings (override with CLI args)"""
 
-    FIXME: Instead of passing copies of individual runtime settings as individual function
-    arguments, we should always pass this dataclass to the function itself.
-
-    FIXME: Instead of inspectig cli_args all over the place, we should interpret the
-    cli_args only once, in __post_init__() of this class, and everywhere else we
-    should just inspect the members of this class. This creates a clean abstraction
-    between the internal quirks of grce_cli_args() and the rest of the code base,
-    should simplify the code, and make it easier to perform changes in grce_cli_args()
-    without breaking anything in a non-trivial way.
-    """
-
-    # The grce_cli_args() return value. Initialize this field
-    # via the Settings constructor and Settings.__post_init__() will
-    # will populate the other fields here from that argparse namespace.
-    cli_args: argparse.Namespace | None = None
-
-    # Model Geometry
     vocab_size: int = MODEL_GEOMETRY_DEFAULTS.vocab_size
     block_size: int = MODEL_GEOMETRY_DEFAULTS.block_size
     n_layer: int = MODEL_GEOMETRY_DEFAULTS.n_layer
@@ -144,96 +126,19 @@ class Settings:
     n_grce: int = MODEL_GEOMETRY_DEFAULTS.n_grce
     n_xctx: int = MODEL_GEOMETRY_DEFAULTS.n_xctx
     n_bias: int = MODEL_GEOMETRY_DEFAULTS.n_bias
-    grce_optimized: bool = False
-
-    # Additional non-geometry "pseudo" model args
     corpus: str = "cccc"
-    tags: tuple[str] = ()
-
-    # Training Loop
     steps: int = 100
     cycles: int = 100
     batch_size: int = 256
     eval_interval: int = 10
-    _block_length_arg: int | None = None
-    restart_optimizer: bool = False
-    checkpoint_optimizer: bool = False
-    no_kv_rebalance: bool = False
-    detach_kv_cache: bool = False
-
-    # Training Details
     dropout: float = 0.05
     detach_span: int = 0
-    detach_context: bool = True
-    detach_layer: int = -1
 
-    # Logging and diagnostics
-    escape_newline_tokens: bool = True
-    show_train_loss_details: bool = False
-    show_test_loss_details: bool = True
-    skip_model_update: bool = False
-    only_forward: bool = False
-    only_decode: bool = False
+DEFAULTS = Defaults()
 
-    @property
-    def block_length(self):
-        if self._block_length_arg is not None:
-            return self._block_length_arg
-        return self.block_size
 
-    def model_geometry(self) -> ModelGeometry:
-        return ModelGeometry(
-            vocab_size=self.vocab_size,
-            block_size=self.block_size,
-            n_layer=self.n_layer,
-            n_head=self.n_head,
-            n_embd=self.n_embd,
-            n_grce=self.n_grce,
-            n_xctx=self.n_xctx,
-            n_bias=self.n_bias,
-        )
-
-    def __post_init__(self):
-        if self.cli_args is None: return
-        args = self.cli_args
-
-        self.vocab_size = args.vocab_size
-        self.block_size = args.block_size
-        self.n_layer = args.n_layer
-        self.n_head = args.n_head
-        self.n_embd = args.n_embd
-        self.n_grce = args.n_grce
-        self.n_xctx = args.n_xctx
-        self.n_bias = args.n_bias
-        self.grce_optimized = args.grce_optimized
-
-        self.corpus = args.corpus
-        self.tags = tuple(args.tag)
-
-        self.steps = args.steps
-        self.cycles = args.cycles
-        self.batch_size = args.batch_size
-        self.eval_interval = args.eval_interval
-        self._block_length_arg = args.block_length
-        self.restart_optimizer = args.restart_optimizer
-        self.checkpoint_optimizer = args.checkpoint_optimizer
-        self.no_kv_rebalance = args.no_kv_rebalance
-        self.detach_kv_cache = args.detach_kv_cache
-
-        self.dropout = args.dropout
-        self.detach_span = args.detach_span
-        self.detach_context = not args.no_detach_ctx
-        self.detach_layer = args.detach_layer
-
-        self.escape_newline_tokens = not args.no_escape_newline_tokens
-        self.show_train_loss_details = args.show_train_loss_details
-        self.show_test_loss_details = args.show_test_loss_details
-        self.skip_model_update = args.skip_model_update
-        self.batch_config = args.batch_config
-
-SETTINGS_DEFAULTS = Settings()
-
-GeometryLike = ModelGeometry | Settings
+from argparse import Namespace as Args
+GeometryLike = ModelGeometry | Args
 
 
 # -----------------------------------------------------------------------------
@@ -298,7 +203,6 @@ import time
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from typing import Dict, List, Tuple, Sequence
-from argparse import Namespace as Args
 
 
 def parse_range_arg(value: str) -> tuple[int, int]:
@@ -318,7 +222,6 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
     wants to mirror the CLI behavior without invoking the binary. The result
     is passed directly to :func:`grce_main`.
     """
-    defaults = SETTINGS_DEFAULTS
     if argv is None:
         raw_cli_args = sys.argv[1:]
     elif argv is sys.argv:
@@ -336,7 +239,7 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
     generic.add_argument(
         "--corpus",
         type=str,
-        default=defaults.corpus,
+        default=DEFAULTS.corpus,
         help="Dataset base name; expects data/<name>-train.txt.gz and ...-test.txt.gz.",
     )
     generic.add_argument(
@@ -358,13 +261,13 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
     model_group.add_argument(
         "--vocab-size",
         type=int,
-        default=defaults.vocab_size,
+        default=DEFAULTS.vocab_size,
         help="Total vocabulary size for the tokenizer (including special tokens)",
     )
     model_group.add_argument(
         "--block-size",
         type=int,
-        default=defaults.block_size,
+        default=DEFAULTS.block_size,
         help="Maximum sequence length supported by the model's positional embeddings",
     )
     model_group.add_argument(
@@ -376,25 +279,25 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
     model_group.add_argument(
         "--n-layer",
         type=int,
-        default=defaults.n_layer,
+        default=DEFAULTS.n_layer,
         help="Number of transformer blocks (GPT-2 base uses 12).",
     )
     model_group.add_argument(
         "--n-head",
         type=int,
-        default=defaults.n_head,
+        default=DEFAULTS.n_head,
         help="Number of attention heads per block (GPT-2 base uses 12).",
     )
     model_group.add_argument(
         "--n-embd",
         type=int,
-        default=defaults.n_embd,
+        default=DEFAULTS.n_embd,
         help="Embedding/hidden dimension (GPT-2 base uses 768); must be a multiple of n_head.",
     )
     model_group.add_argument(
         "--n-grce",
         type=int,
-        default=defaults.n_grce,
+        default=DEFAULTS.n_grce,
         help="Dimension of the recurrent GRCE context; use 0 to disable the channel.",
     )
     model_group.add_argument(
@@ -405,7 +308,7 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
     model_group.add_argument(
         "--n-xctx",
         type=int,
-        default=defaults.n_xctx,
+        default=DEFAULTS.n_xctx,
         help=(
             "Dimension of the wide (layer-partitioned) context channel; must be a multiple of n_layer"
         ),
@@ -413,7 +316,7 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
     model_group.add_argument(
         "--n-bias",
         type=int,
-        default=defaults.n_bias,
+        default=DEFAULTS.n_bias,
         help="Limit GRCE/XCTX bias injectors to the lowest N layers (0 keeps all layers active)",
     )
     model_group.add_argument(
@@ -434,17 +337,17 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
     )
 
     training_group = parser.add_argument_group("Training schedule")
-    training_group.add_argument("--steps", type=int, default=defaults.steps, help="Training steps per cycle")
+    training_group.add_argument("--steps", type=int, default=DEFAULTS.steps, help="Training steps per cycle")
     training_group.add_argument(
         "--cycles",
         type=int,
-        default=defaults.cycles,
+        default=DEFAULTS.cycles,
         help="Repeat the full training/eval/update cycle N times.",
     )
     training_group.add_argument(
         "--batch-size",
         type=int,
-        default=defaults.batch_size,
+        default=DEFAULTS.batch_size,
         help="Number of sequences per optimization step.",
     )
     training_group.add_argument(
@@ -485,7 +388,7 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
     training_group.add_argument(
         "--detach-span",
         type=int,
-        default=defaults.detach_span,
+        default=DEFAULTS.detach_span,
         help="Detach GRCE context gradients every N positions (0 disables detaching).",
     )
     training_group.add_argument(
@@ -496,7 +399,7 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
     training_group.add_argument(
         "--dropout",
         type=float,
-        default=defaults.dropout,
+        default=DEFAULTS.dropout,
         help="Dropout probability inside attention/FFN blocks.",
     )
     training_group.add_argument(
@@ -931,6 +834,19 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
             raise ValueError("--trim-model is only valid with --import-model")
 
     return args
+
+
+def args_to_model_geometry(args: Args):
+    return ModelGeometry(
+        vocab_size=args.vocab_size,
+        block_size=args.block_size,
+        n_layer=args.n_layer,
+        n_head=args.n_head,
+        n_embd=args.n_embd,
+        n_grce=args.n_grce,
+        n_xctx=args.n_xctx,
+        n_bias=args.n_bias,
+    )
 
 
 if __name__ == "__main__":
@@ -1378,7 +1294,7 @@ def _dominant_estimates(config: GeometryLike) -> list[tuple[str, int, str]]:
 
 
 def grce_cmd_size(
-    settings: GeometryLike,
+    args: GeometryLike,
     *,
     check: bool = False,
     estimate: bool = False,
@@ -1389,8 +1305,8 @@ def grce_cmd_size(
     Called exclusively from :func:`grce_main`.
     """
     print()
-    geometry = _build_geometry(settings, settings.block_size)
-    sections = _append_summary_section(_expected_sections(settings, settings.block_size))
+    geometry = _build_geometry(args, args.block_size)
+    sections = _append_summary_section(_expected_sections(args, args.block_size))
     _print_geometry(geometry)
     for idx, (key, title, items) in enumerate(sections):
         print()
@@ -1407,12 +1323,12 @@ def grce_cmd_size(
     if estimate:
         print()
         print(color_text("Estimate using dominant terms only (excl. embeddings)", Colors.CYAN, bold=True))
-        for label, count, formula in _dominant_estimates(settings):
+        for label, count, formula in _dominant_estimates(args):
             print(f"  {label:<20} {count:>15,}  {formula}")
 
     if check:
         expected_map = _flatten_expected(sections)
-        actual_map = _compute_actual_counts(settings)
+        actual_map = _compute_actual_counts(args)
         mismatches: list[tuple[str, str, int, int]] = []
         for (key, label), expected in expected_map.items():
             actual = actual_map.get((key, label), 0)
@@ -1796,14 +1712,14 @@ class GPT2TokenizerWrapper:
     def decode_one(self, token: int) -> str:
         return self.tokenizer.decode([token])
 
-    def decode_pretty(self, settings: Settings, tokens: torch.Tensor, color: str = Colors.MAGENTA, altcolor: str = Colors.GREEN, alt: bool = False) -> str:
+    def decode_pretty(self, args: Args, tokens: torch.Tensor, color: str = Colors.MAGENTA, altcolor: str = Colors.GREEN, alt: bool = False) -> str:
         if alt: color, altcolor =  Colors.YELLOW, Colors.CYAN
         parts = []
         for tok in tokens.tolist():
             s = self.decode_one(tok)
             assert s, "got empty token"
             if s == " " or " " in s[1:]: s = s.replace(" ", FANCY_SPACE)
-            s = s.replace("\n", FANCY_ENTER if settings.escape_newline_tokens else FANCY_ENTER.replace(" ", "\n"))
+            s = s.replace("\n", FANCY_ENTER if args.escape_newline_tokens else FANCY_ENTER.replace(" ", "\n"))
             parts.append(color + s + Colors.RESET)
             color, altcolor = altcolor, color
         return "".join(parts)
@@ -2169,9 +2085,9 @@ def _module_list_param_count(modules: nn.ModuleList) -> int:
 
 
 class CausalSelfAttention(nn.Module):
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, args: Args) -> None:
         super().__init__()
-        config = settings
+        config = args
         assert config.n_embd % config.n_head == 0
         self.n_head = config.n_head
         self.key = nn.Linear(config.n_embd, config.n_embd)
@@ -2258,9 +2174,9 @@ class CausalSelfAttention(nn.Module):
 
 
 class FeedForward(nn.Module):
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, args: Args) -> None:
         super().__init__()
-        config = settings
+        config = args
         hidden = 4 * config.n_embd
         self.fc1 = nn.Linear(config.n_embd, hidden)
         self.act = nn.GELU()
@@ -2281,9 +2197,9 @@ class FeedForward(nn.Module):
 
 
 class Block(nn.Module):
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, args: Args) -> None:
         super().__init__()
-        config = settings
+        config = args
         self.ln1 = nn.LayerNorm(config.n_embd)
         self.attn = CausalSelfAttention(config)
         self.ln2 = nn.LayerNorm(config.n_embd)
@@ -2380,9 +2296,9 @@ class RMSNorm(nn.Module):
 class TransformerStackCore(nn.Module):
     """Shared Transformer backbone used by both grid and sequence modes."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, args: Args) -> None:
         super().__init__()
-        config = settings
+        config = args
         self.config = config
         self.tok_emb = nn.Embedding(config.vocab_size, config.n_embd)
         self.pos_emb = nn.Embedding(config.block_size, config.n_embd)
@@ -2446,9 +2362,9 @@ class TransformerStackGrid(nn.Module):
 
 
 class TransformerGRCE(nn.Module):
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, args: Args) -> None:
         super().__init__()
-        config = settings
+        config = args
         self.disabled = config.n_grce <= 0
         self.context_dim = config.n_grce
         self.n_layers = config.n_layer
@@ -2526,9 +2442,9 @@ class TransformerGRCE(nn.Module):
 
 
 class TransformerXCTX(nn.Module):
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, args: Args) -> None:
         super().__init__()
-        config = settings
+        config = args
         self.disabled = config.n_xctx <= 0
         self.n_layers = config.n_layer
         self.n_embd = config.n_embd
@@ -2627,10 +2543,10 @@ class TransformerXCTX(nn.Module):
 
 
 class TransformerStackSequence(nn.Module):
-    def __init__(self, settings: Settings, core: TransformerStackCore) -> None:
+    def __init__(self, args: Args, core: TransformerStackCore) -> None:
         super().__init__()
         self.core = core
-        config = settings
+        config = args
         self.n_layers = config.n_layer
         self.n_embd = config.n_embd
         self.grce = TransformerGRCE(config) if config.n_grce > 0 else None
@@ -2783,9 +2699,9 @@ class LayerCache:
 
 
 class GPTCore(nn.Module):
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, args: Args) -> None:
         super().__init__()
-        config = settings
+        config = args
         self.config = config
         self.tok_emb = nn.Embedding(config.vocab_size, config.n_embd)
         self.pos_emb = nn.Embedding(config.block_size, config.n_embd)
@@ -2952,9 +2868,9 @@ class GPTCore(nn.Module):
 
 
 class BaseContextChannel(nn.Module):
-    def __init__(self, settings: Settings, width: int) -> None:
+    def __init__(self, args: Args, width: int) -> None:
         super().__init__()
-        config = settings
+        config = args
         self.config = config
         self.context_dim = int(width)
         self.disabled = self.context_dim <= 0
@@ -2977,9 +2893,9 @@ class BaseContextChannel(nn.Module):
 
 
 class GRCEContextChannel(BaseContextChannel):
-    def __init__(self, settings: Settings) -> None:
-        super().__init__(settings, settings.n_grce)
-        config = settings
+    def __init__(self, args: Args) -> None:
+        super().__init__(args, args.n_grce)
+        config = args
         self.is_xctx = False
         self.bias_layers = _get_bias_layer_count(config)
         if self.disabled:
@@ -3056,9 +2972,9 @@ class GRCEContextChannel(BaseContextChannel):
 class GRCEContextChannelOptimized(BaseContextChannel):
     """Vectorized GRCE channel that batches the per-layer samplers/decoders."""
 
-    def __init__(self, settings: Settings) -> None:
-        super().__init__(settings, settings.n_grce)
-        config = settings
+    def __init__(self, args: Args) -> None:
+        super().__init__(args, args.n_grce)
+        config = args
         self.is_xctx = False
         if self.disabled:
             return
@@ -3163,9 +3079,9 @@ class GRCEContextChannelOptimized(BaseContextChannel):
 
 
 class XCTXContextChannel(BaseContextChannel):
-    def __init__(self, settings: Settings) -> None:
-        super().__init__(settings, settings.n_xctx)
-        config = settings
+    def __init__(self, args: Args) -> None:
+        super().__init__(args, args.n_xctx)
+        config = args
         self.is_xctx = True
         self.bias_layers = _get_bias_layer_count(config)
         if self.disabled:
@@ -3276,12 +3192,12 @@ class XCTXContextChannel(BaseContextChannel):
 
 
 class GRCEGPT(nn.Module):
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, args: Args) -> None:
         super().__init__()
-        self.config = settings
-        self.core = TransformerStackCore(settings)
+        self.config = args
+        self.core = TransformerStackCore(args)
         self.stack_grid = TransformerStackGrid(self.core)
-        self.stack_sequence = TransformerStackSequence(settings, self.core)
+        self.stack_sequence = TransformerStackSequence(args, self.core)
         self.context_channels = self.stack_sequence.context_modules
 
     def _position_ids(
@@ -3465,7 +3381,7 @@ def evaluate_single_batch(
     return metrics
 
 def train_model(
-    settings: Settings,
+    args: Args,
     model: GRCEGPT,
     dataset: TextDataset,
     device: torch.device,
@@ -3504,7 +3420,7 @@ def train_model(
     else:
         prompt_queue = []
 
-    mode_specs = batch_mode_specs(batch_size, batch_config=settings.batch_config)
+    mode_specs = batch_mode_specs(batch_size, batch_config=args.batch_config)
 
     loop_timer = Timer().start()
     eval_timer = Timer()
@@ -3576,7 +3492,7 @@ def train_model(
                     block_length,
                     batch_size,
                     device,
-                    target_batch_config=settings.batch_config,
+                    target_batch_config=args.batch_config,
                 )
         model.train()
         eval_timer.stop()
@@ -3639,8 +3555,8 @@ def train_model(
                     )
                 )
 
-        prompt_text = tokenizer.decode_pretty(settings, torch.tensor(prompt_ids))
-        completion_text = tokenizer.decode_pretty(settings, torch.tensor(completion_ids), alt=True)
+        prompt_text = tokenizer.decode_pretty(args, torch.tensor(prompt_ids))
+        completion_text = tokenizer.decode_pretty(args, torch.tensor(completion_ids), alt=True)
         sample_prefix = color_text(prompt_text, Colors.CYAN)
         sample_suffix = color_text(completion_text, Colors.YELLOW)
         sample_render = (Colors.YELLOW if sampling_strategy == 'argmax' else Colors.CYAN) + \
@@ -3714,7 +3630,7 @@ def train_model(
 
 
 def run_profile_mode(
-    settings: Settings,
+    args: Args,
     dataset: TextDataset,
     model: GRCEGPT,
     optimizer: torch.optim.Optimizer,
@@ -3733,7 +3649,7 @@ def run_profile_mode(
             "torch.profiler is unavailable; upgrade to PyTorch 1.8+ to use 'profile'."
         ) from exc
 
-    mode_specs = batch_mode_specs(batch_size, batch_config=settings.batch_config)
+    mode_specs = batch_mode_specs(batch_size, batch_config=args.batch_config)
     if not mode_specs:
         raise ValueError("Batch size must be >0 to run the profiler")
 
@@ -3869,7 +3785,7 @@ def run_report_mode(
 
 
 def run_test_slice(
-    settings: Settings,
+    args: Args,
     dataset: TextDataset,
     tokenizer: GPT2TokenizerWrapper,
     model: GRCEGPT,
@@ -3877,12 +3793,12 @@ def run_test_slice(
     start_pos: int,
 ) -> None:
     tokens = dataset.looped_slice("test", start_pos, block_length)
-    pretty_text = tokenizer.decode_pretty(settings, tokens)
+    pretty_text = tokenizer.decode_pretty(args, tokens)
     print(color_text(f"Test slice @ {start_pos}:", Colors.CYAN))
     print(pretty_text)
 
 
-def preprocess_runtime_settings(args: Args) -> None:
+def preprocess_runtime_args(args: Args) -> None:
     """Resolve checkpoint overrides and derived paths before runtime spins up."""
 
     if getattr(args, "_checkpoint_preprocessed", False):
@@ -3957,8 +3873,8 @@ import signal
 import traceback
 
 class Runtime:
-    def __init__(self, settings: Settings):
-        self.settings = settings
+    def __init__(self, args: Args):
+        self.args = args
         self.tokenizer: GPT2TokenizerWrapper | None = None
         self.dataset: TextDataset | None = None
         self._train_tokens: torch.Tensor | None = None
@@ -4020,13 +3936,10 @@ class Runtime:
         bool,
         str,
     ]:
-        assert self.settings.cli_args is not None
-        args = self.settings.cli_args
-
-        data_dir = pathlib.Path(args.data)
-        train_path = data_dir / f"{args.corpus}-train.txt.gz"
-        test_path = data_dir / f"{args.corpus}-test.txt.gz"
-        model_dir = pathlib.Path(args.model)
+        data_dir = pathlib.Path(self.args.data)
+        train_path = data_dir / f"{self.args.corpus}-train.txt.gz"
+        test_path = data_dir / f"{self.args.corpus}-test.txt.gz"
+        model_dir = pathlib.Path(self.args.model)
         if not model_dir.exists():
             try:
                 model_dir.mkdir(parents=True, exist_ok=True)
@@ -4034,12 +3947,12 @@ class Runtime:
                 pass
 
         must_build_tokenizer = (
-            args.command == "corpus" and getattr(args, "corpus_init", False)
+            self.args.command == "corpus" and getattr(self.args, "corpus_init", False)
         )
-        train_cache_path = data_dir / f"{args.corpus}_tokens_train_{args.vocab_size}.pt"
-        test_cache_path = data_dir / f"{args.corpus}_tokens_test_{args.vocab_size}.pt"
+        train_cache_path = data_dir / f"{self.args.corpus}_tokens_train_{self.args.vocab_size}.pt"
+        test_cache_path = data_dir / f"{self.args.corpus}_tokens_test_{self.args.vocab_size}.pt"
         need_corpus_for_create = False
-        if args.command == "create":
+        if self.args.command == "create":
             need_corpus_for_create = (
                 not train_cache_path.exists() or not test_cache_path.exists()
             )
@@ -4060,11 +3973,11 @@ class Runtime:
                     f"Test token cache {test_cache_path} not found; run 'corpus --init' first."
                 )
 
-        tokenizer_key = f"{args.corpus}_vocab_{args.vocab_size}"
+        tokenizer_key = f"{self.args.corpus}_vocab_{self.args.vocab_size}"
         tokenizer_path = data_dir / f"{tokenizer_key}.json"
-        if args.command == "create" and not tokenizer_path.exists():
+        if self.args.command == "create" and not tokenizer_path.exists():
             must_build_tokenizer = True
-        tokenizer_json = getattr(args, "tokenizer_json_override", None)
+        tokenizer_json = getattr(self.args, "tokenizer_json_override", None)
         if tokenizer_json is None:
             if tokenizer_path.exists():
                 tokenizer_json = tokenizer_path.read_text(encoding="utf-8")
@@ -4076,18 +3989,18 @@ class Runtime:
         tok_timer = Timer().start()
         vocab_source = full_train_text or ""
         reserved_tokens = 1 + len(GPT2TokenizerWrapper.EXTRA_SPECIAL_TOKENS)
-        if args.vocab_size <= reserved_tokens:
+        if self.args.vocab_size <= reserved_tokens:
             raise ValueError(
-                f"--vocab-size must exceed reserved tokens ({reserved_tokens}); got {args.vocab_size}"
+                f"--vocab-size must exceed reserved tokens ({reserved_tokens}); got {self.args.vocab_size}"
             )
-        target_vocab = max(0, args.vocab_size - reserved_tokens)
+        target_vocab = max(0, self.args.vocab_size - reserved_tokens)
         tokenizer = GPT2TokenizerWrapper(
             vocab_source,
             tokenizer_path,
             target_vocab,
             pretrained_json=tokenizer_json,
         )
-        expected_vocab_size = args.vocab_size
+        expected_vocab_size = self.args.vocab_size
         actual_vocab_size = tokenizer.vocab_size
         if actual_vocab_size != expected_vocab_size:
             raise ValueError(
@@ -4102,14 +4015,14 @@ class Runtime:
         if newline_tokens:
             newline_token_id = newline_tokens[0]
 
-        enforce_boundary_guard = not args.no_boundary
+        enforce_boundary_guard = not self.args.no_boundary
         boundary_blocklist = (
             tokenizer.leading_alpha_token_ids if enforce_boundary_guard else None
         )
         default_prompt_boundary = (
             enforce_boundary_guard
             and boundary_blocklist is not None
-            and prompt_needs_boundary(args.prompt)
+            and prompt_needs_boundary(self.args.prompt)
         )
 
         train_tokens, train_text, train_bytes = load_or_prepare_tokens(
@@ -4185,9 +4098,6 @@ class Runtime:
         train_tokens: torch.Tensor,
         test_tokens: torch.Tensor,
     ) -> int:
-        assert self.settings.cli_args is not None
-        args = self.settings.cli_args
-
         def emit_range(label: str, tokens: torch.Tensor, spec: str) -> None:
             start, end = parse_range_arg(spec)
             total = int(tokens.numel())
@@ -4210,7 +4120,7 @@ class Runtime:
                 print(text)
 
         actions_done = False
-        if getattr(args, "corpus_init", False):
+        if getattr(self.args, "corpus_init", False):
             print(
                 color_text(
                     "Tokenizer initialized and token caches updated; run 'train' to build a model.",
@@ -4218,11 +4128,11 @@ class Runtime:
                 )
             )
             actions_done = True
-        if getattr(args, "corpus_print_train", None):
-            emit_range("Train", train_tokens, args.corpus_print_train)
+        if getattr(self.args, "corpus_print_train", None):
+            emit_range("Train", train_tokens, self.args.corpus_print_train)
             actions_done = True
-        if getattr(args, "corpus_print_test", None):
-            emit_range("Test", test_tokens, args.corpus_print_test)
+        if getattr(self.args, "corpus_print_test", None):
+            emit_range("Test", test_tokens, self.args.corpus_print_test)
             actions_done = True
         if not actions_done:
             print(color_text("No corpus action selected", Colors.YELLOW))
@@ -4233,9 +4143,7 @@ class Runtime:
         tokenizer: GPT2TokenizerWrapper,
         model_path: pathlib.Path,
     ) -> int:
-        assert self.settings.cli_args is not None
-        args = self.settings.cli_args
-        target_path = Path(args.target) if args.target else model_path
+        target_path = Path(self.args.target) if self.args.target else model_path
         if not target_path.exists():
             raise FileNotFoundError(f"Checkpoint {target_path} not found")
         payload = torch.load(target_path, map_location="cpu", weights_only=False)
@@ -4254,15 +4162,15 @@ class Runtime:
 
         normalize_statuses()
         changed = False
-        if getattr(args, "reset", False):
+        if getattr(self.args, "reset", False):
             entries = default_prompt_entries()
             statuses = [0] * len(entries)
             changed = True
-        if getattr(args, "clear", False):
+        if getattr(self.args, "clear", False):
             entries = []
             statuses = []
             changed = True
-        removes = sorted(set(getattr(args, "remove", [])), reverse=True)
+        removes = sorted(set(getattr(self.args, "remove", [])), reverse=True)
         for idx in removes:
             if idx is None:
                 continue
@@ -4282,7 +4190,7 @@ class Runtime:
                         Colors.YELLOW,
                     )
                 )
-        add_pair = getattr(args, "add", None)
+        add_pair = getattr(self.args, "add", None)
         if add_pair is not None:
             prompt_text, expected_text = add_pair
             entries.append((prompt_text, expected_text))
@@ -4299,9 +4207,9 @@ class Runtime:
                     Colors.GREEN,
                 )
             )
-        show_list = args.list or (
-            not getattr(args, "reset", False)
-            and not getattr(args, "clear", False)
+        show_list = self.args.list or (
+            not getattr(self.args, "reset", False)
+            and not getattr(self.args, "clear", False)
             and not removes
             and add_pair is None
         )
@@ -4336,10 +4244,6 @@ class Runtime:
         calls :func:`train_model`.
         """
 
-        # big_fat_old_main() needs cli_args
-        assert self.settings.cli_args is not None
-        args = self.settings.cli_args
-
         ansi_file = None
         try:
             orig_stdout, orig_stderr, log_file = sys.stdout, sys.stderr, None
@@ -4354,32 +4258,32 @@ class Runtime:
                 default_prompt_boundary,
                 tokenizer_json,
             ) = self._prepare_corpus()
-            self.settings.vocab_size = tokenizer.vocab_size
-            model_dir = pathlib.Path(args.model)
+            self.args.vocab_size = tokenizer.vocab_size
+            model_dir = pathlib.Path(self.args.model)
 
-            if args.command == "corpus":
+            if self.args.command == "corpus":
                 return self.cli_corpus(tokenizer, train_tokens, test_tokens)
 
-            if args.n_xctx > 0 and args.n_xctx % max(1, args.n_layer) != 0:
+            if self.args.n_xctx > 0 and self.args.n_xctx % max(1, self.args.n_layer) != 0:
                 raise ValueError("--n-xctx must be divisible by --n-layer")
-            config = self.settings
+            config = self.args
             model_tag = build_model_tag(config)
-            for extra_tag in args.tag:
+            for extra_tag in self.args.tag:
                 cleaned = re.sub(r"[^0-9A-Za-z]+", "", extra_tag)
                 if cleaned:
                     model_tag += f"_{cleaned}"
-            model_path = getattr(args, "model_path_override", None)
-            log_path = getattr(args, "log_path_override", None)
+            model_path = getattr(self.args, "model_path_override", None)
+            log_path = getattr(self.args, "log_path_override", None)
             if model_path is None or log_path is None:
-                prefix = f"{args.corpus}_model_"
+                prefix = f"{self.args.corpus}_model_"
                 model_path = model_dir / f"{prefix}{model_tag}.pt"
                 log_path = model_dir / f"{prefix}{model_tag}.log"
-                args.model_path_override = model_path
-                args.log_path_override = log_path
+                self.args.model_path_override = model_path
+                self.args.log_path_override = log_path
             print(color_text(f"Model: {model_path}", Colors.CYAN))
             print(color_text(f"Logfile: {log_path}", Colors.BLUE))
-            requires_checkpoint = args.command in {"train", "report", "test"}
-            if args.command == "create" and model_path.exists():
+            requires_checkpoint = self.args.command in {"train", "report", "test"}
+            if self.args.command == "create" and model_path.exists():
                 raise FileExistsError(
                     f"Checkpoint {model_path} already exists; delete it or pick a new --model directory."
                 )
@@ -4388,7 +4292,7 @@ class Runtime:
                     f"Checkpoint {model_path} not found; run 'create' first to initialize it."
                 )
 
-            if args.command == "prompts":
+            if self.args.command == "prompts":
                 return self.cli_prompts(tokenizer, model_path)
             sections = _append_summary_section(
                 _expected_sections(config, config.block_size)
@@ -4422,7 +4326,7 @@ class Runtime:
             log_file = log_path.open("a", encoding="utf-8")
             log_file.write(f"\n[{timestamp}] {cmdline}\n")
             log_file.flush()
-            if not args.no_ansi:
+            if not self.args.no_ansi:
                 ansi_path = log_path.with_suffix(".ansi")
                 ansi_file = ansi_path.open("a", encoding="utf-8")
                 ansi_file.write(f"\n[{timestamp}] {cmdline}\n")
@@ -4436,9 +4340,9 @@ class Runtime:
             sys.stdout = Tee(*stdout_streams)
             sys.stderr = Tee(*stderr_streams)
 
-            device = torch.device(args.device)
+            device = torch.device(self.args.device)
             try:
-                prompt_tokens = tokenizer.encode(args.prompt)
+                prompt_tokens = tokenizer.encode(self.args.prompt)
             except KeyError as exc:  # pragma: no cover - user misconfiguration
                 raise ValueError(
                     "Prompt contains characters outside the tokenizer vocabulary. "
@@ -4448,14 +4352,14 @@ class Runtime:
                 prompt_tokens = prompt_tokens.unsqueeze(0).to(device)
             except (AssertionError, RuntimeError) as exc:
                 message = str(exc)
-                if "Torch not compiled with CUDA" in message and args.device != "cpu":
-                    if not args.tiny:
+                if "Torch not compiled with CUDA" in message and self.args.device != "cpu":
+                    if not self.args.tiny:
                         raise RuntimeError(
                             "CUDA requested but not available; rerun with --device cpu or --tiny."
                         ) from exc
                     print(color_text("Torch not compiled with CUDA enabled; switching to CPU", Colors.RED, bold=True))
                     device = torch.device("cpu")
-                    args.device = "cpu"
+                    self.args.device = "cpu"
                     prompt_tokens = prompt_tokens.unsqueeze(0).to(device)
                 else:
                     raise
@@ -4465,8 +4369,8 @@ class Runtime:
                 model = GRCEGPT(config).to(device)
             except (AssertionError, RuntimeError) as exc:
                 message = str(exc)
-                if "Torch not compiled with CUDA" in message and args.device != "cpu":
-                    if not args.tiny:
+                if "Torch not compiled with CUDA" in message and self.args.device != "cpu":
+                    if not self.args.tiny:
                         raise RuntimeError(
                             "CUDA requested but not available; rerun with --device cpu or --tiny."
                         ) from exc
@@ -4476,20 +4380,20 @@ class Runtime:
                 else:
                     raise
 
-            if args.torch_compile != "off":
+            if self.args.torch_compile != "off":
                 model = torch.compile(
                     model,
-                    mode=args.torch_compile,
+                    mode=self.args.torch_compile,
                     fullgraph=False,
                 )
 
             total_steps = 0
             loss_history: List[Dict[str, float]] = []
             total_train_wall = 0.0
-            payload = getattr(args, "checkpoint_payload_override", None)
+            payload = getattr(self.args, "checkpoint_payload_override", None)
             optimizer_state = None
             if payload is None and model_path.exists():
-                if args.command == "create" and args.create_args.import_model:
+                if self.args.command == "create" and self.args.create_args.import_model:
                     raise ValueError(
                         "--import-model can only be used when no existing checkpoint is present"
                     )
@@ -4510,7 +4414,7 @@ class Runtime:
                         loss_history = list(payload.get("loss_history", []))
                         total_train_wall = float(payload.get("train_wall_seconds", 0.0))
                         prompt_tracker.load_state(payload.get("prompt_state"))
-                        if args.checkpoint_optimizer:
+                        if self.args.checkpoint_optimizer:
                             optimizer_state = payload.get("optimizer")
                     else:
                         model.load_state_dict(upgrade_state_dict(payload))
@@ -4580,13 +4484,13 @@ class Runtime:
                 except RuntimeError as err:
                     print(color_text("Checkpoint load failed (shape mismatch); starting fresh.", Colors.RED, bold=True))
                     print(color_text(str(err), Colors.RED))
-            elif args.command == "create" and args.create_args.import_model:
+            elif self.args.command == "create" and self.args.create_args.import_model:
                 import_timer = Timer().start()
-                if not args.create_args.import_model.exists():
+                if not self.args.create_args.import_model.exists():
                     raise FileNotFoundError(
-                        f"Import checkpoint {args.create_args.import_model} not found"
+                        f"Import checkpoint {self.args.create_args.import_model} not found"
                     )
-                source_state, meta = load_checkpoint_payload(args.create_args.import_model, device)
+                source_state, meta = load_checkpoint_payload(self.args.create_args.import_model, device)
                 src_config = meta.get("config")
                 if src_config is None:
                     raise ValueError(
@@ -4597,18 +4501,18 @@ class Runtime:
                 src_layers = src_config.get("n_layer")
                 if src_layers is None:
                     src_layers = count_layers_from_state(source_state)
-                print(color_text(f"Importing weights from {args.create_args.import_model}", Colors.GREEN))
+                print(color_text(f"Importing weights from {self.args.create_args.import_model}", Colors.GREEN))
                 mapping = build_layer_mapping(
                     src_layers,
                     config.n_layer,
-                    args.create_args.drop_layers,
-                    args.create_args.add_layers,
-                    allow_trim=args.create_args.trim_model,
+                    self.args.create_args.drop_layers,
+                    self.args.create_args.add_layers,
+                    allow_trim=self.args.create_args.trim_model,
                 )
                 apply_imported_state(
                     model,
                     source_state,
-                    allow_trim=args.create_args.trim_model,
+                    allow_trim=self.args.create_args.trim_model,
                     mapping=mapping,
                 )
                 total_steps = int(meta.get("total_steps", 0))
@@ -4621,7 +4525,7 @@ class Runtime:
                         "dataset": dataset.state_dict(),
                         "total_steps": total_steps,
                         "loss_history": loss_history,
-                        "config": asdict(self.settings.model_geometry()),
+                        "config": asdict(args_to_model_geometry(self.args)),
                         "train_wall_seconds": total_train_wall,
                         "prompt_state": prompt_tracker.serialize() if prompt_tracker else None,
                         "tokenizer_json": tokenizer_json,
@@ -4635,13 +4539,13 @@ class Runtime:
                     )
                 )
                 return
-            if args.command == "create":
+            if self.args.command == "create":
                 checkpoint_payload = {
                     "model": model.state_dict(),
                     "dataset": dataset.state_dict(),
                     "total_steps": 0,
                     "loss_history": [],
-                    "config": asdict(self.settings.model_geometry()),
+                    "config": asdict(self.args.model_geometry()),
                     "train_wall_seconds": 0.0,
                     "prompt_state": prompt_tracker.serialize(),
                     "tokenizer_json": tokenizer_json,
@@ -4655,35 +4559,35 @@ class Runtime:
                 )
                 return
 
-            if args.command == "report":
+            if self.args.command == "report":
                 run_report_mode(
                     model=model,
                     tokenizer=tokenizer,
                     prompt_tokens=prompt_tokens,
-                    sample_len=args.generate,
-                    count=args.report_count,
+                    sample_len=self.args.generate,
+                    count=self.args.report_count,
                     device=device,
-                    suppress_newlines=args.no_newlines,
+                    suppress_newlines=self.args.no_newlines,
                     newline_token_id=newline_token_id,
                     default_prompt_boundary=default_prompt_boundary,
                     boundary_blocklist=boundary_blocklist,
                 )
                 return
 
-            if args.command == "test":
+            if self.args.command == "test":
                 run_test_slice(
-                    settings=self.settings,
+                    args=self.args,
                     dataset=dataset,
                     tokenizer=tokenizer,
                     model=model,
-                    block_length=args.block_length,
-                    start_pos=args.test_start,
+                    block_length=self.args.block_length,
+                    start_pos=self.args.test_start,
                 )
                 return
 
-            if args.command == "profile":
+            if self.args.command == "profile":
                 optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
-                if args.checkpoint_optimizer and optimizer_state:
+                if self.args.checkpoint_optimizer and optimizer_state:
                     try:
                         optimizer.load_state_dict(optimizer_state)
                     except Exception as err:  # pragma: no cover - logging
@@ -4694,14 +4598,14 @@ class Runtime:
                             )
                         )
                 run_profile_mode(
-                    self.settings,
+                    self.args,
                     dataset,
                     model,
                     optimizer,
-                    block_length=args.block_length,
-                    batch_size=args.batch_size,
+                    block_length=self.args.block_length,
+                    batch_size=self.args.batch_size,
                     device=device,
-                    block_size=args.block_size,
+                    block_size=self.args.block_size,
                 )
                 return
 
@@ -4709,7 +4613,7 @@ class Runtime:
                 return torch.optim.AdamW(model.parameters(), lr=3e-4)
 
             shared_optimizer: torch.optim.Optimizer | None = None
-            if not args.restart_optimizer:
+            if not self.args.restart_optimizer:
                 shared_optimizer = build_optimizer()
                 if optimizer_state:
                     try:
@@ -4727,27 +4631,27 @@ class Runtime:
 
             acc_train = Timer()
             acc_eval = Timer()
-            for cycle in range(1, args.cycles + 1):
+            for cycle in range(1, self.args.cycles + 1):
                 cycle_wall = time.time()
                 tags = ["GPT"]
                 plus_tags: list[str] = []
                 minus_tags: list[str] = []
-                if args.n_grce > 0:
+                if self.args.n_grce > 0:
                     plus_tags.append("+GRCE")
                 else:
                     minus_tags.append(" wo/GRCE")
-                if args.n_xctx > 0:
+                if self.args.n_xctx > 0:
                     plus_tags.append("+XCTX")
                 else:
                     minus_tags.append(" wo/XCTX")
                 label = "".join(tags + plus_tags + minus_tags)
                 hours = total_train_wall / 3600.0
                 days = hours / 24.0
-                train_chars_cycle = (args.block_length + 1) * args.batch_size * args.steps
-                eval_calls = max(1, count_eval_calls(args.steps, args.eval_interval))
+                train_chars_cycle = (self.args.block_length + 1) * self.args.batch_size * self.args.steps
+                eval_calls = max(1, count_eval_calls(self.args.steps, self.args.eval_interval))
                 test_chars_cycle = (
-                    (args.block_length + 1)
-                    * args.batch_size
+                    (self.args.block_length + 1)
+                    * self.args.batch_size
                     * eval_calls
                 )
                 train_start = int(dataset.positions.get("train", 0))
@@ -4789,13 +4693,13 @@ class Runtime:
                 )
                 print(
                     color_text(
-                        f"[{label}] Training Cycle {cycle}/{args.cycles}. "
+                        f"[{label}] Training Cycle {cycle}/{self.args.cycles}. "
                         f"Total training so far: {total_steps} steps, {hours:.2f} hours ({days:.2f} days)",
                         Colors.BLUE,
                     )
                 )
 
-                if args.restart_optimizer:
+                if self.args.restart_optimizer:
                     optimizer = build_optimizer()
                 else:
                     if shared_optimizer is None:
@@ -4808,50 +4712,50 @@ class Runtime:
                     train_timer,
                     eval_timer,
                 ) = train_model(
-                    self.settings,
+                    self.args,
                     model,
                     dataset,
                     device,
-                    args.steps,
-                    args.block_length,
-                    args.batch_size,
-                    args.eval_interval,
+                    self.args.steps,
+                    self.args.block_length,
+                    self.args.batch_size,
+                    self.args.eval_interval,
                     total_steps,
                     optimizer,
                     prompt_tokens,
-                    args.generate,
+                    self.args.generate,
                     tokenizer,
-                    suppress_newlines=args.no_newlines,
+                    suppress_newlines=self.args.no_newlines,
                     newline_token_id=newline_token_id,
                     prompt_tracker=prompt_tracker,
-                    reset_prompt_queue=args.reset_prompt_each_cycle,
+                    reset_prompt_queue=self.args.reset_prompt_each_cycle,
                     cycle_wall_start=cycle_wall,
                     base_wall_seconds=total_train_wall,
-                    show_time=args.time,
+                    show_time=self.args.time,
                     default_prompt_boundary=default_prompt_boundary,
                     boundary_blocklist=boundary_blocklist,
-                    show_train_loss_details=args.show_train_loss_details,
-                    show_test_loss_details=args.show_test_loss_details,
+                    show_train_loss_details=self.args.show_train_loss_details,
+                    show_test_loss_details=self.args.show_test_loss_details,
                 )
                 loss_history.extend(updates)
                 pure_train = Timer().add(train_timer).sub(eval_timer)
                 acc_train.add(pure_train)
                 acc_eval.add(eval_timer)
                 total_train_wall += train_timer.wall_secs
-                if not args.skip_model_update:
+                if not self.args.skip_model_update:
                     torch.save(
                         {
                             "model": model.state_dict(),
                             "dataset": dataset.state_dict(),
                             "total_steps": total_steps,
                             "loss_history": loss_history,
-                            "config": asdict(self.settings.model_geometry()),
+                            "config": asdict(args_to_model_geometry(self.args)),
                             "train_wall_seconds": total_train_wall,
                             "prompt_state": prompt_tracker.serialize() if prompt_tracker else None,
                             "tokenizer_json": tokenizer_json,
                             **(
                                 {"optimizer": optimizer.state_dict()}
-                                if args.checkpoint_optimizer and not args.restart_optimizer
+                                if self.args.checkpoint_optimizer and not self.args.restart_optimizer
                                 else {}
                             ),
                         },
@@ -4860,7 +4764,7 @@ class Runtime:
                 cycle_part = color_text(f"[cycle {cycle} (wall/cpu/gpu)]", Colors.CYAN)
                 train_part = color_text(f" train: {pure_train};", Colors.MAGENTA)
                 eval_part = color_text(f" eval: {eval_timer};", Colors.GREEN)
-                if args.skip_model_update:
+                if self.args.skip_model_update:
                     updated_part = color_text(" model update skipped; flushing logs.", Colors.YELLOW)
                 else:
                     updated_part = color_text(" model updated; flushing logs.", Colors.YELLOW)
@@ -4879,12 +4783,12 @@ class Runtime:
                 if ansi_file is not None:
                     ansi_file.flush()
 
-                if args.restart_optimizer:
+                if self.args.restart_optimizer:
                     # Drop the cycle-local optimizer before the next pass
                     optimizer = None
 
         except KeyboardInterrupt:
-            if args.debug_interrupt:
+            if self.args.debug_interrupt:
                 raise
             # traceback.print_exc()
             print(color_text("Interrupted by user; exiting cleanly.", Colors.RED, bold=True))
@@ -4908,18 +4812,18 @@ class Runtime:
 def grce_main(args: argparse.Namespae) -> int:
     # second entry point for "size" subcommand, now with
     # Torch imported; used only in 'size --check' mode
-    if cli_args.command == "size":
-        assert cli_args.size_check
-        sys.exit(grce_cli_size(cli_args))
+    if args.command == "size":
+        assert args.size_check
+        sys.exit(grce_cli_size(args))
 
-    preprocess_runtime_settings(cli_args)
+    preprocess_runtime_args(args)
 
     torch.manual_seed(42)
     random.seed(time.time())
 
     # otherwise: run the big "default" main
-    rt = Runtime(Settings(cli_args))
-    rt.start_timeout(cli_args.timeout)
+    rt = Runtime(args)
+    rt.start_timeout(args.timeout)
     return rt.big_fat_old_main()
 
 if __name__ == "__main__":
