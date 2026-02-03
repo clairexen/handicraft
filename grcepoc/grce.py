@@ -2159,35 +2159,120 @@ class CausalSelfAttention(nn.Module):
         dropout_positions: torch.Tensor | None = None,
         disable_rows: torch.Tensor | None = None,
         full_attention: bool = False,
-    ) -> torch.Tensor:
+        kv_cache_sources: Sequence[tuple[torch.Tensor, torch.Tensor]] | None = None,
+        qh_query_callback=None,
+        attn_mode: str = "decode",
+        layer_idx: int | None = None,
+    ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
         B, T, C = x.shape
+        head_dim = C // self.n_head
         k_full = self.key(x)
-        q = self.query(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
+        q = self.query(x).view(B, T, self.n_head, head_dim).transpose(1, 2)
         v_full = self.value(x)
-        atten_block_mask: torch.Tensor | None = None
+        k_local = k_full.view(B, T, self.n_head, head_dim).transpose(1, 2)
+        v_local = v_full.view(B, T, self.n_head, head_dim).transpose(1, 2)
+
+        cache_keys: list[torch.Tensor] = []
+        cache_values: list[torch.Tensor] = []
+        if kv_cache_sources:
+            for pair in kv_cache_sources:
+                if pair is None:
+                    continue
+                k_cache, v_cache = pair
+                if k_cache is None or v_cache is None:
+                    continue
+                if k_cache.dim() != 4 or v_cache.dim() != 4:
+                    raise ValueError("KV cache tensors must have rank 4 [rows, len, heads, head_dim]")
+                cache_keys.append(k_cache.permute(0, 2, 1, 3))
+                cache_values.append(v_cache.permute(0, 2, 1, 3))
+        if cache_keys:
+            cat_keys = torch.cat(cache_keys, dim=2)
+            cat_values = torch.cat(cache_values, dim=2)
+            all_k = torch.cat([cat_keys, k_local], dim=2)
+            all_v = torch.cat([cat_values, v_local], dim=2)
+            cache_len = cat_keys.size(2)
+        else:
+            all_k = k_local
+            all_v = v_local
+            cache_len = 0
+
+        total_len = all_k.size(2)
+        scores = (q @ all_k.transpose(-2, -1)) / math.sqrt(head_dim)
+
+        block_mask: torch.Tensor | None = None
+        if attn_mode not in {"encode", "decode", "noattn"}:
+            raise ValueError(f"Unknown attention mode: {attn_mode}")
+        if attn_mode == "decode" and not full_attention:
+            block_mask = self.tril[:T, :T] == 0
+        elif attn_mode == "noattn":
+            eye = torch.eye(T, dtype=torch.bool, device=x.device)
+            block_mask = ~eye
+        if block_mask is not None:
+            if cache_len > 0:
+                prefix = torch.zeros(T, cache_len, dtype=torch.bool, device=x.device)
+                combined_mask = torch.cat([prefix, block_mask], dim=1)
+            else:
+                combined_mask = block_mask
+            scores = scores.masked_fill(combined_mask.bool()[None, None, :, :], float("-inf"))
+
         if dropout_positions is not None:
             valid = (dropout_positions >= 0).nonzero(as_tuple=False).flatten()
             if valid.numel() > 0:
-                atten_block_mask = torch.zeros(B, T, T, dtype=torch.bool, device=x.device)
+                atten_block_mask = torch.zeros(B, T, total_len, dtype=torch.bool, device=x.device)
                 for b_idx in valid.tolist():
                     pos = int(dropout_positions[b_idx].item())
-                    if 0 <= pos < T - 1:
-                        atten_block_mask[b_idx, pos + 1 :, pos] = True
-        k = k_full.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
-        v = v_full.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
-        att = (q @ k.transpose(-2, -1)) / math.sqrt(k.size(-1))
-        if not full_attention:
-            att = att.masked_fill(self.tril[:T, :T] == 0, float("-inf"))
-        if atten_block_mask is not None:
-            att = att.masked_fill(atten_block_mask[:, None, :, :], float("-inf"))
-        att = F.softmax(att, dim=-1)
-        att = self.dropout(att)
-        y = att @ v
-        y = y.transpose(1, 2).contiguous().view(B, T, C)
+                    if 0 <= pos < T:
+                        target_col = cache_len + pos
+                        if target_col < total_len and pos + 1 < T:
+                            atten_block_mask[b_idx, pos + 1 :, target_col] = True
+                scores = scores.masked_fill(atten_block_mask[:, None, :, :], float("-inf"))
+
+        kv_output = (
+            k_full.view(B, T, self.n_head, head_dim),
+            v_full.view(B, T, self.n_head, head_dim),
+        )
+
+        local_max = scores.max(dim=-1).values
+        exp_scores = torch.exp(scores - local_max.unsqueeze(-1))
+        local_sum = exp_scores.sum(dim=-1)
+        local_sum = torch.clamp(local_sum, min=1e-9)
+
+        qh_data = None
+        if qh_query_callback is not None:
+            q_for_callback = q.transpose(1, 2)
+            callback_result = qh_query_callback(q_for_callback, layer_idx)
+            if callback_result is not None:
+                qh_M, qh_S, qh_T = callback_result
+                if qh_M is not None and qh_S is not None and qh_T is not None:
+                    ext_M = qh_M.permute(0, 2, 1)
+                    ext_S = qh_S.permute(0, 2, 1)
+                    ext_T = qh_T.permute(0, 2, 1, 3)
+                    qh_data = (ext_M, ext_S, ext_T)
+
+        if qh_data is not None:
+            ext_M, ext_S, ext_T = qh_data
+            base_max = torch.maximum(local_max, ext_M)
+            local_scale = torch.exp(local_max - base_max)
+            ext_scale = torch.exp(ext_M - base_max)
+            denom = local_scale * local_sum + ext_scale * ext_S
+            denom = torch.clamp(denom, min=1e-9)
+            local_weights = local_scale.unsqueeze(-1) * exp_scores / denom.unsqueeze(-1)
+            ext_coeff = (ext_scale * ext_S) / denom
+        else:
+            local_weights = exp_scores / local_sum.unsqueeze(-1)
+            ext_coeff = None
+
+        local_weights = self.dropout(local_weights)
+        y_local = torch.einsum("bhtl,bhlv->bhtv", local_weights, all_v)
+        attn_output = y_local
+        if ext_coeff is not None:
+            attn_output = attn_output + ext_coeff.unsqueeze(-1) * ext_T
+
+        y = attn_output.transpose(1, 2).contiguous().view(B, T, C)
         if disable_rows is not None and disable_rows.any():
             row_mask = (~disable_rows).view(-1, 1, 1).to(y.dtype)
             y = y * row_mask
-        return self.proj(y)
+        return self.proj(y), kv_output
 
     def forward_incremental(
         self,
@@ -2267,30 +2352,38 @@ class Block(nn.Module):
         x: torch.Tensor,
         *,
         block_bias: torch.Tensor | None = None,
+        kv_cache_sources: Sequence[tuple[torch.Tensor, torch.Tensor]] | None = None,
+        qh_query_callback=None,
+        attn_mode: str = "decode",
+        layer_idx: int = 0,
         record_mask: bool = False,
         attention_disabled_rows: torch.Tensor | None = None,
         attention_dropout_positions: torch.Tensor | None = None,
         full_attention: bool = False,
-    ) -> tuple[torch.Tensor, torch.Tensor | None]:
+    ) -> tuple[torch.Tensor, torch.Tensor | None, tuple[torch.Tensor, torch.Tensor] | None]:
         attn_norm = self.ln1(x)
         if block_bias is not None:
             attn_norm = attn_norm + block_bias
-        attn_out = self.attn(
+        attn_output, kv_pair = self.attn(
             attn_norm,
             disable_rows=attention_disabled_rows,
             dropout_positions=attention_dropout_positions,
             full_attention=full_attention,
+            kv_cache_sources=kv_cache_sources,
+            qh_query_callback=qh_query_callback,
+            attn_mode=attn_mode,
+            layer_idx=layer_idx,
         )
         if attention_disabled_rows is not None and attention_disabled_rows.any():
-            mask = (~attention_disabled_rows).view(-1, 1, 1).to(attn_out.dtype)
-            attn_out = attn_out * mask
-        x = x + attn_out
+            mask = (~attention_disabled_rows).view(-1, 1, 1).to(attn_output.dtype)
+            attn_output = attn_output * mask
+        x = x + attn_output
         pre_ff = self.ln2(x)
         if block_bias is not None:
             pre_ff = pre_ff + block_bias
         ff_out, mask = self.ff(pre_ff, record_mask=record_mask)
         x = x + ff_out
-        return x, mask
+        return x, mask, kv_pair
 
     def forward_incremental(
         self,
@@ -2382,9 +2475,11 @@ class TransformerStackCore(nn.Module):
         self,
         x: torch.Tensor,
         bias_list_in: Sequence[torch.Tensor] | None = None,
+        kv_cache_list_in: Sequence[Sequence[tuple[torch.Tensor, torch.Tensor]]] | None = None,
         *,
-        masked: bool = True,
-    ) -> tuple[torch.Tensor, list[torch.Tensor]]:
+        mode: str = "decode",
+        qh_query_callback=None,
+    ) -> tuple[torch.Tensor, list[torch.Tensor], list[tuple[torch.Tensor, torch.Tensor]]]:
         rows, cols, _ = x.shape
         bias_tensor = _merge_bias_list(
             bias_list_in or [],
@@ -2395,19 +2490,38 @@ class TransformerStackCore(nn.Module):
             x.device,
             x.dtype,
         )
+        layer_kv_sources: list[list[tuple[torch.Tensor, torch.Tensor]]] = [
+            [] for _ in range(len(self.blocks))
+        ]
+        if kv_cache_list_in:
+            for source in kv_cache_list_in:
+                if source is None:
+                    continue
+                for layer_idx in range(min(len(source), len(self.blocks))):
+                    kv_pair = source[layer_idx]
+                    if kv_pair is None:
+                        continue
+                    layer_kv_sources[layer_idx].append(kv_pair)
         current = x
         samples: list[torch.Tensor] = [current]
+        kv_outputs: list[tuple[torch.Tensor, torch.Tensor]] = []
         for layer_idx, block in enumerate(self.blocks):
             layer_bias = None
             if bias_tensor is not None:
                 layer_bias = bias_tensor[:, :, layer_idx, :]
-            current, _ = block(
+            kv_sources = layer_kv_sources[layer_idx] or None
+            current, _, kv_pair = block(
                 current,
                 block_bias=layer_bias,
-                full_attention=not masked,
+                kv_cache_sources=kv_sources,
+                qh_query_callback=qh_query_callback,
+                attn_mode=mode,
+                layer_idx=layer_idx,
+                full_attention=(mode == "encode"),
             )
             samples.append(current)
-        return current, samples
+            kv_outputs.append(kv_pair if kv_pair is not None else None)
+        return current, samples, kv_outputs
 
 
 class TransformerStackGrid(nn.Module):
@@ -2424,14 +2538,16 @@ class TransformerStackGrid(nn.Module):
         kv_cache_list_in: Sequence[Sequence[tuple[torch.Tensor, torch.Tensor]]] | None = None,
         *,
         qh_query_callback=None,
-        masked: bool = True,
+        mode: str = "decode",
     ) -> tuple[torch.Tensor, list[torch.Tensor], list]:
-        if kv_cache_list_in:
-            raise NotImplementedError("kv_cache_list_in not supported in grid mode yet")
-        if qh_query_callback is not None:
-            raise NotImplementedError("qh_query_callback not supported in grid mode yet")
-        output, samples = self.core.forward_grid(x, bias_list_in=bias_list_in, masked=masked)
-        return output, samples, []
+        output, samples, kv_out = self.core.forward_grid(
+            x,
+            bias_list_in=bias_list_in,
+            kv_cache_list_in=kv_cache_list_in,
+            mode=mode,
+            qh_query_callback=qh_query_callback,
+        )
+        return output, samples, kv_out
 
 
 class TransformerGRCE(nn.Module):
@@ -2481,10 +2597,14 @@ class TransformerGRCE(nn.Module):
         grce_state: torch.Tensor,
         samples: Sequence[torch.Tensor],
         position: int,
+        *,
+        detach_samples: bool = False,
     ) -> torch.Tensor:
         if self.disabled:
             return grce_state
-        should_detach = self.detach_span > 0 and (position % self.detach_span) == 0
+        should_detach = detach_samples or (
+            self.detach_span > 0 and (position % self.detach_span) == 0
+        )
         messages: list[torch.Tensor] = []
         for layer_idx in range(self.n_layers):
             layer_sample = samples[layer_idx][:, -1, :]
@@ -2575,10 +2695,14 @@ class TransformerXCTX(nn.Module):
         xctx_state: torch.Tensor,
         samples: Sequence[torch.Tensor],
         position: int,
+        *,
+        detach_samples: bool = False,
     ) -> torch.Tensor:
         if self.disabled:
             return xctx_state
-        should_detach = self.detach_span > 0 and (position % self.detach_span) == 0
+        should_detach = detach_samples or (
+            self.detach_span > 0 and (position % self.detach_span) == 0
+        )
         messages: list[torch.Tensor] = []
         for idx in range(self.n_layers):
             layer_sample = samples[idx][:, -1, :]
@@ -2680,16 +2804,26 @@ class TransformerStackSequence(nn.Module):
             if self.xctx is not None and xctx_state is not None:
                 column_biases.append(self.xctx.bias_forward(xctx_state))
             column_input = x[:, col : col + 1, :]
-            column_output, samples = self.core.forward_grid(
+            column_output, samples, _ = self.core.forward_grid(
                 column_input,
                 bias_list_in=column_biases,
-                masked=True,
+                mode="decode",
             )
             outputs.append(column_output)
             if self.grce is not None and grce_state is not None:
-                grce_state = self.grce.sample_forward(grce_state, samples, col)
+                grce_state = self.grce.sample_forward(
+                    grce_state,
+                    samples,
+                    col,
+                    detach_samples=False,
+                )
             if self.xctx is not None and xctx_state is not None:
-                xctx_state = self.xctx.sample_forward(xctx_state, samples, col)
+                xctx_state = self.xctx.sample_forward(
+                    xctx_state,
+                    samples,
+                    col,
+                    detach_samples=False,
+                )
         stacked = torch.cat(outputs, dim=1)
         return stacked, grce_state, xctx_state, []
 
@@ -2832,7 +2966,7 @@ class GRCEGPT(nn.Module):
             if not context_info:
                 context_info = None
         elif mode == "decode":
-            decode_output, _, _ = self.stack_grid.forward(x, masked=True)
+            decode_output, _, _ = self.stack_grid.forward(x, mode="decode")
             hidden = decode_output
         else:
             raise ValueError(f"Unknown forward_autoreg mode: {mode}")

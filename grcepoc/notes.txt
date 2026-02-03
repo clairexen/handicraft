@@ -259,8 +259,8 @@ Their size is [rows, n_grce] or [rows, n_xctx]. The 'b_out' outputs can be
 inserted directly in the 'bias_list_in' argument of stackgrid.forward().
 These 'b_out' outputs have size [rows, 1, n_layers, n_embd].
 
-	grce_out = grce.sample_forward(grce_in, S_in, detach_S=False)
-	xctx_out = xctx.sample_forward(xctx_in, S_in, detach_S=False)
+	grce_out = grce.sample_forward(grce_in, S_in, detach_samples=False)
+	xctx_out = xctx.sample_forward(xctx_in, S_in, detach_samples=False)
 
 These calculate the recurrent GRCE/XCTX outputs based on the recurrent input
 and the sampled values from the stack in 'S_in'. (Note that tensors in the
@@ -271,8 +271,8 @@ means only S_in[:][:, -1, i, :] is ever read by sample_forward().)
 We can detach the recurrent path in "the middle" of a position, by detaching
 the arguments to .sample_forward():
 
-	detached_grce_out = grce.sample_forward(grce_in.detach(), S_in, detach_S=True)
-	detached_xctx_out = xctx.sample_forward(xctx_in.detach(), S_in, detach_S=True)
+	detached_grce_out = grce.sample_forward(grce_in.detach(), S_in, detach_samples=True)
+	detached_xctx_out = xctx.sample_forward(xctx_in.detach(), S_in, detach_samples=True)
 
 When this is done for all positions, then the recurrence collapses and maximum
 path-length for backprop is alost unchanged by the addition if the recurrent
