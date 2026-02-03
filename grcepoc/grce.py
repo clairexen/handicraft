@@ -2191,13 +2191,17 @@ class Block(nn.Module):
         self,
         x: torch.Tensor,
         *,
+        block_bias: torch.Tensor | None = None,
         record_mask: bool = False,
         attention_disabled_rows: torch.Tensor | None = None,
         attention_dropout_positions: torch.Tensor | None = None,
         full_attention: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
+        attn_norm = self.ln1(x)
+        if block_bias is not None:
+            attn_norm = attn_norm + block_bias
         attn_out = self.attn(
-            self.ln1(x),
+            attn_norm,
             disable_rows=attention_disabled_rows,
             dropout_positions=attention_dropout_positions,
             full_attention=full_attention,
@@ -2207,6 +2211,8 @@ class Block(nn.Module):
             attn_out = attn_out * mask
         x = x + attn_out
         pre_ff = self.ln2(x)
+        if block_bias is not None:
+            pre_ff = pre_ff + block_bias
         ff_out, mask = self.ff(pre_ff, record_mask=record_mask)
         x = x + ff_out
         return x, mask
@@ -2216,13 +2222,17 @@ class Block(nn.Module):
         x: torch.Tensor,
         cache: LayerCache,
         *,
+        block_bias: torch.Tensor | None = None,
         record_mask: bool = False,
         attention_disabled_rows: torch.Tensor | None = None,
         puncture_mask: torch.Tensor | None = None,
         write_cache: bool = True,
     ) -> tuple[torch.Tensor, LayerCache, torch.Tensor | None]:
+        attn_norm = self.ln1(x)
+        if block_bias is not None:
+            attn_norm = attn_norm + block_bias
         attn_out, cache = self.attn.forward_incremental(
-            self.ln1(x),
+            attn_norm,
             cache,
             puncture_mask=puncture_mask,
             disable_rows=attention_disabled_rows,
@@ -2233,6 +2243,8 @@ class Block(nn.Module):
             attn_out = attn_out * mask
         x = x + attn_out
         pre_ff = self.ln2(x)
+        if block_bias is not None:
+            pre_ff = pre_ff + block_bias
         ff_out, mask = self.ff(pre_ff, record_mask=record_mask)
         x = x + ff_out
         return x, cache, mask
@@ -2312,9 +2324,9 @@ class TransformerStackCore(nn.Module):
             layer_bias = None
             if bias_tensor is not None:
                 layer_bias = bias_tensor[:, :, layer_idx, :]
-            block_input = current if layer_bias is None else current + layer_bias
             current, _ = block(
-                block_input,
+                current,
+                block_bias=layer_bias,
                 full_attention=not masked,
             )
             samples.append(current)
@@ -2779,11 +2791,13 @@ class GPTCore(nn.Module):
         target_idx = target_position if target_position is not None else (T - 1)
         target_idx = max(0, min(T - 1, int(target_idx)))
         for layer_idx, block in enumerate(self.blocks):
+            layer_bias = None
             if block_biases is not None:
-                x = x + block_biases[layer_idx]
+                layer_bias = block_biases[layer_idx]
             block_inputs.append(x[:, target_idx, :])
             x, layer_mask = block(
                 x,
+                block_bias=layer_bias,
                 record_mask=record_relu_mask,
                 attention_disabled_rows=attention_disabled_rows,
                 attention_dropout_positions=attention_dropout_positions,
@@ -2827,12 +2841,14 @@ class GPTCore(nn.Module):
             device=idx.device,
         )
         for layer_idx, block in enumerate(self.blocks):
+            layer_bias = None
             if block_biases is not None:
-                x = x + block_biases[layer_idx].unsqueeze(1)
+                layer_bias = block_biases[layer_idx].unsqueeze(1)
             block_inputs.append(x[:, 0, :])
             x, caches[layer_idx], layer_mask = block.forward_incremental(
                 x,
                 caches[layer_idx],
+                block_bias=layer_bias,
                 record_mask=record_relu_mask,
                 attention_disabled_rows=attention_disabled_rows,
                 puncture_mask=puncture_mask,
