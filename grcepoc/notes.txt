@@ -23,20 +23,25 @@ mix and remix stage, and then per-layer bias-injection stage in the next positio
 
 Let's call the recurrent GRCE signal G, the updated recurrent signal G'. Let the
 sampled signal from the input to transformer layer i be S_i, and let the per-layer bias
-vectors, added to the transformer inputs after sampling S_i, be B_i.
+vectors, added to both LN()-outputs in the transformer block, be B_i.
 
 The model embedding dimension is n_embd. The width of the recurrent GRCE channel
 is n_grce, and the width of the recurrent XCTX channel is n_xctx. Note that usually
-n_grce < n_embd < n_xctx. (n_xctx must be a multiple of n_layers.)
+n_grce < n_embd < n_xctx.
 
-A transformer block is simply this (GPT-2 design, with GRCE and XCTX bias added):
+A "classical" (GPT-2 design) transformer block is simply this:
 Let Up4xE_i() be a per-layer learned linear from n_embd to 4*n_embd
 Let Dn4xE_i() be a per-layer learned linear from 4*n_embd to n_embd
-  Z_i := S_i [+ GRCE B_i bias signal, if present] [+ XCTX B_i bias signal, if present]
-  H_i := MultiHeadAtt_i(LN(Z_i))
-  T_i := Z_i + H_i
-  R_i := ReLU(Up4xE_i(LN(T_i)))
-  S_{i+1} := T_i + Dn4xE(R_i)
+  H_i := MultiHeadAtt_i(LN(S_i))
+  T_i := S_i + H_i
+  R_i := Dn4xE(ReLU(Up4xE_i(LN(T_i))))
+  S_{i+1} := T_i + R_i
+
+Now with GRCE and/or XCTX bias added:
+  H_i := MultiHeadAtt_i(LN(S_i)+B_i)
+  T_i := S_i + H_i
+  R_i := Dn4xE(ReLU(Up4xE_i(LN(T_i)+B_i)))
+  S_{i+1} := T_i + R_i
 
 The (low-dimensional) GRCE channel (G -> G'):
 Let G2E_i() be a per-layer learned linear from n_grce to n_embd.
@@ -44,22 +49,22 @@ Let E2G_i() be a per-layer learned linear from n_embd to n_grce.
 Let Up4xG() be a learned linear from n_grce to 4*n_grce
 Let Dn4xG() be a learned linear from 4*n_grce to n_grce
   Bias injection based on the signal from the previous position(s) via recurrent input G, create bias
-  values B_i for the n_layer layers, to be added to block inputs *after* sampling the vectors S_i:
+  values B_i for the n_layer layers, add with bias from XCTX if both GRCE and XCTX are enabled.
     B_i := G2E_i(LN(G))
   For each transformer layer i at this position and thus for each sampled vector S_i:
-    V_i := E2G_i(LN(S_i))
+    Z_i := E2G_i(LN(S_i))
   Then the shared mixing stage, combining the recurrent input signal G with the per-layer values:
-    M := LN(G + V_0 + V_1 + ... + V_{n_layers-1})
+    M := LN(G + Z_0 + Z_1 + ... + Z_{n_layers-1})
   Then re-mixing M with an MLP into a new recurrent vector G'
     G' := LN(M + Dn4xG(ReLU(Up4xG(M))))
 
 The GRCE architecture is almost identical to a block of the transformer stack,
 except that it has the transformer stack itself in its first half, instead of
 the attention mechanism that we find in the first half of each block of the
-transformer stack. Note that via the path B_i -> V_j (with i<j) thru the
+transformer stack. Note that via the path B_i -> Z_j (with i<j) thru the
 transformer, the GRCE path can access compute resources inside the transformer
 stack, and thus only one shared MLP layer is ever needed in the GRCE data path
-itself, for remixing the mixed G and V_i signals from different layers into an
+itself, for remixing the mixed G and Z_i signals from different layers into an
 updated single recurrent state vector G'.
 
 The (high-dimensional) XCTX channel (X -> X'):
@@ -71,13 +76,12 @@ Let U2E_i() be a per-layer learned linear from u to n_embd.
 Let DnX() be a learned linear from n_xctx to n_xctx/2.
 Let UpX() be a learned linear from n_xctx/2 to n_xctx.
 Let W() be a learned linear from n_xctx to n_xctx.
-  Bias injection based on the signal from the previous position via recurrent input G, create bias
-  values B_i for the n_layer layers, to be added to block inputs *after* sampling the vectors S_i:
+  Bias injection based on the signal from the previous position via recurrent input X:
     B_i := U2E_i(LN(X2U_i(X)))
   For each transformer layer i at this position and thus for each sampled vector S_i:
-    V_i := U2X_i(LN(E2U_i(S_i)))
+    Z_i := U2X_i(LN(E2U_i(S_i)))
   Then the shared mixing stage, combining the recurrent input signal G with the per-layer values:
-    M := LN(DnX(X + V_0 + V_1 + ... + V_{n_layers-1}))
+    M := LN(DnX(X + Z_0 + Z_1 + ... + Z_{n_layers-1}))
   Then re-mixing the original recurrent X input (not M) with an MLP into the new
   recurrent vector X'; with RMSNorm (not LN, for better stability in recurrent path):
     X' := RMSNorm(X + W(ReLU(UpX(M))))
@@ -96,15 +100,6 @@ run the *full layer stack for a single token*, appending that token’s K/V to
 per-layer caches and attending only against cached past keys/values. (In
 `encode` blocks we run the transformer with simple un-masked attention, so
 we must not use a KV-cached architecture in the case of `encode` blocks.)
-
-In `encode` blocks (see below) the GRCE channel is disabed. Only the last
-position in an `encode` block has the GRCE sampler and shared path, to generate
-a GRCE output from the last position of the encoder only. The recurrent XCTX
-channel however is present for all positions of the encoder, but without the
-bias injection networks. So one could say in `encode` mode each transformer
-position is "blindly" injecting information into the shared forward-projecting
-XCTX data path. `recode` rows (see below) are used to train such encoders to
-produce pairs of GRCE and XCTX outputs that that decoders can consume.
 
 
 ## Rationale for the recurrent channels, additional thoughts, and predicted behavior
@@ -169,16 +164,16 @@ information cleanly overwriting or adding to older information, without adding
 any "architectural noise" into the critical (recurrent) path in the process.
 
 
-## PyTorch Model and new method of batch creation
+## PyTorch Model
 
 ### TransformerStackGrid
 
-We create the following TransformerStackBlock(nn.Module) class:
+We create the following TransformerStackGrid(nn.Module) class:
 
 	stackgrid = TransformerStackGrid(settings)
 	y, s_out, kv_out = stackgrid.forward(x,
 			bias_list_in=[], kv_cache_list_in=[],
-			qh_query_callback=None, masked=True)
+			qh_query_callback=None, mode="decode")
 
 Note: We use rows for the batch dimension (often B) and cols for the
 time dimension (often T). This is intentional: a full batch may be
@@ -197,19 +192,17 @@ The (posibly empty) list 'bias_list_in' contains tensors of maximum size
 [rows, <=cols, <=n_layers, n_embd]. (Each tensor in a list can have a different
 size in its second of third dimension, as long as the 2nd dim is <=cols and the
 thirdt dimensionis <=n-layers. The tensors contain the 'biases' added to the
-n_embd-sized transformer-block input vectors before each block in the stack,
-for the first <=cols columns in the grid, and the first <=n_layers. (usually
-<=cols is simply either one or cols, and <=n_layers is usually either
-one or n_layer.)
+two n_embd-sized LN() output vectors in each block in the stack, for the first
+<=cols columns in the grid, and the first <=n_layers. (usually <=cols is simply
+either one or cols, and <=n_layers is usually either one or n_layer.)
 
 The argument 'kv_cache_list_in' is a list of lists of 2-tuples. The first
 list-dimension is simply the source and the second dimension is the layer.
 Each 2-tuple is "per-layer k/v-cache" and contains two tensors of the same
 size: [rows, n_kv, n_heads, head_dim], with n_embd = n_heads * head_dim, and
 with n_kv as the arbitrary number of entries in the given cache. (Usually
-n_kv is simpl the number of columns of the grid that produced this cache.
-The output 'kv_out' is a single such list of 2-tuples with the layer dimension
-as list-size.)
+n_kv is simply the number of columns of the grid that produced this kv-cache.
+The output 'kv_out' is a single such n_layers-sized list of 2-tuples.
 
 The callback 'qh_query_callback,' basically implements keyed external memory:
 
@@ -223,17 +216,29 @@ max_i(x_i=Q*K_i^T) value for the row/col/head specified in k. S_k is the
 sum_j(exp(x_j - M_k)).  And T_k is the H value for the external contribution
 only: sum_i(V_i*exp(x_i - M_k)) / S_k.
 
-With mask=True we perform masked causal senf-attention. With mask=False each
-position can attent to any other position in the grid. ('kv_cache_list_in'
-and 'qh_query_callback' by definition belong to events in the past and
-thus the 'mask' argument has no effect on them.)
+With mode="decode" we perform masked causal senf-attention. With mode="encode"
+each position can attent to any other position in the grid. And with
+mode="noattn" we only perform self-attention and no attention between
+positions of this grid ('kv_cache_list_in' and 'qh_query_callback' are
+always used regardless of 'mode' selection.)
 
 The output 's_out' is a list of size n_layers+1, containing tensors of size
 [rows, cols, n_embd], with the sampled inputs and outputs to all transformer
-blocks in the grid. Sampling is done before the biases in b_in are being added
-to the transformer block inputs for the next stage. Note that te first element
-in 's_out' is simply the input 'x' and the last element is simply the
-"transformed" output 'y'.
+blocks in the grid.  Note that the first element in 's_out' is simply the input
+'x' and the last element is simply the "transformed" output 'y'.
+
+### Optimized tensor memory layout
+
+The tensor dimensions used in the API are all using 'rows' as first dimension
+and 'cols' as second dimension, because that is cleaner from an API
+point-of-vies. For example:
+	[rows, cols, n_embd]
+	[rows, cols, n_layers, n_embd]
+	[rows, cols, n_heads, head_dim]
+
+However, if there's an iteration, then code iterates over 'cols' first, so
+that should be the first dimension in memory. Thus allocate tensors [cols, rows, ...]
+and then immediately re-shape them into the "API form".
 
 ### GRCE and XCTX shims
 
@@ -254,14 +259,24 @@ Their size is [rows, n_grce] or [rows, n_xctx]. The 'b_out' outputs can be
 inserted directly in the 'bias_list_in' argument of stackgrid.forward().
 These 'b_out' outputs have size [rows, 1, n_layers, n_embd].
 
-	grce_out = grce.sample_forward(grce_in, S_in)
-	xctx_out = xctx.sample_forward(xctx_in, S_in)
+	grce_out = grce.sample_forward(grce_in, S_in, detach_S=False)
+	xctx_out = xctx.sample_forward(xctx_in, S_in, detach_S=False)
 
 These calculate the recurrent GRCE/XCTX outputs based on the recurrent input
 and the sampled values from the stack in 'S_in'. (Note that tensors in the
 'S_in' list may have a 'cols' dimension > 1, but for convenience these two
 functions are only ever using the _last_ entry in the 'cols' dimension. This
 means only S_in[:][:, -1, i, :] is ever read by sample_forward().)
+
+We can detach the recurrent path in "the middle" of a position, by detaching
+the arguments to .sample_forward():
+
+	detached_grce_out = grce.sample_forward(grce_in.detach(), S_in, detach_S=True)
+	detached_xctx_out = xctx.sample_forward(xctx_in.detach(), S_in, detach_S=True)
+
+When this is done for all positions, then the recurrence collapses and maximum
+path-length for backprop is alost unchanged by the addition if the recurrent
+GRCE and XCTX paths.
 
 In summary: bias_forward() always consumes the recurrent state from the
 previous position; sample_forward() produces the recurrent state for the next
@@ -277,8 +292,9 @@ resambling a StackGrid, but with added GRCE and XCTX channels:
 
 	seq = TransformerStackSequence(settings)
 	y, grce_out, xctx_out, kv_out = seq.forward(x, grce_in, xctx_in,
-			bias_list_in=[], kv_cache_list_in=[],
-			qh_query_callback=None)
+			bias_list_in=[], kv_cache_list_in=[], qh_query_callback=None,
+			mode="forward", detach_internal_kv_cache=False,
+			detach_span_S=0, detach_span_grce=0, detach_span_xctx=0)
 
 With {grce,xctx}_{in,out} of size [rows, n_{grce,xctx}]. (So {grce,xctx}_out
 are the final recurrent states after the last column.)
@@ -293,57 +309,87 @@ inputs.
 The values from 'bias_list_in' are applied per column: biases for column t are
 applied to TransformerStackColumn[t] in the same way as in TransformerStackGrid.
 
+We maintain an internal kv_cache, as described in "Management and balancing of
+k/v-caches in sequences" below, which we return as kv_out.
+
+When mode="noattn" we skip applying the internal kv_cache. Thus in "noattn"
+mode the recurrent channels are the only way of passing information forward
+within the sequence. (Note that we still apply self-attention and we still
+attent to 'kv_cache_list_in' and 'qh_query_callback'.)
+
+When mode is "encode" or "decode", then a single large internal stack grid
+is created that covers all the positions in the sequence. In this case we
+call .bias_forward() only once for the first position of the sequence, and
+only inject that bias into the first position. After running .forward()
+for the grid we call .sample_forward() for each channel and position to
+calculate the values for 'grce_out' and 'xctx_out'.
+
+When detach_span_*>0 then the recurrent path or S-sampling is detached every
+detach_span positions. So detach_span_S=1 will detach S-sampling at every
+position, but allow full backprop on the recurrent XCTX and GRCE signals.
+
+### Management and balancing of k/v-caches in sequences
+
+There are two mechanisms to manage the internal kv-cache of a sequence:
+
+1) As list[:] of list[n_layers] of 2-tuples of tensor[rows, n_kv, n_heads, head_dim]
+
+Each time we receive a new kv_out (list[n_layers] of 2-tuples of tensors)
+we simply append that kv_out to our kv_cache_list, which we pass via the
+kv_cache_list_in argument to .forward() of a grids and sequences.
+
+Having a large such list, each with a small 'n_kv' inner dimension is
+inefficient. So we call kv_cache_list_balance() on our kv_cache_list
+after appending one or more additional kv_out to it, and before using
+it as kv_cache_list_in in a .forward() call the next time.
+
+kv_cache_list_balance() utilizes a helper function kv_cache_list_merge()
+that consumes a kv_cache_list_in-style list of lists of 2-tuples of tensors,
+and re-arranges that into a single list[n_layers] of 2-tuples of tensors.
+
+At the end of the sequence we then use kv_cache_list_merge() to convert
+the final state of kv_cache_list into the kv_out return value.
+
+Another helper kv_cache_list_detach() can be used to .detach() all
+tensors in a kv_cache_list. (This is not done by default, but can
+be done by the caller. See also batch composition below.)
+
+2) As .detach()-ed k/v copies in two pre-allocated tensor[rows, cols, n_heads, head_dim]
+
+When in detach_internal_kv_cache=True mode we simply pre-allocate kv_out.
+
+For each position we then create a list[n_layers] of 2-tuples of tensors[:,:pos,:,:]
+kv_cache that we can pass in kv_cache_list_in to .forward().
+
+When we receive a kv_out we simply store a .detached() copy of it in a slice of
+our pre-allocated kv_out tensor pair.
+
+Each of those modes are available in evaluation and training! kv-detached cache
+is NOT just meant inference-only optimization. Instead, we can use it to speed
+up training for sequences with GRCE/XCTX enabled. In those cases, with detached
+kv-caches for some instances of the model, we simply rely on the other
+instances in the training batch to learn useful k/v values, which then can be
+used as detached values when training the recurrent channel.
+
 ### Composition of training and evaluation batches
 
-Half of the rows are in "normal" mode (just one big TransformerStackSequence)
-and the other half are in "decode" mode (one big TransformerStackGrid with
-mask=True).
+We construct a training scenario by appending TransformerStackSequence
+blocks of different modes in the following sequence order:
 
-There are two mechanisms to manage the kv-cache. Either as list of 2- tuples of
-tensors, re-balanced unless --no-kv-rebalance, or via a kv-detached cache,
-when --detach-kv-cache, in which case a pre-alocated tensor is filled with
-detached copies of the k/v falues, and each stack is passed a slice of that
-large tensor. Each of those modes are available in training! kv-detached
-cache is NOT just meant inference-only optimization. Instead, we can use it to
-speed up training for rows with GRCE/XCTX. In those cases, with detached
-kv-caches, we simply rely on the rows in "decode" mode to train for good K/V
-values.
+  encode -> decode -> forward -> noattn
 
-We also add a single "noattn" row, that is equivalent to "forward", except
-it has all attention except self-attention disabled, by not maintaining
-either form of k/v cache. (Note that "forward" row are constructed with
-TransformerStackSequence, which contains single-column TransformerStackGrids,
-so there is no attention within the contained grid except self-attention
-for that column.)
+From a given block_size we first allocate max(1, allocate block_size // 8)
+columns to each of the 4 modes, then we randomly assign the remaining cols
+to the 4 sequences.
 
-(With --only-forward or --only-decode we create training batches that
-only contain that row type. But for evaluation we always create the
-mix of three row types as described above.)
+Note that for the "encode" sequence we must only use the prediction from the
+very last position, that predicts the next token after the encode block
+input.
 
-
-## Training and evaluation with pre-evaluation -- (this is future work)
-
-We add a `--pre-eval` CLI option. For that mode we define a *pre-eval batch*,
-that is evaluated before training on or evaluating a *default batch*.
-
-The *pre-eval batch* contains a 50/50 mix of `encode` and `normal` blocks
-and is evaluated on the current block of tokens for each training step or
-evaluation during training, and then the final recurrent GRCE and XCTX vectors
-generated by the last position of each block are extracted.
-
-Then we create the actual training or eval batch, and we use the extracted GRCE and
-XCTX vectors as recurrent inputs for the first position in the following block,
-in 75% of the cases where that block is a `normal` block. (Note that we can
-never run the first block in a batch with pre-eval input values, because we
-have not evaluated the block before that during pre-eval.) We ensure that there's
-always at least one case of normal-with-encode-pre-eval, one case of
-normal-with-normal-pre-eval, and one case of normal-without-pre-eval in each
-train or eval batch with --pre-eval enabled.
-
-For all reported loss values, in evaluation steps, we calculate the `loss_hist`
-{train,test}_loss_normal values using only the normal-without-pre-eval blocks,
-and add the new {train,test}_loss_pre{norm,enc} values, that are calculated using
-only the normal blocks with normal-pre-eval or encode-pre-eval respectively.
+We report 4 loss numbers when evaluating the model: "target" = the actual
+optimization target, "encode" = loss only based on the last column of the
+encode block, "decode" = loss based on all columns of the decode block,
+and likewise for "forward" and "noattn".
 
 
 ## Thinking Models -- (this is future work)
