@@ -607,6 +607,10 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         test_start=None,
     )
 
+
+    # --------------------------------------------------------
+    # Subcommand args parser for "train"
+
     train_parser = subparsers.add_parser(
         "train",
         help="Run the standard training loop",
@@ -629,6 +633,10 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         help="How many completions to generate",
     )
 
+
+    # --------------------------------------------------------
+    # Subcommand args parser for "test"
+
     test_parser = subparsers.add_parser(
         "test",
         help="Print block-length tokens from the test corpus",
@@ -643,12 +651,20 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         help="Cursor offset within the test corpus to begin printing",
     )
 
+
+    # --------------------------------------------------------
+    # Subcommand args parser for "profile"
+
     profile_parser = subparsers.add_parser(
         "profile",
         help="Run a warm-up and profiled training step, then dump profiler stats",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     profile_parser.set_defaults(command="profile")
+
+
+    # --------------------------------------------------------
+    # Subcommand args parser for "size"
 
     size_parser = subparsers.add_parser(
         "size",
@@ -658,14 +674,20 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
     size_parser.set_defaults(command="size")
     size_parser.add_argument(
         "--check",
+        dest="size_check",
         action="store_true",
         help="Instantiate the model and verify the analytic counts",
     )
     size_parser.add_argument(
         "--estimate",
+        dest="size_estimate",
         action="store_true",
         help="Append a dominant-term estimate section",
     )
+
+
+    # --------------------------------------------------------
+    # Subcommand args parser for "corpus"
 
     corpus_parser = subparsers.add_parser(
         "corpus",
@@ -697,6 +719,10 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         help="Print a START-END token range from the test split",
     )
     corpus_parser.set_defaults(command="corpus")
+
+
+    # --------------------------------------------------------
+    # Subcommand args parser for "prompts"
 
     prompt_parser = subparsers.add_parser(
         "prompts",
@@ -739,6 +765,10 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
     )
     prompt_parser.set_defaults(command="prompts")
 
+
+    # --------------------------------------------------------
+    # Subcommand args parser for "create"
+
     create_parser = subparsers.add_parser(
         "create",
         help="Create a new checkpoint with random weights and exit",
@@ -773,6 +803,7 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         help="Comma-separated layer numbers (1-indexed) to insert during import",
     )
 
+
     # --------------------------------------------------------
     # Run the args parser
 
@@ -784,6 +815,7 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
             1,
             "\nPlease specify a command (train, report, test, size, corpus, create, or prompts).\n",
         )
+
 
     # --------------------------------------------------------
     # Normalize, tweak, and check global options
@@ -1128,7 +1160,7 @@ def _build_geometry(config: GeometryLike, block_size: int) -> list[tuple[str, st
         ("G", "grce width", config.n_grce),
         ("X", "xctx width", config.n_xctx),
         ("U", "inner xctx width", _get_inner_xctx_width(config)),
-        ("C", "bias limit (0=all)", config.n_bias),
+        ("C", "bias layers", config.n_bias),
     ]
 
 def _expected_sections(config: GeometryLike, block_size: int) -> list[tuple[str, str, list[dict]]]:
@@ -1154,13 +1186,13 @@ def _expected_sections(config: GeometryLike, block_size: int) -> list[tuple[str,
     transformer_items = [
         {
             "label": "attn qkv",
-            "count": 3 * L * (E * E + E),
-            "formula": "3 * L * (E * E + E)",
+            "count": 3 * L * (E*E + E),
+            "formula": "3 * L * (E*E + E)",
         },
         {
             "label": "attn proj",
-            "count": L * (E * E + E),
-            "formula": "L * (E * E + E)",
+            "count": L * (E*E + E),
+            "formula": "L * (E*E + E)",
         },
         {
             "label": "ffn fc1",
@@ -1184,13 +1216,13 @@ def _expected_sections(config: GeometryLike, block_size: int) -> list[tuple[str,
             },
             {
                 "label": "mlp",
-                "count": 8 * G * G + 9 * G,
+                "count": 8*G*G + 9*G,
                 "formula": "8*G*G + 9*G",
             },
             {
                 "label": "bias",
-                "count": C * (G * E + E),
-                "formula": "C * (G*E + E) (C=bias layers)",
+                "count": C * (G*E + E),
+                "formula": "C * (G*E + E)",
             },
         ]
     else:
@@ -1285,8 +1317,8 @@ def _compute_actual_counts(config: GeometryLike) -> dict[tuple[str, str], int]:
     model = GRCEGPT(config)
     counts: dict[tuple[str, str], int] = {}
 
-    counts[("global", "token embeddings")] = _module_param_count(model.core.tok_emb)
-    counts[("global", "position embeddings")] = _module_param_count(model.core.pos_emb)
+    counts[("embeddings", "token embeddings")] = _module_param_count(model.core.tok_emb)
+    counts[("embeddings", "position embeddings")] = _module_param_count(model.core.pos_emb)
 
     attn_qkv = 0
     attn_proj = 0
@@ -1308,7 +1340,7 @@ def _compute_actual_counts(config: GeometryLike) -> dict[tuple[str, str], int]:
     for channel in model.context_channels:
         if channel.disabled:
             continue
-        key = "xctx" if channel.is_xctx else "grce"
+        key = "xctx" if type(channel) is TransformerXCTX else "grce"
         breakdown = channel.parameter_breakdown()
         for label, value in breakdown.items():
             counts[(key, label)] = counts.get((key, label), 0) + value
@@ -1404,17 +1436,16 @@ def grce_cmd_size(
 
 def grce_cli_size(args: Args):
     assert args.command == "size"
-    return grce_cmd_size(
-        Settings(args),
-        check=getattr(args, "check", False),
-        estimate=getattr(args, "estimate", False),
+    return grce_cmd_size(args,
+        check=args.size_check,
+        estimate=args.size_estimate
     )
 
 if __name__ == "__main__":
     # run it here when not in --check mode, and run it later if we need torch for --check
     # on some builds it can take 5 seconds or longer to import torch, so we early-exit
     # on the "size" sub-command here so it prints the model size right away without that delay
-    if cli_args.command == "size" and not getattr(cli_args, "check", False):
+    if cli_args.command == "size" and not cli_args.size_check:
         sys.exit(grce_cli_size(cli_args))
 
 
@@ -4878,7 +4909,7 @@ def grce_main(args: argparse.Namespae) -> int:
     # second entry point for "size" subcommand, now with
     # Torch imported; used only in 'size --check' mode
     if cli_args.command == "size":
-        assert getattr(cli_args, "check", False)
+        assert cli_args.size_check
         sys.exit(grce_cli_size(cli_args))
 
     preprocess_runtime_settings(cli_args)
