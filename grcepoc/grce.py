@@ -109,7 +109,6 @@ class ModelGeometry:
     n_embd: int = 384       # GPT-2 base uses 768 embedding dims.
     n_grce: int = 64        # Narrow GRCE context dims.
     n_xctx: int = 720       # Wide XCTX context dims.
-    n_bias: int = 4         # Layers that accept GRCE/XCTX bias injections (0 = all).
 
 MODEL_GEOMETRY_DEFAULTS = ModelGeometry()
 
@@ -125,7 +124,6 @@ class Defaults:
     n_embd: int = MODEL_GEOMETRY_DEFAULTS.n_embd
     n_grce: int = MODEL_GEOMETRY_DEFAULTS.n_grce
     n_xctx: int = MODEL_GEOMETRY_DEFAULTS.n_xctx
-    n_bias: int = MODEL_GEOMETRY_DEFAULTS.n_bias
     corpus: str = "cccc"
     steps: int = 100
     cycles: int = 100
@@ -312,12 +310,6 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         help=(
             "Dimension of the wide (layer-partitioned) context channel; must be a multiple of n_layer"
         ),
-    )
-    model_group.add_argument(
-        "--n-bias",
-        type=int,
-        default=DEFAULTS.n_bias,
-        help="Limit GRCE/XCTX bias injectors to the lowest N layers (0 keeps all layers active)",
     )
     model_group.add_argument(
         "--tiny",
@@ -732,8 +724,6 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
             args.block_size = 6
         if not flag_present("--n-layer"):
             args.n_layer = 3
-        if not flag_present("--n-bias"):
-            args.n_bias = 2
         if not flag_present("--n-head"):
             args.n_head = 2
         if not flag_present("--n-embd"):
@@ -760,8 +750,6 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
             args.block_size = 64
         if not flag_present("--n-layer"):
             args.n_layer = 10
-        if not flag_present("--n-bias"):
-            args.n_bias = 8
         if not flag_present("--n-head"):
             args.n_head = 4
         if not flag_present("--n-embd"):
@@ -845,7 +833,6 @@ def args_to_model_geometry(args: Args):
         n_embd=args.n_embd,
         n_grce=args.n_grce,
         n_xctx=args.n_xctx,
-        n_bias=args.n_bias,
     )
 
 
@@ -1058,14 +1045,6 @@ def _get_inner_xctx_width(config: GeometryLike) -> int:
     return min(config.n_embd // 2, config.n_xctx // 2, max(config.n_embd // 4, config.n_xctx // config.n_layer))
 
 
-def _get_bias_layer_count(config: GeometryLike) -> int:
-    """Return how many Transformer layers accept GRCE/XCTX bias injections."""
-
-    limit = int(config.n_bias)
-    if limit <= 0:
-        return max(0, config.n_layer)
-    return max(0, min(config.n_layer, limit))
-
 def _build_geometry(config: GeometryLike, block_size: int) -> list[tuple[str, str, int]]:
     return [
         ("V", "vocab size", config.vocab_size),
@@ -1076,71 +1055,74 @@ def _build_geometry(config: GeometryLike, block_size: int) -> list[tuple[str, st
         ("G", "grce width", config.n_grce),
         ("X", "xctx width", config.n_xctx),
         ("U", "inner xctx width", _get_inner_xctx_width(config)),
-        ("C", "bias layers", config.n_bias),
     ]
 
 def _expected_sections(config: GeometryLike, block_size: int) -> list[tuple[str, str, list[dict]]]:
     V = config.vocab_size
     B = block_size
-    L = max(1, config.n_layer)
-    H = max(1, config.n_head)
+    L = config.n_layer
+    H = config.n_head
     E = config.n_embd
     G = config.n_grce
     X = config.n_xctx
-    C = _get_bias_layer_count(config)
-
     sections: list[tuple[str, str, list[dict]]] = []
 
-    global_items = [
-        {"label": "token embeddings", "count": V * E, "formula": "V * E"},
-        {"label": "position embeddings", "count": B * E, "formula": "B * E"},
-        {"label": "special embeddings", "count": 0 * E, "formula": "0 * E"},
-        {"label": "grce embeddings", "count": 0 * G, "formula": "0 * G"},
-    ]
+    def eval_items(items):
+        for item in items:
+            item["count"] = eval(item["formula"], {
+                "V": config.vocab_size,
+                "B": block_size,
+                "L": config.n_layer,
+                "H": config.n_head,
+                "E": config.n_embd,
+                "G": config.n_grce,
+                "X": config.n_xctx
+            })
+        return items
+
+    global_items = eval_items([
+        {"label": "token embeddings", "formula": "V * E"},
+        {"label": "position embeddings", "formula": "B * E"},
+        {"label": "special embeddings", "formula": "0 * E"},
+        {"label": "grce embeddings", "formula": "0 * G"},
+    ])
     sections.append(("embeddings", "Embeddings", global_items))
 
-    transformer_items = [
+    transformer_items = eval_items([
         {
             "label": "attn qkv",
-            "count": 3 * L * (E*E + E),
             "formula": "3 * L * (E*E + E)",
         },
         {
             "label": "attn proj",
-            "count": L * (E*E + E),
             "formula": "L * (E*E + E)",
         },
         {
             "label": "ffn fc1",
-            "count": L * (4 * E * E + 4 * E),
             "formula": "L * (4*E*E + 4*E)",
         },
         {
             "label": "ffn fc2",
-            "count": L * (4 * E * E + E),
             "formula": "L * (4*E*E + E)",
         },
-    ]
+    ])
     sections.append(("transformer", "Transformer", transformer_items))
 
     if G > 0:
-        grce_items = [
+        grce_items = eval_items([
             {
                 "label": "samplers",
-                "count": config.n_layer * (2 * E + E * G + G),
                 "formula": "L * (2*E + E*G + G)",
             },
             {
                 "label": "mlp",
-                "count": 8*G*G + 9*G,
                 "formula": "8*G*G + 9*G",
             },
             {
                 "label": "bias",
-                "count": C * (G*E + E),
-                "formula": "C * (G*E + E)",
+                "formula": "L * (G*E + E)",
             },
-        ]
+        ])
     else:
         grce_items = []
     sections.append(("grce", "GRCE Channel", grce_items))
@@ -1162,8 +1144,8 @@ def _expected_sections(config: GeometryLike, block_size: int) -> list[tuple[str,
             },
             {
                 "label": "bias",
-                "count": C * (X * chunk + chunk + chunk * E + E),
-                "formula": "C * (X*(X/L) + (X/L) + (X/L)*E + E)",
+                "count": max(0, config.n_layer) * (X * chunk + chunk + chunk * E + E),
+                "formula": "L * (X*(X/L) + (X/L) + (X/L)*E + E)",
             },
         ]
     else:
@@ -2369,7 +2351,6 @@ class TransformerGRCE(nn.Module):
         self.context_dim = config.n_grce
         self.n_layers = config.n_layer
         self.n_embd = config.n_embd
-        self.bias_layers = _get_bias_layer_count(config)
         self.detach_span = max(0, int(config.detach_span))
         if self.disabled:
             return
@@ -2381,7 +2362,7 @@ class TransformerGRCE(nn.Module):
         )
         self.bias_norm = nn.LayerNorm(self.context_dim)
         self.bias_projections = nn.ModuleList(
-            nn.Linear(self.context_dim, self.n_embd) for _ in range(self.bias_layers)
+            nn.Linear(self.context_dim, self.n_embd) for _ in range(self.n_layers)
         )
         self.mix_norm = nn.LayerNorm(self.context_dim)
         hidden = max(1, 4 * self.context_dim)
@@ -2395,7 +2376,7 @@ class TransformerGRCE(nn.Module):
     def bias_forward(self, grce_state: torch.Tensor) -> torch.Tensor:
         if self.disabled:
             raise RuntimeError("GRCE disabled")
-        if self.bias_layers <= 0:
+        if self.n_layers <= 0:
             return grce_state.new_zeros(grce_state.size(0), 1, 0, self.n_embd)
         normed = self.bias_norm(grce_state)
         per_layer = [proj(normed) for proj in self.bias_projections]
@@ -2451,7 +2432,6 @@ class TransformerXCTX(nn.Module):
         self.context_dim = config.n_xctx
         self.inner_dim = _get_inner_xctx_width(config)
         self.squeeze_dim = max(1, self.context_dim // 2)
-        self.bias_layers = _get_bias_layer_count(config)
         self.detach_span = max(0, int(config.detach_span))
         if self.disabled:
             return
@@ -2465,13 +2445,13 @@ class TransformerXCTX(nn.Module):
             nn.Linear(self.inner_dim, self.context_dim) for _ in range(self.n_layers)
         )
         self.bias_down = nn.ModuleList(
-            nn.Linear(self.context_dim, self.inner_dim) for _ in range(self.bias_layers)
+            nn.Linear(self.context_dim, self.inner_dim) for _ in range(self.n_layers)
         )
         self.bias_norms = nn.ModuleList(
-            nn.LayerNorm(self.inner_dim) for _ in range(self.bias_layers)
+            nn.LayerNorm(self.inner_dim) for _ in range(self.n_layers)
         )
         self.bias_up = nn.ModuleList(
-            nn.Linear(self.inner_dim, self.n_embd) for _ in range(self.bias_layers)
+            nn.Linear(self.inner_dim, self.n_embd) for _ in range(self.n_layers)
         )
         self.mix_down = nn.Linear(self.context_dim, self.squeeze_dim)
         self.mix_norm = nn.LayerNorm(self.squeeze_dim)
@@ -2485,10 +2465,10 @@ class TransformerXCTX(nn.Module):
     def bias_forward(self, xctx_state: torch.Tensor) -> torch.Tensor:
         if self.disabled:
             raise RuntimeError("XCTX disabled")
-        if self.bias_layers <= 0:
+        if self.n_layers <= 0:
             return xctx_state.new_zeros(xctx_state.size(0), 1, 0, self.n_embd)
         per_layer: list[torch.Tensor] = []
-        for idx in range(self.bias_layers):
+        for idx in range(self.n_layers):
             reduced = self.bias_down[idx](xctx_state)
             normed = self.bias_norms[idx](reduced)
             per_layer.append(self.bias_up[idx](normed))
@@ -2897,18 +2877,18 @@ class GRCEContextChannel(BaseContextChannel):
         super().__init__(args, args.n_grce)
         config = args
         self.is_xctx = False
-        self.bias_layers = _get_bias_layer_count(config)
+        self.n_layers = config.n_layer
         if self.disabled:
             return
         self.sample_norms = nn.ModuleList(
-            nn.LayerNorm(config.n_embd) for _ in range(config.n_layer)
+            nn.LayerNorm(config.n_embd) for _ in range(self.n_layers)
         )
         self.sample_projections = nn.ModuleList(
-            nn.Linear(config.n_embd, self.context_dim) for _ in range(config.n_layer)
+            nn.Linear(config.n_embd, self.context_dim) for _ in range(self.n_layers)
         )
         self.bias_norm = nn.LayerNorm(self.context_dim)
         self.bias_projections = nn.ModuleList(
-            nn.Linear(self.context_dim, config.n_embd) for _ in range(self.bias_layers)
+            nn.Linear(self.context_dim, config.n_embd) for _ in range(self.n_layers)
         )
         self.mix_norm = nn.LayerNorm(self.context_dim)
         hidden = max(1, 4 * self.context_dim)
@@ -2919,7 +2899,7 @@ class GRCEContextChannel(BaseContextChannel):
     def project(self, context: torch.Tensor) -> List[torch.Tensor]:
         if self.disabled:
             raise RuntimeError("Context channel disabled; project should not be called.")
-        if self.bias_layers <= 0:
+        if self.n_layers <= 0:
             return []
         normed = self.bias_norm(context)
         return [proj(normed) for proj in self.bias_projections]
@@ -2979,7 +2959,6 @@ class GRCEContextChannelOptimized(BaseContextChannel):
         if self.disabled:
             return
         self.layer_count = config.n_layer
-        self.bias_layer_count = _get_bias_layer_count(config)
         self.sample_ln_eps = 1e-5
         emb_dim = config.n_embd
         ctx_dim = self.context_dim
@@ -2988,8 +2967,8 @@ class GRCEContextChannelOptimized(BaseContextChannel):
         self.sample_proj_weight = nn.Parameter(torch.empty(self.layer_count, emb_dim, ctx_dim))
         self.sample_proj_bias = nn.Parameter(torch.zeros(self.layer_count, ctx_dim))
         self.bias_norm = nn.LayerNorm(ctx_dim)
-        self.bias_proj_weight = nn.Parameter(torch.empty(self.bias_layer_count, ctx_dim, emb_dim))
-        self.bias_proj_bias = nn.Parameter(torch.zeros(self.bias_layer_count, emb_dim))
+        self.bias_proj_weight = nn.Parameter(torch.empty(self.layer_count, ctx_dim, emb_dim))
+        self.bias_proj_bias = nn.Parameter(torch.zeros(self.layer_count, emb_dim))
         self.mix_norm = nn.LayerNorm(ctx_dim)
         hidden = max(1, 4 * ctx_dim)
         self.mlp_up = nn.Linear(ctx_dim, hidden)
@@ -3018,7 +2997,7 @@ class GRCEContextChannelOptimized(BaseContextChannel):
     def project(self, context: torch.Tensor) -> List[torch.Tensor]:
         if self.disabled:
             raise RuntimeError("Context channel disabled; project should not be called.")
-        if self.bias_layer_count <= 0:
+        if self.layer_count <= 0:
             return []
         normed = self.bias_norm(context)
         projected = torch.einsum("bc,lce->ble", normed, self.bias_proj_weight)
@@ -3083,7 +3062,7 @@ class XCTXContextChannel(BaseContextChannel):
         super().__init__(args, args.n_xctx)
         config = args
         self.is_xctx = True
-        self.bias_layers = _get_bias_layer_count(config)
+        self.n_layers = config.n_layer
         if self.disabled:
             return
         layers = max(1, config.n_layer)
@@ -3092,25 +3071,25 @@ class XCTXContextChannel(BaseContextChannel):
         self.inner_dim = mid
         self.down_dim = down_dim
         self.sample_input_norms = nn.ModuleList(
-            nn.LayerNorm(config.n_embd) for _ in range(config.n_layer)
+            nn.LayerNorm(config.n_embd) for _ in range(self.n_layers)
         )
         self.sample_e2u = nn.ModuleList(
-            nn.Linear(config.n_embd, mid) for _ in range(config.n_layer)
+            nn.Linear(config.n_embd, mid) for _ in range(self.n_layers)
         )
         self.sample_mid_norms = nn.ModuleList(
-            nn.LayerNorm(mid) for _ in range(config.n_layer)
+            nn.LayerNorm(mid) for _ in range(self.n_layers)
         )
         self.sample_u2x = nn.ModuleList(
-            nn.Linear(mid, self.context_dim) for _ in range(config.n_layer)
+            nn.Linear(mid, self.context_dim) for _ in range(self.n_layers)
         )
         self.bias_x2u = nn.ModuleList(
-            nn.Linear(self.context_dim, mid) for _ in range(self.bias_layers)
+            nn.Linear(self.context_dim, mid) for _ in range(self.n_layers)
         )
         self.bias_mid_norms = nn.ModuleList(
-            nn.LayerNorm(mid) for _ in range(self.bias_layers)
+            nn.LayerNorm(mid) for _ in range(self.n_layers)
         )
         self.bias_u2e = nn.ModuleList(
-            nn.Linear(mid, config.n_embd) for _ in range(self.bias_layers)
+            nn.Linear(mid, config.n_embd) for _ in range(self.n_layers)
         )
         self.down_proj = nn.Linear(self.context_dim, down_dim)
         self.mix_norm = nn.LayerNorm(down_dim)
@@ -3121,7 +3100,7 @@ class XCTXContextChannel(BaseContextChannel):
     def project(self, context: torch.Tensor) -> List[torch.Tensor]:
         if self.disabled:
             raise RuntimeError("Context channel disabled; project should not be called.")
-        if self.bias_layers <= 0:
+        if self.n_layers <= 0:
             return []
         outputs: list[torch.Tensor] = []
         for x2u, norm, u2e in zip(self.bias_x2u, self.bias_mid_norms, self.bias_u2e):
@@ -3261,8 +3240,6 @@ def build_model_tag(config: GeometryLike) -> str:
         tag += f"_grce{config.n_grce}"
     if config.n_xctx > 0:
         tag += f"_xctx{config.n_xctx}"
-    if config.n_bias > 0:
-        tag += f"_bias{config.n_bias}"
     return tag
 
 
@@ -3841,7 +3818,6 @@ def preprocess_runtime_args(args: Args) -> None:
         args.n_embd = config.n_embd
         args.n_grce = config.n_grce
         args.n_xctx = config.n_xctx
-        args.n_bias = config.n_bias
         args.vocab_size = config.vocab_size
         args.model_path_override = checkpoint_path
         args.log_path_override = checkpoint_path.with_suffix(".log")
@@ -3855,7 +3831,6 @@ def preprocess_runtime_args(args: Args) -> None:
         n_embd=args.n_embd,
         n_grce=args.n_grce,
         n_xctx=args.n_xctx,
-        n_bias=args.n_bias,
     )
     tag = build_model_tag(inferred)
     for extra_tag in args.tag:
