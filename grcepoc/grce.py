@@ -148,7 +148,7 @@ class Settings:
 
     # Additional non-geometry "pseudo" model args
     corpus: str = "cccc"
-    extra_tags: tuple[str] = ()
+    tags: tuple[str] = ()
 
     # Training Loop
     steps: int = 100
@@ -156,9 +156,9 @@ class Settings:
     batch_size: int = 256
     eval_interval: int = 10
     _block_length_arg: int | None = None
-    restart_optimizer_each_cycle: bool = False
-    checkpoint_optimizer_state: bool = False
-    disable_kv_rebalance: bool = False
+    restart_optimizer: bool = False
+    checkpoint_optimizer: bool = False
+    no_kv_rebalance: bool = False
     detach_kv_cache: bool = False
 
     # Training Details
@@ -172,22 +172,14 @@ class Settings:
     show_train_loss_details: bool = False
     show_test_loss_details: bool = True
     skip_model_update: bool = False
-    only_forward_batches: bool = False
-    only_decode_batches: bool = False
+    only_forward: bool = False
+    only_decode: bool = False
 
     @property
     def block_length(self):
         if self._block_length_arg is not None:
             return self._block_length_arg
         return self.block_size
-
-    @property
-    def batch_mode_override(self) -> str | None:
-        if self.only_decode_batches:
-            return "decode"
-        if self.only_forward_batches:
-            return "forward"
-        return None
 
     def model_geometry(self) -> ModelGeometry:
         return ModelGeometry(
@@ -216,16 +208,16 @@ class Settings:
         self.grce_optimized = args.grce_optimized
 
         self.corpus = args.corpus
-        self.extra_tags = tuple(args.tag)
+        self.tags = tuple(args.tag)
 
         self.steps = args.steps
         self.cycles = args.cycles
         self.batch_size = args.batch_size
         self.eval_interval = args.eval_interval
         self._block_length_arg = args.block_length
-        self.restart_optimizer_each_cycle = args.restart_optimizer
-        self.checkpoint_optimizer_state = args.checkpoint_optimizer
-        self.disable_kv_rebalance = args.no_kv_rebalance
+        self.restart_optimizer = args.restart_optimizer
+        self.checkpoint_optimizer = args.checkpoint_optimizer
+        self.no_kv_rebalance = args.no_kv_rebalance
         self.detach_kv_cache = args.detach_kv_cache
 
         self.dropout = args.dropout
@@ -234,11 +226,10 @@ class Settings:
         self.detach_layer = args.detach_layer
 
         self.escape_newline_tokens = not args.no_escape_newline_tokens
-        self.show_train_loss_details = args.train_loss_details
-        self.show_test_loss_details = not args.no_test_loss_details
-        self.skip_model_update = args.no_model_update
-        self.only_forward_batches = args.only_forward
-        self.only_decode_batches = args.only_decode
+        self.show_train_loss_details = args.show_train_loss_details
+        self.show_test_loss_details = args.show_test_loss_details
+        self.skip_model_update = args.skip_model_update
+        self.batch_config = args.batch_config
 
 SETTINGS_DEFAULTS = Settings()
 
@@ -265,13 +256,13 @@ def compute_row_type_counts(batch_size: int) -> dict[str, int]:
     return counts
 
 
-def batch_mode_specs(batch_size: int, mode_override: str | None = None) -> list[tuple[str, int]]:
+def batch_mode_specs(batch_size: int, batch_config: str | None = None) -> list[tuple[str, int]]:
     """Return ordered (mode, rows) pairs for the current batch size."""
 
     total = max(0, int(batch_size))
-    if mode_override == "forward":
+    if batch_config == "forward":
         return [("forward", total)]
-    if mode_override == "decode":
+    if batch_config == "decode":
         return [("decode", total)]
     counts = compute_row_type_counts(batch_size)
     return [
@@ -282,12 +273,13 @@ def batch_mode_specs(batch_size: int, mode_override: str | None = None) -> list[
 
 
 FANCY_SPACE = "\u2423"  # Open Box symbol for visible spaces
-FANCY_ENTER = "\u23CE "  # Return symbol for visible newlines
+FANCY_ENTER = "\u23CE " # Return symbol for visible newlines
 
 def normalize_prompt(text: str) -> str:
     """Map placeholder characters back to literal spaces/newlines."""
 
-    return text.replace(FANCY_SPACE, " ").replace(FANCY_ENTER, "\n")
+    return text.replace(FANCY_SPACE, " ").replace(FANCY_ENTER, "\n"). \
+            replace(FANCY_ENTER.replace(" ", "\n"), "\n")
 
 
 # -----------------------------------------------------------------------------
@@ -306,6 +298,7 @@ import time
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from typing import Dict, List, Tuple, Sequence
+from argparse import Namespace as Args
 
 
 def parse_range_arg(value: str) -> tuple[int, int]:
@@ -318,7 +311,7 @@ def parse_range_arg(value: str) -> tuple[int, int]:
     return start, end
 
 
-def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
     """Parse CLI arguments and return the populated namespace.
 
     Used by the ``if __name__ == '__main__'`` entry point and by tooling that
@@ -455,20 +448,16 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Number of sequences per optimization step.",
     )
     training_group.add_argument(
-        "--no-model-update",
+        "--skip-model-update",
         action="store_true",
         help="Skip overwriting the checkpoint at the end of each training cycle",
     )
     training_group.add_argument(
-        "--only-decode",
-        action="store_true",
-        help="Create batches that only contain the decode half",
-    )
-    training_group.add_argument(
-        "--only-forward",
-        dest="only_forward",
-        action="store_true",
-        help="Create batches that only contain the forward half",
+        "--batch-config",
+        metavar="CONFIG",
+        type=str,
+        default="forward,decode,noattn",
+        help="Create batches according to the configuration string",
     )
     training_group.add_argument(
         "--restart-optimizer",
@@ -578,12 +567,12 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Print an actual newline to the console and logfile if a completion or prompt contains a newline",
     )
     logging_group.add_argument(
-        "--train-loss-details",
+        "--show-train-loss-details",
         action="store_true",
         help="Show the per-row loss columns in the live log",
     )
     logging_group.add_argument(
-        "--no-test-loss-details",
+        "--no-show-test-loss-details",
         action="store_true",
         help="Collapse the test loss group down to a single column in the live log",
     )
@@ -799,9 +788,6 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     # --------------------------------------------------------
     # Normalize, tweak, and check global options
 
-    if args.only_decode and args.only_forward:
-        parser.error("--only-decode and --only-forward cannot be combined")
-
     if args.tiny:
         if not flag_present("--vocab-size"):
             args.vocab_size = 500
@@ -864,6 +850,16 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
     # --------------------------------------------------------
+    # Add non-inverted option names and values for --no-* options
+
+    for k, v in list(args.__dict__.items()):
+        if k.startswith("no_"):
+            assert type(v) is bool
+            args.__dict__[k[3:]] = not v
+            # del args.__dict__[k]
+
+
+    # --------------------------------------------------------
     # Parse and check "corpus" sub-command args
 
     if args.command == "corpus":
@@ -890,7 +886,7 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
                 raise ValueError(f"{flag} must be a comma-separated list of integers") from exc
             return entries
 
-        args.create_args = argparse.Namespace(
+        args.create_args = Args(
             import_model=args.create_import_model,
             trim_model=args.create_trim_model,
             drop_layers=parse_layer_list(args.create_drop_layers, "--drop-layers"),
@@ -1117,7 +1113,7 @@ def _get_inner_xctx_width(config: GeometryLike) -> int:
 def _get_bias_layer_count(config: GeometryLike) -> int:
     """Return how many Transformer layers accept GRCE/XCTX bias injections."""
 
-    limit = int(getattr(config, "n_bias", 0))
+    limit = int(config.n_bias)
     if limit <= 0:
         return max(0, config.n_layer)
     return max(0, min(config.n_layer, limit))
@@ -1406,7 +1402,7 @@ def grce_cmd_size(
     print()
     return 0
 
-def grce_cli_size(args: argparse.Namespace):
+def grce_cli_size(args: Args):
     assert args.command == "size"
     return grce_cmd_size(
         Settings(args),
@@ -2427,7 +2423,7 @@ class TransformerGRCE(nn.Module):
         self.n_layers = config.n_layer
         self.n_embd = config.n_embd
         self.bias_layers = _get_bias_layer_count(config)
-        self.detach_span = max(0, int(getattr(config, "detach_span", 0)))
+        self.detach_span = max(0, int(config.detach_span))
         if self.disabled:
             return
         self.sample_norms = nn.ModuleList(
@@ -2509,7 +2505,7 @@ class TransformerXCTX(nn.Module):
         self.inner_dim = _get_inner_xctx_width(config)
         self.squeeze_dim = max(1, self.context_dim // 2)
         self.bias_layers = _get_bias_layer_count(config)
-        self.detach_span = max(0, int(getattr(config, "detach_span", 0)))
+        self.detach_span = max(0, int(config.detach_span))
         if self.disabled:
             return
         self.sample_linear = nn.ModuleList(
@@ -2766,7 +2762,7 @@ class GPTCore(nn.Module):
         self.blocks = nn.ModuleList([Block(config) for _ in range(config.n_layer)])
         self.ln_f = nn.LayerNorm(config.n_embd)
         self.head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
-        self.detach_layer = max(-1, int(getattr(config, "detach_layer", -1)))
+        self.detach_layer = max(-1, int(config.detach_layer))
         if self.detach_layer > len(self.blocks):
             self.detach_layer = len(self.blocks)
 
@@ -2776,7 +2772,7 @@ class GPTCore(nn.Module):
         max_seq_len: int,
         device: torch.device,
     ) -> list[LayerCache]:
-        allow_rebalance = not getattr(self.config, "disable_kv_rebalance", False)
+        allow_rebalance = not getattr(self.config, "no_kv_rebalance", False)
         detach_kv_cache = bool(getattr(self.config, "detach_kv_cache", False))
         if detach_kv_cache and max_seq_len <= 0:
             raise ValueError("max_seq_len must be positive when --detach-kv-cache is set")
@@ -2931,8 +2927,8 @@ class BaseContextChannel(nn.Module):
         self.config = config
         self.context_dim = int(width)
         self.disabled = self.context_dim <= 0
-        self.detach_span = max(0, int(getattr(config, "detach_span", 0)))
-        self.detach_context = bool(getattr(config, "detach_context", True))
+        self.detach_span = max(0, int(config.detach_span))
+        self.detach_context = bool(config.detach_context)
 
     def parameter_breakdown(self) -> dict[str, int]:
         return {}
@@ -3318,7 +3314,7 @@ def build_model_tag(config: GeometryLike) -> str:
         tag += f"_grce{config.n_grce}"
     if config.n_xctx > 0:
         tag += f"_xctx{config.n_xctx}"
-    if getattr(config, "n_bias", 0) > 0:
+    if config.n_bias > 0:
         tag += f"_bias{config.n_bias}"
     return tag
 
@@ -3388,7 +3384,7 @@ def evaluate_single_batch(
     batch_size: int,
     device: torch.device,
     *,
-    target_mode: str | None = None,
+    target_batch_config: str | None = None,
 ) -> dict[str, float | None]:
     metrics: dict[str, float | None] = {key: None for key in ROW_METRIC_LOG_KEYS}
     metrics["target"] = None
@@ -3429,8 +3425,8 @@ def evaluate_single_batch(
     if total_tokens > 0:
         mix_loss = total_loss / total_tokens
         metrics["target"] = mix_loss
-    if target_mode in {"forward", "decode", "noattn"}:
-        selected = metrics.get(target_mode)
+    if target_batch_config in {"forward", "decode", "noattn"}:
+        selected = metrics.get(target_batch_config)
         if selected is not None:
             metrics["target"] = selected
         elif mix_loss is not None:
@@ -3477,8 +3473,7 @@ def train_model(
     else:
         prompt_queue = []
 
-    mode_override = settings.batch_mode_override
-    mode_specs = batch_mode_specs(batch_size, mode_override=mode_override)
+    mode_specs = batch_mode_specs(batch_size, batch_config=settings.batch_config)
 
     loop_timer = Timer().start()
     eval_timer = Timer()
@@ -3550,7 +3545,7 @@ def train_model(
                     block_length,
                     batch_size,
                     device,
-                    target_mode=mode_override,
+                    target_batch_config=settings.batch_config,
                 )
         model.train()
         eval_timer.stop()
@@ -3707,8 +3702,7 @@ def run_profile_mode(
             "torch.profiler is unavailable; upgrade to PyTorch 1.8+ to use 'profile'."
         ) from exc
 
-    mode_override = settings.batch_mode_override
-    mode_specs = batch_mode_specs(batch_size, mode_override=mode_override)
+    mode_specs = batch_mode_specs(batch_size, batch_config=settings.batch_config)
     if not mode_specs:
         raise ValueError("Batch size must be >0 to run the profiler")
 
@@ -3857,7 +3851,7 @@ def run_test_slice(
     print(pretty_text)
 
 
-def preprocess_runtime_settings(args: argparse.Namespace) -> None:
+def preprocess_runtime_settings(args: Args) -> None:
     """Resolve checkpoint overrides and derived paths before runtime spins up."""
 
     if getattr(args, "_checkpoint_preprocessed", False):
@@ -4805,15 +4799,15 @@ class Runtime:
                     show_time=args.time,
                     default_prompt_boundary=default_prompt_boundary,
                     boundary_blocklist=boundary_blocklist,
-                    show_train_loss_details=args.train_loss_details,
-                    show_test_loss_details=not args.no_test_loss_details,
+                    show_train_loss_details=args.show_train_loss_details,
+                    show_test_loss_details=args.show_test_loss_details,
                 )
                 loss_history.extend(updates)
                 pure_train = Timer().add(train_timer).sub(eval_timer)
                 acc_train.add(pure_train)
                 acc_eval.add(eval_timer)
                 total_train_wall += train_timer.wall_secs
-                if not args.no_model_update:
+                if not args.skip_model_update:
                     torch.save(
                         {
                             "model": model.state_dict(),
@@ -4835,7 +4829,7 @@ class Runtime:
                 cycle_part = color_text(f"[cycle {cycle} (wall/cpu/gpu)]", Colors.CYAN)
                 train_part = color_text(f" train: {pure_train};", Colors.MAGENTA)
                 eval_part = color_text(f" eval: {eval_timer};", Colors.GREEN)
-                if args.no_model_update:
+                if args.skip_model_update:
                     updated_part = color_text(" model update skipped; flushing logs.", Colors.YELLOW)
                 else:
                     updated_part = color_text(" model updated; flushing logs.", Colors.YELLOW)
