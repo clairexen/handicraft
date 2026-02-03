@@ -2443,6 +2443,62 @@ def _merge_bias_list(
     return merged
 
 
+def kv_cache_list_merge(
+    kv_cache_list: Sequence[Sequence[tuple[torch.Tensor, torch.Tensor]] | None],
+) -> list[tuple[torch.Tensor, torch.Tensor]]:
+    """Concatenate cache segments from multiple sources into per-layer tensors."""
+
+    merged: list[tuple[torch.Tensor, torch.Tensor] | None] = []
+    for source in kv_cache_list:
+        if not source:
+            continue
+        for layer_idx, pair in enumerate(source):
+            if pair is None:
+                continue
+            key, value = pair
+            if layer_idx >= len(merged):
+                merged.extend([None] * (layer_idx + 1 - len(merged)))
+            current = merged[layer_idx]
+            if current is None:
+                merged[layer_idx] = (key, value)
+            else:
+                prev_key, prev_value = current
+                merged[layer_idx] = (
+                    torch.cat([prev_key, key], dim=1),
+                    torch.cat([prev_value, value], dim=1),
+                )
+    return [pair for pair in merged]
+
+
+def kv_cache_list_detach(
+    kv_cache_list: Sequence[Sequence[tuple[torch.Tensor, torch.Tensor]] | None],
+) -> list[list[tuple[torch.Tensor, torch.Tensor] | None]]:
+    """Return a detached copy of every tensor in a kv_cache_list structure."""
+
+    detached: list[list[tuple[torch.Tensor, torch.Tensor] | None]] = []
+    for source in kv_cache_list:
+        if not source:
+            continue
+        new_source: list[tuple[torch.Tensor, torch.Tensor] | None] = []
+        for pair in source:
+            if pair is None:
+                new_source.append(None)
+                continue
+            key, value = pair
+            new_source.append((key.detach(), value.detach()))
+        detached.append(new_source)
+    return detached
+
+
+def kv_cache_list_balance(
+    kv_cache_list: Sequence[Sequence[tuple[torch.Tensor, torch.Tensor]] | None],
+) -> list[list[tuple[torch.Tensor, torch.Tensor]]]:
+    """Collapse many small cache segments into a single chunk per layer."""
+
+    merged = kv_cache_list_merge(kv_cache_list)
+    return [merged] if merged else []
+
+
 class RMSNorm(nn.Module):
     """RMS normalization used by the recurrent :class:`TransformerXCTX` path."""
 
@@ -2755,6 +2811,34 @@ class TransformerStackSequence(nn.Module):
         modules = [m for m in (self.grce, self.xctx) if m is not None]
         self.context_modules = nn.ModuleList(modules)
 
+    def _allocate_detached_kv_storage(
+        self,
+        rows: int,
+        cols: int,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> list[tuple[torch.Tensor, torch.Tensor]]:
+        n_heads = self.core.config.n_head
+        head_dim = self.n_embd // n_heads
+        storage: list[tuple[torch.Tensor, torch.Tensor]] = []
+        for _ in range(self.n_layers):
+            key_buf = torch.empty(rows, cols, n_heads, head_dim, device=device, dtype=dtype)
+            value_buf = torch.empty_like(key_buf)
+            storage.append((key_buf, value_buf))
+        return storage
+
+    def _detached_kv_prefix(
+        self,
+        storage: list[tuple[torch.Tensor, torch.Tensor]],
+        upto_col: int,
+    ) -> list[tuple[torch.Tensor, torch.Tensor] | None]:
+        if upto_col <= 0:
+            return [None] * len(storage)
+        prefix: list[tuple[torch.Tensor, torch.Tensor]] = []
+        for key_buf, value_buf in storage:
+            prefix.append((key_buf[:, :upto_col, :, :], value_buf[:, :upto_col, :, :]))
+        return prefix
+
     def _ensure_state(
         self,
         module: nn.Module | None,
@@ -2778,17 +2862,40 @@ class TransformerStackSequence(nn.Module):
         kv_cache_list_in: Sequence[Sequence[tuple[torch.Tensor, torch.Tensor]]] | None = None,
         *,
         qh_query_callback=None,
+        mode: str = "forward",
+        detach_internal_kv_cache: bool = False,
+        detach_samples_span: int = 0,
+        detach_grce_span: int = 0,
+        detach_xctx_span: int = 0,
     ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None, list]:
-        if kv_cache_list_in:
-            raise NotImplementedError("kv_cache_list_in not supported in sequence mode yet")
-        if qh_query_callback is not None:
-            raise NotImplementedError("qh_query_callback not supported in sequence mode yet")
+        if mode not in {"forward", "encode", "decode", "noattn"}:
+            raise ValueError(f"Unknown TransformerStackSequence mode: {mode}")
         rows, cols, _ = x.shape
         device = x.device
         dtype = x.dtype
         outputs: list[torch.Tensor] = []
         grce_state = self._ensure_state(self.grce, grce_in, rows, device, dtype)
         xctx_state = self._ensure_state(self.xctx, xctx_in, rows, device, dtype)
+        if mode in {"encode", "decode"}:
+            return self._forward_grid_mode(
+                x,
+                grce_state,
+                xctx_state,
+                bias_list_in=bias_list_in,
+                kv_cache_list_in=kv_cache_list_in,
+                qh_query_callback=qh_query_callback,
+                mode=mode,
+                detach_samples_span=detach_samples_span,
+                detach_grce_span=detach_grce_span,
+                detach_xctx_span=detach_xctx_span,
+                detach_internal_kv_cache=detach_internal_kv_cache,
+            )
+        use_internal_cache = mode != "noattn"
+        base_sources = list(kv_cache_list_in or [])
+        kv_history: list[list[tuple[torch.Tensor, torch.Tensor] | None]] = []
+        kv_storage: list[tuple[torch.Tensor, torch.Tensor]] | None = None
+        if detach_internal_kv_cache:
+            kv_storage = self._allocate_detached_kv_storage(rows, cols, device, dtype)
         for col in range(cols):
             column_biases: list[torch.Tensor] = []
             if bias_list_in:
@@ -2804,28 +2911,125 @@ class TransformerStackSequence(nn.Module):
             if self.xctx is not None and xctx_state is not None:
                 column_biases.append(self.xctx.bias_forward(xctx_state))
             column_input = x[:, col : col + 1, :]
-            column_output, samples, _ = self.core.forward_grid(
+            column_kv_sources: list[Sequence[tuple[torch.Tensor, torch.Tensor] | None]] = []
+            if base_sources:
+                column_kv_sources.extend(base_sources)
+            if detach_internal_kv_cache and kv_storage is not None and col > 0:
+                column_kv_sources.append(self._detached_kv_prefix(kv_storage, col))
+            elif (not detach_internal_kv_cache) and use_internal_cache and kv_history:
+                column_kv_sources.extend(kv_history)
+            kv_sources_arg = column_kv_sources if column_kv_sources else None
+            column_output, samples, kv_pairs = self.core.forward_grid(
                 column_input,
                 bias_list_in=column_biases,
+                kv_cache_list_in=kv_sources_arg,
                 mode="decode",
+                qh_query_callback=qh_query_callback,
             )
+            if detach_internal_kv_cache:
+                column_output = column_output.detach()
+                samples = [sample.detach() for sample in samples]
             outputs.append(column_output)
+            if detach_internal_kv_cache and kv_storage is not None:
+                for layer_idx, kv_pair in enumerate(kv_pairs):
+                    if kv_pair is None:
+                        continue
+                    key_chunk, value_chunk = kv_pair
+                    key_buf, value_buf = kv_storage[layer_idx]
+                    key_buf[:, col : col + key_chunk.size(1), :, :].copy_(key_chunk.detach())
+                    value_buf[:, col : col + value_chunk.size(1), :, :].copy_(value_chunk.detach())
+            else:
+                kv_history.append(kv_pairs)
+            detach_samples = detach_samples_span > 0 and (col % detach_samples_span) == 0
             if self.grce is not None and grce_state is not None:
+                if detach_grce_span > 0 and (col % detach_grce_span) == 0:
+                    grce_state = grce_state.detach()
                 grce_state = self.grce.sample_forward(
                     grce_state,
                     samples,
                     col,
-                    detach_samples=False,
+                    detach_samples=detach_samples,
                 )
             if self.xctx is not None and xctx_state is not None:
+                if detach_xctx_span > 0 and (col % detach_xctx_span) == 0:
+                    xctx_state = xctx_state.detach()
                 xctx_state = self.xctx.sample_forward(
                     xctx_state,
                     samples,
                     col,
-                    detach_samples=False,
+                    detach_samples=detach_samples,
                 )
         stacked = torch.cat(outputs, dim=1)
-        return stacked, grce_state, xctx_state, []
+        if detach_internal_kv_cache and kv_storage is not None:
+            kv_out_base = [
+                (key_buf.detach(), value_buf.detach()) for key_buf, value_buf in kv_storage
+            ]
+            if base_sources:
+                kv_out = kv_cache_list_merge(base_sources + [kv_out_base])
+            else:
+                kv_out = kv_out_base
+        else:
+            kv_out = kv_cache_list_merge(kv_history)
+        return stacked, grce_state, xctx_state, kv_out
+
+    def _forward_grid_mode(
+        self,
+        x: torch.Tensor,
+        grce_state: torch.Tensor | None,
+        xctx_state: torch.Tensor | None,
+        *,
+        bias_list_in: Sequence[torch.Tensor] | None,
+        kv_cache_list_in: Sequence[Sequence[tuple[torch.Tensor, torch.Tensor]]] | None,
+        qh_query_callback=None,
+        mode: str,
+        detach_samples_span: int,
+        detach_grce_span: int,
+        detach_xctx_span: int,
+        detach_internal_kv_cache: bool,
+    ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None, list[tuple[torch.Tensor, torch.Tensor]]]:
+        rows, cols, _ = x.shape
+        grid_biases = list(bias_list_in or [])
+        if self.grce is not None and grce_state is not None:
+            grid_biases.append(self.grce.bias_forward(grce_state))
+        if self.xctx is not None and xctx_state is not None:
+            grid_biases.append(self.xctx.bias_forward(xctx_state))
+        output, samples, kv_pairs = self.core.forward_grid(
+            x,
+            bias_list_in=grid_biases,
+            kv_cache_list_in=kv_cache_list_in,
+            mode=mode,
+            qh_query_callback=qh_query_callback,
+        )
+        kv_out = kv_pairs
+        if detach_internal_kv_cache:
+            kv_out = [
+                None if pair is None else (pair[0].detach(), pair[1].detach())
+                for pair in kv_out
+            ]
+        detach_samples = False
+        for col in range(cols):
+            if detach_samples_span > 0:
+                detach_samples = (col % detach_samples_span) == 0
+            slice_samples = [sample[:, : col + 1, :] for sample in samples[: self.n_layers]]
+            if self.grce is not None and grce_state is not None:
+                if detach_grce_span > 0 and (col % detach_grce_span) == 0:
+                    grce_state = grce_state.detach()
+                grce_state = self.grce.sample_forward(
+                    grce_state,
+                    slice_samples,
+                    col,
+                    detach_samples=detach_samples,
+                )
+            if self.xctx is not None and xctx_state is not None:
+                if detach_xctx_span > 0 and (col % detach_xctx_span) == 0:
+                    xctx_state = xctx_state.detach()
+                xctx_state = self.xctx.sample_forward(
+                    xctx_state,
+                    slice_samples,
+                    col,
+                    detach_samples=detach_samples,
+                )
+        return output, grce_state, xctx_state, kv_out
 
 
 @dataclass
@@ -2955,8 +3159,11 @@ class GRCEGPT(nn.Module):
         pos = self.core.pos_emb(pos_idx)
         x = self.core.drop(tok + pos)
         context_info: dict[str, torch.Tensor] | None = None
-        if mode in {"forward", "noattn"}:
-            sequence_output, grce_out, xctx_out, _ = self.stack_sequence.forward(x)
+        if mode in {"forward", "noattn", "encode"}:
+            sequence_output, grce_out, xctx_out, _ = self.stack_sequence.forward(
+                x,
+                mode=mode,
+            )
             hidden = sequence_output
             context_info = {}
             if grce_out is not None:
