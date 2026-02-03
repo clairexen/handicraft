@@ -394,7 +394,7 @@ but only spans a sub block of (<block-size) columns.
 So this time we determine the random number of cols per mode in the batch:
   cols_encode, cols_decode, cols_forward, cols_noattn
 
-(The numbers are chosen randomly so they add up to batch_size. It's possible to
+(The numbers are chosen randomly so they add up to block_size. It's possible to
 "pin" some of these values with --cols-encode N etc CLI options.)
 
 The sequences are attached to each other in the following order:
