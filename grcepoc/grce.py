@@ -124,7 +124,7 @@ class Defaults:
     n_embd: int = MODEL_GEOMETRY_DEFAULTS.n_embd
     n_grce: int = MODEL_GEOMETRY_DEFAULTS.n_grce
     n_xctx: int = MODEL_GEOMETRY_DEFAULTS.n_xctx
-    corpus: str = "cccc"
+    corpus: str = "cccclc"
     steps: int = 100
     cycles: int = 100
     batch_size: int = 256
