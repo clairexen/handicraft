@@ -2590,7 +2590,7 @@ class TransformerXCTX(nn.Module):
         fused = torch.stack(messages, dim=0).sum(dim=0)
         combined = xctx_state + fused
         squeezed = self.mix_norm(self.mix_down(combined))
-        mlp = self.mix_up(F.gelu(squeezed))
+        mlp = F.gelu(self.mix_up(squeezed))
         projected = self.mix_proj(mlp)
         return self.output_norm(xctx_state + projected)
 
