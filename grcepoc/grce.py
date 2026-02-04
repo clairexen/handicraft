@@ -2526,7 +2526,8 @@ def kv_cache_list_merge(
 ) -> list[tuple[torch.Tensor, torch.Tensor]]:
     """Concatenate cache segments from multiple sources into per-layer tensors."""
 
-    merged: list[tuple[torch.Tensor, torch.Tensor] | None] = []
+    merged_keys: list[list[torch.Tensor]] = []
+    merged_values: list[list[torch.Tensor]] = []
     for source in kv_cache_list:
         if not source:
             continue
@@ -2534,18 +2535,19 @@ def kv_cache_list_merge(
             if pair is None:
                 continue
             key, value = pair
-            if layer_idx >= len(merged):
-                merged.extend([None] * (layer_idx + 1 - len(merged)))
-            current = merged[layer_idx]
-            if current is None:
-                merged[layer_idx] = (key, value)
-            else:
-                prev_key, prev_value = current
-                merged[layer_idx] = (
-                    torch.cat([prev_key, key], dim=1),
-                    torch.cat([prev_value, value], dim=1),
-                )
-    return [pair for pair in merged]
+            if layer_idx >= len(merged_keys):
+                pad = layer_idx + 1 - len(merged_keys)
+                merged_keys.extend([[] for _ in range(pad)])
+                merged_values.extend([[] for _ in range(pad)])
+            merged_keys[layer_idx].append(key)
+            merged_values[layer_idx].append(value)
+    merged: list[tuple[torch.Tensor, torch.Tensor]] = []
+    for key_chunks, value_chunks in zip(merged_keys, merged_values):
+        if not key_chunks:
+            merged.append(None)
+            continue
+        merged.append((torch.cat(key_chunks, dim=1), torch.cat(value_chunks, dim=1)))
+    return merged
 
 
 def kv_cache_list_detach(
