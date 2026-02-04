@@ -611,6 +611,24 @@ G.dot(embedding) < 1 for all GRCE state embeddings that are expected "OFF" (-1).
 
 Read AGENTS.md, README.md, and the comments at the top of grce.py. Then:
 
+## Add "recode" shim to "encode" blocks
+
+I'd like to change the way we handle "encode" for both train and test and both
+"split" and "stacked" batches: If the encode block would be at least 4 columns
+(positions) long, create an encode block of cols-1 length instead, and then add
+a single column of "forward" with no incoming kv- cache. we record the loss
+value for that position as "recode". (confirm, if you can, that "encode" is
+generating the concurrent GRCE and XCTX signals, as intended, just "blindly"
+with bias injection disabled.) Added that "recode" column, especially in
+"split" mode, should help training "encode" blocks to eject whatever
+information is needed for the immediate future via XCTX (and GRCE).
+
+Proposed/suggested implementation plan: Add mode="recode" to
+TransformerStackSequence, which should then internally build an encoder
+of size cols-1 and wire it to a single final recode column. Then the
+code using it must only call it with mode="recode" instead of mode="encode",
+when cols >= 4, and adjust if only the last colmn is used for loss (encode),
+or the last two columns (encode, and recode).
 
 ## Clean up and restructure CLI subcommand handling and managing runtime settings
 
