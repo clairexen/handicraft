@@ -3082,11 +3082,7 @@ class TransformerStackSequence(nn.Module):
             kv_out_base = [
                 (key_buf.detach(), value_buf.detach()) for key_buf, value_buf in kv_storage
             ]
-            if base_sources:
-                # FIXME: this should happen outside of the sequence, we should only return the new kv-pairs
-                kv_out = kv_cache_list_merge(base_sources + [kv_out_base])
-            else:
-                kv_out = kv_out_base
+            kv_out = kv_out_base
         else:
             kv_out = kv_cache_list_merge(kv_history)
         return stacked, grce_state, xctx_state, kv_out
