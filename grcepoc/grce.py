@@ -3797,6 +3797,9 @@ def train_model(
             if total_tokens <= 0:
                 raise RuntimeError("No tokens processed in training step")
             total_loss = total_loss_sum / float(total_tokens)
+            optimizer.zero_grad(set_to_none=True)
+            total_loss.backward()
+            optimizer.step()
         except torch.OutOfMemoryError:
             oom_retries += 1
             line_parts: List[str] = []
@@ -3811,15 +3814,12 @@ def train_model(
             print(line)
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
+            optimizer.zero_grad(set_to_none=True)
             if oom_retries >= 3:
                 raise
             continue
         oom_retries = 0
         step += 1
-
-        optimizer.zero_grad(set_to_none=True)
-        total_loss.backward()
-        optimizer.step()
         total_steps += 1
 
         eval_due = step == 1 or step % eval_interval == 0 or step == steps
