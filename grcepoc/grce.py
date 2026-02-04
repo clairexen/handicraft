@@ -2800,7 +2800,9 @@ class TransformerXCTX(nn.Module):
         squeezed = self.mix_norm(self.mix_down(combined))
         mlp = F.gelu(self.mix_up(squeezed))
         projected = self.mix_proj(mlp)
-        return self.output_norm(xctx_state + projected)
+        mean = projected.mean(dim=-1, keepdim=True)
+        updated = xctx_state + (projected - mean)
+        return self.output_norm(updated)
 
     def parameter_breakdown(self) -> dict[str, int]:
         if self.disabled:
