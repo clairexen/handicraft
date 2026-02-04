@@ -174,6 +174,7 @@ import re
 import shlex
 import sys
 import time
+from collections import defaultdict
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from typing import Dict, List, Tuple, Sequence
@@ -2572,8 +2573,42 @@ def kv_cache_list_balance(
 ) -> list[list[tuple[torch.Tensor, torch.Tensor]]]:
     """Collapse many small cache segments into a single chunk per layer."""
 
-    merged = kv_cache_list_merge(kv_cache_list)
-    return [merged] if merged else []
+    if not kv_cache_list or (kv_cache_list[0] and kv_cache_list[0][0] and
+                             len(kv_cache_list) <= kv_cache_list[0][0][0].size(1).bit_length()):
+        return kv_cache_list
+
+    total_size = 0
+    clog2_buckets = defaultdict(list)
+    for i, kv_cache in enumerate(kv_cache_list):
+        if not kv_cache or not kv_cache[0]: continue
+        n_kv = kv_cache[0][0].size(1)
+        if not n_kv: continue
+        total_size += n_kv
+        clog2_n_kv = n_kv.bit_length()
+        clog2_buckets[clog2_n_kv].append((n_kv, i))
+
+    if len(kv_cache_list) == len(clog2_buckets):
+        return kv_cache_list
+
+    merge_size = 0
+    merge_caches = list()
+    final_caches = list()
+    for clog2_n_kv, bucket in sorted(clog2_buckets.items()):
+        if len(bucket) > 2 or clog2_n_kv == merge_size.bit_length():
+            merge_size += sum(n for n, i in bucket)
+            merge_caches += bucket
+        else:
+            final_caches += bucket
+
+    if merge_size:
+        merged = kv_cache_list_merge([kv_cache_list[i] for n, i in merge_caches])
+        assert merged[0][0].size(1) == merge_size
+        final_caches.append((merge_size, None))
+    else:
+        merged = None
+
+    # return with largest element in position 0 for quick exit on next call
+    return [merged if i is None else kv_cache_list[i] for n, i in reversed(sorted(final_caches))]
 
 
 class RMSNorm(nn.Module):
@@ -2888,6 +2923,7 @@ class TransformerStackSequence(nn.Module):
         self.n_embd = config.n_embd
         self.grce = TransformerGRCE(config) if config.n_grce > 0 else None
         self.xctx = TransformerXCTX(config) if config.n_xctx > 0 else None
+        self.kv_rebalance = args.kv_rebalance
         modules = [m for m in (self.grce, self.xctx) if m is not None]
         self.context_modules = nn.ModuleList(modules)
 
@@ -3020,6 +3056,8 @@ class TransformerStackSequence(nn.Module):
                     value_buf[:, col : col + value_chunk.size(1), :, :].copy_(value_chunk.detach())
             else:
                 kv_history.append(kv_pairs)
+                if self.kv_rebalance:
+                    kv_history = kv_cache_list_balance(kv_history)
             detach_samples = detach_samples_span > 0 and (col % detach_samples_span) == 0
             if self.grce is not None and grce_state is not None:
                 if detach_grce_span > 0 and (col % detach_grce_span) == 0:
@@ -3045,6 +3083,7 @@ class TransformerStackSequence(nn.Module):
                 (key_buf.detach(), value_buf.detach()) for key_buf, value_buf in kv_storage
             ]
             if base_sources:
+                # FIXME: this should happen outside of the sequence, we should only return the new kv-pairs
                 kv_out = kv_cache_list_merge(base_sources + [kv_out_base])
             else:
                 kv_out = kv_out_base
