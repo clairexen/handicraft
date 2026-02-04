@@ -29,17 +29,17 @@ external tooling to mirror the binary interface. Its result is consumed by
 :func:`grce_main`.
 * :func:`train_model` – the main training loop used by :func:`grce_main`. It
 handles batching, diagnostics, and logging.
-* :func:`evaluate_single_batch` – computes evaluation metrics from a single
-forward pass that mirrors the training row-type composition.
-* :func:`describe_model_size` – backs the ``size`` subcommand by combining
-  :class:`ModelGeometry` metadata with :func:`compute_row_type_counts`.
+* :func:`evaluate_single_split_batch` / :func:`evaluate_single_stacked_batch`
+  – evaluate batch losses for the split/stacked layouts.
+* :func:`describe_model_size` – backs the ``size`` subcommand using
+  :class:`ModelGeometry` metadata.
 
 Call tree (simplified)::
 
     grce_cli_args
         └── grce_main
             ├── train_model
-            │     └── evaluate_single_batch
+            │     └── evaluate_single_*_batch
             └── describe_model_size
 """
 from __future__ import annotations
@@ -128,6 +128,15 @@ class Defaults:
     steps: int = 100
     cycles: int = 100
     batch_size: int = 256
+    batch_layout: str = "stacked"  # split vs stacked batch composition
+    rows_encode: int | None = None
+    rows_decode: int | None = None
+    rows_forward: int | None = None
+    rows_noattn: int | None = None
+    cols_encode: int | None = None
+    cols_decode: int | None = None
+    cols_forward: int | None = None
+    cols_noattn: int | None = None
     eval_interval: int = 10
     dropout: float = 0.05
     detach_span: int = 0
@@ -137,42 +146,6 @@ DEFAULTS = Defaults()
 
 from argparse import Namespace as Args
 GeometryLike = ModelGeometry | Args
-
-
-# -----------------------------------------------------------------------------
-# GRCE Model Helper Functions
-# -----------------------------------------------------------------------------
-
-def compute_row_type_counts(batch_size: int) -> dict[str, int]:
-    """Return the simplified row-type counts for a batch size."""
-
-    total = max(0, int(batch_size))
-    n_noattn = 1 if total > 0 else 0
-    remaining = total - n_noattn
-    n_forward = max(1, remaining // 2) if remaining > 0 else 0
-    counts: dict[str, int] = {
-        "n_forward": n_forward,
-        "n_decode": max(0, total - n_forward - n_noattn),
-        "n_noattn": n_noattn,
-        "n_total": total,
-    }
-    return counts
-
-
-def batch_mode_specs(batch_size: int, batch_config: str | None = None) -> list[tuple[str, int]]:
-    """Return ordered (mode, rows) pairs for the current batch size."""
-
-    total = max(0, int(batch_size))
-    if batch_config == "forward":
-        return [("forward", total)]
-    if batch_config == "decode":
-        return [("decode", total)]
-    counts = compute_row_type_counts(batch_size)
-    return [
-        ("forward", max(0, int(counts.get("n_forward", 0)))),
-        ("decode", max(0, int(counts.get("n_decode", 0)))),
-        ("noattn", max(0, int(counts.get("n_noattn", 0)))),
-    ]
 
 
 FANCY_SPACE = "\u2423"  # Open Box symbol for visible spaces
@@ -345,16 +318,63 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         help="Number of sequences per optimization step.",
     )
     training_group.add_argument(
+        "--batch-layout",
+        choices=["split", "stacked"],
+        default=DEFAULTS.batch_layout,
+        help="How to compose encode/decode/forward/noattn modes inside a batch",
+    )
+    training_group.add_argument(
+        "--rows-encode",
+        type=int,
+        default=DEFAULTS.rows_encode,
+        help="Pin the encode row count for split batches (omit for random)",
+    )
+    training_group.add_argument(
+        "--rows-decode",
+        type=int,
+        default=DEFAULTS.rows_decode,
+        help="Pin the decode row count for split batches (omit for random)",
+    )
+    training_group.add_argument(
+        "--rows-forward",
+        type=int,
+        default=DEFAULTS.rows_forward,
+        help="Pin the forward row count for split batches (omit for random)",
+    )
+    training_group.add_argument(
+        "--rows-noattn",
+        type=int,
+        default=DEFAULTS.rows_noattn,
+        help="Pin the no-attention row count for split batches (omit for random)",
+    )
+    training_group.add_argument(
+        "--cols-encode",
+        type=int,
+        default=DEFAULTS.cols_encode,
+        help="Pin the encode column count for stacked batches (omit for random)",
+    )
+    training_group.add_argument(
+        "--cols-decode",
+        type=int,
+        default=DEFAULTS.cols_decode,
+        help="Pin the decode column count for stacked batches (omit for random)",
+    )
+    training_group.add_argument(
+        "--cols-forward",
+        type=int,
+        default=DEFAULTS.cols_forward,
+        help="Pin the forward column count for stacked batches (omit for random)",
+    )
+    training_group.add_argument(
+        "--cols-noattn",
+        type=int,
+        default=DEFAULTS.cols_noattn,
+        help="Pin the no-attention column count for stacked batches (omit for random)",
+    )
+    training_group.add_argument(
         "--skip-model-update",
         action="store_true",
         help="Skip overwriting the checkpoint at the end of each training cycle",
-    )
-    training_group.add_argument(
-        "--batch-config",
-        metavar="CONFIG",
-        type=str,
-        default="forward,decode,noattn",
-        help="Create batches according to the configuration string",
     )
     training_group.add_argument(
         "--restart-optimizer",
@@ -823,6 +843,14 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         if args.create_args.trim_model and not args.create_args.import_model:
             raise ValueError("--trim-model is only valid with --import-model")
 
+    for attr in ("rows_encode", "rows_decode", "rows_forward", "rows_noattn"):
+        value = getattr(args, attr, None)
+        if value is not None and value < 0:
+            parser.error(f"--{attr.replace('_', '-')} must be non-negative")
+    for attr in ("cols_encode", "cols_decode", "cols_forward", "cols_noattn"):
+        value = getattr(args, attr, None)
+        if value is not None and value < 0:
+            parser.error(f"--{attr.replace('_', '-')} must be non-negative")
     return args
 
 
@@ -3203,21 +3231,89 @@ LOSS_IGNORE_INDEX = -100
 # -----------------------------------------------------------------------------
 
 
-ROW_METRIC_HIST_KEYS = [
-    "forward",
-    "decode",
-    "noattn",
-]
+BATCH_MODES: tuple[str, ...] = ("encode", "decode", "forward", "noattn")
 
-ROW_METRIC_LOG_KEYS = [
-    "forward",
-    "decode",
-    "noattn",
-]
+ROW_METRIC_HIST_KEYS = list(BATCH_MODES)
+ROW_METRIC_LOG_KEYS = list(BATCH_MODES)
+ROW_METRIC_LOG_GROUP = {"encode", "forward"}
 
-ROW_METRIC_LOG_GROUP = {
-    "forward",
-}
+
+def allocate_split_rows(
+    total_rows: int,
+    rows_encode: int | None,
+    rows_decode: int | None,
+    rows_forward: int | None,
+    rows_noattn: int | None,
+) -> dict[str, int]:
+    """Randomly allocate row counts per mode subject to optional pins."""
+
+    pinned = {
+        "encode": rows_encode,
+        "decode": rows_decode,
+        "forward": rows_forward,
+        "noattn": rows_noattn,
+    }
+    total = max(len(pinned), int(total_rows))
+    pinned_total = sum(int(v) for v in pinned.values() if v is not None)
+    if pinned_total > total:
+        raise ValueError("Sum of pinned --rows-* exceeds batch size")
+    remaining = total - pinned_total
+    allocations = {mode: int(value) if value is not None else 0 for mode, value in pinned.items()}
+    for mode in pinned:
+        if allocations[mode] <= 0 and pinned[mode] is None:
+            allocations[mode] = 1
+            remaining -= 1
+    unspecified = [mode for mode, value in pinned.items() if value is None]
+    for idx, mode in enumerate(unspecified):
+        if idx == len(unspecified) - 1:
+            take = remaining
+        else:
+            low = max(1, total // 8)
+            high = max(low, total // 2)
+            take = random.randint(low, high)
+            take = min(max(1, take), remaining)
+        allocations[mode] += take
+        remaining -= take
+    return allocations
+
+
+def allocate_stacked_cols(
+    total_cols: int,
+    cols_encode: int | None,
+    cols_decode: int | None,
+    cols_forward: int | None,
+    cols_noattn: int | None,
+) -> dict[str, int]:
+    """Randomly allocate column counts per mode subject to optional pins."""
+
+    pinned = {
+        "encode": cols_encode,
+        "decode": cols_decode,
+        "forward": cols_forward,
+        "noattn": cols_noattn,
+    }
+    total = max(len(pinned), int(total_cols))
+    pinned_total = sum(int(v) for v in pinned.values() if v is not None)
+    if pinned_total > total:
+        raise ValueError("Sum of pinned --cols-* exceeds block length")
+    remaining = total - pinned_total
+    allocations = {mode: int(value) if value is not None else 0 for mode, value in pinned.items()}
+    for mode in pinned:
+        if allocations[mode] <= 0 and pinned[mode] is None:
+            allocations[mode] = 1
+            remaining -= 1
+    unspecified = [mode for mode, value in pinned.items() if value is None]
+    for idx, mode in enumerate(unspecified):
+        if idx == len(unspecified) - 1:
+            take = remaining
+        else:
+            low = max(1, total // 8)
+            high = max(low, total // 2)
+            take = random.randint(low, high)
+            take = min(max(1, take), remaining)
+        allocations[mode] += take
+        remaining -= take
+    return allocations
 
 
 def sample_position_offsets(
@@ -3252,23 +3348,61 @@ def count_eval_calls(steps: int, interval: int) -> int:
     return len(eval_steps)
 
 
-def evaluate_single_batch(
+def loss_sum_and_token_count(
+    logits: torch.Tensor,
+    targets: torch.Tensor,
+    *,
+    last_only: bool = False,
+) -> tuple[torch.Tensor, int]:
+    if last_only:
+        logits = logits[:, -1:, :]
+        targets = targets[:, -1:]
+    per_token = F.cross_entropy(
+        logits.reshape(-1, logits.size(-1)),
+        targets.reshape(-1),
+        reduction="none",
+        ignore_index=LOSS_IGNORE_INDEX,
+    ).view(targets.size(0), -1)
+    valid_mask = (targets != LOSS_IGNORE_INDEX).to(per_token.dtype)
+    loss_sum = (per_token * valid_mask).sum()
+    token_count = int(valid_mask.sum().item())
+    return loss_sum, token_count
+
+
+def _sequence_embeddings(model: GRCEGPT, token_batch: torch.Tensor) -> torch.Tensor:
+    """Project token IDs into dropout'd embeddings for stack sequence calls."""
+
+    batch_size, seq_len = token_batch.shape
+    pos_idx = model._position_ids(seq_len, batch_size, token_batch.device, None)
+    tok = model.core.tok_emb(token_batch)
+    pos = model.core.pos_emb(pos_idx)
+    return model.core.drop(tok + pos)
+
+
+def evaluate_single_split_batch(
+    args: Args,
     model: GRCEGPT,
     dataset: TextDataset,
     split: str,
     block_length: int,
     batch_size: int,
     device: torch.device,
-    *,
-    target_batch_config: str | None = None,
-) -> dict[str, float | None]:
-    """Mirror :func:`train_model`'s row mix for evaluation checkpoints."""
+) -> dict[str, float]:
+    """Evaluate a split batch (rows per mode) and report per-mode losses."""
 
-    metrics: dict[str, float | None] = {key: None for key in ROW_METRIC_LOG_KEYS}
+    metrics: dict[str, float | None] = {mode: None for mode in BATCH_MODES}
     metrics["target"] = None
+    allocations = allocate_split_rows(
+        batch_size,
+        args.rows_encode,
+        args.rows_decode,
+        args.rows_forward,
+        args.rows_noattn,
+    )
     total_loss = 0.0
     total_tokens = 0
-    for mode, rows in batch_mode_specs(batch_size):
+    for mode in BATCH_MODES:
+        rows = allocations.get(mode, 0)
         if rows <= 0:
             continue
         xb, yb = dataset.get_batch(split, block_length, rows, device)
@@ -3284,32 +3418,194 @@ def evaluate_single_batch(
             mode=mode,
             position_offsets=position_offsets,
         )
-        per_token = F.cross_entropy(
-            logits.view(-1, logits.size(-1)),
-            yb.view(-1),
-            reduction="none",
-            ignore_index=LOSS_IGNORE_INDEX,
-        )
-        per_token = per_token.view(rows, -1)
-        valid_mask = (yb != LOSS_IGNORE_INDEX)
-        loss_sum = float((per_token * valid_mask).sum().item())
-        token_count = int(valid_mask.sum().item())
+        loss_sum, token_count = loss_sum_and_token_count(logits, yb, last_only=(mode == "encode"))
         if token_count <= 0:
             continue
-        metrics[mode] = loss_sum / token_count
-        total_loss += loss_sum
+        metrics[mode] = float((loss_sum / token_count).item())
+        total_loss += loss_sum.item()
         total_tokens += token_count
-    mix_loss = None
     if total_tokens > 0:
-        mix_loss = total_loss / total_tokens
-        metrics["target"] = mix_loss
-    if target_batch_config in {"forward", "decode", "noattn"}:
-        selected = metrics.get(target_batch_config)
-        if selected is not None:
-            metrics["target"] = selected
-        elif mix_loss is not None:
-            metrics["target"] = mix_loss
+        metrics["target"] = total_loss / total_tokens
     return metrics
+
+
+def evaluate_single_stacked_batch(
+    args: Args,
+    model: GRCEGPT,
+    dataset: TextDataset,
+    split: str,
+    block_length: int,
+    batch_size: int,
+    device: torch.device,
+) -> dict[str, float]:
+    """Evaluate a stacked batch (cols per mode) with KV chaining."""
+
+    metrics: dict[str, float | None] = {mode: None for mode in BATCH_MODES}
+    metrics["target"] = None
+    allocations = allocate_stacked_cols(
+        block_length,
+        args.cols_encode,
+        args.cols_decode,
+        args.cols_forward,
+        args.cols_noattn,
+    )
+    xb, yb = dataset.get_batch(split, block_length, batch_size, device)
+    embeddings = _sequence_embeddings(model, xb)
+    cursor = 0
+    kv_chain: list[list[tuple[torch.Tensor, torch.Tensor]] | None] = []
+    grce_state = None
+    xctx_state = None
+    total_loss = 0.0
+    total_tokens = 0
+    for mode in BATCH_MODES:
+        cols = allocations.get(mode, 0)
+        if cols <= 0:
+            continue
+        chunk_input = embeddings[:, cursor : cursor + cols, :]
+        chunk_target = yb[:, cursor : cursor + cols]
+        kv_sources = None if mode == "noattn" else (kv_chain if kv_chain else None)
+        chunk_output, grce_state, xctx_state, kv_out = model.stack_sequence.forward(
+            chunk_input,
+            grce_in=grce_state,
+            xctx_in=xctx_state,
+            kv_cache_list_in=kv_sources,
+            mode=mode,
+            detach_internal_kv_cache=args.detach_kv_cache,
+        )
+        logits = model.core.head(model.core.ln_f(chunk_output))
+        loss_sum, token_count = loss_sum_and_token_count(
+            logits,
+            chunk_target,
+            last_only=(mode == "encode"),
+        )
+        if token_count > 0:
+            metrics[mode] = float((loss_sum / token_count).item())
+            total_loss += loss_sum.item()
+            total_tokens += token_count
+        if mode != "noattn":
+            kv_chain.append(kv_out)
+        cursor += cols
+    if total_tokens > 0:
+        metrics["target"] = total_loss / total_tokens
+    return metrics
+
+
+def evaluate_single_batch(
+    args: Args,
+    model: GRCEGPT,
+    dataset: TextDataset,
+    split: str,
+    block_length: int,
+    batch_size: int,
+    device: torch.device,
+) -> dict[str, float]:
+    if args.batch_layout == "stacked":
+        return evaluate_single_stacked_batch(
+            args, model, dataset, split, block_length, batch_size, device
+        )
+    return evaluate_single_split_batch(
+        args, model, dataset, split, block_length, batch_size, device
+    )
+
+
+def train_split_batch(
+    args: Args,
+    model: GRCEGPT,
+    dataset: TextDataset,
+    block_length: int,
+    batch_size: int,
+    device: torch.device,
+) -> tuple[torch.Tensor, int]:
+    allocations = allocate_split_rows(
+        batch_size,
+        args.rows_encode,
+        args.rows_decode,
+        args.rows_forward,
+        args.rows_noattn,
+    )
+    total_loss_sum: torch.Tensor | None = None
+    total_tokens = 0
+    for mode in BATCH_MODES:
+        rows = allocations.get(mode, 0)
+        if rows <= 0:
+            continue
+        xb, yb = dataset.get_batch("train", block_length, rows, device)
+        position_offsets = sample_position_offsets(
+            rows,
+            model.config.block_size,
+            block_length,
+            device,
+        )
+        logits, _, _ = model.forward_autoreg(
+            xb,
+            targets=yb,
+            mode=mode,
+            position_offsets=position_offsets,
+        )
+        loss_sum, token_count = loss_sum_and_token_count(logits, yb, last_only=(mode == "encode"))
+        if token_count <= 0:
+            continue
+        total_loss_sum = loss_sum if total_loss_sum is None else total_loss_sum + loss_sum
+        total_tokens += token_count
+    if total_loss_sum is None:
+        raise RuntimeError("No tokens processed in split batch")
+    return total_loss_sum, total_tokens
+
+
+def train_stacked_batch(
+    args: Args,
+    model: GRCEGPT,
+    dataset: TextDataset,
+    block_length: int,
+    batch_size: int,
+    device: torch.device,
+) -> tuple[torch.Tensor, int]:
+    allocations = allocate_stacked_cols(
+        block_length,
+        args.cols_encode,
+        args.cols_decode,
+        args.cols_forward,
+        args.cols_noattn,
+    )
+    xb, yb = dataset.get_batch("train", block_length, batch_size, device)
+    embeddings = _sequence_embeddings(model, xb)
+    cursor = 0
+    kv_chain: list[list[tuple[torch.Tensor, torch.Tensor]] | None] = []
+    grce_state = None
+    xctx_state = None
+    total_loss_sum: torch.Tensor | None = None
+    total_tokens = 0
+    for mode in BATCH_MODES:
+        cols = allocations.get(mode, 0)
+        if cols <= 0:
+            continue
+        chunk_input = embeddings[:, cursor : cursor + cols, :]
+        chunk_target = yb[:, cursor : cursor + cols]
+        kv_sources = None if mode == "noattn" else (kv_chain if kv_chain else None)
+        chunk_output, grce_state, xctx_state, kv_out = model.stack_sequence.forward(
+            chunk_input,
+            grce_in=grce_state,
+            xctx_in=xctx_state,
+            kv_cache_list_in=kv_sources,
+            mode=mode,
+            detach_internal_kv_cache=args.detach_kv_cache,
+        )
+        logits = model.core.head(model.core.ln_f(chunk_output))
+        loss_sum, token_count = loss_sum_and_token_count(
+            logits,
+            chunk_target,
+            last_only=(mode == "encode"),
+        )
+        if token_count > 0:
+            total_loss_sum = loss_sum if total_loss_sum is None else total_loss_sum + loss_sum
+            total_tokens += token_count
+        if mode != "noattn":
+            kv_chain.append(kv_out)
+        cursor += cols
+    if total_loss_sum is None:
+        raise RuntimeError("No tokens processed in stacked batch")
+    return total_loss_sum, total_tokens
+
 
 def train_model(
     args: Args,
@@ -3351,8 +3647,6 @@ def train_model(
     else:
         prompt_queue = []
 
-    mode_specs = batch_mode_specs(batch_size, batch_config=args.batch_config)
-
     loop_timer = Timer().start()
     eval_timer = Timer()
 
@@ -3368,40 +3662,27 @@ def train_model(
     print(line)
 
     for step in range(1, steps + 1):
-        total_loss_sum: torch.Tensor | None = None
-        total_tokens = 0
-        for mode, rows in mode_specs:
-            if rows <= 0:
-                continue
-            xb, yb = dataset.get_batch("train", block_length, rows, device)
-            position_offsets = sample_position_offsets(
-                rows,
-                model.config.block_size,
+        if args.batch_layout == "stacked":
+            total_loss_sum, total_tokens = train_stacked_batch(
+                args,
+                model,
+                dataset,
                 block_length,
+                batch_size,
                 device,
             )
-            logits, _, _ = model.forward_autoreg(
-                xb,
-                targets=yb,
-                mode=mode,
-                position_offsets=position_offsets,
+        else:
+            total_loss_sum, total_tokens = train_split_batch(
+                args,
+                model,
+                dataset,
+                block_length,
+                batch_size,
+                device,
             )
-            loss_sum = F.cross_entropy(
-                logits.view(-1, logits.size(-1)),
-                yb.view(-1),
-                reduction="sum",
-                ignore_index=LOSS_IGNORE_INDEX,
-            )
-            if total_loss_sum is None:
-                total_loss_sum = loss_sum
-            else:
-                total_loss_sum = total_loss_sum + loss_sum
-            token_count = int((yb != LOSS_IGNORE_INDEX).sum().item())
-            total_tokens += token_count
-        if total_loss_sum is None:
+        if total_tokens <= 0:
             raise RuntimeError("No tokens processed in training step")
-        denom = float(max(total_tokens, 1))
-        total_loss = total_loss_sum / denom
+        total_loss = total_loss_sum / float(total_tokens)
 
         optimizer.zero_grad(set_to_none=True)
         total_loss.backward()
@@ -3417,13 +3698,13 @@ def train_model(
         with torch.no_grad():
             for split in ("train", "test"):
                 split_metrics[split] = evaluate_single_batch(
+                    args,
                     model,
                     dataset,
                     split,
                     block_length,
                     batch_size,
                     device,
-                    target_batch_config=args.batch_config,
                 )
         model.train()
         eval_timer.stop()
@@ -3580,45 +3861,30 @@ def run_profile_mode(
             "torch.profiler is unavailable; upgrade to PyTorch 1.8+ to use 'profile'."
         ) from exc
 
-    mode_specs = batch_mode_specs(batch_size, batch_config=args.batch_config)
-    if not mode_specs:
-        raise ValueError("Batch size must be >0 to run the profiler")
-
     train_chars = (block_length + 1) * batch_size * 2
     dataset.prepare_cycle("train", train_chars)
 
     def train_step(tag: str) -> float:
         model.train()
-        total_loss_sum: torch.Tensor | None = None
-        total_tokens = 0
-        for mode, rows in mode_specs:
-            if rows <= 0:
-                continue
-            xb, yb = dataset.get_batch("train", block_length, rows, device)
-            position_offsets = sample_position_offsets(
-                rows,
-                block_size,
+        if args.batch_layout == "stacked":
+            total_loss_sum, total_tokens = train_stacked_batch(
+                args,
+                model,
+                dataset,
                 block_length,
+                batch_size,
                 device,
             )
-            logits, _, _ = model.forward_autoreg(
-                xb,
-                targets=yb,
-                mode=mode,
-                position_offsets=position_offsets,
+        else:
+            total_loss_sum, total_tokens = train_split_batch(
+                args,
+                model,
+                dataset,
+                block_length,
+                batch_size,
+                device,
             )
-            loss_sum = F.cross_entropy(
-                logits.view(-1, logits.size(-1)),
-                yb.view(-1),
-                reduction="sum",
-                ignore_index=LOSS_IGNORE_INDEX,
-            )
-            if total_loss_sum is None:
-                total_loss_sum = loss_sum
-            else:
-                total_loss_sum = total_loss_sum + loss_sum
-            total_tokens += int((yb != LOSS_IGNORE_INDEX).sum().item())
-        if total_loss_sum is None or total_tokens <= 0:
+        if total_tokens <= 0:
             raise RuntimeError("No tokens processed during profiling step")
         loss = total_loss_sum / float(total_tokens)
         optimizer.zero_grad(set_to_none=True)
