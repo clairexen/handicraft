@@ -128,7 +128,7 @@ class Defaults:
     steps: int = 100
     cycles: int = 100
     batch_size: int = 256
-    batch_layout: str = "stacked"  # split vs stacked batch composition
+    batch_layout: str = "auto"  # auto, split, or stacked batch composition
     rows_encode: int | None = None
     rows_decode: int | None = None
     rows_forward: int | None = None
@@ -319,9 +319,9 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
     )
     training_group.add_argument(
         "--batch-layout",
-        choices=["split", "stacked"],
+        choices=["auto", "split", "stacked"],
         default=DEFAULTS.batch_layout,
-        help="How to compose encode/decode/forward/noattn modes inside a batch",
+        help="Batch composition strategy: auto=random, or force split/stacked",
     )
     training_group.add_argument(
         "--rows-encode",
@@ -3257,14 +3257,18 @@ def allocate_split_rows(
     }
     total = max(len(pinned), int(total_rows))
     pinned_total = sum(int(v) for v in pinned.values() if v is not None)
-    if pinned_total > total:
+    all_pinned = all(value is not None for value in pinned.values())
+    if all_pinned:
+        total = pinned_total
+    elif pinned_total > total:
         raise ValueError("Sum of pinned --rows-* exceeds batch size")
     remaining = total - pinned_total
     allocations = {mode: int(value) if value is not None else 0 for mode, value in pinned.items()}
     for mode in pinned:
-        if allocations[mode] <= 0 and pinned[mode] is None:
-            allocations[mode] = 1
-            remaining -= 1
+        if pinned[mode] is None and allocations[mode] <= 0:
+            need = 1
+            allocations[mode] = need
+            remaining -= need
     unspecified = [mode for mode, value in pinned.items() if value is None]
     for idx, mode in enumerate(unspecified):
         if idx == len(unspecified) - 1:
@@ -3296,12 +3300,15 @@ def allocate_stacked_cols(
     }
     total = max(len(pinned), int(total_cols))
     pinned_total = sum(int(v) for v in pinned.values() if v is not None)
-    if pinned_total > total:
+    all_pinned = all(value is not None for value in pinned.values())
+    if all_pinned:
+        total = pinned_total
+    elif pinned_total > total:
         raise ValueError("Sum of pinned --cols-* exceeds block length")
     remaining = total - pinned_total
     allocations = {mode: int(value) if value is not None else 0 for mode, value in pinned.items()}
     for mode in pinned:
-        if allocations[mode] <= 0 and pinned[mode] is None:
+        if pinned[mode] is None and allocations[mode] <= 0:
             allocations[mode] = 1
             remaining -= 1
     unspecified = [mode for mode, value in pinned.items() if value is None]
@@ -3666,8 +3673,11 @@ def train_model(
     oom_retries = 0
     step = 0
     while step < steps:
+        layout_choice = args.batch_layout
+        if layout_choice == "auto":
+            layout_choice = random.choice(["split", "stacked"])
         try:
-            if args.batch_layout == "stacked":
+            if layout_choice == "stacked":
                 total_loss_sum, total_tokens = train_stacked_batch(
                     args,
                     model,
@@ -3690,12 +3700,18 @@ def train_model(
             total_loss = total_loss_sum / float(total_tokens)
         except torch.OutOfMemoryError:
             oom_retries += 1
-            warning = (
-                f"OOM (retry {oom_retries}/3) during {args.batch_layout} batch; "
-                "refreshing layout and retrying"
-            )
-            print(color_text(warning, Colors.YELLOW))
-            torch.cuda.empty_cache() if torch.cuda.is_available() else None
+            line_parts: List[str] = []
+            if show_time:
+                timestamp = time.strftime("%H:%M", time.localtime())
+                line_parts.append(color_text(timestamp, Colors.BLUE))
+            line_parts.append(color_text(f"{total_steps}", Colors.CYAN))
+            line_parts.append(color_text(
+                f"OOM (retry {oom_retries}/3) during {layout_choice} batch; "
+                "refreshing layout and retrying", Colors.YELLOW))
+            line = " | ".join(line_parts)
+            print(line)
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
             if oom_retries >= 3:
                 raise
             continue
