@@ -76,17 +76,18 @@ Let U2E_i() be a per-layer learned linear from u to n_embd.
 Let DnX() be a learned linear from n_xctx to n_xctx/2.
 Let UpX() be a learned linear from n_xctx/2 to n_xctx.
 Let W() be a learned linear from n_xctx to n_xctx.
+Let C() be the "center" function: C(Y) = Y - ones()*mean(Y)
   Bias injection based on the signal from the previous position via recurrent input X:
     B_i := U2E_i(LN(X2U_i(X)))
   For each transformer layer i at this position and thus for each sampled vector S_i:
-    Z_i := U2X_i(LN(E2U_i(S_i)))
+    Z_i := U2X_i(LN(E2U_i(C(S_i))))
   Then the shared mixing stage, combining the recurrent input signal X with the per-layer values:
     M := LN(DnX(X + Z_0 + Z_1 + ... + Z_{n_layers-1}))
   Un-squeeze and convert back into X-space with MLP
     Y := W(GELU(UpX(M)))
   Updating the original recurrent X input (not M) with Y, but without the
   mean component, then rescale the recurrent signal with RMSNorm (not LN):
-    X' := RMSNorm(X + Y - ones()*mean(Y))
+    X' := RMSNorm(X + C(Y))
 
 The XCTX architecture uses a similar bias-sample-mix-remix architecture as
 GRCE, but shapes noise, manages dimensionality of updates, and incorporates

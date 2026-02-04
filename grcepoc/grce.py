@@ -2841,7 +2841,8 @@ class TransformerXCTX(nn.Module):
             layer_sample = samples[idx][:, -1, :]
             if should_detach:
                 layer_sample = layer_sample.detach()
-            reduced = self.sample_linear[idx](layer_sample)
+            centered = layer_sample - layer_sample.mean(dim=-1, keepdim=True)
+            reduced = self.sample_linear[idx](centered)
             normed = self.sample_norms[idx](reduced)
             messages.append(self.expand_linear[idx](normed))
         fused = torch.stack(messages, dim=0).sum(dim=0)
