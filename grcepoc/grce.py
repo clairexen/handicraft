@@ -133,6 +133,9 @@ class Defaults:
     rows_decode: int | None = None
     rows_forward: int | None = None
     rows_noattn: int | None = None
+    split_length: int | None = None
+    split_size: int | None = None
+    split_steps: int | None = None
     cols_encode: int | None = None
     cols_decode: int | None = None
     cols_forward: int | None = None
@@ -346,6 +349,24 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         type=int,
         default=DEFAULTS.rows_noattn,
         help="Pin the no-attention row count for split batches (omit for random)",
+    )
+    training_group.add_argument(
+        "--split-length",
+        type=int,
+        default=DEFAULTS.split_length,
+        help="Override --block-length for split batches only",
+    )
+    training_group.add_argument(
+        "--split-size",
+        type=int,
+        default=DEFAULTS.split_size,
+        help="Override --batch-size for split batches only",
+    )
+    training_group.add_argument(
+        "--split-steps",
+        type=int,
+        default=DEFAULTS.split_steps,
+        help="Number of steps per cycle assigned to split mode (default=steps/2)",
     )
     training_group.add_argument(
         "--cols-encode",
@@ -851,6 +872,23 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         value = getattr(args, attr, None)
         if value is not None and value < 0:
             parser.error(f"--{attr.replace('_', '-')} must be non-negative")
+    col_pins = [args.cols_encode, args.cols_decode, args.cols_forward, args.cols_noattn]
+    if all(value is not None for value in col_pins):
+        total_cols = sum(int(value) for value in col_pins)
+        if total_cols > args.block_size:
+            parser.error("Sum of pinned --cols-* cannot exceed --block-size")
+    if getattr(args, "split_length", None) is not None:
+        if args.split_length <= 0:
+            parser.error("--split-length must be positive")
+        if args.split_length > args.block_size:
+            parser.error("--split-length cannot exceed --block-size")
+    if getattr(args, "split_size", None) is not None and args.split_size <= 0:
+        parser.error("--split-size must be positive")
+    if getattr(args, "split_steps", None) is not None:
+        if args.split_steps < 0:
+            parser.error("--split-steps must be non-negative")
+        if args.split_steps > args.steps:
+            parser.error("--split-steps cannot exceed --steps")
     return args
 
 
@@ -1037,6 +1075,7 @@ class Timer:
         self.wall_start = None
         self.cpu_start = None
         self.gpu_start = None
+        self.gpu_sampler_active = False
 
     def add(self, other):
         assert self.wall_start is None
@@ -1066,17 +1105,27 @@ class Timer:
         assert self.wall_start is None
         self.wall_start = time.time()
         self.cpu_start = time.process_time()
-        self.gpu_sampler.start()
+        self.gpu_sampler_active = False
+        try:
+            self.gpu_sampler.start()
+            self.gpu_sampler_active = True
+        except Exception:
+            self.gpu_sampler_active = False
         return self
 
     def stop(self):
         assert self.wall_start is not None
         self.wall_secs += time.time() - self.wall_start
         self.cpu_secs += time.process_time() - self.cpu_start
-        self.gpu_sampler.stop()
-        self.gpu_secs += self.gpu_sampler.busy_time_s
-        if self.gpu_mem is not None:
-            self.gpu_mem = max(self.gpu_mem, self.gpu_sampler.max_mem_util)
+        if self.gpu_sampler_active:
+            try:
+                self.gpu_sampler.stop()
+                self.gpu_secs += self.gpu_sampler.busy_time_s
+                if self.gpu_mem is not None:
+                    self.gpu_mem = max(self.gpu_mem, self.gpu_sampler.max_mem_util)
+            except Exception:
+                pass
+        self.gpu_sampler_active = False
         self.wall_start = None
         self.cpu_start = None
         return self
@@ -3325,6 +3374,44 @@ def allocate_stacked_cols(
     return allocations
 
 
+def build_cycle_layouts(step_count: int, mode: str, split_steps: int | None) -> list[str]:
+    """Return a per-step layout list honoring explicit or auto selection."""
+
+    if mode == "split":
+        return ["split"] * step_count
+    if mode == "stacked":
+        return ["stacked"] * step_count
+    if split_steps is None:
+        split_count = step_count // 2
+    else:
+        split_count = max(0, min(step_count, int(split_steps)))
+    stacked_count = step_count - split_count
+    layouts = ["split"] * split_count + ["stacked"] * stacked_count
+    random.shuffle(layouts)
+    return layouts
+
+
+def effective_split_rows(args: Args, base_rows: int) -> int:
+    pinned = [args.rows_encode, args.rows_decode, args.rows_forward, args.rows_noattn]
+    if args.split_size is not None:
+        return max(0, int(args.split_size))
+    if all(value is not None for value in pinned):
+        return max(0, sum(int(value) for value in pinned))
+    return max(0, int(base_rows))
+
+
+def effective_split_length(args: Args, base_length: int) -> int:
+    if args.split_length is not None:
+        return max(1, int(args.split_length))
+    return max(1, int(base_length))
+
+
+def effective_stacked_length(args: Args, base_length: int) -> int:
+    pinned = [args.cols_encode, args.cols_decode, args.cols_forward, args.cols_noattn]
+    if all(value is not None for value in pinned):
+        return max(1, sum(int(value) for value in pinned))
+    return max(1, int(base_length))
+
 def sample_position_offsets(
     batch_size: int,
     block_size: int,
@@ -3401,8 +3488,10 @@ def evaluate_single_split_batch(
 
     metrics: dict[str, float | None] = {mode: None for mode in BATCH_MODES}
     metrics["target"] = None
+    split_total_rows = effective_split_rows(args, batch_size)
+    split_block_length = effective_split_length(args, block_length)
     allocations = allocate_split_rows(
-        batch_size,
+        split_total_rows,
         args.rows_encode,
         args.rows_decode,
         args.rows_forward,
@@ -3414,11 +3503,11 @@ def evaluate_single_split_batch(
         rows = allocations.get(mode, 0)
         if rows <= 0:
             continue
-        xb, yb = dataset.get_batch(split, block_length, rows, device)
+        xb, yb = dataset.get_batch(split, split_block_length, rows, device)
         position_offsets = sample_position_offsets(
             rows,
             model.config.block_size,
-            block_length,
+            split_block_length,
             device,
         )
         logits, _, _ = model.forward_autoreg(
@@ -3451,14 +3540,15 @@ def evaluate_single_stacked_batch(
 
     metrics: dict[str, float | None] = {mode: None for mode in BATCH_MODES}
     metrics["target"] = None
+    stacked_total_cols = effective_stacked_length(args, block_length)
     allocations = allocate_stacked_cols(
-        block_length,
+        stacked_total_cols,
         args.cols_encode,
         args.cols_decode,
         args.cols_forward,
         args.cols_noattn,
     )
-    xb, yb = dataset.get_batch(split, block_length, batch_size, device)
+    xb, yb = dataset.get_batch(split, stacked_total_cols, batch_size, device)
     embeddings = _sequence_embeddings(model, xb)
     cursor = 0
     kv_chain: list[list[tuple[torch.Tensor, torch.Tensor]] | None] = []
@@ -3525,8 +3615,10 @@ def train_split_batch(
     batch_size: int,
     device: torch.device,
 ) -> tuple[torch.Tensor, int]:
+    split_total_rows = effective_split_rows(args, batch_size)
+    split_block_length = effective_split_length(args, block_length)
     allocations = allocate_split_rows(
-        batch_size,
+        split_total_rows,
         args.rows_encode,
         args.rows_decode,
         args.rows_forward,
@@ -3538,11 +3630,11 @@ def train_split_batch(
         rows = allocations.get(mode, 0)
         if rows <= 0:
             continue
-        xb, yb = dataset.get_batch("train", block_length, rows, device)
+        xb, yb = dataset.get_batch("train", split_block_length, rows, device)
         position_offsets = sample_position_offsets(
             rows,
             model.config.block_size,
-            block_length,
+            split_block_length,
             device,
         )
         logits, _, _ = model.forward_autoreg(
@@ -3569,14 +3661,15 @@ def train_stacked_batch(
     batch_size: int,
     device: torch.device,
 ) -> tuple[torch.Tensor, int]:
+    stacked_total_cols = effective_stacked_length(args, block_length)
     allocations = allocate_stacked_cols(
-        block_length,
+        stacked_total_cols,
         args.cols_encode,
         args.cols_decode,
         args.cols_forward,
         args.cols_noattn,
     )
-    xb, yb = dataset.get_batch("train", block_length, batch_size, device)
+    xb, yb = dataset.get_batch("train", stacked_total_cols, batch_size, device)
     embeddings = _sequence_embeddings(model, xb)
     cursor = 0
     kv_chain: list[list[tuple[torch.Tensor, torch.Tensor]] | None] = []
@@ -3624,6 +3717,7 @@ def train_model(
     steps: int,
     block_length: int,
     batch_size: int,
+    step_layouts: Sequence[str] | None,
     eval_interval: int,
     start_step: int,
     optimizer: torch.optim.Optimizer,
@@ -3651,6 +3745,11 @@ def train_model(
     history_updates: List[Dict[str, float]] = []
     printed_header = False
     eval_interval = max(1, int(eval_interval))
+    if step_layouts is None or len(step_layouts) != steps:
+        step_layouts = build_cycle_layouts(steps, args.batch_layout, args.split_steps)
+    else:
+        step_layouts = list(step_layouts)
+
     if prompt_tracker is not None:
         prompt_queue = prompt_tracker.prompt_queue(reset=reset_prompt_queue)
     else:
@@ -3673,9 +3772,7 @@ def train_model(
     oom_retries = 0
     step = 0
     while step < steps:
-        layout_choice = args.batch_layout
-        if layout_choice == "auto":
-            layout_choice = random.choice(["split", "stacked"])
+        layout_choice = step_layouts[step]
         try:
             if layout_choice == "stacked":
                 total_loss_sum, total_tokens = train_stacked_batch(
@@ -3895,12 +3992,20 @@ def run_profile_mode(
             "torch.profiler is unavailable; upgrade to PyTorch 1.8+ to use 'profile'."
         ) from exc
 
-    train_chars = (block_length + 1) * batch_size * 2
+    split_len = effective_split_length(args, block_length)
+    stacked_len = effective_stacked_length(args, block_length)
+    split_rows = effective_split_rows(args, batch_size)
+    max_len = max(block_length, split_len, stacked_len)
+    max_rows = max(batch_size, split_rows)
+    train_chars = (max_len + 1) * max_rows * 2
     dataset.prepare_cycle("train", train_chars)
 
     def train_step(tag: str) -> float:
         model.train()
-        if args.batch_layout == "stacked":
+        layout_choice = args.batch_layout
+        if layout_choice == "auto":
+            layout_choice = random.choice(["split", "stacked"])
+        if layout_choice == "stacked":
             total_loss_sum, total_tokens = train_stacked_batch(
                 args,
                 model,
@@ -4884,13 +4989,25 @@ class Runtime:
                 label = "".join(tags + plus_tags + minus_tags)
                 hours = total_train_wall / 3600.0
                 days = hours / 24.0
-                train_chars_cycle = (self.args.block_length + 1) * self.args.batch_size * self.args.steps
-                eval_calls = max(1, count_eval_calls(self.args.steps, self.args.eval_interval))
-                test_chars_cycle = (
-                    (self.args.block_length + 1)
-                    * self.args.batch_size
-                    * eval_calls
+                split_len = effective_split_length(self.args, self.args.block_length)
+                stacked_len = effective_stacked_length(self.args, self.args.block_length)
+                split_rows = effective_split_rows(self.args, self.args.batch_size)
+                step_layouts = build_cycle_layouts(
+                    self.args.steps,
+                    self.args.batch_layout,
+                    self.args.split_steps,
                 )
+                train_chars_cycle = 0
+                for layout in step_layouts:
+                    if layout == "split":
+                        length = split_len
+                        rows = split_rows
+                    else:
+                        length = stacked_len
+                        rows = self.args.batch_size
+                    train_chars_cycle += (length + 1) * rows
+                eval_calls = max(1, count_eval_calls(self.args.steps, self.args.eval_interval))
+                test_chars_cycle = (split_len + 1) * split_rows * eval_calls
                 train_start = int(dataset.positions.get("train", 0))
                 test_start = int(dataset.positions.get("test", 0))
                 dataset.prepare_cycle("train", train_chars_cycle)
@@ -4956,6 +5073,7 @@ class Runtime:
                     self.args.steps,
                     self.args.block_length,
                     self.args.batch_size,
+                    step_layouts,
                     self.args.eval_interval,
                     total_steps,
                     optimizer,
