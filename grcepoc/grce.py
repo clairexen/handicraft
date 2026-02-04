@@ -3597,8 +3597,10 @@ def evaluate_single_batch(
     block_length: int,
     batch_size: int,
     device: torch.device,
+    *,
+    layout: str = "split",
 ) -> dict[str, float]:
-    if args.batch_layout == "stacked":
+    if layout == "stacked":
         return evaluate_single_stacked_batch(
             args, model, dataset, split, block_length, batch_size, device
         )
@@ -3825,6 +3827,8 @@ def train_model(
             continue
         eval_timer.start()
         model.eval()
+        split_eval = (total_steps % 2 == 1)
+        eval_layout = "split" if split_eval else "stacked"
         split_metrics: dict[str, dict[str, float | None]] = {}
         with torch.no_grad():
             for split in ("train", "test"):
@@ -3836,6 +3840,7 @@ def train_model(
                     block_length,
                     batch_size,
                     device,
+                    layout=eval_layout,
                 )
         model.train()
         eval_timer.stop()
@@ -3905,27 +3910,30 @@ def train_model(
         sample_render = (Colors.YELLOW if sampling_strategy == 'argmax' else Colors.CYAN) + \
                         f"{sampling_strategy}:{Colors.RESET} " + sample_prefix + sample_suffix
 
-        def format_metric(split: str, key: str) -> str:
+        def format_metric(split: str, key: str, split_mode: bool) -> str:
             value = split_metrics[split].get(key)
+            if key in ROW_METRIC_LOG_GROUP:
+                sep = ": " if split_mode else "- "
+            else:
+                sep = ""
             if value is None:
-                return "-"
-            sep = ": " if key in ROW_METRIC_LOG_GROUP else ""
+                return f"{sep}****"
             return f"{sep}{value:.2f}"
 
         detail_keys = ROW_METRIC_LOG_KEYS
 
         def format_train_line() -> str:
-            base = format_metric("train", "target")
+            base = format_metric("train", "target", split_eval)
             if not show_train_loss_details:
                 return base
-            diag = " ".join(format_metric("train", key) for key in detail_keys)
+            diag = " ".join(format_metric("train", key, split_eval) for key in detail_keys)
             return f"{base} {diag}"
 
         def format_test_line() -> str:
-            base = format_metric("test", "target")
+            base = format_metric("test", "target", split_eval)
             if not show_test_loss_details:
                 return base
-            diag = " ".join(format_metric("test", key) for key in detail_keys)
+            diag = " ".join(format_metric("test", key, split_eval) for key in detail_keys)
             return f"{base} {diag}"
 
         train_values = format_train_line()
@@ -3958,6 +3966,7 @@ def train_model(
             "unix_time": float(eval_now),
             "train_cursor": int(dataset.positions.get("train", 0)),
             "test_cursor": int(dataset.positions.get("test", 0)),
+            "step_split_eval": 1 if split_eval else 0,
         }
         metric_keys = ["target"] + ROW_METRIC_HIST_KEYS
         for key in metric_keys:
