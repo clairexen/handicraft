@@ -1,0 +1,12 @@
+if [ ! -f .venv/bin/activate ]; then
+	echo "Run:"
+	echo "  python3 -m venv .venv"
+	echo "  source activate"
+	echo "  pip install -r requirements.txt"
+else
+	source .venv/bin/activate
+	PS1="(grce)${PS1#(.venv)}"
+	VIRTUAL_ENV_PROMPT="(grce) "
+	grce() { python3 "$(dirname $VIRTUAL_ENV)/grce.py" "$@"; }
+	eval "$(typeset -f deactivate | sed 's/^}/unset -f grce; }/')"
+fi
