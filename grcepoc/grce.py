@@ -4750,7 +4750,7 @@ class Runtime:
                     "dataset": dataset.state_dict(),
                     "total_steps": 0,
                     "loss_history": [],
-                    "config": asdict(self.args.model_geometry()),
+                    "config": asdict(args_to_model_geometry(self.args)),
                     "train_wall_seconds": 0.0,
                     "prompt_state": prompt_tracker.serialize(),
                     "tokenizer_json": tokenizer_json,
