@@ -3663,28 +3663,44 @@ def train_model(
     line = " | ".join(line_parts) + " |"
     print(line)
 
-    for step in range(1, steps + 1):
-        if args.batch_layout == "stacked":
-            total_loss_sum, total_tokens = train_stacked_batch(
-                args,
-                model,
-                dataset,
-                block_length,
-                batch_size,
-                device,
+    oom_retries = 0
+    step = 0
+    while step < steps:
+        try:
+            if args.batch_layout == "stacked":
+                total_loss_sum, total_tokens = train_stacked_batch(
+                    args,
+                    model,
+                    dataset,
+                    block_length,
+                    batch_size,
+                    device,
+                )
+            else:
+                total_loss_sum, total_tokens = train_split_batch(
+                    args,
+                    model,
+                    dataset,
+                    block_length,
+                    batch_size,
+                    device,
+                )
+            if total_tokens <= 0:
+                raise RuntimeError("No tokens processed in training step")
+            total_loss = total_loss_sum / float(total_tokens)
+        except torch.OutOfMemoryError:
+            oom_retries += 1
+            warning = (
+                f"OOM (retry {oom_retries}/3) during {args.batch_layout} batch; "
+                "refreshing layout and retrying"
             )
-        else:
-            total_loss_sum, total_tokens = train_split_batch(
-                args,
-                model,
-                dataset,
-                block_length,
-                batch_size,
-                device,
-            )
-        if total_tokens <= 0:
-            raise RuntimeError("No tokens processed in training step")
-        total_loss = total_loss_sum / float(total_tokens)
+            print(color_text(warning, Colors.YELLOW))
+            torch.cuda.empty_cache() if torch.cuda.is_available() else None
+            if oom_retries >= 3:
+                raise
+            continue
+        oom_retries = 0
+        step += 1
 
         optimizer.zero_grad(set_to_none=True)
         total_loss.backward()
