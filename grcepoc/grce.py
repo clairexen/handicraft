@@ -87,7 +87,7 @@ PROMPT_GOALS = [
 SPECIAL_TOKENS = """
 <|----|> <|//|> <|tokipona:> <|english:> </english:> </tokipona:>
 <|lq:> <:lq|> <|hq:> <:hq|> <|!:> <:!|> <|?:> <:?|> <|*:> <:*|>
-<|-:> <:-|> <|=:> <:=|> <|/:> <:/|> <|@:> <:@|> <|think|>
+<|-:> <:-|> <|=:> <:=|> <|/:> <:/|> <|@:> <:@|> <|reject|> <|think|>
 <|p7|> <|p6|> <|p5|> <|p4|> <|p3|> <|p2|> <|p1|> <|p0|>
 """.split()
 
@@ -1522,11 +1522,11 @@ class LayerDampening(nn.Module):
         y = gain * x / denom
     """
 
-    def __init__(self, dim, eps=1e-8, init_log_k=0.0):
+    def __init__(self, dim, with_gain=True, eps=1e-8, init_log_k=0.0):
         super().__init__()
         self.dim = dim
         self.eps = eps
-        self.gain = nn.Parameter(torch.ones(dim))
+        self.gain = nn.Parameter(torch.ones(dim)) if with_gain else None
         self.log_k = nn.Parameter(torch.tensor(init_log_k))
 
     def forward(self, x):
@@ -1536,7 +1536,7 @@ class LayerDampening(nn.Module):
         k = torch.exp(self.log_k)
         denom = 1.0 + F.softplus(k * (r - 1.0)) / k
         y = x / denom
-        return y * self.gain
+        return y * self.gain if self.gain else y
 
 
 # Local GPT2 tokenizer adapter (no huggingface dependency)

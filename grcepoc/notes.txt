@@ -104,6 +104,9 @@ per-layer caches and attending only against cached past keys/values. (In
 `encode` blocks we run the transformer with simple un-masked attention, so
 we must not use a KV-cached architecture in the case of `encode` blocks.)
 
+(Also note the "Experiment with different bias-injection schemes" todo item
+near the end of this document.)
+
 
 ## Rationale for the recurrent channels, additional thoughts, and predicted behavior
 
@@ -555,6 +558,10 @@ embedding names that correspond to special tokens below.
 <|@:> ... <:@|>
   think-available block begin and end marks
 
+<|reject|>
+  the model predicts this token when it rejects the last token
+  and thus "wants" to discontinue.
+
 <|think|>
   the model predicts this token to request an extra think step.
   it's a token and not a non-token embedding, because we might
@@ -637,11 +644,16 @@ This reduces noise from small signals by preserving them as they are, prevents
 runaway growth, and allows the model to adapt the strength of injected bias
 differently for attention and MLP paths with minimal additional parameters.
 
-I'm also considering the pros and cons of G' := LD(G + ...) instead
-of G' := LN(M + ...).
+I'm also considering
+
+	G' := LD(G + ..., with_gain=False)
+
+instead of the current
+
+	G' := LN(M + ...).
 
 
-## Add "recode" shim to "encode" blocks
+## Add final "recode" column to "encode" blocks, and other "encode" tweaks
 
 I'd like to change the way we handle "encode" for both train and eval and both
 "split" and "stacked" batches: If the encode block would be at least 4 columns
@@ -659,6 +671,19 @@ of size cols-1 and wire it to a single final recode column. Then the
 code using it must only call it with mode="recode" instead of mode="encode",
 when cols >= 4, and adjust if only the last colmn is used for loss (encode),
 or the last two columns (encode, and recode).
+
+Another idea, that is easier to implement, is to turn one (or more) random
+position(s) within the "encode" block into a "fillin" slot: We suppress the
+token encoding on that input, and only supply the position encoding. Then we
+calculate a "fillin" loss based on the preceeding positions ability to predict
+("fill in") the missing token.
+
+Likewise we can create a "correct" slot and metric: We swap one (or more) input
+tokens with another randomly selected token, weighted by some function of their
+distance in embedding space. We then create a "correct" loss based on the
+previous positions ability to predict the correct token, and a "detect" loss
+based on that positions ability to output a <|reject|> token instead of a
+continuation.
 
 
 ## Clean up and restructure CLI subcommand handling and managing runtime settings
