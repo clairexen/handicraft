@@ -119,6 +119,17 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Ignore records where step_split_eval == 1.0 (pure split evaluations)",
     )
+    parser.add_argument(
+        "--fit-line",
+        type=int,
+        default=0,
+        help="Least-squares fit of a line to the last N samples of each plotted trace",
+    )
+    parser.add_argument(
+        "--scatter",
+        action="store_true",
+        help="Plot raw values as scatter points instead of continuous lines",
+    )
     return parser.parse_args()
 
 
@@ -303,6 +314,20 @@ def _apply_transforms(
     return x_proc, y_proc
 
 
+def _fit_line(points: List[Tuple[float, float]]) -> Tuple[float, float] | None:
+    if len(points) < 2:
+        return None
+    mean_x = sum(pt[0] for pt in points) / len(points)
+    mean_y = sum(pt[1] for pt in points) / len(points)
+    denom = sum((pt[0] - mean_x) ** 2 for pt in points)
+    if denom == 0:
+        return None
+    numer = sum((pt[0] - mean_x) * (pt[1] - mean_y) for pt in points)
+    slope = numer / denom
+    intercept = mean_y - slope * mean_x
+    return slope, intercept
+
+
 def _build_metric_groups(values: list[str] | None, fallback: list[str]) -> list[list[str]]:
     if not values:
         return [list(fallback)]
@@ -327,6 +352,8 @@ def plot_metric_traces(
     relative: bool = False,
     deltas: bool = False,
     cumulative: bool = False,
+    fit_line: int = 0,
+    scatter: bool = False,
 ) -> None:
     num_groups = max(1, len(metric_groups))
     fig, axes = plt.subplots(
@@ -368,7 +395,52 @@ def plot_metric_traces(
                     )
                     if not y_plot:
                         continue
-                    ax.plot(x_plot, y_plot, label=f"{label} – {metric}")
+                    label_name = f"{label} – {metric}"
+                    if scatter:
+                        ax.plot(
+                            x_plot,
+                            y_plot,
+                            label=label_name,
+                            linestyle="",
+                            marker=".",
+                            markersize=4,
+                            linewidth=0,
+                        )
+                    else:
+                        ax.plot(
+                            x_plot,
+                            y_plot,
+                            label=label_name,
+                            linewidth=2,
+                        )
+                    if fit_line and len(x_plot) >= 2:
+                        pairs = [
+                            (x_val, y_val)
+                            for x_val, y_val in zip(x_plot, y_plot)
+                            if not math.isnan(x_val) and not math.isnan(y_val)
+                        ]
+                        if pairs:
+                            tail = pairs[-min(fit_line, len(pairs)) :]
+                            line = _fit_line(tail)
+                            if line is not None:
+                                slope, intercept = line
+                                x_start = tail[0][0]
+                                x_end = tail[-1][0]
+                                if x_start != x_end:
+                                    y_start = slope * x_start + intercept
+                                    y_end = slope * x_end + intercept
+                                    delta_y = y_end - y_start
+                                    print(
+                                        f"fit-line: {label_name} slope={slope:.4g} span={x_end - x_start:.4g} kN={delta_y:.4g}"
+                                    )
+                                    ax.plot(
+                                        [x_start, x_end],
+                                        [y_start, y_end],
+                                        linestyle="--",
+                                        alpha=0.7,
+                                        linewidth=2,
+                                        label=f"{label} – {metric} fit",
+                                    )
         ylabel = ", ".join(metrics) if metrics else "metric"
         ax.set_ylabel(ylabel)
         if idx_ax == num_groups - 1:
@@ -468,6 +540,8 @@ def main() -> None:
             relative=args.plot_relative,
             deltas=args.plot_deltas,
             cumulative=args.plot_sum,
+            fit_line=args.fit_line,
+            scatter=args.scatter,
         )
         performed = True
     if args.plot_time is not None:
@@ -480,6 +554,8 @@ def main() -> None:
             relative=args.plot_relative,
             deltas=args.plot_deltas,
             cumulative=args.plot_sum,
+            fit_line=args.fit_line,
+            scatter=args.scatter,
         )
         performed = True
     if args.plot_timestamp is not None:
@@ -492,6 +568,8 @@ def main() -> None:
             relative=args.plot_relative,
             deltas=args.plot_deltas,
             cumulative=args.plot_sum,
+            fit_line=args.fit_line,
+            scatter=args.scatter,
         )
         performed = True
     if not performed:
