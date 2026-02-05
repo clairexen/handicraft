@@ -615,13 +615,14 @@ Read AGENTS.md, README.md, and the comments at the top of grce.py. Then:
 
 ## Experiment with different bias-injection schemes
 
-One of my current favorite injection patterns is
+My current favorite injection patterns is
 
 	LN(S_i + XCTX_Bias_i) + LD(GRCE_Bias_i),
 
 where LD (Layer-Dampening) is a LayerNorm-like operation that removes the mean
-and applies per-feature learned gains, but replaces hard RMS normalization with
-soft radial dampening.
+and applies per-feature (and per-layer and per-injection-point) learned gains,
+but replaces hard RMS normalization with soft radial dampening. (See also
+the implementation in class LayerDampening(nn.Module) in grce.py.)
 
 Instead of forcing activations onto a unit-RMS shell, LD only attenuates
 large magnitudes using a learned sharpness parameter log_k:
@@ -635,6 +636,9 @@ projecting it onto the unit sphere.
 This reduces noise from small signals by preserving them as they are, prevents
 runaway growth, and allows the model to adapt the strength of injected bias
 differently for attention and MLP paths with minimal additional parameters.
+
+I'm also considering the pros and cons of G' := LD(G + ...) instead
+of G' := LN(M + ...).
 
 
 ## Add "recode" shim to "encode" blocks

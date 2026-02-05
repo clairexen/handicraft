@@ -1508,6 +1508,37 @@ class RMSNorm(nn.Module):
         return x * scale * self.weight
 
 
+class LayerDampening(nn.Module):
+    """
+    LD: Layer-Dampening
+
+    - Removes mean (LN-style)
+    - Applies per-feature learned gain
+    - Uses soft radial dampening instead of hard RMS normalization
+
+    For input x [..., d]:
+        r = ||x||
+        denom = 1 + softplus(k * (r - 1)) / k
+        y = gain * x / denom
+    """
+
+    def __init__(self, dim, eps=1e-8, init_log_k=0.0):
+        super().__init__()
+        self.dim = dim
+        self.eps = eps
+        self.gain = nn.Parameter(torch.ones(dim))
+        self.log_k = nn.Parameter(torch.tensor(init_log_k))
+
+    def forward(self, x):
+        x = x - x.mean(dim=-1, keepdim=True)
+        r = torch.linalg.norm(x, dim=-1, keepdim=True)
+        r = r.clamp_min(self.eps) # just to be on the safe side
+        k = torch.exp(self.log_k)
+        denom = 1.0 + F.softplus(k * (r - 1.0)) / k
+        y = x / denom
+        return y * self.gain
+
+
 # Local GPT2 tokenizer adapter (no huggingface dependency)
 class GPT2TokenizerFast:
     """Lightweight adapter around ``tokenizers.Tokenizer`` used by GRCE.

@@ -10,9 +10,10 @@ MAX_BYTES = 2 * 1024  # 2 kB
 TEST_SPLIT = 0.11
 SEP = "\n\n<|----|>\n\n"
 
-INPUT = "dolma-cccc-filtered-0000.json.gz"
-OUT_TRAIN = "cccclc-train.txt.gz"
-OUT_TEST = "cccclc-test.txt.gz"
+VOLUME = sys.argv[1]
+INPUT = f"dolma-cccc-filtered-{VOLUME}.json.gz"
+OUT_TRAIN = f"cccclc-{VOLUME}-train.txt.gz"
+OUT_TEST = f"cccclc-{VOLUME}-test.txt.gz"
 
 #random.seed()    # nondeterministic
 random.seed(1234) # set a seed here if you want reproducibility
