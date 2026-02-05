@@ -710,3 +710,13 @@ preserving the cursors and counts for the inactive corpuses, so we continue at
 the last position when switching back to a previous corpus.
 
 We also add new fields to the loss_history: corpus, train_cycle, test_cycle.
+
+
+## More improvement in corpus management
+
+Write a new stand-alone clean-slate rewrite 'corpus.py' tool for two tasks:
+ 1. creating a tokenizer with the specified number of tokens from a given
+    set of *.txt.gz files. (only use a configurable amount of text, by default
+    the first 1MB of text, from each input file)
+ 2. creating a pre-tokenized corpus .pt file from a given tokenizer JSON
+    and *.txt.gz file.

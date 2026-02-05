@@ -87,7 +87,7 @@ PROMPT_GOALS = [
 SPECIAL_TOKENS = """
 <|----|> <|//|> <|tokipona:> <|english:> </english:> </tokipona:>
 <|lq:> <:lq|> <|hq:> <:hq|> <|!:> <:!|> <|?:> <:?|> <|*:> <:*|>
-<|-:> <:-|> <|=:> <:=|> <|/:> <:/|> <|@:> <:@|> <|reject|> <|think|>
+<|-:> <:-|> <|=:> <:=|> <|/:> <:/|> <|@:> <:@|> <|think|>
 <|p7|> <|p6|> <|p5|> <|p4|> <|p3|> <|p2|> <|p1|> <|p0|>
 """.split()
 
@@ -218,6 +218,12 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         type=str,
         default=DEFAULTS.corpus,
         help="Dataset base name; expects data/<name>-train.txt.gz and ...-test.txt.gz.",
+    )
+    generic.add_argument(
+        "--name",
+        type=str,
+        default=None,
+        help="Run identifier used when naming checkpoints; defaults to --corpus.",
     )
     generic.add_argument(
         "--data",
@@ -814,6 +820,9 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         parser.error("--block-length must be <= --block-size")
 
     args.prompt = normalize_prompt(args.prompt)
+
+    if not args.name:
+        args.name = args.corpus
 
 
     # --------------------------------------------------------
@@ -2045,38 +2054,50 @@ class TextDataset:
     test_tokens: torch.Tensor
     train_text: str | None
     test_text: str | None
-    train_bytes: int
-    test_bytes: int
     train_path: pathlib.Path
     test_path: pathlib.Path
     positions: Dict[str, int] = field(
         default_factory=lambda: {"train": 0, "test": 0}
     )
-    byte_positions: Dict[str, int] = field(
+    cycles: Dict[str, int] = field(
         default_factory=lambda: {"train": 0, "test": 0}
     )
     chunks: Dict[str, torch.Tensor] = field(default_factory=dict)
     chunk_offsets: Dict[str, int] = field(default_factory=dict)
 
-    def state_dict(self) -> Dict[str, Dict[str, int]]:
+    def state_dict(self) -> Dict[str, int]:
         return {
-            "positions": dict(self.positions),
-            "byte_positions": dict(self.byte_positions),
+            "train_cursor": int(self.positions.get("train", 0)),
+            "test_cursor": int(self.positions.get("test", 0)),
+            "train_cycles": int(self.cycles.get("train", 0)),
+            "test_cycles": int(self.cycles.get("test", 0)),
         }
 
-    def load_state(self, state: Dict[str, Dict[str, int]]) -> None:
-        self.positions.update(state.get("positions", {}))
-        self.byte_positions.update(state.get("byte_positions", {}))
-        for split in ("train", "test"):
-            data = self.train_tokens if split == "train" else self.test_tokens
-            total = len(data)
+    def load_state(self, state: dict | None) -> None:
+        self.positions = {"train": 0, "test": 0}
+        self.cycles = {"train": 0, "test": 0}
+        if not state:
+            return
+        if "positions" in state:
+            legacy_positions = state.get("positions", {})
+            for split in ("train", "test"):
+                value = int(legacy_positions.get(split, 0) or 0)
+                total = len(self.train_tokens if split == "train" else self.test_tokens)
+                if total:
+                    value %= total
+                self.positions[split] = value
+            return
+        for split, key in (("train", "train_cursor"), ("test", "test_cursor")):
+            value = int(state.get(key, 0) or 0)
+            total = len(self.train_tokens if split == "train" else self.test_tokens)
             if total:
-                self.positions[split] %= total
-            byte_total = self.train_bytes if split == "train" else self.test_bytes
-            if byte_total:
-                self.byte_positions[split] %= byte_total
+                value %= total
+            self.positions[split] = value
+        for split, key in (("train", "train_cycles"), ("test", "test_cycles")):
+            value = int(state.get(key, 0) or 0)
+            self.cycles[split] = max(0, value)
 
-    def prepare_cycle(self, split: str, total_chars: int) -> None:
+    def prepare_cycle(self, split: str, total_chars: int) -> bool:
         if split not in {"train", "test"}:
             raise ValueError(f"Unknown split {split!r}")
         source = self.train_tokens if split == "train" else self.test_tokens
@@ -2084,13 +2105,19 @@ class TextDataset:
         if total_chars <= 0 or total_chars > len(source):
             total_chars = len(source)
         start = self.positions[split]
-        chunk, parts_text = self._slice_with_wrap(source, text, start, total_chars)
+        chunk, _ = self._slice_with_wrap(source, text, start, total_chars)
         if len(chunk) <= 1:
             raise ValueError(f"Not enough tokens in {split} split to build a chunk")
-        self.positions[split] = (start + total_chars) % len(source)
-        self._byte_segments(split, parts_text)
+        wrapped = False
+        if len(source) > 0:
+            span = start + total_chars
+            wrapped = span >= len(source)
+            self.positions[split] = span % len(source)
+            if wrapped:
+                self.cycles[split] = self.cycles.get(split, 0) + 1
         self.chunks[split] = chunk
         self.chunk_offsets[split] = start % len(source)
+        return wrapped
 
     def get_batch(
         self,
@@ -2169,33 +2196,6 @@ class TextDataset:
             pos = (pos + take) % total
         return torch.cat(pieces).contiguous()
 
-    def _byte_segments(self, split: str, parts_text: list[str]) -> list[tuple[int, int]]:
-        segments = []
-        byte_pos = self.byte_positions[split]
-        total_bytes = self.train_bytes if split == "train" else self.test_bytes
-        if total_bytes == 0:
-            return segments
-        for idx, part in enumerate(parts_text):
-            part_bytes = len(part.encode("utf-8"))
-            if not part_bytes:
-                continue
-            if idx == 0:
-                start = byte_pos
-                end = start + part_bytes
-                byte_pos = end % total_bytes
-            else:
-                start = 0
-                end = part_bytes
-                byte_pos = part_bytes % total_bytes
-            if end > total_bytes and idx == 0:
-                end = total_bytes
-            segments.append((start, end))
-        self.byte_positions[split] = byte_pos % total_bytes
-        return segments
-
-
-
-
 
 def load_or_prepare_tokens(
     split: str,
@@ -2204,27 +2204,26 @@ def load_or_prepare_tokens(
     cache_path: pathlib.Path,
     tokenizer: GPT2TokenizerWrapper,
     seed: int,
-) -> Tuple[torch.Tensor, str | None, int, int]:
+) -> Tuple[torch.Tensor, str | None]:
     """Load cached token tensors or create them for :class:`Runtime` setups."""
 
     if cache_path.exists():
         payload = torch.load(cache_path)
         tokens = payload["tokens"].long()
-        bytes_count = int(payload.get("bytes", 0))
         print(color_text(f"Loaded cached {split} tokens from {cache_path}", Colors.YELLOW))
-        return tokens, text, bytes_count
-
-    print(color_text(f"Tokenizing raw {split} data: {text_path}...", Colors.BLUE))
+        return tokens, text
 
     if text is None:
         raise FileNotFoundError(
-            f"No cached tokens at {cache_path} and source text missing for {split}."
+            f"Token cache {cache_path} not found for {split}; run 'corpus --init' to build it."
         )
+
+    print(color_text(f"Tokenizing raw {split} data: {text_path}...", Colors.BLUE))
     tokens = tokenizer.encode_corpus(text).type(torch.uint16)
     bytes_count = len(text.encode("utf-8"))
     torch.save({"tokens": tokens, "bytes": bytes_count}, cache_path)
     print(color_text(f"Saved {split} token cache to {cache_path}", Colors.YELLOW))
-    return tokens, text, bytes_count
+    return tokens, text
 
 
 # -----------------------------------------------------------------------------
@@ -4136,6 +4135,9 @@ def train_model(
             "test_cursor": int(dataset.positions.get("test", 0)),
             "step_split_eval": 0.0,
         }
+        record["corpus"] = args.corpus
+        record["train_cycle"] = int(dataset.cycles.get("train", 0))
+        record["test_cycle"] = int(dataset.cycles.get("test", 0))
         split_rows_eval = effective_split_rows(args, batch_size) if layout_uses_split else 0
         split_cols_eval = effective_split_length(args, block_length) if layout_uses_split else 0
         stacked_rows_eval = batch_size if layout_uses_stacked else 0
@@ -4412,7 +4414,7 @@ def preprocess_runtime_args(args: Args) -> None:
         if cleaned:
             tag += f"_{cleaned}"
     model_dir = pathlib.Path(args.model)
-    prefix = f"{args.corpus}_model_"
+    prefix = f"{args.name}_model_"
     model_path = model_dir / f"{prefix}{tag}.pt"
     args.model_path_override = model_path
     args.log_path_override = model_path.with_suffix(".log")
@@ -4436,6 +4438,7 @@ class Runtime:
         self.model_path: pathlib.Path | None = None
         self.log_path: pathlib.Path | None = None
         self.tokenizer_json: str | None = None
+        self.datasets_state: dict[str, dict[str, int]] = {}
 
     class TimeoutAlarm(Exception):
         pass
@@ -4497,19 +4500,17 @@ class Runtime:
             except OSError:
                 pass
 
-        must_build_tokenizer = (
+        build_tokens = (
             self.args.command == "corpus" and getattr(self.args, "corpus_init", False)
+        )
+        build_tokenizer = (
+            self.args.command == "corpus"
+            and getattr(self.args, "corpus_init_tokenizer", False)
         )
         train_cache_path = data_dir / f"{self.args.corpus}_tokens_train_{self.args.vocab_size}.pt"
         test_cache_path = data_dir / f"{self.args.corpus}_tokens_test_{self.args.vocab_size}.pt"
-        need_corpus_for_create = False
-        if self.args.command == "create":
-            need_corpus_for_create = (
-                not train_cache_path.exists() or not test_cache_path.exists()
-            )
-        must_build_tokenizer = must_build_tokenizer or need_corpus_for_create
-
-        if must_build_tokenizer:
+        need_raw_text = build_tokens or build_tokenizer
+        if need_raw_text:
             full_train_text = load_text_file(train_path)
             full_test_text = load_text_file(test_path)
         else:
@@ -4526,19 +4527,19 @@ class Runtime:
 
         tokenizer_key = f"{self.args.corpus}_vocab_{self.args.vocab_size}"
         tokenizer_path = data_dir / f"{tokenizer_key}.json"
-        if self.args.command == "create" and not tokenizer_path.exists():
-            must_build_tokenizer = True
         tokenizer_json = getattr(self.args, "tokenizer_json_override", None)
+        if build_tokenizer:
+            tokenizer_json = None
         if tokenizer_json is None:
-            if tokenizer_path.exists():
+            if tokenizer_path.exists() and not build_tokenizer:
                 tokenizer_json = tokenizer_path.read_text(encoding="utf-8")
-            elif not must_build_tokenizer:
+            elif not build_tokenizer:
                 raise FileNotFoundError(
-                    f"Tokenizer cache {tokenizer_path} not found; run 'corpus --init' first or supply --pt."
+                    f"Tokenizer cache {tokenizer_path} not found; run 'corpus --init-tokenizer' first or supply --pt."
                 )
         print(color_text(f"Tokenizer: {tokenizer_path}", Colors.BLUE))
         tok_timer = Timer().start()
-        vocab_source = full_train_text or ""
+        vocab_source = full_train_text if build_tokenizer else ""
         reserved_tokens = 1 + len(GPT2TokenizerWrapper.EXTRA_SPECIAL_TOKENS)
         if self.args.vocab_size <= reserved_tokens:
             raise ValueError(
@@ -4576,28 +4577,23 @@ class Runtime:
             and prompt_needs_boundary(self.args.prompt)
         )
 
-        train_tokens, train_text, train_bytes = load_or_prepare_tokens(
+        train_tokens, train_text = load_or_prepare_tokens(
             "train",
             train_path,
-            full_train_text,
+            full_train_text if build_tokens else None,
             train_cache_path,
             tokenizer,
             seed=1234,
         )
 
-        test_tokens, test_text, test_bytes = load_or_prepare_tokens(
+        test_tokens, test_text = load_or_prepare_tokens(
             "test",
             test_path,
-            full_test_text,
+            full_test_text if build_tokens else None,
             test_cache_path,
             tokenizer,
             seed=5678,
         )
-
-        if train_text is None and train_bytes == 0:
-            train_bytes = len(train_tokens)
-        if test_text is None and test_bytes == 0:
-            test_bytes = len(test_tokens)
 
         train_token_count = int(train_tokens.numel())
         test_token_count = int(test_tokens.numel())
@@ -4618,8 +4614,6 @@ class Runtime:
             test_tokens=test_tokens,
             train_text=train_text,
             test_text=test_text,
-            train_bytes=train_bytes,
-            test_bytes=test_bytes,
             train_path=train_path,
             test_path=test_path,
         )
@@ -4632,6 +4626,7 @@ class Runtime:
         self.boundary_blocklist = boundary_blocklist
         self.default_prompt_boundary = default_prompt_boundary
         self.tokenizer_json = tokenizer_json
+        self.datasets_state.setdefault(self.args.corpus, dataset.state_dict())
         return (
             tokenizer,
             dataset,
@@ -4641,6 +4636,91 @@ class Runtime:
             boundary_blocklist,
             default_prompt_boundary,
             tokenizer_json,
+        )
+
+    def _token_cache_paths(self, corpus: str) -> tuple[pathlib.Path, pathlib.Path]:
+        data_dir = pathlib.Path(self.args.data)
+        train_cache = data_dir / f"{corpus}_tokens_train_{self.args.vocab_size}.pt"
+        test_cache = data_dir / f"{corpus}_tokens_test_{self.args.vocab_size}.pt"
+        return train_cache, test_cache
+
+    def _corpus_tokens_available(self, corpus: str) -> bool:
+        train_cache, test_cache = self._token_cache_paths(corpus)
+        return train_cache.exists() and test_cache.exists()
+
+    def _save_active_dataset_state(self) -> None:
+        if self.dataset is None:
+            return
+        self.datasets_state[self.args.corpus] = self.dataset.state_dict()
+
+    def _instantiate_dataset_for_corpus(self, corpus: str) -> TextDataset:
+        if self.tokenizer is None:
+            raise RuntimeError("Tokenizer not initialized; cannot load corpus")
+        data_dir = pathlib.Path(self.args.data)
+        train_path = data_dir / f"{corpus}-train.txt.gz"
+        test_path = data_dir / f"{corpus}-test.txt.gz"
+        train_cache, test_cache = self._token_cache_paths(corpus)
+        train_tokens, _ = load_or_prepare_tokens(
+            "train",
+            train_path,
+            None,
+            train_cache,
+            self.tokenizer,
+            seed=1234,
+        )
+        test_tokens, _ = load_or_prepare_tokens(
+            "test",
+            test_path,
+            None,
+            test_cache,
+            self.tokenizer,
+            seed=5678,
+        )
+        dataset = TextDataset(
+            train_tokens=train_tokens,
+            test_tokens=test_tokens,
+            train_text=None,
+            test_text=None,
+            train_path=train_path,
+            test_path=test_path,
+        )
+        state = self.datasets_state.get(corpus)
+        dataset.load_state(state)
+        self.datasets_state[corpus] = dataset.state_dict()
+        return dataset
+
+    def _auto_advance_corpus_volume(self) -> bool:
+        if self.tokenizer is None:
+            return False
+        current = self.args.corpus
+        match = re.match(r"^(.*?)-(\d{4})$", current)
+        if not match:
+            return False
+        prefix, digits = match.groups()
+        next_idx = int(digits) + 1
+        candidates: list[str] = [f"{prefix}-{next_idx:04d}"]
+        fallback = f"{prefix}-0000"
+        if fallback not in candidates:
+            candidates.append(fallback)
+        for candidate in candidates:
+            if not self._corpus_tokens_available(candidate):
+                continue
+            self._save_active_dataset_state()
+            new_dataset = self._instantiate_dataset_for_corpus(candidate)
+            self.dataset = new_dataset
+            self._train_tokens = new_dataset.train_tokens
+            self._test_tokens = new_dataset.test_tokens
+            self.args.corpus = candidate
+            print(
+                color_text(
+                    f"Auto-switched to corpus {candidate}",
+                    Colors.YELLOW,
+                )
+            )
+            return True
+        missing = ", ".join(candidates)
+        raise FileNotFoundError(
+            f"Unable to locate next corpus volume(s): {missing}. Add the pre-tokenized files or run 'corpus --init'."
         )
 
     def cli_corpus(
@@ -4826,7 +4906,7 @@ class Runtime:
             model_path = getattr(self.args, "model_path_override", None)
             log_path = getattr(self.args, "log_path_override", None)
             if model_path is None or log_path is None:
-                prefix = f"{self.args.corpus}_model_"
+                prefix = f"{self.args.name}_model_"
                 model_path = model_dir / f"{prefix}{model_tag}.pt"
                 log_path = model_dir / f"{prefix}{model_tag}.log"
                 self.args.model_path_override = model_path
@@ -4943,6 +5023,7 @@ class Runtime:
             total_train_wall = 0.0
             payload = getattr(self.args, "checkpoint_payload_override", None)
             optimizer_state = None
+            dataset_states: dict[str, dict[str, int]] = {}
             if payload is None and model_path.exists():
                 if self.args.command == "create" and self.args.create_args.import_model:
                     raise ValueError(
@@ -4959,14 +5040,25 @@ class Runtime:
                         upgraded = upgrade_state_dict(payload["model"])
                         payload["model"] = upgraded
                         model.load_state_dict(upgraded)
-                        if "dataset" in payload:
-                            dataset.load_state(payload["dataset"])
                         total_steps = int(payload.get("total_steps", 0))
                         loss_history = list(payload.get("loss_history", []))
                         total_train_wall = float(payload.get("train_wall_seconds", 0.0))
                         prompt_tracker.load_state(payload.get("prompt_state"))
                         if self.args.checkpoint_optimizer:
                             optimizer_state = payload.get("optimizer")
+                        raw_datasets = payload.get("datasets")
+                        if isinstance(raw_datasets, dict):
+                            dataset_states = {
+                                str(name): dict(state)
+                                for name, state in raw_datasets.items()
+                                if isinstance(state, dict)
+                            }
+                        elif "dataset" in payload:
+                            legacy_state = payload.get("dataset")
+                            if isinstance(legacy_state, dict):
+                                dataset.load_state(legacy_state)
+                                legacy_name = payload.get("corpus") or self.args.corpus
+                                dataset_states[legacy_name] = dataset.state_dict()
                     else:
                         model.load_state_dict(upgrade_state_dict(payload))
                     print(color_text(f"Loaded existing model from {model_path}", Colors.YELLOW))
@@ -5073,11 +5165,12 @@ class Runtime:
                 torch.save(
                     {
                         "model": model.state_dict(),
-                        "dataset": dataset.state_dict(),
+                        "datasets": {self.args.corpus: dataset.state_dict()},
                         "total_steps": total_steps,
                         "loss_history": loss_history,
                         "config": asdict(args_to_model_geometry(self.args)),
                         "train_wall_seconds": total_train_wall,
+                        "corpus": self.args.corpus,
                         "prompt_state": prompt_tracker.serialize() if prompt_tracker else None,
                         "tokenizer_json": tokenizer_json,
                     },
@@ -5090,14 +5183,22 @@ class Runtime:
                     )
                 )
                 return
+            self.datasets_state = {
+                name: dict(state) for name, state in dataset_states.items()
+            }
+            active_state = self.datasets_state.get(self.args.corpus)
+            dataset.load_state(active_state)
+            self.datasets_state[self.args.corpus] = dataset.state_dict()
+
             if self.args.command == "create":
                 checkpoint_payload = {
                     "model": model.state_dict(),
-                    "dataset": dataset.state_dict(),
+                    "datasets": self.datasets_state,
                     "total_steps": 0,
                     "loss_history": [],
                     "config": asdict(args_to_model_geometry(self.args)),
                     "train_wall_seconds": 0.0,
+                    "corpus": self.args.corpus,
                     "prompt_state": prompt_tracker.serialize(),
                     "tokenizer_json": tokenizer_json,
                 }
@@ -5183,6 +5284,7 @@ class Runtime:
             acc_train = Timer()
             acc_eval = Timer()
             for cycle in range(1, self.args.cycles + 1):
+                dataset = self.dataset
                 cycle_wall = time.time()
                 tags = ["GPT"]
                 plus_tags: list[str] = []
@@ -5229,10 +5331,15 @@ class Runtime:
                 else:
                     per_eval_chars = max(split_eval_chars, stacked_eval_chars)
                 test_chars_cycle = per_eval_chars * eval_calls
-                train_start = int(dataset.positions.get("train", 0))
-                test_start = int(dataset.positions.get("test", 0))
-                dataset.prepare_cycle("train", train_chars_cycle)
-                dataset.prepare_cycle("test", test_chars_cycle)
+                while True:
+                    dataset = self.dataset
+                    train_start = int(dataset.positions.get("train", 0))
+                    train_wrapped = dataset.prepare_cycle("train", train_chars_cycle)
+                    if train_wrapped and self._auto_advance_corpus_volume():
+                        continue
+                    test_start = int(dataset.positions.get("test", 0))
+                    dataset.prepare_cycle("test", test_chars_cycle)
+                    break
 
                 train_chunk = dataset.chunks.get("train")
                 test_chunk = dataset.chunks.get("test")
@@ -5262,7 +5369,7 @@ class Runtime:
                 print(color_text(f"Model: {model_path}", Colors.CYAN))
                 print(
                     color_text(
-                        f"Corpus ranges: train tokens {train_range}, test tokens {test_range}",
+                        f"Corpus {self.args.corpus}: train tokens {train_range}, test tokens {test_range}",
                         Colors.CYAN,
                     )
                 )
@@ -5318,15 +5425,17 @@ class Runtime:
                 acc_train.add(pure_train)
                 acc_eval.add(eval_timer)
                 total_train_wall += train_timer.wall_secs
+                self.datasets_state[self.args.corpus] = dataset.state_dict()
                 if not self.args.skip_model_update:
                     torch.save(
                         {
                             "model": model.state_dict(),
-                            "dataset": dataset.state_dict(),
+                            "datasets": self.datasets_state,
                             "total_steps": total_steps,
                             "loss_history": loss_history,
                             "config": asdict(args_to_model_geometry(self.args)),
                             "train_wall_seconds": total_train_wall,
+                            "corpus": self.args.corpus,
                             "prompt_state": prompt_tracker.serialize() if prompt_tracker else None,
                             "tokenizer_json": tokenizer_json,
                             **(
