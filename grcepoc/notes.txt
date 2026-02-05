@@ -76,18 +76,18 @@ Let U2E_i() be a per-layer learned linear from u to n_embd.
 Let DnX() be a learned linear from n_xctx to n_xctx/2.
 Let UpX() be a learned linear from n_xctx/2 to n_xctx.
 Let W() be a learned linear from n_xctx to n_xctx.
-Let C() be the "center" function: C(Y) = Y - ones()*mean(Y)
+Let center() be the "center" function: center(Y) = Y - ones()*mean(Y)
   Bias injection based on the signal from the previous position via recurrent input X:
     B_i := U2E_i(LN(X2U_i(X)))
   For each transformer layer i at this position and thus for each sampled vector S_i:
-    Z_i := U2X_i(LN(E2U_i(C(S_i))))
+    Z_i := U2X_i(LN(E2U_i(center(S_i))))
   Then the shared mixing stage, combining the recurrent input signal X with the per-layer values:
     M := LN(DnX(dropout(X + Z_0 + Z_1 + ... + Z_{n_layers-1})))
   Un-squeeze and convert back into X-space with MLP
     Y := W(GELU(UpX(M)))
   Updating the original recurrent X input (not M) with Y, but without the
   mean component, then rescale the recurrent signal with RMSNorm (not LN):
-    X' := RMSNorm(X + C(dropout(Y)))
+    X' := RMSNorm(X + center(dropout(Y)))
 
 The XCTX architecture uses a similar bias-sample-mix-remix architecture as
 GRCE, but shapes noise, manages dimensionality of updates, and incorporates
@@ -612,17 +612,25 @@ G.dot(embedding) < 1 for all GRCE state embeddings that are expected "OFF" (-1).
 
 Read AGENTS.md, README.md, and the comments at the top of grce.py. Then:
 
+
+## Experiment with different bias-injection schemes
+
+My current favorite is LN(S_i + XCTX_Bias) + alpha * center(GRCE_Bias), with a
+learned per-injection alpha. (Alpha might be a per-feature vector. Then the
+second part would essentially be a LN without normalization.)
+
+
 ## Add "recode" shim to "encode" blocks
 
-I'd like to change the way we handle "encode" for both train and test and both
+I'd like to change the way we handle "encode" for both train and eval and both
 "split" and "stacked" batches: If the encode block would be at least 4 columns
 (positions) long, create an encode block of cols-1 length instead, and then add
 a single column of "forward" with no incoming kv- cache. we record the loss
 value for that position as "recode". (confirm, if you can, that "encode" is
 generating the concurrent GRCE and XCTX signals, as intended, just "blindly"
-with bias injection disabled.) Added that "recode" column, especially in
+with bias injection disabled.) Adding that "recode" column, especially in
 "split" mode, should help training "encode" blocks to eject whatever
-information is needed for the immediate future via XCTX (and GRCE).
+information is needed for the immediate future via XCTX and GRCE.
 
 Proposed/suggested implementation plan: Add mode="recode" to
 TransformerStackSequence, which should then internally build an encoder
@@ -630,6 +638,7 @@ of size cols-1 and wire it to a single final recode column. Then the
 code using it must only call it with mode="recode" instead of mode="encode",
 when cols >= 4, and adjust if only the last colmn is used for loss (encode),
 or the last two columns (encode, and recode).
+
 
 ## Clean up and restructure CLI subcommand handling and managing runtime settings
 
