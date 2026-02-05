@@ -10,10 +10,10 @@ if [ ! -f dolma-cccc-filtered-${volume}.json.gz ]; then
 fi
 
 if [ ! -f cccclc-${volume}-train.txt.gz ]; then
-	python cccclc-split.py ${volume}
+	../.venv/bin/python cccclc-split.py ${volume}
 fi
 
 if [ ! -f cccclc-${volume}_tokens_train_5000.pt ]; then
-	cp cccclc_vocab_5000.json cccclc-${volume}_vocab_5000.json
-	( cd ..; .venv/bin/python grce.py --corpus cccclc-${volume} corpus --init; )
+	../.venv/bin/python python corpus.py tokens --tokenizer cccclc_vocab_5000.json \
+			--input cccclc-${volume}-test.txt.gz --output data/cccclc-${volume}_tokens_test_5000.pt
 fi

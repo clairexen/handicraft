@@ -231,6 +231,12 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         default="data",
         help="Directory containing <corpus>-train.txt.gz and <corpus>-test.txt.gz",
     )
+    generic.add_argument(
+        "--tokenizer",
+        type=str,
+        default=None,
+        help="Optional tokenizer JSON path overriding checkpoints and cached files",
+    )
     generic.add_argument("--device", type=str, default="cuda", help="cpu or cuda")
     generic.add_argument("--torch-compile", type=str, default="off", help="off or default or reduce-overhead")
     generic.add_argument(
@@ -4526,7 +4532,11 @@ class Runtime:
                 )
 
         tokenizer_key = f"{self.args.corpus}_vocab_{self.args.vocab_size}"
-        tokenizer_path = data_dir / f"{tokenizer_key}.json"
+        tokenizer_path = (
+            pathlib.Path(self.args.tokenizer)
+            if self.args.tokenizer
+            else (data_dir / f"{tokenizer_key}.json")
+        )
         tokenizer_json = getattr(self.args, "tokenizer_json_override", None)
         if build_tokenizer:
             tokenizer_json = None
@@ -4535,7 +4545,7 @@ class Runtime:
                 tokenizer_json = tokenizer_path.read_text(encoding="utf-8")
             elif not build_tokenizer:
                 raise FileNotFoundError(
-                    f"Tokenizer cache {tokenizer_path} not found; run 'corpus --init-tokenizer' first or supply --pt."
+                    f"Tokenizer cache {tokenizer_path} not found; run 'corpus --init-tokenizer' first or supply --pt or --tokenizer."
                 )
         print(color_text(f"Tokenizer: {tokenizer_path}", Colors.BLUE))
         tok_timer = Timer().start()
@@ -5059,6 +5069,15 @@ class Runtime:
                                 dataset.load_state(legacy_state)
                                 legacy_name = payload.get("corpus") or self.args.corpus
                                 dataset_states[legacy_name] = dataset.state_dict()
+                        if self.args.tokenizer:
+                            override_path = pathlib.Path(self.args.tokenizer)
+                            if not override_path.exists():
+                                raise FileNotFoundError(
+                                    f"Tokenizer override {override_path} not found"
+                                )
+                            tokenizer_json = override_path.read_text(encoding="utf-8")
+                        elif "tokenizer_json" in payload:
+                            self.args.tokenizer_json_override = payload.get("tokenizer_json")
                     else:
                         model.load_state_dict(upgrade_state_dict(payload))
                     print(color_text(f"Loaded existing model from {model_path}", Colors.YELLOW))
