@@ -2889,7 +2889,7 @@ class TransformerXCTX(nn.Module):
         combined = self.dropout(xctx_state + fused)
         squeezed = self.mix_norm(self.mix_down(combined))
         mlp = F.gelu(self.mix_up(squeezed))
-        projected = self.mix_proj(self.dropout(mlp))
+        projected = self.dropout(self.mix_proj(mlp))
         mean = projected.mean(dim=-1, keepdim=True)
         updated = xctx_state + (projected - mean)
         return self.output_norm(updated)
