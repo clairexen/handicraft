@@ -10,6 +10,7 @@ import shutil
 from typing import Dict, Iterable, List, Tuple
 
 import matplotlib.pyplot as plt
+import numpy as np
 
 LEGACY_TARGET_FIELDS = {
     # "train_loss": "train_loss_target",
@@ -126,9 +127,21 @@ def parse_args() -> argparse.Namespace:
         help="Least-squares fit of a line to the last N samples of each plotted trace",
     )
     parser.add_argument(
+        "--fit-quad",
+        type=int,
+        default=0,
+        help="Least-squares fit of a quadratic to the last N samples of each plotted trace",
+    )
+    parser.add_argument(
         "--scatter",
         action="store_true",
         help="Plot raw values as scatter points instead of continuous lines",
+    )
+    parser.add_argument(
+        "--backtrace",
+        type=int,
+        default=0,
+        help="Ignore the last N samples from each history before plotting/exporting",
     )
     return parser.parse_args()
 
@@ -328,6 +341,19 @@ def _fit_line(points: List[Tuple[float, float]]) -> Tuple[float, float] | None:
     return slope, intercept
 
 
+def _fit_quadratic(points: List[Tuple[float, float]]) -> Tuple[float, float, float] | None:
+    if len(points) < 3:
+        return None
+    xs = np.array([pt[0] for pt in points], dtype=float)
+    ys = np.array([pt[1] for pt in points], dtype=float)
+    if np.all(xs == xs[0]):
+        return None
+    design = np.vstack([xs**2, xs, np.ones_like(xs)]).T
+    coeffs, *_ = np.linalg.lstsq(design, ys, rcond=None)
+    a, b, c = coeffs.tolist()
+    return a, b, c
+
+
 def _build_metric_groups(values: list[str] | None, fallback: list[str]) -> list[list[str]]:
     if not values:
         return [list(fallback)]
@@ -353,6 +379,7 @@ def plot_metric_traces(
     deltas: bool = False,
     cumulative: bool = False,
     fit_line: int = 0,
+    fit_quad: int = 0,
     scatter: bool = False,
 ) -> None:
     num_groups = max(1, len(metric_groups))
@@ -413,33 +440,78 @@ def plot_metric_traces(
                             label=label_name,
                             linewidth=2,
                         )
-                    if fit_line and len(x_plot) >= 2:
+                    if (fit_line or fit_quad) and len(x_plot) >= 2:
                         pairs = [
                             (x_val, y_val)
                             for x_val, y_val in zip(x_plot, y_plot)
                             if not math.isnan(x_val) and not math.isnan(y_val)
                         ]
                         if pairs:
-                            tail = pairs[-min(fit_line, len(pairs)) :]
-                            line = _fit_line(tail)
-                            if line is not None:
-                                slope, intercept = line
-                                x_start = tail[0][0]
-                                x_end = tail[-1][0]
-                                if x_start != x_end:
-                                    y_start = slope * x_start + intercept
-                                    y_end = slope * x_end + intercept
-                                    delta_y = y_end - y_start
+                            max_tail = max(fit_line, fit_quad)
+                            tail = pairs[-min(max_tail if max_tail > 0 else len(pairs), len(pairs)) :]
+                            if fit_line:
+                                line_tail = tail[-min(fit_line, len(tail)) :]
+                                line = _fit_line(line_tail)
+                                if line is not None:
+                                    slope, intercept = line
+                                    x_start = line_tail[0][0]
+                                    x_end = line_tail[-1][0]
+                                    if x_start != x_end:
+                                        y_start = slope * x_start + intercept
+                                        y_end = slope * x_end + intercept
+                                        delta_y = y_end - y_start
+                                        print(
+                                            f"fit-line: {label_name} slope={slope:.4g} delta_x={x_end - x_start:.4g} delta_y={delta_y:.4g}"
+                                        )
+                                        ax.plot(
+                                            [x_start, x_end],
+                                            [y_start, y_end],
+                                            linestyle="--",
+                                            alpha=0.7,
+                                            linewidth=2,
+                                            label=f"{label} – {metric} fit",
+                                        )
+                                        x_extra = x_end + (x_end - x_start)
+                                        y_extra = slope * x_extra + intercept
+                                        ax.plot(
+                                            [x_end, x_extra],
+                                            [y_end, y_extra],
+                                            linestyle="--",
+                                            alpha=0.5,
+                                            linewidth=2,
+                                            label=f"{label} – {metric} fit extrap",
+                                        )
+                            if fit_quad:
+                                quad_tail = tail[-min(fit_quad, len(tail)) :]
+                                quad = _fit_quadratic(quad_tail)
+                                if quad is not None:
+                                    a, b, c = quad
+                                    xs = [pt[0] for pt in quad_tail]
+                                    x_start = xs[0]
+                                    x_end = xs[-1]
+                                    sample_x = [x_start + (x_end - x_start) * t / 20 for t in range(21)]
+                                    y_vals = [a * x ** 2 + b * x + c for x in sample_x]
                                     print(
-                                        f"fit-line: {label_name} slope={slope:.4g} delta_x={x_end - x_start:.4g} delta_y={delta_y:.4g}"
+                                        f"fit-quad: {label_name} a={a:.4g} b={b:.4g} c={c:.4g}"
                                     )
                                     ax.plot(
-                                        [x_start, x_end],
-                                        [y_start, y_end],
-                                        linestyle="--",
+                                        sample_x,
+                                        y_vals,
+                                        linestyle=":",
                                         alpha=0.7,
                                         linewidth=2,
-                                        label=f"{label} – {metric} fit",
+                                        label=f"{label} – {metric} quad",
+                                    )
+                                    x_extra = x_end + (x_end - x_start)
+                                    sample_extra = np.linspace(x_end, x_extra, 20)
+                                    y_extra = a * sample_extra**2 + b * sample_extra + c
+                                    ax.plot(
+                                        sample_extra,
+                                        y_extra,
+                                        linestyle=":",
+                                        alpha=0.4,
+                                        linewidth=2,
+                                        label=f"{label} – {metric} quad extrap",
                                     )
         ylabel = ", ".join(metrics) if metrics else "metric"
         ax.set_ylabel(ylabel)
@@ -448,6 +520,7 @@ def plot_metric_traces(
         else:
             ax.set_xlabel("")
         ax.legend()
+        ax.grid(True, linestyle=":", alpha=0.3)
     fig.tight_layout()
     plt.show()
 
@@ -486,6 +559,14 @@ def main() -> None:
         label, history = load_json_history(json_path)
         source_path_lookup[label] = json_path
         sources.append((label, history))
+    if args.backtrace > 0:
+        trimmed_sources: List[Tuple[str, List[Dict[str, float]]]] = []
+        for label, history in sources:
+            if len(history) > args.backtrace:
+                trimmed_sources.append((label, history[:-args.backtrace]))
+            else:
+                trimmed_sources.append((label, []))
+        sources = trimmed_sources
     if args.skip_split_evals and sources:
         filtered_sources: List[Tuple[str, List[Dict[str, float]]]] = []
         for label, history in sources:
@@ -541,6 +622,7 @@ def main() -> None:
             deltas=args.plot_deltas,
             cumulative=args.plot_sum,
             fit_line=args.fit_line,
+            fit_quad=args.fit_quad,
             scatter=args.scatter,
         )
         performed = True
@@ -555,6 +637,7 @@ def main() -> None:
             deltas=args.plot_deltas,
             cumulative=args.plot_sum,
             fit_line=args.fit_line,
+            fit_quad=args.fit_quad,
             scatter=args.scatter,
         )
         performed = True
@@ -569,6 +652,7 @@ def main() -> None:
             deltas=args.plot_deltas,
             cumulative=args.plot_sum,
             fit_line=args.fit_line,
+            fit_quad=args.fit_quad,
             scatter=args.scatter,
         )
         performed = True
