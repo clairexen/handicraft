@@ -54,9 +54,9 @@ Let Dn4xG() be a learned linear from 4*n_grce to n_grce
   For each transformer layer i at this position and thus for each sampled vector S_i:
     Z_i := E2G_i(LN(S_i))
   Then the shared mixing stage, combining the recurrent input signal G with the per-layer values:
-    M := LN(G + Z_0 + Z_1 + ... + Z_{n_layers-1})
+    M := LN(dropout(G + Z_0 + Z_1 + ... + Z_{n_layers-1}))
   Then re-mixing M with an MLP into a new recurrent vector G'
-    G' := LN(M + Dn4xG(GELU(Up4xG(M))))
+    G' := LN(M + dropout(Dn4xG(GELU(Up4xG(M)))))
 
 The GRCE architecture is almost identical to a block of the transformer stack,
 except that it has the transformer stack itself in its first half, instead of
@@ -82,12 +82,12 @@ Let C() be the "center" function: C(Y) = Y - ones()*mean(Y)
   For each transformer layer i at this position and thus for each sampled vector S_i:
     Z_i := U2X_i(LN(E2U_i(C(S_i))))
   Then the shared mixing stage, combining the recurrent input signal X with the per-layer values:
-    M := LN(DnX(X + Z_0 + Z_1 + ... + Z_{n_layers-1}))
+    M := LN(DnX(dropout(X + Z_0 + Z_1 + ... + Z_{n_layers-1})))
   Un-squeeze and convert back into X-space with MLP
     Y := W(GELU(UpX(M)))
   Updating the original recurrent X input (not M) with Y, but without the
   mean component, then rescale the recurrent signal with RMSNorm (not LN):
-    X' := RMSNorm(X + C(Y))
+    X' := RMSNorm(X + C(dropout(Y)))
 
 The XCTX architecture uses a similar bias-sample-mix-remix architecture as
 GRCE, but shapes noise, manages dimensionality of updates, and incorporates

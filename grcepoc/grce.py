@@ -2541,7 +2541,7 @@ def kv_cache_list_merge(
                 merged_values.extend([[] for _ in range(pad)])
             merged_keys[layer_idx].append(key)
             merged_values[layer_idx].append(value)
-    merged: list[tuple[torch.Tensor, torch.Tensor]] = []
+    merged: list[tuple[torch.Tensor, torch.Tensor] | None] = []
     for key_chunks, value_chunks in zip(merged_keys, merged_values):
         if not key_chunks:
             merged.append(None)
@@ -2748,6 +2748,7 @@ class TransformerGRCE(nn.Module):
         self.mlp_up = nn.Linear(self.context_dim, hidden)
         self.mlp_down = nn.Linear(hidden, self.context_dim)
         self.output_norm = nn.LayerNorm(self.context_dim)
+        self.dropout = nn.Dropout(config.dropout)
 
     def initial_state(self, batch: int, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
         return torch.zeros(batch, self.context_dim, device=device, dtype=dtype)
@@ -2784,8 +2785,9 @@ class TransformerGRCE(nn.Module):
             messages.append(self.sample_projections[layer_idx](reduced))
         fused = torch.stack(messages, dim=0).sum(dim=0)
         combined = fused + grce_state
-        mixed = self.mix_norm(combined)
-        mlp_out = self.mlp_down(F.gelu(self.mlp_up(mixed)))
+        mixed = self.mix_norm(self.dropout(combined))
+        mlp_hidden = F.gelu(self.mlp_up(mixed))
+        mlp_out = self.dropout(self.mlp_down(mlp_hidden))
         return self.output_norm(mixed + mlp_out)
 
     def parameter_breakdown(self) -> dict[str, int]:
@@ -2843,6 +2845,7 @@ class TransformerXCTX(nn.Module):
         self.mix_up = nn.Linear(self.squeeze_dim, self.context_dim)
         self.mix_proj = nn.Linear(self.context_dim, self.context_dim)
         self.output_norm = RMSNorm(self.context_dim)
+        self.dropout = nn.Dropout(config.dropout)
 
     def initial_state(self, batch: int, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
         return torch.zeros(batch, self.context_dim, device=device, dtype=dtype)
@@ -2883,10 +2886,10 @@ class TransformerXCTX(nn.Module):
             normed = self.sample_norms[idx](reduced)
             messages.append(self.expand_linear[idx](normed))
         fused = torch.stack(messages, dim=0).sum(dim=0)
-        combined = xctx_state + fused
+        combined = self.dropout(xctx_state + fused)
         squeezed = self.mix_norm(self.mix_down(combined))
         mlp = F.gelu(self.mix_up(squeezed))
-        projected = self.mix_proj(mlp)
+        projected = self.mix_proj(self.dropout(mlp))
         mean = projected.mean(dim=-1, keepdim=True)
         updated = xctx_state + (projected - mean)
         return self.output_norm(updated)
