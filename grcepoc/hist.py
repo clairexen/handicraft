@@ -23,6 +23,7 @@ LEGACY_SPECIAL_FIELDS = {
 
 ALLOWED_FIELDS = {
     "step",
+    "step_split_eval",
     "train_loss_target",
     "train_loss_encode",
     "train_loss_decode",
@@ -113,6 +114,11 @@ def parse_args() -> argparse.Namespace:
         nargs="*",
         help="Plot unix_time vs metric (default: test_loss); ':' makes separate subplots",
     )
+    parser.add_argument(
+        "--skip-split-evals",
+        action="store_true",
+        help="Ignore records where step_split_eval == 1.0 (pure split evaluations)",
+    )
     return parser.parse_args()
 
 
@@ -168,6 +174,16 @@ def normalize_entry(entry: Dict[str, float]) -> Dict[str, float]:
     apply_alias(LEGACY_SPECIAL_FIELDS)
     filtered = {k: v for k, v in out.items() if k in ALLOWED_FIELDS}
     return filtered
+
+
+def _skip_split_eval(record: Dict[str, float]) -> bool:
+    value = record.get("step_split_eval")
+    if value is None:
+        return False
+    try:
+        return float(value) == 1.0
+    except (TypeError, ValueError):
+        return False
 
 
 def summarize_source(label: str, records: List[Dict[str, float]], filters: List[str] | None = None) -> None:
@@ -398,6 +414,12 @@ def main() -> None:
         label, history = load_json_history(json_path)
         source_path_lookup[label] = json_path
         sources.append((label, history))
+    if args.skip_split_evals and sources:
+        filtered_sources: List[Tuple[str, List[Dict[str, float]]]] = []
+        for label, history in sources:
+            filtered_history = [rec for rec in history if not _skip_split_eval(rec)]
+            filtered_sources.append((label, filtered_history))
+        sources = filtered_sources
     if not sources:
         print("no data sources provided")
         return
