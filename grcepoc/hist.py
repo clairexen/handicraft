@@ -431,7 +431,7 @@ def plot_metric_traces(
                                     y_end = slope * x_end + intercept
                                     delta_y = y_end - y_start
                                     print(
-                                        f"fit-line: {label_name} slope={slope:.4g} span={x_end - x_start:.4g} kN={delta_y:.4g}"
+                                        f"fit-line: {label_name} slope={slope:.4g} delta_x={x_end - x_start:.4g} delta_y={delta_y:.4g}"
                                     )
                                     ax.plot(
                                         [x_start, x_end],
