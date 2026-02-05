@@ -686,15 +686,27 @@ based on that positions ability to output a <|reject|> token instead of a
 continuation.
 
 
-## Clean up and restructure CLI subcommand handling and managing runtime settings
+## Improved corpus management
 
-I've added a Settings dataclass to grce.py, that should simply passing the
-runtime setting around. Let's re-structure the code one sub-command at a time.
+Add a new grce.py CLI option: --name NAME. This is the new first component
+of the .pt file name. (--name defaults to --corpus, if only --corpus is
+present.)
 
-Have a look at grce_cli_size(args) and grce_cmd_size(settings, ...) for the
-general pattern: a slim cli shim that handles args, and a main subcommand
-function, that receives settings as first arg, and the parsed cli options
-as additional args.
+Next we replace 'dataset' in the .pt files with 'datasets':
+	datasets[<corpus_name>] = {
+		"train_cursor": 8546534,
+		"train_cycles": 0,
+		"test_cursor": 8546534,
+		"test_cycles": 0,
+	}
 
-Maybe let's restructure 'create' into grce_cli_create() and grce_cmd_create() first?
+(the _cycle counts are incremented whenever a full cycle is completed, and the
+cursor wraps around)
 
+And we also add a top-level 'corpus' item to the .pt file, with the name of the
+current corpus. So whenever grce.py is called with --corpus <NAME>, we simply
+change the current corpus, adding it when neccessary to datasets[], and
+preserving the cursors and counts for the inactive corpuses, so we continue at
+the last position when switching back to a previous corpus.
+
+We also add new fields to the loss_history: corpus, train_cycle, test_cycle.
