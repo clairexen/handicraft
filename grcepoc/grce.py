@@ -132,6 +132,7 @@ class Defaults:
     eval_interval: int = 10
     dropout: float = 0.05
     detach_span: int = 0
+    log_step_layout_times: bool = False
 
 DEFAULTS = Defaults()
 
@@ -332,6 +333,12 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
             "Batch layout mini-language string controlling per-row encode/decode/forward/noattn segments."
             " Supports ranges, '*' expansions, and () alternations."
         ),
+    )
+    training_group.add_argument(
+        "--log-step-layout-times",
+        action="store_true",
+        default=DEFAULTS.log_step_layout_times,
+        help="Print per-step layout serialization plus training wall time",
     )
     training_group.add_argument(
         "--skip-model-update",
@@ -3541,6 +3548,8 @@ def train_model(
         layout = BatchLayout(args.layout, batch_size=batch_size, block_size=block_length)
         layout_serialized = layout.serialize()
         _log_layout_warnings(args, layout)
+        current_step_index = total_steps + 1
+        step_wall_start = time.time()
         try:
             total_loss_sum, total_tokens = train_layout_batch(
                 args,
@@ -3575,6 +3584,13 @@ def train_model(
             if oom_retries >= 3:
                 raise
             continue
+        step_wall = time.time() - step_wall_start
+        if args.log_step_layout_times:
+            line = (
+                f"Step {current_step_index}: layout {layout_serialized} "
+                f"train {step_wall:.2f}s"
+            )
+            print(color_text(line, Colors.BLUE))
         oom_retries = 0
         step += 1
         total_steps += 1
