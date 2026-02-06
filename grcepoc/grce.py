@@ -159,10 +159,12 @@ def normalize_prompt(text: str) -> str:
 # 
 # * ``A+B+...`` concatenates row groups; each group is ``ROWS[SEGMENTS]``.
 # * ``SEGMENTS`` are slash-separated ``COLS``+``MODE`` tokens (``16e/32d``).
-# * Ranges use ``START-END`` (inclusive) and may be prefixed by ``*`` to allow
+# * Ranges use ``START-END`` (inclusive) and may be prefixed by ``*`` or ``+`` to allow
 #   dynamic expansion when additional rows/columns are needed.
-# * Bare ``*`` behaves like ``*0-0`` for the baseline but participates in
-#   expansion with a constant weight of 1.
+# * Bare ``*`` behaves like ``*0-0`` for the baseline and participates in expansion with
+#   weight ``max(1, current_size)``.
+# * ``+N-M`` behaves like ``*N-M`` but never grows beyond ``M`` (``+M`` means ``+1-M`` and
+#   bare ``+`` expands with a constant weight of 1).
 # * Parentheses with ``|`` act as a textual pre-processor: ``A(B|C)D`` randomly
 #   expands to either ``ABD`` or ``ACD`` before the parser runs.
 # 
@@ -543,7 +545,7 @@ import re
 import shlex
 import sys
 import time
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from typing import Dict, List, Tuple, Sequence
@@ -755,14 +757,6 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         type=int,
         default=-1,
         help="If >0, detach gradients after this Transformer layer (1-based index).",
-    )
-    training_group.add_argument(
-        "--reset-prompt-each-cycle",
-        action="store_true",
-        help=(
-            "Rebuild the prompt queue at the start of every training cycle; default keeps cycling "
-            "through prompts across cycles"
-        ),
     )
     training_group.add_argument(
         "--eval-interval",
@@ -1190,7 +1184,7 @@ def color_text(text: str, color: str, *, bold: bool = False, underline: bool = F
 
 
 def prompt_needs_boundary(text: str) -> bool:
-    """Return True when :class:`PromptTracker` should append boundary tokens."""
+    """Return True when the prompt selection logic should enforce boundary tokens."""
 
     trimmed = text.rstrip()
     if not trimmed:
@@ -1757,67 +1751,131 @@ class LayerDampening(nn.Module):
 
 
 def default_prompt_entries() -> list[tuple[str, str]]:
-    """Return the built-in prompt catalog used by :class:`PromptTracker`."""
+    """Return the built-in prompt catalog."""
 
     return [(prompt, expected) for prompt, expected in PROMPT_GOALS]
 
 
-def serialized_prompts(entries: list[tuple[str, str]]) -> list[dict[str, str]]:
-    """Convert prompt tuples into checkpoint-friendly dictionaries."""
-
-    return [{"prompt": prompt, "expected": expected} for prompt, expected in entries]
-
-
-def empty_prompt_state(entries: list[tuple[str, str]] | None = None) -> dict:
-    """Create a fresh tracker state for :class:`Runtime` prompt persistence."""
-
-    prompts = entries if entries is not None else default_prompt_entries()
-    serialized = serialized_prompts(prompts)
-    return {
-        "status": [0] * len(serialized),
-        "completed": [False] * len(serialized),
-        "queue": None,
-        "prompts": serialized,
-    }
-
-def build_prompt_state(
-    entries: list[tuple[str, str]], statuses: list[int] | None = None
-) -> dict:
-    """Combine prompts and status overrides for :class:`PromptTracker`."""
-
-    serialized = serialized_prompts(entries)
-    total = len(serialized)
-    cleaned: list[int] = []
-    if statuses is None:
-        cleaned = [0] * total
-    else:
-        for val in statuses:
-            try:
-                intval = int(val)
-            except (TypeError, ValueError):
-                intval = 0
-            if intval not in (0, 1, 2):
-                intval = 2 if intval else 0
-            cleaned.append(intval)
-        if len(cleaned) < total:
-            cleaned.extend([0] * (total - len(cleaned)))
-        elif len(cleaned) > total:
-            cleaned = cleaned[:total]
-    return {
-        "status": cleaned,
-        "completed": [val == 2 for val in cleaned],
-        "queue": None,
-        "prompts": serialized,
-    }
+@dataclass
+class PromptEntry:
+    expected: str
+    maxarg_count: int = 0
+    sample_count: int = 0
 
 
-# -----------------------------------------------------------------------------
-# Data Utilities
-# -----------------------------------------------------------------------------
+class PromptRegistry:
+    """Maintains prompt metadata for training diagnostics."""
+
+    def __init__(self, tokenizer: GPT2TokenizerWrapper, data: dict | None = None) -> None:
+        self.tokenizer = tokenizer
+        self.entries: OrderedDict[str, PromptEntry] = OrderedDict()
+        self._expected_cache: dict[str, list[int]] = {}
+        if data:
+            self._load_from_data(data)
+        else:
+            self.reset_to_defaults()
+
+    def _load_from_data(self, data: dict) -> None:
+        self.entries.clear()
+        self._expected_cache.clear()
+        for prompt, payload in data.items():
+            if not isinstance(prompt, str) or not isinstance(payload, dict):
+                continue
+            expected = str(payload.get("expected", ""))
+            maxarg = int(payload.get("maxarg_count", 0) or 0)
+            sample = int(payload.get("sample_count", 0) or 0)
+            self.entries[prompt] = PromptEntry(expected, maxarg, sample)
+        if not self.entries:
+            self.reset_to_defaults()
+
+    def reset_to_defaults(self) -> None:
+        self.entries.clear()
+        for prompt, expected in PROMPT_GOALS:
+            self.entries[prompt] = PromptEntry(expected)
+        self._expected_cache.clear()
+
+    def clear(self) -> None:
+        self.entries.clear()
+        self._expected_cache.clear()
+
+    def add_prompt(self, prompt: str, expected: str) -> None:
+        self.entries[prompt] = PromptEntry(expected)
+        self._expected_cache.pop(prompt, None)
+
+    def remove_indices(self, indices: list[int]) -> None:
+        prompts = list(self.entries.keys())
+        for idx in sorted(set(indices), reverse=True):
+            if 0 <= idx < len(prompts):
+                key = prompts[idx]
+                self.entries.pop(key, None)
+                self._expected_cache.pop(key, None)
+
+    def serialize(self) -> dict[str, dict[str, object]]:
+        return {
+            prompt: {
+                "expected": entry.expected,
+                "maxarg_count": int(entry.maxarg_count),
+                "sample_count": int(entry.sample_count),
+            }
+            for prompt, entry in self.entries.items()
+        }
+
+    def ordered_entries(self) -> list[tuple[str, PromptEntry]]:
+        return list(self.entries.items())
+
+    def pick_prompt(self, mode: str, default_prompt: str) -> tuple[str, str | None, bool]:
+        entries = self.ordered_entries()
+        weights: list[float] = []
+        for _, entry in entries:
+            count = entry.maxarg_count if mode == "argmax" else entry.sample_count
+            weights.append(1.0 / (1.0 + count))
+        total_weight = sum(weights) + 1.0
+        choice = random.random() * total_weight
+        if choice < 1.0:
+            return default_prompt, None, True
+        choice -= 1.0
+        for (prompt, entry), weight in zip(entries, weights):
+            choice -= weight
+            if choice <= 0:
+                return prompt, entry.expected, False
+        if entries:
+            prompt, entry = entries[-1]
+            return prompt, entry.expected, False
+        return default_prompt, None, True
+
+    def _expected_ids(self, prompt: str, expected: str) -> list[int]:
+        cached = self._expected_cache.get(prompt)
+        if cached is not None:
+            return cached
+        ids = self.tokenizer.encode_ids(expected)
+        self._expected_cache[prompt] = ids
+        return ids
+
+    def record_result(
+        self,
+        prompt: str,
+        expected: str,
+        *,
+        used_argmax: bool,
+        completion_ids: list[int],
+    ) -> bool:
+        entry = self.entries.get(prompt)
+        if entry is None or not expected:
+            return False
+        expected_ids = self._expected_ids(prompt, expected)
+        if not expected_ids or len(completion_ids) < len(expected_ids):
+            return False
+        if completion_ids[: len(expected_ids)] != expected_ids:
+            return False
+        if used_argmax:
+            entry.maxarg_count += 1
+        else:
+            entry.sample_count += 1
+        return True
 
 
 class GPT2TokenizerWrapper:
-    """Tokenizer shim used by prompt tracking and pretty-print helpers."""
+    """Minimal tokenizer shim for prompt encoding/decoding."""
 
     def __init__(
         self,
@@ -1887,7 +1945,7 @@ class GPT2TokenizerWrapper:
 
 
 def load_cached_tokens(split: str, cache_path: pathlib.Path) -> torch.Tensor:
-    """Load tokens produced by ``corpus.py tokens``."""
+    """Load tokens produced by corpus.py tokens."""
 
     if not cache_path.exists():
         raise FileNotFoundError(
@@ -1898,160 +1956,6 @@ def load_cached_tokens(split: str, cache_path: pathlib.Path) -> torch.Tensor:
     if tokens is None:
         raise ValueError(f"Token cache {cache_path} is missing 'tokens' data")
     return tokens.long()
-
-
-class PromptTracker:
-    """Maintains evaluation prompts reused by :class:`Runtime` diagnostics."""
-
-    def __init__(self, tokenizer: GPT2TokenizerWrapper, state: dict | None = None) -> None:
-        self.tokenizer = tokenizer
-        self.prompts: list[tuple[str, str]] = []
-        self.status: list[int] = []  # 0=unsolved, 1=solved via sampling, 2=solved via argmax
-        self._cache: dict[int, torch.Tensor] = {}
-        self._expected_token_ids: dict[int, List[int]] = {}
-        self._queue: list[int] | None = None
-        self.load_state(state)
-
-    def load_state(self, state: dict | None) -> None:
-        self._cache.clear()
-        self._expected_token_ids.clear()
-        prompts_state = state.get("prompts") if isinstance(state, dict) else None
-        prompt_entries: list[tuple[str, str]] = []
-        cleared_prompts = isinstance(prompts_state, list) and len(prompts_state) == 0
-        if isinstance(prompts_state, list):
-            for entry in prompts_state:
-                prompt_text = None
-                expected_text = None
-                if isinstance(entry, dict):
-                    prompt_text = entry.get("prompt")
-                    expected_text = entry.get("expected")
-                elif isinstance(entry, (list, tuple)) and len(entry) >= 2:
-                    prompt_text, expected_text = entry[0], entry[1]
-                if isinstance(prompt_text, str) and isinstance(expected_text, str):
-                    prompt_entries.append((prompt_text, expected_text))
-        if prompt_entries:
-            self.prompts = prompt_entries
-        elif cleared_prompts:
-            self.prompts = []
-        else:
-            self.prompts = default_prompt_entries()
-        total = len(self.prompts)
-        raw_status: list[int] | None = None
-        if state and isinstance(state.get("status"), list):
-            raw_status = state.get("status")
-        elif state and isinstance(state.get("completed"), list):
-            raw_status = [2 if bool(val) else 0 for val in state.get("completed", [])]
-        if raw_status is None:
-            cleaned = [0] * total
-        else:
-            cleaned = []
-            for val in raw_status:
-                try:
-                    intval = int(val)
-                except (TypeError, ValueError):
-                    intval = 0
-                if intval not in (0, 1, 2):
-                    intval = 2 if intval else 0
-                cleaned.append(intval)
-        if len(cleaned) < total:
-            cleaned.extend([0] * (total - len(cleaned)))
-        elif len(cleaned) > total:
-            cleaned = cleaned[:total]
-        self.status = cleaned
-        queue_state: list[int] | None = None
-        if state and isinstance(state.get("queue"), list):
-            queue_state = [
-                idx
-                for idx in (int(val) for val in state["queue"])
-                if 0 <= idx < total and self.status[idx] < 2
-            ]
-        self._queue = queue_state if queue_state else None
-
-    def serialize(self) -> dict:
-        return {
-            "status": list(self.status),
-            "completed": [val == 2 for val in self.status],
-            "queue": list(self._queue) if self._queue else None,
-            "prompts": [
-                {"prompt": prompt, "expected": expected} for prompt, expected in self.prompts
-            ],
-        }
-
-    def next_goal(self) -> tuple[int | None, tuple[str, str] | None]:
-        for idx, val in enumerate(self.status):
-            if val < 2:
-                return idx, self.prompts[idx]
-        return None, None
-
-    def prompt_tensor(self, idx: int, device: torch.device) -> torch.Tensor:
-        if idx not in self._cache:
-            tensor = self.tokenizer.encode(self.prompts[idx][0]).unsqueeze(0)
-            self._cache[idx] = tensor
-        return self._cache[idx].to(device)
-
-    def expected_text(self, idx: int) -> str:
-        return self.prompts[idx][1]
-    
-    def expected_token_ids(self, idx: int) -> List[int]:
-        if idx not in self._expected_token_ids:
-            tensor = self.tokenizer.encode(self.expected_text(idx))
-            self._expected_token_ids[idx] = tensor.tolist()
-        return self._expected_token_ids[idx]
-
-    def state(self, idx: int) -> int:
-        if idx < 0 or idx >= len(self.status):
-            return 2
-        return self.status[idx]
-
-    def mark_if_satisfied(
-        self, idx: int, completion_ids: List[int], *, used_argmax: bool
-    ) -> tuple[bool, int, int]:
-        if idx is None or idx < 0 or idx >= len(self.prompts):
-            return False, 0, 0
-        prev = self.status[idx]
-        expected_ids = self.expected_token_ids(idx)
-        if len(completion_ids) < len(expected_ids):
-            return False, prev, prev
-        matched = completion_ids[: len(expected_ids)] == expected_ids
-        new_state = prev
-        if matched:
-            if used_argmax:
-                new_state = 2
-            elif prev == 0:
-                new_state = 1
-        self.status[idx] = new_state
-        return matched, prev, new_state
-
-    def remaining(self) -> int:
-        return sum(1 for val in self.status if val < 2)
-
-    def is_completed(self, idx: int | None) -> bool:
-        if idx is None:
-            return True
-        if idx < 0 or idx >= len(self.status):
-            return True
-        return self.status[idx] == 2
-
-    def pending_indices(self, limit: int | None = None) -> List[int]:
-        indices = [i for i, val in enumerate(self.status) if val < 2]
-        if limit is not None:
-            return indices[: max(0, int(limit))]
-        return indices
-
-    def prompt_queue(self, *, reset: bool) -> list[int]:
-        if reset or self._queue is None:
-            self._queue = self.pending_indices()
-        else:
-            self._queue = [idx for idx in self._queue if self.status[idx] < 2]
-            if not self._queue:
-                self._queue = self.pending_indices()
-        return self._queue
-
-    def counts(self) -> tuple[int, int, int]:
-        random_or_better = sum(1 for val in self.status if val > 0)
-        solved = sum(1 for val in self.status if val == 2)
-        total = len(self.status)
-        return random_or_better, solved, total
 
 
 @dataclass
@@ -3567,8 +3471,7 @@ def train_model(
     tokenizer: GPT2TokenizerWrapper,
     suppress_newlines: bool,
     newline_token_id: int | None,
-    prompt_tracker: PromptTracker | None = None,
-    reset_prompt_queue: bool = False,
+    prompt_registry: PromptRegistry | None = None,
     *,
     cycle_wall_start: float,
     base_wall_seconds: float,
@@ -3586,11 +3489,6 @@ def train_model(
     history_updates: List[Dict[str, float]] = []
     printed_header = False
     eval_interval = max(1, int(eval_interval))
-    if prompt_tracker is not None:
-        prompt_queue = prompt_tracker.prompt_queue(reset=reset_prompt_queue)
-    else:
-        prompt_queue = []
-
     loop_timer = Timer().start()
     eval_timer = Timer()
 
@@ -3678,29 +3576,32 @@ def train_model(
         eval_timer.stop()
 
         prompt_input = sample_prompt
-        prompt_needs_boundary_flag = default_prompt_boundary and boundary_blocklist is not None
-        current_prompt_idx = None
+        selected_prompt_text = args.prompt
+        selected_expected_text: str | None = None
+        selected_is_default = True
         use_argmax_completion = random.random() < 0.5
         sampling_strategy = "argmax" if use_argmax_completion else "sample"
-        if prompt_tracker is not None:
-            while prompt_queue and prompt_tracker.is_completed(prompt_queue[0]):
-                prompt_queue.pop(0)
-            if prompt_queue:
-                current_prompt_idx = prompt_queue.pop(0)
-                prompt_input = prompt_tracker.prompt_tensor(current_prompt_idx, device)
-                prompt_text = prompt_tracker.prompts[current_prompt_idx][0]
-                prompt_needs_boundary_flag = (
-                    boundary_blocklist is not None and prompt_needs_boundary(prompt_text)
-                )
-                state_val = prompt_tracker.state(current_prompt_idx)
-                if state_val == 1:
-                    use_argmax_completion = True
-                else:
-                    use_argmax_completion = random.random() < 0.5
-                sampling_strategy = "argmax" if use_argmax_completion else "sample"
+        if prompt_registry is not None:
+            mode = "argmax" if use_argmax_completion else "sample"
+            picked_prompt, expected_text, used_default = prompt_registry.pick_prompt(
+                mode,
+                args.prompt,
+            )
+            selected_prompt_text = picked_prompt
+            selected_expected_text = expected_text
+            selected_is_default = used_default
+            if used_default:
+                prompt_input = sample_prompt
             else:
-                use_argmax_completion = random.random() < 0.5
-                sampling_strategy = "argmax" if use_argmax_completion else "sample"
+                prompt_tokens = tokenizer.encode(picked_prompt).unsqueeze(0).to(device)
+                prompt_input = prompt_tokens
+            prompt_needs_boundary_flag = (
+                boundary_blocklist is not None and prompt_needs_boundary(picked_prompt)
+            )
+        else:
+            prompt_needs_boundary_flag = (
+                default_prompt_boundary and boundary_blocklist is not None
+            )
         sample_tokens, prompt_len = generate(
             model,
             prompt_input.clone(),
@@ -3714,22 +3615,22 @@ def train_model(
         prompt_ids = sample_ids[:prompt_len]
         completion_ids = sample_ids[prompt_len:]
 
-        if prompt_tracker is not None and current_prompt_idx is not None:
-            matched, prev_state, new_state = prompt_tracker.mark_if_satisfied(
-                current_prompt_idx,
-                completion_ids,
+        if (
+            prompt_registry is not None
+            and not selected_is_default
+            and selected_expected_text
+        ):
+            matched = prompt_registry.record_result(
+                selected_prompt_text,
+                selected_expected_text,
                 used_argmax=use_argmax_completion,
+                completion_ids=completion_ids,
             )
-            if matched and new_state > prev_state:
-                expected = prompt_tracker.expected_text(current_prompt_idx)
-                prompt_text = prompt_tracker.prompts[current_prompt_idx][0]
-                if new_state == 2:
-                    mode = "argmax"
-                else:
-                    mode = "sample"
+            if matched:
+                mode = "argmax" if use_argmax_completion else "sample"
                 print(
                     color_text(
-                        f"Prompt #{current_prompt_idx + 1} satisfied ({mode}): {prompt_text} (expected '{expected}')",
+                        f"Prompt satisfied ({mode}): {selected_prompt_text} (expected '{selected_expected_text}')",
                         Colors.YELLOW,
                         bold=True,
                     )
@@ -3774,12 +3675,6 @@ def train_model(
 
         train_values = format_train_line()
         test_values = format_test_line()
-        if prompt_tracker is not None:
-            random_only_count, solved_prompts, total_prompts = prompt_tracker.counts()
-        else:
-            total_prompts = len(default_prompt_entries())
-            random_only_count = 0
-            solved_prompts = 0
         line_parts: List[str] = []
         if show_time:
             timestamp = time.strftime("%H:%M", time.localtime())
@@ -4260,90 +4155,44 @@ class Runtime:
         if not target_path.exists():
             raise FileNotFoundError(f"Checkpoint {target_path} not found")
         payload = torch.load(target_path, map_location="cpu", weights_only=False)
-        prompt_state = payload.get("prompt_state") or empty_prompt_state()
-        tracker = PromptTracker(tokenizer, prompt_state)
-        entries = list(tracker.prompts)
-        statuses = list(tracker.status)
-
-        def normalize_statuses() -> None:
-            nonlocal statuses
-            length = len(entries)
-            if len(statuses) < length:
-                statuses.extend([0] * (length - len(statuses)))
-            elif len(statuses) > length:
-                statuses = statuses[:length]
-
-        normalize_statuses()
+        registry = PromptRegistry(tokenizer, payload.get("prompts"))
         changed = False
         if getattr(self.args, "reset", False):
-            entries = default_prompt_entries()
-            statuses = [0] * len(entries)
+            registry.reset_to_defaults()
             changed = True
         if getattr(self.args, "clear", False):
-            entries = []
-            statuses = []
+            registry.clear()
             changed = True
         removes = sorted(set(getattr(self.args, "remove", [])), reverse=True)
-        for idx in removes:
-            if idx is None:
-                continue
-            try:
-                intval = int(idx)
-            except (TypeError, ValueError):
-                continue
-            if 0 <= intval < len(entries):
-                entries.pop(intval)
-                if len(statuses) > intval:
-                    statuses.pop(intval)
-                changed = True
-            else:
-                print(
-                    color_text(
-                        f"Prompt index {intval} out of range; ignoring remove request.",
-                        Colors.YELLOW,
-                    )
-                )
+        if removes:
+            registry.remove_indices(removes)
+            changed = True
         add_pair = getattr(self.args, "add", None)
         if add_pair is not None:
             prompt_text, expected_text = add_pair
-            entries.append((prompt_text, expected_text))
-            statuses.append(0)
+            registry.add_prompt(prompt_text, expected_text)
             changed = True
-        normalize_statuses()
         if changed:
-            new_state = build_prompt_state(entries, statuses)
-            payload["prompt_state"] = new_state
+            payload["prompts"] = registry.serialize()
             torch.save(payload, target_path)
-            print(
-                color_text(
-                    f"Updated prompts in {target_path}",
-                    Colors.GREEN,
-                )
-            )
-        show_list = self.args.list or (
-            not getattr(self.args, "reset", False)
-            and not getattr(self.args, "clear", False)
-            and not removes
-            and add_pair is None
-        )
+            print(color_text(f"Updated prompts in {target_path}", Colors.GREEN))
+        show_list = self.args.list or not changed
         if show_list:
+            entries = registry.ordered_entries()
             if not entries:
                 print(color_text("No prompts stored in checkpoint", Colors.MAGENTA))
             else:
                 print(color_text(f"Prompts in {target_path}:", Colors.CYAN))
-                for idx, (prompt_text, expected_text) in enumerate(entries):
-                    status_val = statuses[idx] if idx < len(statuses) else 0
-                    if status_val >= 2:
-                        status_label = color_text("argmax", Colors.GREEN)
-                    elif status_val == 1:
-                        status_label = color_text("sample", Colors.YELLOW)
-                    else:
-                        status_label = color_text("pending", Colors.RED)
+                for idx, (prompt_text, entry) in enumerate(entries):
+                    counts = color_text(
+                        f"[argmax={entry.maxarg_count} sample={entry.sample_count}]",
+                        Colors.YELLOW,
+                    )
                     print(
                         color_text(f"#{idx}: ", Colors.CYAN)
-                        + status_label
+                        + counts
                         + color_text(
-                            f" prompt='{prompt_text}' expected='{expected_text}'",
+                            f" prompt='{prompt_text}' expected='{entry.expected}'",
                             Colors.CYAN,
                         )
                     )
@@ -4471,7 +4320,7 @@ class Runtime:
                     prompt_tokens = prompt_tokens.unsqueeze(0).to(device)
                 else:
                     raise
-            prompt_tracker = PromptTracker(tokenizer)
+            prompt_registry = PromptRegistry(tokenizer)
 
             try:
                 model = GRCEGPT(config).to(device)
@@ -4520,7 +4369,10 @@ class Runtime:
                         total_steps = int(payload.get("total_steps", 0))
                         loss_history = list(payload.get("loss_history", []))
                         total_train_wall = float(payload.get("train_wall_seconds", 0.0))
-                        prompt_tracker.load_state(payload.get("prompt_state"))
+                        prompt_registry = PromptRegistry(
+                            tokenizer,
+                            payload.get("prompts"),
+                        )
                         if self.args.checkpoint_optimizer:
                             optimizer_state = payload.get("optimizer")
                         raw_datasets = payload.get("datasets")
@@ -4556,60 +4408,6 @@ class Runtime:
                             Colors.YELLOW,
                         )
                     )
-                    prompt_total = len(prompt_tracker.prompts)
-                    if prompt_tracker.remaining() < prompt_total:
-                        solved_argmax = [
-                            idx for idx, state in enumerate(prompt_tracker.status) if state == 2
-                        ]
-                        solved_random_only = [
-                            idx for idx, state in enumerate(prompt_tracker.status) if state == 1
-                        ]
-                        if solved_random_only:
-                            lines = []
-                            for idx in solved_random_only:
-                                if 0 <= idx < prompt_total:
-                                    text, expected = prompt_tracker.prompts[idx]
-                                else:
-                                    continue
-                                lines.append(
-                                    color_text(
-                                        f"#{idx + 1}: '{text}' -> '{expected}'",
-                                        Colors.YELLOW,
-                                    )
-                                )
-                            print(
-                                "\n"
-                                + color_text(
-                                    f"Random-only prompts ({len(solved_random_only)}/{prompt_total}):",
-                                    Colors.YELLOW,
-                                    bold=True,
-                                )
-                                + "\n"
-                                + "\n".join(lines)
-                            )
-                        if solved_argmax:
-                            lines = []
-                            for idx in solved_argmax:
-                                if 0 <= idx < prompt_total:
-                                    text, expected = prompt_tracker.prompts[idx]
-                                else:
-                                    continue
-                                lines.append(
-                                    color_text(
-                                        f"#{idx + 1}: '{text}' -> '{expected}'",
-                                        Colors.GREEN,
-                                    )
-                                )
-                            print(
-                                "\n"
-                                + color_text(
-                                    f"Argmax-satisfied prompts ({len(solved_argmax)}/{prompt_total}):",
-                                    Colors.GREEN,
-                                    bold=True,
-                                )
-                                + "\n"
-                                + "\n".join(lines)
-                            )
                 except RuntimeError as err:
                     print(color_text("Checkpoint load failed (shape mismatch); starting fresh.", Colors.RED, bold=True))
                     print(color_text(str(err), Colors.RED))
@@ -4657,7 +4455,7 @@ class Runtime:
                         "config": asdict(args_to_model_geometry(self.args)),
                         "train_wall_seconds": total_train_wall,
                         "corpus": self.args.corpus,
-                        "prompt_state": prompt_tracker.serialize() if prompt_tracker else None,
+                        "prompts": prompt_registry.serialize() if prompt_registry else None,
                         "tokenizer_json": tokenizer_json,
                     },
                     model_path,
@@ -4685,7 +4483,7 @@ class Runtime:
                     "config": asdict(args_to_model_geometry(self.args)),
                     "train_wall_seconds": 0.0,
                     "corpus": self.args.corpus,
-                    "prompt_state": prompt_tracker.serialize(),
+                    "prompts": prompt_registry.serialize(),
                     "tokenizer_json": tokenizer_json,
                 }
                 torch.save(checkpoint_payload, model_path)
@@ -4873,8 +4671,7 @@ class Runtime:
                     tokenizer,
                     suppress_newlines=self.args.no_newlines,
                     newline_token_id=newline_token_id,
-                    prompt_tracker=prompt_tracker,
-                    reset_prompt_queue=self.args.reset_prompt_each_cycle,
+                    prompt_registry=prompt_registry,
                     cycle_wall_start=cycle_wall,
                     base_wall_seconds=total_train_wall,
                     show_time=self.args.time,
@@ -4899,7 +4696,7 @@ class Runtime:
                             "config": asdict(args_to_model_geometry(self.args)),
                             "train_wall_seconds": total_train_wall,
                             "corpus": self.args.corpus,
-                            "prompt_state": prompt_tracker.serialize() if prompt_tracker else None,
+                            "prompts": prompt_registry.serialize() if prompt_registry else None,
                             "tokenizer_json": tokenizer_json,
                             **(
                                 {"optimizer": optimizer.state_dict()}
