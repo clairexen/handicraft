@@ -84,13 +84,6 @@ PROMPT_GOALS = [
     ("celsius is based on the freezing and boiling points of water. water freezes at", " 0"),
 ]
 
-SPECIAL_TOKENS = """
-<|----|> <|//|> <|tokipona:> <|english:> </english:> </tokipona:>
-<|lq:> <:lq|> <|hq:> <:hq|> <|!:> <:!|> <|?:> <:?|> <|*:> <:*|>
-<|-:> <:-|> <|=:> <:=|> <|/:> <:/|> <|@:> <:@|> <|think|>
-<|p7|> <|p6|> <|p5|> <|p4|> <|p3|> <|p2|> <|p1|> <|p0|>
-""".split()
-
 
 # -----------------------------------------------------------------------------
 # GRCE Model Configuration

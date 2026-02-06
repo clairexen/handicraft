@@ -17,7 +17,13 @@ from tokenizers.pre_tokenizers import ByteLevel
 from tokenizers.processors import ByteLevel as ByteLevelProcessor
 from tokenizers.trainers import BpeTrainer
 
-from grce import SPECIAL_TOKENS
+SPECIAL_TOKENS = """
+<|----|> <|//|> <|tokipona:> <|english:> </english:> </tokipona:>
+<|lq:> <:lq|> <|hq:> <:hq|> <|!:> <:!|> <|?:> <:?|> <|*:> <:*|>
+<|-:> <:-|> <|=:> <:=|> <|/:> <:/|> <|@:> <:@|> <|reject|> <|think|>
+<|p7|> <|p6|> <|p5|> <|p4|> <|p3|> <|p2|> <|p1|> <|p0|>
+""".split()
+
 
 
 DEFAULT_LIMIT = 1 * 1024 * 1024  # 1 MiB
