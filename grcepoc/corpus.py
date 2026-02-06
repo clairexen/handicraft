@@ -90,7 +90,7 @@ def encode_corpus(args: argparse.Namespace) -> int:
     for offset in range(0, len(text), chunk):
         piece = text[offset : offset + chunk]
         token_ids.extend(tokenizer.encode(piece).ids)
-    tensor = torch.tensor(token_ids, dtype=torch.long)
+    tensor = torch.tensor(token_ids, dtype=torch.uint16)
     payload = {"tokens": tensor, "bytes": len(text.encode("utf-8"))}
     args.output.parent.mkdir(parents=True, exist_ok=True)
     torch.save(payload, args.output)
