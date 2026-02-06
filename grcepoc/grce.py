@@ -538,18 +538,6 @@ from datetime import datetime, timezone
 from typing import Dict, List, Tuple, Sequence
 
 
-def parse_range_arg(value: str) -> tuple[int, int]:
-    """Parse ``START-END`` strings for :meth:`Runtime.cli_corpus` emitters."""
-
-    parts = value.replace(" ", "").split("-", 1)
-    if len(parts) != 2:
-        raise ValueError(f"Invalid range '{value}'. Expected format START-END.")
-    start, end = int(parts[0]), int(parts[1])
-    if end < start:
-        raise ValueError(f"Range end {end} is smaller than start {start}.")
-    return start, end
-
-
 def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
     """Parse CLI arguments and return the populated namespace.
 
@@ -939,41 +927,6 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
 
 
     # --------------------------------------------------------
-    # Subcommand args parser for "corpus"
-
-    corpus_parser = subparsers.add_parser(
-        "corpus",
-        help="Manage tokenizer and cached corpora",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    corpus_parser.add_argument(
-        "--init-tokenizer",
-        action="store_true",
-        dest="corpus_init_tokenizer",
-        help="Train or refresh the tokenizer JSON for this corpus",
-    )
-    corpus_parser.add_argument(
-        "--init",
-        action="store_true",
-        dest="corpus_init",
-        help="Regenerate the cached token files (requires an existing tokenizer JSON)",
-    )
-    corpus_parser.add_argument(
-        "--print-train",
-        dest="corpus_print_train",
-        metavar="START-END",
-        help="Print a START-END token range from the train split",
-    )
-    corpus_parser.add_argument(
-        "--print-test",
-        dest="corpus_print_test",
-        metavar="START-END",
-        help="Print a START-END token range from the test split",
-    )
-    corpus_parser.set_defaults(command="corpus")
-
-
-    # --------------------------------------------------------
     # Subcommand args parser for "prompts"
 
     prompt_parser = subparsers.add_parser(
@@ -1143,20 +1096,6 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
 
 
     # --------------------------------------------------------
-    # Parse and check "corpus" sub-command args
-
-    if args.command == "corpus":
-        has_corpus_action = bool(
-            args.corpus_init
-            or args.corpus_init_tokenizer
-            or args.corpus_print_train is not None
-            or args.corpus_print_test is not None
-        )
-        if not has_corpus_action:
-            parser.error("corpus command requires --init-tokenizer, --init and/or --print-* options")
-
-
-    # --------------------------------------------------------
     # Parse "create" sub-command args
 
     if args.command == "create":
@@ -1204,23 +1143,6 @@ def args_to_model_geometry(args: Args):
 
 if __name__ == "__main__":
     cli_args = grce_cli_args(sys.argv)
-
-
-# -----------------------------------------------------------------------------
-# Lightweight (non-Torch) Library Components
-# -----------------------------------------------------------------------------
-
-def load_text_file(path: pathlib.Path) -> str:
-    """Load raw corpus text for tokenizer prep and CLI corpus utilities."""
-
-    if not path.exists():
-        raise FileNotFoundError(f"Could not find {path}. Provide a text file path.")
-    if path.suffix == ".gz":
-        import gzip
-
-        with gzip.open(path, "rt", encoding="utf-8") as fh:
-            return fh.read()
-    return path.read_text(encoding="utf-8")
 
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
@@ -1775,16 +1697,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 import string
 from tokenizers import Tokenizer
-from tokenizers.decoders import ByteLevel as ByteLevelDecoder
-from tokenizers.models import BPE
-from tokenizers.pre_tokenizers import ByteLevel
-from tokenizers.processors import ByteLevel as ByteLevelProcessor
-from tokenizers.trainers import BpeTrainer
 
 ASCII_LETTERS = set(string.ascii_letters)
 ASCII_LOWERCASE = set(string.ascii_lowercase)
-TOKENIZER_TRAIN_LIMIT_BYTES = 16 * 1024 * 1024  # 16 MB of corpus text for tokenizer training
-
 class RMSNorm(nn.Module):
     """Root-mean-square norm used by the XCTX recurrent path."""
 
@@ -1829,83 +1744,6 @@ class LayerDampening(nn.Module):
         y = x / denom
         return y * self.gain if self.gain else y
 
-
-# Local GPT2 tokenizer adapter (no huggingface dependency)
-class GPT2TokenizerFast:
-    """Lightweight adapter around ``tokenizers.Tokenizer`` used by GRCE.
-
-    Instances are created in :func:`grce_main` to build tokenizers without the
-    full Hugging Face dependency and are consumed via
-    :class:`GPT2TokenizerWrapper`.
-    """
-    def __init__(self, tokenizer_file=None, tokenizer_object=None):
-        if tokenizer_file is not None:
-            self._tokenizer = Tokenizer.from_file(tokenizer_file)
-        elif tokenizer_object is not None:
-            self._tokenizer = tokenizer_object
-        else:
-            raise ValueError("Either tokenizer_file or tokenizer_object must be provided")
-        self._extra_special_tokens: list[str] = []
-
-    @property
-    def unk_token(self) -> str:
-        return "<|unk|>"
-
-    def _normalize_special_tokens(self, tokens):
-        if isinstance(tokens, dict):
-            tokens = tokens.get("additional_special_tokens", []) or []
-        if isinstance(tokens, str):
-            tokens = [tokens]
-        return list(tokens or [])
-
-    def add_special_tokens(self, tokens):
-        entries = self._normalize_special_tokens(tokens)
-        added = []
-        for tok in entries:
-            if tok not in self._extra_special_tokens:
-                self._extra_special_tokens.append(tok)
-                added.append(tok)
-        if added:
-            self._tokenizer.add_special_tokens(added)
-        return len(entries)
-
-    def get_vocab_size(self) -> int:
-        return self._tokenizer.get_vocab_size()
-
-    def __len__(self) -> int:
-        return self.get_vocab_size()
-
-    @property
-    def all_special_ids(self) -> list[int]:
-        ids: list[int] = []
-        for token in self._extra_special_tokens:
-            tok_id = self._tokenizer.token_to_id(token)
-            if tok_id is not None:
-                ids.append(tok_id)
-        return ids
-
-    def convert_tokens_to_ids(self, token: str) -> int | None:
-        return self._tokenizer.token_to_id(token)
-
-    def encode(self, text: str, add_special_tokens: bool = True) -> list[int]:
-        encoding = self._tokenizer.encode(text, add_special_tokens=add_special_tokens)
-        return encoding.ids
-
-    def decode(
-        self,
-        ids: list[int] | torch.Tensor,
-        *,
-        clean_up_tokenization_spaces: bool = True,
-        skip_special_tokens: bool = False,
-    ) -> str:
-        if isinstance(ids, torch.Tensor):
-            ids = ids.tolist()
-        return self._tokenizer.decode(ids, skip_special_tokens=skip_special_tokens)
-
-    def save_pretrained(self, path: str) -> None:
-        os.makedirs(path, exist_ok=True)
-        file = os.path.join(path, "tokenizer.json")
-        self._tokenizer.save(file)
 
 def default_prompt_entries() -> list[tuple[str, str]]:
     """Return the built-in prompt catalog used by :class:`PromptTracker`."""
@@ -1962,216 +1800,93 @@ def build_prompt_state(
     }
 
 
-def _restrict_bpe_training_text(text: str) -> str:
-    """Normalize raw text prior to tokenizer training in :class:`Runtime`."""
-
-    pieces: list[str] = []
-    i = 0
-    length = len(text)
-    while i < length:
-        ch = text[i]
-        if ch in ASCII_LETTERS:
-            start = i
-            i += 1
-            while i < length and text[i] in ASCII_LETTERS:
-                i += 1
-            pieces.append(text[start:i])
-            continue
-        if ch == " ":
-            pieces.append(ch)
-            i += 1
-            continue
-        if ch in "\n\r\t":
-            pieces.append(ch)
-            i += 1
-            continue
-        pieces.append(" ")
-        pieces.append(ch)
-        pieces.append(" ")
-        i += 1
-    return "".join(pieces)
-
-
-def _limit_training_text_bytes(
-    text: str,
-    limit_bytes: int = TOKENIZER_TRAIN_LIMIT_BYTES,
-) -> str:
-    """Clamp tokenizer training data size for :class:`GPT2TokenizerWrapper`."""
-
-    if limit_bytes <= 0 or not text:
-        return text
-    try:
-        raw = text.encode("utf-8")
-    except UnicodeEncodeError:
-        return text[:limit_bytes]
-    if len(raw) <= limit_bytes:
-        return text
-    truncated = raw[:limit_bytes]
-    return truncated.decode("utf-8", errors="ignore")
-
-
 # -----------------------------------------------------------------------------
 # Data Utilities
 # -----------------------------------------------------------------------------
 
 
 class GPT2TokenizerWrapper:
-    """Tokenizer shim used wherever :class:`Runtime` needs GPT-2 style BPE."""
-
-    EXTRA_SPECIAL_TOKENS = list(SPECIAL_TOKENS)
+    """Tokenizer shim used by prompt tracking and pretty-print helpers."""
 
     def __init__(
         self,
-        train_text: str,
-        cache_path: pathlib.Path,
-        vocab_size: int,
-        pretrained_json: str | None = None,
+        *,
+        tokenizer_path: pathlib.Path | None = None,
+        tokenizer_json: str | None = None,
     ) -> None:
-        if not cache_path.parent.exists():
-            try:
-                cache_path.parent.mkdir(parents=True, exist_ok=True)
-            except OSError:
-                pass
-        self.cache_path = cache_path
-        self.pretrained_json = pretrained_json
-        self.extra_special_tokens: list[str] = list(self.EXTRA_SPECIAL_TOKENS)
-        self.tokenizer = self._load_or_train(
-            train_text,
-            cache_path,
-            vocab_size,
-            self.extra_special_tokens,
-        )
-        self.vocab_size = self.tokenizer.get_vocab_size()
-        self.special_ids = set(self.tokenizer.all_special_ids)
-        self.non_special_ids = [
-            tok_id for tok_id in range(self.vocab_size) if tok_id not in self.special_ids
-        ]
-        self.leading_alpha_token_ids = sorted(self._collect_leading_alpha_tokens())
-        #self.byte_fallback_encodings = self._build_byte_fallback_encodings()
-
-    def _load_or_train(
-        self,
-        train_text: str,
-        cache_path: pathlib.Path,
-        vocab_size: int,
-        extra_special_tokens: list[str],
-    ) -> GPT2TokenizerFast:
-        if cache_path.exists():
-            return self._configure_special_tokens(
-                GPT2TokenizerFast(tokenizer_file=str(cache_path)),
-                extra_special_tokens,
-            )
-        if self.pretrained_json:
-            tokenizer = Tokenizer.from_str(self.pretrained_json)
-            tk = GPT2TokenizerFast(tokenizer_object=tokenizer)
-            try:
-                cache_path.write_text(self.pretrained_json, encoding="utf-8")
-            except OSError:
-                pass  # best-effort cache write
-            return self._configure_special_tokens(tk, extra_special_tokens)
-        tokenizer = Tokenizer(BPE(unk_token=None))
-        tokenizer.pre_tokenizer = ByteLevel(add_prefix_space=False)
-        tokenizer.decoder = ByteLevelDecoder()
-        byte_level_alphabet = ByteLevel.alphabet()
-        if byte_level_alphabet:
-            initial_alphabet = byte_level_alphabet
+        if tokenizer_json is not None:
+            self._tokenizer = Tokenizer.from_str(tokenizer_json)
+        elif tokenizer_path is not None:
+            self._tokenizer = Tokenizer.from_file(str(tokenizer_path))
         else:
-            byte_values = sorted(set(train_text.encode("utf-8")))
-            observed_alphabet = [chr(b) for b in byte_values]
-            initial_alphabet = observed_alphabet or [chr(b) for b in range(256)]
-        # Reserve one additional slot beyond the requested vocab size to compensate
-        # for the underlying trainer implicitly injecting an end-of-input token.
-        trainer_vocab_size = vocab_size + 1
-        trainer = BpeTrainer(
-            vocab_size=trainer_vocab_size,
-            min_frequency=2,
-            special_tokens=[],
-            initial_alphabet=initial_alphabet,
-        )
-        limited_text = _limit_training_text_bytes(train_text)
-        sanitized = _restrict_bpe_training_text(limited_text)
-        tokenizer.train_from_iterator([sanitized], trainer=trainer)
-        tokenizer.post_processor = ByteLevelProcessor(trim_offsets=False)
-        if extra_special_tokens:
-            tokenizer.add_special_tokens(extra_special_tokens)
-        tokenizer.save(str(cache_path))
-        tk = GPT2TokenizerFast(tokenizer_file=str(cache_path))
-        return self._configure_special_tokens(tk, extra_special_tokens)
-
-    def _configure_special_tokens(
-        self, tk: GPT2TokenizerFast, extra_special_tokens: list[str]
-    ) -> GPT2TokenizerFast:
-        # Suggested GPT-2 style special tokens (BOS/EOS/UNK/PAD) are omitted for now.
-        if extra_special_tokens:
-            tk.add_special_tokens({"additional_special_tokens": extra_special_tokens})
-        return tk
+            raise ValueError("Tokenizer path or JSON must be provided")
+        self.vocab_size = self._tokenizer.get_vocab_size()
+        self.leading_alpha_token_ids = sorted(self._collect_leading_alpha_tokens())
 
     def _collect_leading_alpha_tokens(self) -> set[int]:
+        vocab = self._tokenizer.get_vocab()
         token_ids: set[int] = set()
-        for tok_id in self.non_special_ids:
-            try:
-                piece = self.tokenizer.decode([tok_id], clean_up_tokenization_spaces=False)
-            except KeyError:
-                continue
-            if not piece:
-                continue
-            first = piece[0]
-            if first in ASCII_LOWERCASE:
+        for token, tok_id in vocab.items():
+            piece = self._tokenizer.decode([tok_id], skip_special_tokens=False)
+            if piece and piece[0] in ASCII_LOWERCASE:
                 token_ids.add(tok_id)
         return token_ids
 
-    def _build_byte_fallback_encodings(self) -> list[tuple[int, ...]]:
-        encodings: list[tuple[int, ...]] = []
-        for value in range(256):
-            byte_text = bytes([value]).decode("latin-1")
-            try:
-                tokens = self.tokenizer.encode(byte_text, add_special_tokens=False)
-            except Exception as exc:  # pragma: no cover - defensive guard
-                raise ValueError(
-                    f"Tokenizer could not encode byte {value}; delete {self.cache_path} and rebuild the tokenizer cache"
-                ) from exc
-            cleaned = tuple(int(tok) for tok in tokens)
-            if not cleaned:
-                raise ValueError(
-                    f"Tokenizer produced no tokens for byte {value}; delete {self.cache_path} and rebuild the tokenizer cache"
-                )
-            if any(tok in self.special_ids for tok in cleaned):
-                raise ValueError(
-                    f"Tokenizer fallback for byte {value} relies on a special token; delete {self.cache_path} and rebuild the tokenizer cache"
-                )
-            encodings.append(cleaned)
-        return encodings
-
     def encode(self, text: str) -> torch.Tensor:
-        ids = self.tokenizer.encode(text, add_special_tokens=False)
+        ids = self._tokenizer.encode(text, add_special_tokens=False).ids
         return torch.tensor(ids, dtype=torch.long)
 
-    def encode_corpus(self, text: str, chunk_chars: int = 2048) -> torch.Tensor:
-        ids: list[int] = []
-        for i in range(0, len(text), chunk_chars):
-            piece = text[i : i + chunk_chars]
-            if not piece:
-                continue
-            ids.extend(self.tokenizer.encode(piece, add_special_tokens=False))
-        return torch.tensor(ids, dtype=torch.long)
+    def encode_ids(self, text: str) -> list[int]:
+        return self._tokenizer.encode(text, add_special_tokens=False).ids
 
-    def decode(self, tokens: torch.Tensor) -> str:
-        return self.tokenizer.decode(tokens.tolist())
+    def decode(self, tokens: torch.Tensor | list[int]) -> str:
+        if isinstance(tokens, torch.Tensor):
+            ids = tokens.tolist()
+        else:
+            ids = list(tokens)
+        return self._tokenizer.decode(ids, skip_special_tokens=False)
 
     def decode_one(self, token: int) -> str:
-        return self.tokenizer.decode([token])
+        return self._tokenizer.decode([token], skip_special_tokens=False)
 
-    def decode_pretty(self, args: Args, tokens: torch.Tensor, color: str = Colors.MAGENTA, altcolor: str = Colors.GREEN, alt: bool = False) -> str:
-        if alt: color, altcolor =  Colors.YELLOW, Colors.CYAN
-        parts = []
+    def decode_pretty(
+        self,
+        args: Args,
+        tokens: torch.Tensor,
+        color: str = Colors.MAGENTA,
+        altcolor: str = Colors.GREEN,
+        alt: bool = False,
+    ) -> str:
+        if alt:
+            color, altcolor = Colors.YELLOW, Colors.CYAN
+        parts: list[str] = []
         for tok in tokens.tolist():
             s = self.decode_one(tok)
-            assert s, "got empty token"
-            if s == " " or " " in s[1:]: s = s.replace(" ", FANCY_SPACE)
-            s = s.replace("\n", FANCY_ENTER if args.escape_newline_tokens else FANCY_ENTER.replace(" ", "\n"))
+            if not s:
+                continue
+            if s == " " or " " in s[1:]:
+                s = s.replace(" ", FANCY_SPACE)
+            replacement = (
+                FANCY_ENTER if args.escape_newline_tokens else FANCY_ENTER.replace(" ", "\n")
+            )
+            s = s.replace("\n", replacement)
             parts.append(color + s + Colors.RESET)
             color, altcolor = altcolor, color
         return "".join(parts)
+
+
+def load_cached_tokens(split: str, cache_path: pathlib.Path) -> torch.Tensor:
+    """Load tokens produced by ``corpus.py tokens``."""
+
+    if not cache_path.exists():
+        raise FileNotFoundError(
+            f"Token cache {cache_path} not found for {split}; run corpus.py tokens to build it."
+        )
+    payload = torch.load(cache_path, map_location="cpu")
+    tokens = payload.get("tokens")
+    if tokens is None:
+        raise ValueError(f"Token cache {cache_path} is missing 'tokens' data")
+    return tokens.long()
 
 
 class PromptTracker:
@@ -2477,35 +2192,6 @@ class TextDataset:
             remaining -= take
             pos = (pos + take) % total
         return torch.cat(pieces).contiguous()
-
-
-def load_or_prepare_tokens(
-    split: str,
-    text_path: str,
-    text: str | None,
-    cache_path: pathlib.Path,
-    tokenizer: GPT2TokenizerWrapper,
-    seed: int,
-) -> Tuple[torch.Tensor, str | None]:
-    """Load cached token tensors or create them for :class:`Runtime` setups."""
-
-    if cache_path.exists():
-        payload = torch.load(cache_path)
-        tokens = payload["tokens"].long()
-        print(color_text(f"Loaded cached {split} tokens from {cache_path}", Colors.YELLOW))
-        return tokens, text
-
-    if text is None:
-        raise FileNotFoundError(
-            f"Token cache {cache_path} not found for {split}; run 'corpus --init' to build it."
-        )
-
-    print(color_text(f"Tokenizing raw {split} data: {text_path}...", Colors.BLUE))
-    tokens = tokenizer.encode_corpus(text).type(torch.uint16)
-    bytes_count = len(text.encode("utf-8"))
-    torch.save({"tokens": tokens, "bytes": bytes_count}, cache_path)
-    print(color_text(f"Saved {split} token cache to {cache_path}", Colors.YELLOW))
-    return tokens, text
 
 
 # -----------------------------------------------------------------------------
@@ -4353,8 +4039,6 @@ class Runtime:
         self.args = args
         self.tokenizer: GPT2TokenizerWrapper | None = None
         self.dataset: TextDataset | None = None
-        self._train_tokens: torch.Tensor | None = None
-        self._test_tokens: torch.Tensor | None = None
         self.newline_token_id: int | None = None
         self.boundary_blocklist: Sequence[int] | None = None
         self.default_prompt_boundary: bool = False
@@ -4406,48 +4090,20 @@ class Runtime:
     ) -> tuple[
         GPT2TokenizerWrapper,
         TextDataset,
-        torch.Tensor,
-        torch.Tensor,
         int | None,
         Sequence[int] | None,
         bool,
         str,
     ]:
         data_dir = pathlib.Path(self.args.data)
-        train_path = data_dir / f"{self.args.corpus}-train.txt.gz"
-        test_path = data_dir / f"{self.args.corpus}-test.txt.gz"
         model_dir = pathlib.Path(self.args.model)
         if not model_dir.exists():
             try:
                 model_dir.mkdir(parents=True, exist_ok=True)
             except OSError:
                 pass
-
-        build_tokens = (
-            self.args.command == "corpus" and getattr(self.args, "corpus_init", False)
-        )
-        build_tokenizer = (
-            self.args.command == "corpus"
-            and getattr(self.args, "corpus_init_tokenizer", False)
-        )
         train_cache_path = data_dir / f"{self.args.corpus}_tokens_train_{self.args.vocab_size}.pt"
         test_cache_path = data_dir / f"{self.args.corpus}_tokens_test_{self.args.vocab_size}.pt"
-        need_raw_text = build_tokens or build_tokenizer
-        if need_raw_text:
-            full_train_text = load_text_file(train_path)
-            full_test_text = load_text_file(test_path)
-        else:
-            full_train_text = None
-            full_test_text = None
-            if not train_cache_path.exists():
-                raise FileNotFoundError(
-                    f"Train token cache {train_cache_path} not found; run 'corpus --init' first."
-                )
-            if not test_cache_path.exists():
-                raise FileNotFoundError(
-                    f"Test token cache {test_cache_path} not found; run 'corpus --init' first."
-                )
-
         tokenizer_key = f"{self.args.corpus}_vocab_{self.args.vocab_size}"
         tokenizer_path = (
             pathlib.Path(self.args.tokenizer)
@@ -4455,42 +4111,22 @@ class Runtime:
             else (data_dir / f"{tokenizer_key}.json")
         )
         tokenizer_json = getattr(self.args, "tokenizer_json_override", None)
-        if build_tokenizer:
-            tokenizer_json = None
         if tokenizer_json is None:
-            if tokenizer_path.exists() and not build_tokenizer:
+            if tokenizer_path.exists():
                 tokenizer_json = tokenizer_path.read_text(encoding="utf-8")
-            elif not build_tokenizer:
+            else:
                 raise FileNotFoundError(
-                    f"Tokenizer cache {tokenizer_path} not found; run 'corpus --init-tokenizer' first or supply --pt or --tokenizer."
+                    f"Tokenizer JSON {tokenizer_path} not found; run corpus.py tokenizer to create it."
                 )
         print(color_text(f"Tokenizer: {tokenizer_path}", Colors.BLUE))
-        tok_timer = Timer().start()
-        vocab_source = full_train_text if build_tokenizer else ""
-        reserved_tokens = 1 + len(GPT2TokenizerWrapper.EXTRA_SPECIAL_TOKENS)
-        if self.args.vocab_size <= reserved_tokens:
-            raise ValueError(
-                f"--vocab-size must exceed reserved tokens ({reserved_tokens}); got {self.args.vocab_size}"
-            )
-        target_vocab = max(0, self.args.vocab_size - reserved_tokens)
         tokenizer = GPT2TokenizerWrapper(
-            vocab_source,
-            tokenizer_path,
-            target_vocab,
-            pretrained_json=tokenizer_json,
+            tokenizer_path=tokenizer_path,
+            tokenizer_json=tokenizer_json,
         )
-        expected_vocab_size = self.args.vocab_size
-        actual_vocab_size = tokenizer.vocab_size
-        if actual_vocab_size != expected_vocab_size:
-            raise ValueError(
-                "Tokenizer size mismatch: expected "
-                f"{expected_vocab_size} tokens but found {actual_vocab_size}. "
-                "Delete the cached tokenizer and re-run 'corpus --init'."
-            )
         tokenizer_json = tokenizer_json or tokenizer_path.read_text(encoding="utf-8")
 
         newline_token_id = None
-        newline_tokens = tokenizer.tokenizer.encode("\n", add_special_tokens=False)
+        newline_tokens = tokenizer.encode_ids("\n")
         if newline_tokens:
             newline_token_id = newline_tokens[0]
 
@@ -4504,23 +4140,8 @@ class Runtime:
             and prompt_needs_boundary(self.args.prompt)
         )
 
-        train_tokens, train_text = load_or_prepare_tokens(
-            "train",
-            train_path,
-            full_train_text if build_tokens else None,
-            train_cache_path,
-            tokenizer,
-            seed=1234,
-        )
-
-        test_tokens, test_text = load_or_prepare_tokens(
-            "test",
-            test_path,
-            full_test_text if build_tokens else None,
-            test_cache_path,
-            tokenizer,
-            seed=5678,
-        )
+        train_tokens = load_cached_tokens("train", train_cache_path)
+        test_tokens = load_cached_tokens("test", test_cache_path)
 
         train_token_count = int(train_tokens.numel())
         test_token_count = int(test_tokens.numel())
@@ -4530,25 +4151,17 @@ class Runtime:
                 Colors.CYAN,
             )
         )
-        tok_summary = (
-            color_text(f"[tokenizer (wall/cpu/gpu)]", Colors.CYAN)
-            + color_text(f" {tok_timer.stop()}\n", Colors.MAGENTA)
-        )
-        print(tok_summary)
-
         dataset = TextDataset(
             train_tokens=train_tokens,
             test_tokens=test_tokens,
-            train_text=train_text,
-            test_text=test_text,
-            train_path=train_path,
-            test_path=test_path,
+            train_text=None,
+            test_text=None,
+            train_path=train_cache_path,
+            test_path=test_cache_path,
         )
 
         self.tokenizer = tokenizer
         self.dataset = dataset
-        self._train_tokens = train_tokens
-        self._test_tokens = test_tokens
         self.newline_token_id = newline_token_id
         self.boundary_blocklist = boundary_blocklist
         self.default_prompt_boundary = default_prompt_boundary
@@ -4557,8 +4170,6 @@ class Runtime:
         return (
             tokenizer,
             dataset,
-            train_tokens,
-            test_tokens,
             newline_token_id,
             boundary_blocklist,
             default_prompt_boundary,
@@ -4581,35 +4192,16 @@ class Runtime:
         self.datasets_state[self.args.corpus] = self.dataset.state_dict()
 
     def _instantiate_dataset_for_corpus(self, corpus: str) -> TextDataset:
-        if self.tokenizer is None:
-            raise RuntimeError("Tokenizer not initialized; cannot load corpus")
-        data_dir = pathlib.Path(self.args.data)
-        train_path = data_dir / f"{corpus}-train.txt.gz"
-        test_path = data_dir / f"{corpus}-test.txt.gz"
         train_cache, test_cache = self._token_cache_paths(corpus)
-        train_tokens, _ = load_or_prepare_tokens(
-            "train",
-            train_path,
-            None,
-            train_cache,
-            self.tokenizer,
-            seed=1234,
-        )
-        test_tokens, _ = load_or_prepare_tokens(
-            "test",
-            test_path,
-            None,
-            test_cache,
-            self.tokenizer,
-            seed=5678,
-        )
+        train_tokens = load_cached_tokens("train", train_cache)
+        test_tokens = load_cached_tokens("test", test_cache)
         dataset = TextDataset(
             train_tokens=train_tokens,
             test_tokens=test_tokens,
             train_text=None,
             test_text=None,
-            train_path=train_path,
-            test_path=test_path,
+            train_path=train_cache,
+            test_path=test_cache,
         )
         state = self.datasets_state.get(corpus)
         dataset.load_state(state)
@@ -4635,8 +4227,6 @@ class Runtime:
             self._save_active_dataset_state()
             new_dataset = self._instantiate_dataset_for_corpus(candidate)
             self.dataset = new_dataset
-            self._train_tokens = new_dataset.train_tokens
-            self._test_tokens = new_dataset.test_tokens
             self.args.corpus = candidate
             print(
                 color_text(
@@ -4649,52 +4239,6 @@ class Runtime:
         raise FileNotFoundError(
             f"Unable to locate next corpus volume(s): {missing}. Add the pre-tokenized files or run 'corpus --init'."
         )
-
-    def cli_corpus(
-        self,
-        tokenizer: GPT2TokenizerWrapper,
-        train_tokens: torch.Tensor,
-        test_tokens: torch.Tensor,
-    ) -> int:
-        def emit_range(label: str, tokens: torch.Tensor, spec: str) -> None:
-            start, end = parse_range_arg(spec)
-            total = int(tokens.numel())
-            if total == 0:
-                print(color_text(f"{label} corpus is empty", Colors.MAGENTA))
-                return
-            if start < 0 or end < 0 or start >= total or end >= total:
-                raise ValueError(f"{label} range {start}-{end} is outside 0-{total - 1}")
-            subset = tokens[start : end + 1].tolist()
-            print(
-                color_text(
-                    f"{label} tokens {start}-{end} (count {len(subset)}):",
-                    Colors.CYAN,
-                )
-            )
-            chunk_size = 128
-            for offset in range(0, len(subset), chunk_size):
-                chunk_tokens = subset[offset : offset + chunk_size]
-                text = tokenizer.decode(torch.tensor(chunk_tokens))
-                print(text)
-
-        actions_done = False
-        if getattr(self.args, "corpus_init", False):
-            print(
-                color_text(
-                    "Tokenizer initialized and token caches updated; run 'train' to build a model.",
-                    Colors.GREEN,
-                )
-            )
-            actions_done = True
-        if getattr(self.args, "corpus_print_train", None):
-            emit_range("Train", train_tokens, self.args.corpus_print_train)
-            actions_done = True
-        if getattr(self.args, "corpus_print_test", None):
-            emit_range("Test", test_tokens, self.args.corpus_print_test)
-            actions_done = True
-        if not actions_done:
-            print(color_text("No corpus action selected", Colors.YELLOW))
-        return 0
 
     def cli_prompts(
         self,
@@ -4809,8 +4353,6 @@ class Runtime:
             (
                 tokenizer,
                 dataset,
-                train_tokens,
-                test_tokens,
                 newline_token_id,
                 boundary_blocklist,
                 default_prompt_boundary,
@@ -4818,9 +4360,6 @@ class Runtime:
             ) = self._prepare_corpus()
             self.args.vocab_size = tokenizer.vocab_size
             model_dir = pathlib.Path(self.args.model)
-
-            if self.args.command == "corpus":
-                return self.cli_corpus(tokenizer, train_tokens, test_tokens)
 
             if self.args.n_xctx > 0 and self.args.n_xctx % max(1, self.args.n_layer) != 0:
                 raise ValueError("--n-xctx must be divisible by --n-layer")
