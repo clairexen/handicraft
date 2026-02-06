@@ -712,35 +712,29 @@ instead of the current
 
 	G' := LN(M + ...).
 
+## Clean up and simpplify prompt tracking
 
-## Add final "recode" column to "encode" blocks, and other "encode" tweaks
+Let's simplify prompt tracking in grce.py (or replace it entirely with a way
+simpler re-implementation):
 
-I'd like to change the way we handle "encode" for both train and eval and both
-"split" and "stacked" batches: If the encode block would be at least 4 columns
-(positions) long, create an encode block of cols-1 length instead, and then add
-a single column of "forward" with no incoming kv- cache. we record the loss
-value for that position as "recode". (confirm, if you can, that "encode" is
-generating the concurrent GRCE and XCTX signals, as intended, just "blindly"
-with bias injection disabled.) Adding that "recode" column, especially in
-"split" mode, should help training "encode" blocks to eject whatever
-information is needed for the immediate future via XCTX and GRCE.
+Let's get rid of --reset-prompt-each-cycle and replace 'prompt_state'
+in the .pt file with 'prompts'. (No need to convert old data from
+the old .pt format.) The new prompts format:
 
-Proposed/suggested implementation plan: Add mode="recode" to
-TransformerStackSequence, which should then internally build an encoder
-of size cols-1 and wire it to a single final recode column. Then the
-code using it must only call it with mode="recode" instead of mode="encode",
-when cols >= 4, and adjust if only the last colmn is used for loss (encode),
-or the last two columns (encode, and recode).
+	prompts[<prompt_string>] = {
+		"expected": <expected_string>,
+		"maxarg_count": <integer>,
+		"sample_count": <integer>
+	}
 
-Another idea, that is easier to implement, is to turn one (or more) random
-position(s) within the "encode" block into a "fillin" slot: We suppress the
-token encoding on that input, and only supply the position encoding. Then we
-calculate a "fillin" loss based on the preceeding positions ability to predict
-("fill in") the missing token.
+In each eval cycle we first roll a dice to see if we are goinmg to evaluate a
+prompt in "sample" or "maxarg" mode. Once we have done that we weight each
+prompt with 1/(1+<count>) and also add the default prompt (--prompt) with
+weight 1 to the mix, and pick a random prompt according to these probabilities.
 
-Likewise we can create a "correct" slot and metric: We swap one (or more) input
-tokens with another randomly selected token, weighted by some function of their
-distance in embedding space. We then create a "correct" loss based on the
-previous positions ability to predict the correct token, and a "detect" loss
-based on that positions ability to output a <|reject|> token instead of a
-continuation.
+This way prompts that have been solved more often are becoming less frequent
+but we never really "check off the list" any prompt.
+
+Leave the CLI interface of the 'prompts' subcommand and it's options unchanged.
+
+I think this should simplify the codebase. Do you agree?
