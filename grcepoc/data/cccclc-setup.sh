@@ -12,7 +12,12 @@ if [ ! -f cccclc-${volume}-train.txt.gz ]; then
 	../.venv/bin/python cccclc-split.py ${volume}
 fi
 
-if [ ! -f cccclc-${volume}_tokens_train_5000.pt ]; then
+if [ ! -f cccclc-${volume}_tokens_test_5000.pt ]; then
 	../.venv/bin/python ../corpus.py tokens --tokenizer cccclc_vocab_5000.json \
 			--input cccclc-${volume}-test.txt.gz --output cccclc-${volume}_tokens_test_5000.pt
+fi
+
+if [ ! -f cccclc-${volume}_tokens_train_5000.pt ]; then
+	../.venv/bin/python ../corpus.py tokens --tokenizer cccclc_vocab_5000.json \
+			--input cccclc-${volume}-train.txt.gz --output cccclc-${volume}_tokens_train_5000.pt
 fi
