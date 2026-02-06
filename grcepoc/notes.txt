@@ -619,6 +619,65 @@ G.dot(embedding) < 1 for all GRCE state embeddings that are expected "OFF" (-1).
 
 Read AGENTS.md, README.md, and the comments at the top of grce.py. Then:
 
+## Mini-language for batch layouts
+
+We define a mini-language for (training and evaluating) batch layouts:
+
+	12[16e/16d]+4[48f]+1[8f/8d/8f]
+
+This means example means with first have 12 rows wide stack of the following
+sequences: first a 16 columns long "encode" sequence, followed by a 16 columns
+long "decode" sequence, with the outputs of the first 16 cols sequence are
+connected to the inputs of the second sequence.
+
+The next we have a single 4-rows by 48-columns big "forward" sequence. And
+finally there's a single-row sequence with 8 cols "forward", followed by
+8 cols "decode", followed by another 8 cols "forward".
+
+We remove all --rows-*, --cols-*, --split-* CLI options, and --batch-layout,
+and replace it all by a single --layout STR option, that accepts the above
+syntax. A warning is generated when the number of rows exceeds --batch-size
+or the number of cols in any row exceeds --block-size/--block-length.
+
+There's more syntax to introduce randomness and dynamically adjust a layout
+to a given --batch-size and --block-size/--block-length. The default --layout
+is:
+
+	2[*d]+2[*f]+*[*1-2e/*1-4d/*1-4f/*1-2n]
+
+So we have 2 rows by block-size cols of "decode", then 2 by block_size "forward",
+then batch_size-4 rows of a encode-decode-forward-noattn pattern, with the cols
+assign as following: first a random number in the range of 1-2 is allocated for
+"encode"; then numbers in the range 1-4 for the "decode" and "forward" sequences;
+and finally a number in the range 1-2 for "noattn".
+
+If the available --block-size/--block-length is smaller than the resulting total
+sequence lenght, we randomly select sub-blocks that are still over their lower
+bound, and decrement them, until block_size is reached, or each segment is at its
+lower bound.
+
+If the available block_size is larger, we step-by-step expand the segments marked
+with an * using the following method: we weight the segments according to their
+current size and select a random segment to increment in size using this weighting.
+This way relative size differences are not evened out by the expansion process.
+
+The syntax *5 is just short for *5-5. And just * is a special form that means
+allocate a baseline of 0, but participate in expansion with a constant weight
+of 1 regardless of current size. These prefixes work exactly the same way for
+rows (outside of [...]) and cols (inside of [...]).
+
+In addition to that we define a simple pre-processing language, using '(', '|',
+and ')' to express alternatives for random choices. This is a pure text-based
+pre-processor. So the following is valid syntax:
+
+	*[*e(/|]+*[)*d]    ... for either  *[*e/*d]  or  *[*e]+*[*d]
+
+As first step, create a helper-class that is constructed from such a string,
+and values for batch_size (rows) and block_size (cols), interprets the string
+and execute the random choices, and store the resulting layout in an
+easy-to-use internal representation, and provides a method to re-serialize
+the concrete layout using the same syntax.
+
 
 ## Experiment with different bias-injection schemes
 
