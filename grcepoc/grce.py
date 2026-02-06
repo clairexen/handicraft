@@ -239,19 +239,28 @@ class CountSpec:
     maximum: int
     expandable: bool
     constant_weight: bool = False
+    cap: int | None = None
 
     @classmethod
     def parse(cls, token: str) -> "CountSpec":
         token = token.strip()
         if not token:
             raise LayoutParseError("Missing size spec")
-        expandable = token.startswith("*")
-        constant_weight = False
-        if expandable:
+        prefix = None
+        if token.startswith("*"):
+            prefix = "*"
             token = token[1:]
-            if not token:
-                constant_weight = True
-        if not token:
+        elif token.startswith("+"):
+            prefix = "+"
+            token = token[1:]
+        expandable = prefix in {"*", "+"}
+        constant_weight = prefix == "+"
+        cap: int | None = None
+        if prefix == "+" and token and "-" not in token:
+            minimum = 1
+            maximum = int(token)
+            cap = maximum
+        elif not token:
             minimum = maximum = 0
         else:
             if "-" in token:
@@ -262,11 +271,13 @@ class CountSpec:
                 maximum = int(parts[1])
             else:
                 minimum = maximum = int(token)
+            if prefix == "+":
+                cap = maximum
         if minimum < 0 or maximum < 0:
             raise LayoutParseError("Negative sizes are not supported")
         if maximum < minimum:
             raise LayoutParseError(f"Invalid range {minimum}-{maximum}")
-        return cls(minimum, maximum, expandable, constant_weight)
+        return cls(minimum, maximum, expandable, constant_weight, cap)
 
     def sample(self, rng: random.Random) -> int:
         if self.minimum == self.maximum:
@@ -383,15 +394,22 @@ class _CountAllocation:
             raise ValueError("Cannot shrink below minimum")
         self.value -= 1
 
-    def expand_weight(self) -> int:
+    def can_expand(self) -> bool:
         if not self.spec.expandable:
+            return False
+        if self.spec.cap is not None and self.value >= self.spec.cap:
+            return False
+        return True
+
+    def expand_weight(self) -> int:
+        if not self.can_expand():
             return 0
         if self.spec.constant_weight:
             return 1
         return max(1, self.value)
 
     def expand(self) -> None:
-        if not self.spec.expandable:
+        if not self.can_expand():
             raise ValueError("Cannot expand fixed allocation")
         self.value += 1
 
@@ -411,7 +429,7 @@ def _shrink_until(target: int, items: Sequence[_CountAllocation], rng: random.Ra
 def _expand_until(target: int, items: Sequence[_CountAllocation], rng: random.Random) -> bool:
     current = sum(item.value for item in items)
     while current < target:
-        candidates = [item for item in items if item.spec.expandable]
+        candidates = [item for item in items if item.can_expand()]
         if not candidates:
             return False
         weights = [item.expand_weight() for item in candidates]
