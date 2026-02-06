@@ -25,6 +25,7 @@ LEGACY_SPECIAL_FIELDS = {
 ALLOWED_FIELDS = {
     "step",
     "step_split_eval",
+    "batch_layout",
     "train_loss_target",
     "train_loss_encode",
     "train_loss_decode",
@@ -219,19 +220,38 @@ def summarize_source(label: str, records: List[Dict[str, float]], filters: List[
         wanted = set(filters)
         fields = [field for field in fields if field in wanted]
     for field in fields:
-        values = [float(rec[field]) for rec in records if field in rec]
-        if not values:
+        raw_values = [rec[field] for rec in records if field in rec]
+        if not raw_values:
             continue
-        count = len(values)
-        min_val = min(values)
-        max_val = max(values)
-        mean = sum(values) / count
-        variance = sum((val - mean) ** 2 for val in values) / count
-        stddev = math.sqrt(variance)
-        print(
-            f"  {field}: count={count} min={min_val:.4f} max={max_val:.4f} "
-            f"mean={mean:.4f} std={stddev:.4f}"
-        )
+        numeric_values: List[float] = []
+        non_numeric_samples: List[str] = []
+        for value in raw_values:
+            if isinstance(value, (int, float)):
+                numeric_values.append(float(value))
+            else:
+                try:
+                    numeric_values.append(float(value))
+                except (TypeError, ValueError):
+                    non_numeric_samples.append(str(value))
+        if numeric_values:
+            count = len(numeric_values)
+            min_val = min(numeric_values)
+            max_val = max(numeric_values)
+            mean = sum(numeric_values) / count
+            variance = sum((val - mean) ** 2 for val in numeric_values) / count
+            stddev = math.sqrt(variance)
+            print(
+                f"  {field}: count={count} min={min_val:.4f} max={max_val:.4f} "
+                f"mean={mean:.4f} std={stddev:.4f}"
+            )
+            continue
+        if non_numeric_samples:
+            uniq = sorted(set(non_numeric_samples))
+            preview = ", ".join(uniq[:3])
+            suffix = "..." if len(uniq) > 3 else ""
+            print(
+                f"  {field}: {len(uniq)} unique values ({preview}{suffix})"
+            )
 
 
 def combine_records(sources: List[Tuple[str, List[Dict[str, float]]]]) -> Tuple[List[str], List[List[float]]]:

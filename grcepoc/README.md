@@ -11,6 +11,19 @@ maximum positional range (`--block-size`) from the runtime window (`--block-leng
 so you can keep the checkpoint's full set of positional embeddings while training on
 shorter slices that randomly slide across the corpus.
 
+## Batch layout mini-language
+
+`--layout` replaces the old maze of `--rows-*`/`--cols-*` flags and describes the
+entire training/eval batch with a compact string. Each term is `ROWS[SEGMENTS]`
+where `SEGMENTS` is a `/`-delimited list of `COLS+MODE` tokens (`e`, `d`, `f`, `n`
+for encode/decode/forward/noattn). Ranges use `A-B`, optional `*` prefixes mark
+segments that can expand/shrink to fit `--batch-size` and `--block-length`, and
+parenthetical `(a|b|c)` choices are expanded before parsing. For example,
+`12[16e/16d]+4[48f]+1[8f/8d/8f]` creates three row groups with chained sequences. The
+default is `2[*d]+2[*f]+*[*1-2e/*1-4d/*1-4f/*1-2n]`, which keeps two full decode and
+forward rows and fills the rest of the batch with a randomized encode/decode/forward/
+no-attention pattern that expands to the available window.
+
 ## How the context channel works
 
 1. **Per-position capture.** For every position we collect the inputs to each Transformer block before self-attention/FFN work on them. Those vectors are the only items allowed to leak information across time.

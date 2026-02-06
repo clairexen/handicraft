@@ -128,18 +128,7 @@ class Defaults:
     steps: int = 100
     cycles: int = 100
     batch_size: int = 256
-    batch_layout: str = "random"  # random, split, stacked, or both batch composition
-    rows_encode: int | None = None
-    rows_decode: int | None = None
-    rows_forward: int | None = None
-    rows_noattn: int | None = None
-    split_length: int | None = None
-    split_size: int | None = None
-    split_steps: int | None = None
-    cols_encode: int | None = None
-    cols_decode: int | None = None
-    cols_forward: int | None = None
-    cols_noattn: int | None = None
+    layout: str = "2[*d]+2[*f]+*[*1-2e/*1-4d/*1-4f/*1-2n]"
     eval_interval: int = 10
     dropout: float = 0.05
     detach_span: int = 0
@@ -178,6 +167,8 @@ from collections import defaultdict
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from typing import Dict, List, Tuple, Sequence
+
+from layout import BatchLayout
 
 
 def parse_range_arg(value: str) -> tuple[int, int]:
@@ -334,76 +325,13 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         help="Number of sequences per optimization step.",
     )
     training_group.add_argument(
-        "--batch-layout",
-        choices=["random", "split", "stacked", "both"],
-        default=DEFAULTS.batch_layout,
-        help="Batch composition strategy: random mix, force split/stacked, or run both",
-    )
-    training_group.add_argument(
-        "--rows-encode",
-        type=int,
-        default=DEFAULTS.rows_encode,
-        help="Pin the encode row count for split batches (omit for random)",
-    )
-    training_group.add_argument(
-        "--rows-decode",
-        type=int,
-        default=DEFAULTS.rows_decode,
-        help="Pin the decode row count for split batches (omit for random)",
-    )
-    training_group.add_argument(
-        "--rows-forward",
-        type=int,
-        default=DEFAULTS.rows_forward,
-        help="Pin the forward row count for split batches (omit for random)",
-    )
-    training_group.add_argument(
-        "--rows-noattn",
-        type=int,
-        default=DEFAULTS.rows_noattn,
-        help="Pin the no-attention row count for split batches (omit for random)",
-    )
-    training_group.add_argument(
-        "--split-length",
-        type=int,
-        default=DEFAULTS.split_length,
-        help="Override --block-length for split batches only",
-    )
-    training_group.add_argument(
-        "--split-size",
-        type=int,
-        default=DEFAULTS.split_size,
-        help="Override --batch-size for split batches only",
-    )
-    training_group.add_argument(
-        "--split-steps",
-        type=int,
-        default=DEFAULTS.split_steps,
-        help="Number of steps per cycle assigned to split mode (default=steps/2)",
-    )
-    training_group.add_argument(
-        "--cols-encode",
-        type=int,
-        default=DEFAULTS.cols_encode,
-        help="Pin the encode column count for stacked batches (omit for random)",
-    )
-    training_group.add_argument(
-        "--cols-decode",
-        type=int,
-        default=DEFAULTS.cols_decode,
-        help="Pin the decode column count for stacked batches (omit for random)",
-    )
-    training_group.add_argument(
-        "--cols-forward",
-        type=int,
-        default=DEFAULTS.cols_forward,
-        help="Pin the forward column count for stacked batches (omit for random)",
-    )
-    training_group.add_argument(
-        "--cols-noattn",
-        type=int,
-        default=DEFAULTS.cols_noattn,
-        help="Pin the no-attention column count for stacked batches (omit for random)",
+        "--layout",
+        type=str,
+        default=DEFAULTS.layout,
+        help=(
+            "Batch layout mini-language string controlling per-row encode/decode/forward/noattn segments."
+            " Supports ranges, '*' expansions, and () alternations."
+        ),
     )
     training_group.add_argument(
         "--skip-model-update",
@@ -880,31 +808,6 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         if args.create_args.trim_model and not args.create_args.import_model:
             raise ValueError("--trim-model is only valid with --import-model")
 
-    for attr in ("rows_encode", "rows_decode", "rows_forward", "rows_noattn"):
-        value = getattr(args, attr, None)
-        if value is not None and value < 0:
-            parser.error(f"--{attr.replace('_', '-')} must be non-negative")
-    for attr in ("cols_encode", "cols_decode", "cols_forward", "cols_noattn"):
-        value = getattr(args, attr, None)
-        if value is not None and value < 0:
-            parser.error(f"--{attr.replace('_', '-')} must be non-negative")
-    col_pins = [args.cols_encode, args.cols_decode, args.cols_forward, args.cols_noattn]
-    if all(value is not None for value in col_pins):
-        total_cols = sum(int(value) for value in col_pins)
-        if total_cols > args.block_size:
-            parser.error("Sum of pinned --cols-* cannot exceed --block-size")
-    if getattr(args, "split_length", None) is not None:
-        if args.split_length <= 0:
-            parser.error("--split-length must be positive")
-        if args.split_length > args.block_size:
-            parser.error("--split-length cannot exceed --block-size")
-    if getattr(args, "split_size", None) is not None and args.split_size <= 0:
-        parser.error("--split-size must be positive")
-    if getattr(args, "split_steps", None) is not None:
-        if args.split_steps < 0:
-            parser.error("--split-steps must be non-negative")
-        if args.split_steps > args.steps:
-            parser.error("--split-steps cannot exceed --steps")
     return args
 
 
@@ -3393,149 +3296,142 @@ def _combine_eval_stats(stats_list: Sequence[EvalBatchStats]) -> EvalBatchStats:
     return EvalBatchStats(metrics, combined_sums, combined_counts)
 
 
-def allocate_split_rows(
-    total_rows: int,
-    rows_encode: int | None,
-    rows_decode: int | None,
-    rows_forward: int | None,
-    rows_noattn: int | None,
-) -> dict[str, int]:
-    """Randomly allocate row counts per mode subject to optional pins."""
-
-    pinned = {
-        "encode": rows_encode,
-        "decode": rows_decode,
-        "forward": rows_forward,
-        "noattn": rows_noattn,
-    }
-    total = max(len(pinned), int(total_rows))
-    pinned_total = sum(int(v) for v in pinned.values() if v is not None)
-    all_pinned = all(value is not None for value in pinned.values())
-    if all_pinned:
-        total = pinned_total
-    elif pinned_total > total:
-        raise ValueError("Sum of pinned --rows-* exceeds batch size")
-    remaining = total - pinned_total
-    allocations = {mode: int(value) if value is not None else 0 for mode, value in pinned.items()}
-    for mode in pinned:
-        if pinned[mode] is None and allocations[mode] <= 0:
-            need = 1
-            allocations[mode] = need
-            remaining -= need
-    unspecified = [mode for mode, value in pinned.items() if value is None]
-    for idx, mode in enumerate(unspecified):
-        if idx == len(unspecified) - 1:
-            take = remaining
-        else:
-            low = max(1, total // 8)
-            high = max(low, total // 2)
-            take = random.randint(low, high)
-            take = min(max(1, take), remaining)
-        allocations[mode] += take
-        remaining -= take
-    return allocations
+@dataclass
+class LayoutPassResult:
+    total_loss_sum: torch.Tensor | None
+    total_tokens: int
+    mode_loss_sums: dict[str, float]
+    mode_token_counts: dict[str, int]
 
 
-def allocate_stacked_cols(
-    total_cols: int,
-    cols_encode: int | None,
-    cols_decode: int | None,
-    cols_forward: int | None,
-    cols_noattn: int | None,
-) -> dict[str, int]:
-    """Randomly allocate column counts per mode subject to optional pins."""
-
-    pinned = {
-        "encode": cols_encode,
-        "decode": cols_decode,
-        "forward": cols_forward,
-        "noattn": cols_noattn,
-    }
-    total = max(len(pinned), int(total_cols))
-    pinned_total = sum(int(v) for v in pinned.values() if v is not None)
-    all_pinned = all(value is not None for value in pinned.values())
-    if all_pinned:
-        total = pinned_total
-    elif pinned_total > total:
-        raise ValueError("Sum of pinned --cols-* exceeds block length")
-    remaining = total - pinned_total
-    allocations = {mode: int(value) if value is not None else 0 for mode, value in pinned.items()}
-    for mode in pinned:
-        if pinned[mode] is None and allocations[mode] <= 0:
-            allocations[mode] = 1
-            remaining -= 1
-    unspecified = [mode for mode, value in pinned.items() if value is None]
-    for idx, mode in enumerate(unspecified):
-        if idx == len(unspecified) - 1:
-            take = remaining
-        else:
-            low = max(1, total // 8)
-            high = max(low, total // 2)
-            take = random.randint(low, high)
-            take = min(max(1, take), remaining)
-        allocations[mode] += take
-        remaining -= take
-    return allocations
+def _log_layout_warnings(args: Args, layout: BatchLayout) -> None:
+    if not layout.warnings:
+        return
+    cache: set[str] = getattr(args, "_layout_warning_cache", set())
+    printed = False
+    for warning in layout.warnings:
+        if warning in cache:
+            continue
+        cache.add(warning)
+        printed = True
+        print(color_text(f"Layout warning: {warning}", Colors.YELLOW))
+    if printed:
+        args._layout_warning_cache = cache
 
 
-def build_cycle_layouts(step_count: int, mode: str, split_steps: int | None) -> list[str]:
-    """Return a per-step layout list honoring explicit or random selection."""
-
-    if mode == "split":
-        return ["split"] * step_count
-    if mode == "stacked":
-        return ["stacked"] * step_count
-    if mode == "both":
-        return ["both"] * step_count
-    if mode != "random":
-        raise ValueError(f"Unknown batch layout: {mode}")
-    if split_steps is None:
-        split_count = step_count // 2
-    else:
-        split_count = max(0, min(step_count, int(split_steps)))
-    stacked_count = step_count - split_count
-    layouts = ["split"] * split_count + ["stacked"] * stacked_count
-    random.shuffle(layouts)
-    return layouts
-
-
-def effective_split_rows(args: Args, base_rows: int) -> int:
-    pinned = [args.rows_encode, args.rows_decode, args.rows_forward, args.rows_noattn]
-    if args.split_size is not None:
-        return max(0, int(args.split_size))
-    if all(value is not None for value in pinned):
-        return max(0, sum(int(value) for value in pinned))
-    return max(0, int(base_rows))
-
-
-def effective_split_length(args: Args, base_length: int) -> int:
-    if args.split_length is not None:
-        return max(1, int(args.split_length))
-    return max(1, int(base_length))
-
-
-def effective_stacked_length(args: Args, base_length: int) -> int:
-    pinned = [args.cols_encode, args.cols_decode, args.cols_forward, args.cols_noattn]
-    if all(value is not None for value in pinned):
-        return max(1, sum(int(value) for value in pinned))
-    return max(1, int(base_length))
-
-def sample_position_offsets(
-    batch_size: int,
-    block_size: int,
-    block_length: int,
+def _run_layout_pass(
+    args: Args,
+    model: GRCEGPT,
+    dataset: TextDataset,
+    layout: BatchLayout,
+    split: str,
     device: torch.device,
-) -> torch.Tensor | None:
-    """Return per-row positional offsets when block_length < block_size."""
+    *,
+    collect_mode_metrics: bool,
+) -> LayoutPassResult:
+    mode_loss_sums = {mode: 0.0 for mode in BATCH_MODES}
+    mode_token_counts = {mode: 0 for mode in BATCH_MODES}
+    total_loss_sum: torch.Tensor | None = None
+    total_tokens = 0
+    for group in layout.rows:
+        rows = int(group.rows)
+        if rows <= 0:
+            continue
+        cols_total = group.total_columns()
+        if cols_total <= 0:
+            continue
+        xb, yb = dataset.get_batch(split, cols_total, rows, device)
+        embeddings = _sequence_embeddings(model, xb)
+        cursor = 0
+        kv_chain: list[list[tuple[torch.Tensor, torch.Tensor]] | None] = []
+        grce_state = None
+        xctx_state = None
+        for segment in group.segments:
+            cols = int(segment.columns)
+            if cols <= 0:
+                continue
+            mode = segment.mode
+            chunk_input = embeddings[:, cursor : cursor + cols, :]
+            chunk_target = yb[:, cursor : cursor + cols]
+            kv_sources = None if mode == "noattn" else (kv_chain if kv_chain else None)
+            chunk_output, grce_state, xctx_state, kv_out = model.stack_sequence.forward(
+                chunk_input,
+                grce_in=grce_state,
+                xctx_in=xctx_state,
+                kv_cache_list_in=kv_sources,
+                mode=mode,
+                detach_internal_kv_cache=args.detach_kv_cache,
+            )
+            logits = model.core.head(model.core.ln_f(chunk_output))
+            loss_sum, token_count = loss_sum_and_token_count(
+                logits,
+                chunk_target,
+                last_only=(mode == "encode"),
+            )
+            if token_count > 0:
+                total_tokens += token_count
+                total_loss_sum = loss_sum if total_loss_sum is None else total_loss_sum + loss_sum
+                if collect_mode_metrics:
+                    mode_loss_sums[mode] += float(loss_sum.detach().item())
+                    mode_token_counts[mode] += token_count
+            if mode != "noattn":
+                kv_chain.append(kv_out)
+            cursor += cols
+    return LayoutPassResult(total_loss_sum, total_tokens, mode_loss_sums, mode_token_counts)
 
-    if batch_size <= 0:
-        return None
-    if block_length >= block_size:
-        return None
-    max_offset = block_size - block_length
-    if max_offset <= 0:
-        return None
-    return torch.randint(0, max_offset + 1, (batch_size,), device=device)
+
+def train_layout_batch(
+    args: Args,
+    model: GRCEGPT,
+    dataset: TextDataset,
+    layout: BatchLayout,
+    device: torch.device,
+) -> tuple[torch.Tensor, int]:
+    result = _run_layout_pass(
+        args,
+        model,
+        dataset,
+        layout,
+        "train",
+        device,
+        collect_mode_metrics=False,
+    )
+    if result.total_loss_sum is None:
+        raise RuntimeError("Layout batch produced no tokens")
+    return result.total_loss_sum, result.total_tokens
+
+
+def evaluate_layout_batch(
+    args: Args,
+    model: GRCEGPT,
+    dataset: TextDataset,
+    split: str,
+    layout: BatchLayout,
+    device: torch.device,
+) -> EvalBatchStats:
+    result = _run_layout_pass(
+        args,
+        model,
+        dataset,
+        layout,
+        split,
+        device,
+        collect_mode_metrics=True,
+    )
+    metrics: dict[str, float | None] = {mode: None for mode in BATCH_MODES}
+    metrics["target"] = None
+    loss_sums = {mode: float(result.mode_loss_sums.get(mode, 0.0)) for mode in BATCH_MODES}
+    token_counts = {mode: int(result.mode_token_counts.get(mode, 0)) for mode in BATCH_MODES}
+    total_loss_value = float(result.total_loss_sum.item()) if result.total_loss_sum is not None else 0.0
+    loss_sums["target"] = total_loss_value
+    token_counts["target"] = int(result.total_tokens)
+    for mode in BATCH_MODES:
+        count = token_counts[mode]
+        if count > 0:
+            metrics[mode] = loss_sums[mode] / count
+    if result.total_tokens > 0 and result.total_loss_sum is not None:
+        metrics["target"] = total_loss_value / result.total_tokens
+    return EvalBatchStats(metrics, loss_sums, token_counts)
 
 
 def count_eval_calls(steps: int, interval: int) -> int:
@@ -3583,270 +3479,6 @@ def _sequence_embeddings(model: GRCEGPT, token_batch: torch.Tensor) -> torch.Ten
     return model.core.drop(tok + pos)
 
 
-def evaluate_single_split_batch(
-    args: Args,
-    model: GRCEGPT,
-    dataset: TextDataset,
-    split: str,
-    block_length: int,
-    batch_size: int,
-    device: torch.device,
-) -> EvalBatchStats:
-    """Evaluate a split batch (rows per mode) and report per-mode losses."""
-
-    metrics: dict[str, float | None] = {mode: None for mode in BATCH_MODES}
-    metrics["target"] = None
-    loss_sums = {mode: 0.0 for mode in BATCH_MODES}
-    loss_sums["target"] = 0.0
-    token_counts = {mode: 0 for mode in BATCH_MODES}
-    token_counts["target"] = 0
-    split_total_rows = effective_split_rows(args, batch_size)
-    split_block_length = effective_split_length(args, block_length)
-    allocations = allocate_split_rows(
-        split_total_rows,
-        args.rows_encode,
-        args.rows_decode,
-        args.rows_forward,
-        args.rows_noattn,
-    )
-    total_loss = 0.0
-    total_tokens = 0
-    for mode in BATCH_MODES:
-        rows = allocations.get(mode, 0)
-        if rows <= 0:
-            continue
-        xb, yb = dataset.get_batch(split, split_block_length, rows, device)
-        position_offsets = sample_position_offsets(
-            rows,
-            model.config.block_size,
-            split_block_length,
-            device,
-        )
-        logits, _, _ = model.forward_autoreg(
-            xb,
-            targets=yb,
-            mode=mode,
-            position_offsets=position_offsets,
-        )
-        loss_sum, token_count = loss_sum_and_token_count(
-            logits, yb, last_only=(mode == "encode")
-        )
-        if token_count <= 0:
-            continue
-        loss_value = float(loss_sum.item())
-        loss_sums[mode] = loss_value
-        token_counts[mode] = token_count
-        metrics[mode] = loss_value / token_count
-        total_loss += loss_value
-        total_tokens += token_count
-    if total_tokens > 0:
-        metrics["target"] = total_loss / total_tokens
-    loss_sums["target"] = total_loss
-    token_counts["target"] = total_tokens
-    return EvalBatchStats(metrics, loss_sums, token_counts)
-
-
-def evaluate_single_stacked_batch(
-    args: Args,
-    model: GRCEGPT,
-    dataset: TextDataset,
-    split: str,
-    block_length: int,
-    batch_size: int,
-    device: torch.device,
-) -> EvalBatchStats:
-    """Evaluate a stacked batch (cols per mode) with KV chaining."""
-
-    metrics: dict[str, float | None] = {mode: None for mode in BATCH_MODES}
-    metrics["target"] = None
-    loss_sums = {mode: 0.0 for mode in BATCH_MODES}
-    loss_sums["target"] = 0.0
-    token_counts = {mode: 0 for mode in BATCH_MODES}
-    token_counts["target"] = 0
-    stacked_total_cols = effective_stacked_length(args, block_length)
-    allocations = allocate_stacked_cols(
-        stacked_total_cols,
-        args.cols_encode,
-        args.cols_decode,
-        args.cols_forward,
-        args.cols_noattn,
-    )
-    xb, yb = dataset.get_batch(split, stacked_total_cols, batch_size, device)
-    embeddings = _sequence_embeddings(model, xb)
-    cursor = 0
-    kv_chain: list[list[tuple[torch.Tensor, torch.Tensor]] | None] = []
-    grce_state = None
-    xctx_state = None
-    total_loss = 0.0
-    total_tokens = 0
-    for mode in BATCH_MODES:
-        cols = allocations.get(mode, 0)
-        if cols <= 0:
-            continue
-        chunk_input = embeddings[:, cursor : cursor + cols, :]
-        chunk_target = yb[:, cursor : cursor + cols]
-        kv_sources = None if mode == "noattn" else (kv_chain if kv_chain else None)
-        chunk_output, grce_state, xctx_state, kv_out = model.stack_sequence.forward(
-            chunk_input,
-            grce_in=grce_state,
-            xctx_in=xctx_state,
-            kv_cache_list_in=kv_sources,
-            mode=mode,
-            detach_internal_kv_cache=args.detach_kv_cache,
-        )
-        logits = model.core.head(model.core.ln_f(chunk_output))
-        loss_sum, token_count = loss_sum_and_token_count(
-            logits,
-            chunk_target,
-            last_only=(mode == "encode"),
-        )
-        if token_count > 0:
-            loss_value = float(loss_sum.item())
-            loss_sums[mode] = loss_value
-            token_counts[mode] = token_count
-            metrics[mode] = loss_value / token_count
-            total_loss += loss_value
-            total_tokens += token_count
-        if mode != "noattn":
-            kv_chain.append(kv_out)
-        cursor += cols
-    if total_tokens > 0:
-        metrics["target"] = total_loss / total_tokens
-    loss_sums["target"] = total_loss
-    token_counts["target"] = total_tokens
-    return EvalBatchStats(metrics, loss_sums, token_counts)
-
-
-def evaluate_single_batch(
-    args: Args,
-    model: GRCEGPT,
-    dataset: TextDataset,
-    split: str,
-    block_length: int,
-    batch_size: int,
-    device: torch.device,
-    *,
-    layout: str = "split",
-) -> EvalBatchStats:
-    if layout == "stacked":
-        return evaluate_single_stacked_batch(
-            args, model, dataset, split, block_length, batch_size, device
-        )
-    if layout == "split":
-        return evaluate_single_split_batch(
-            args, model, dataset, split, block_length, batch_size, device
-        )
-    if layout == "both":
-        split_stats = evaluate_single_split_batch(
-            args, model, dataset, split, block_length, batch_size, device
-        )
-        stacked_stats = evaluate_single_stacked_batch(
-            args, model, dataset, split, block_length, batch_size, device
-        )
-        return _combine_eval_stats((split_stats, stacked_stats))
-    raise ValueError(f"Unknown evaluation layout: {layout}")
-
-
-def train_split_batch(
-    args: Args,
-    model: GRCEGPT,
-    dataset: TextDataset,
-    block_length: int,
-    batch_size: int,
-    device: torch.device,
-) -> tuple[torch.Tensor, int]:
-    split_total_rows = effective_split_rows(args, batch_size)
-    split_block_length = effective_split_length(args, block_length)
-    allocations = allocate_split_rows(
-        split_total_rows,
-        args.rows_encode,
-        args.rows_decode,
-        args.rows_forward,
-        args.rows_noattn,
-    )
-    total_loss_sum: torch.Tensor | None = None
-    total_tokens = 0
-    for mode in BATCH_MODES:
-        rows = allocations.get(mode, 0)
-        if rows <= 0:
-            continue
-        xb, yb = dataset.get_batch("train", split_block_length, rows, device)
-        position_offsets = sample_position_offsets(
-            rows,
-            model.config.block_size,
-            split_block_length,
-            device,
-        )
-        logits, _, _ = model.forward_autoreg(
-            xb,
-            targets=yb,
-            mode=mode,
-            position_offsets=position_offsets,
-        )
-        loss_sum, token_count = loss_sum_and_token_count(logits, yb, last_only=(mode == "encode"))
-        if token_count <= 0:
-            continue
-        total_loss_sum = loss_sum if total_loss_sum is None else total_loss_sum + loss_sum
-        total_tokens += token_count
-    if total_loss_sum is None:
-        raise RuntimeError("No tokens processed in split batch")
-    return total_loss_sum, total_tokens
-
-
-def train_stacked_batch(
-    args: Args,
-    model: GRCEGPT,
-    dataset: TextDataset,
-    block_length: int,
-    batch_size: int,
-    device: torch.device,
-) -> tuple[torch.Tensor, int]:
-    stacked_total_cols = effective_stacked_length(args, block_length)
-    allocations = allocate_stacked_cols(
-        stacked_total_cols,
-        args.cols_encode,
-        args.cols_decode,
-        args.cols_forward,
-        args.cols_noattn,
-    )
-    xb, yb = dataset.get_batch("train", stacked_total_cols, batch_size, device)
-    embeddings = _sequence_embeddings(model, xb)
-    cursor = 0
-    kv_chain: list[list[tuple[torch.Tensor, torch.Tensor]] | None] = []
-    grce_state = None
-    xctx_state = None
-    total_loss_sum: torch.Tensor | None = None
-    total_tokens = 0
-    for mode in BATCH_MODES:
-        cols = allocations.get(mode, 0)
-        if cols <= 0:
-            continue
-        chunk_input = embeddings[:, cursor : cursor + cols, :]
-        chunk_target = yb[:, cursor : cursor + cols]
-        kv_sources = None if mode == "noattn" else (kv_chain if kv_chain else None)
-        chunk_output, grce_state, xctx_state, kv_out = model.stack_sequence.forward(
-            chunk_input,
-            grce_in=grce_state,
-            xctx_in=xctx_state,
-            kv_cache_list_in=kv_sources,
-            mode=mode,
-            detach_internal_kv_cache=args.detach_kv_cache,
-        )
-        logits = model.core.head(model.core.ln_f(chunk_output))
-        loss_sum, token_count = loss_sum_and_token_count(
-            logits,
-            chunk_target,
-            last_only=(mode == "encode"),
-        )
-        if token_count > 0:
-            total_loss_sum = loss_sum if total_loss_sum is None else total_loss_sum + loss_sum
-            total_tokens += token_count
-        if mode != "noattn":
-            kv_chain.append(kv_out)
-        cursor += cols
-    if total_loss_sum is None:
-        raise RuntimeError("No tokens processed in stacked batch")
-    return total_loss_sum, total_tokens
 
 
 def train_model(
@@ -3857,7 +3489,6 @@ def train_model(
     steps: int,
     block_length: int,
     batch_size: int,
-    step_layouts: Sequence[str] | None,
     eval_interval: int,
     start_step: int,
     optimizer: torch.optim.Optimizer,
@@ -3885,11 +3516,6 @@ def train_model(
     history_updates: List[Dict[str, float]] = []
     printed_header = False
     eval_interval = max(1, int(eval_interval))
-    if step_layouts is None or len(step_layouts) != steps:
-        step_layouts = build_cycle_layouts(steps, args.batch_layout, args.split_steps)
-    else:
-        step_layouts = list(step_layouts)
-
     if prompt_tracker is not None:
         prompt_queue = prompt_tracker.prompt_queue(reset=reset_prompt_queue)
     else:
@@ -3912,47 +3538,17 @@ def train_model(
     oom_retries = 0
     step = 0
     while step < steps:
-        layout_choice = step_layouts[step]
+        layout = BatchLayout(args.layout, batch_size=batch_size, block_size=block_length)
+        layout_serialized = layout.serialize()
+        _log_layout_warnings(args, layout)
         try:
-            if layout_choice == "stacked":
-                total_loss_sum, total_tokens = train_stacked_batch(
-                    args,
-                    model,
-                    dataset,
-                    block_length,
-                    batch_size,
-                    device,
-                )
-            elif layout_choice == "split":
-                total_loss_sum, total_tokens = train_split_batch(
-                    args,
-                    model,
-                    dataset,
-                    block_length,
-                    batch_size,
-                    device,
-                )
-            elif layout_choice == "both":
-                split_loss_sum, split_tokens = train_split_batch(
-                    args,
-                    model,
-                    dataset,
-                    block_length,
-                    batch_size,
-                    device,
-                )
-                stacked_loss_sum, stacked_tokens = train_stacked_batch(
-                    args,
-                    model,
-                    dataset,
-                    block_length,
-                    batch_size,
-                    device,
-                )
-                total_loss_sum = split_loss_sum + stacked_loss_sum
-                total_tokens = split_tokens + stacked_tokens
-            else:
-                raise ValueError(f"Unknown batch layout: {layout_choice}")
+            total_loss_sum, total_tokens = train_layout_batch(
+                args,
+                model,
+                dataset,
+                layout,
+                device,
+            )
             if total_tokens <= 0:
                 raise RuntimeError("No tokens processed in training step")
             total_loss = total_loss_sum / float(total_tokens)
@@ -3967,8 +3563,10 @@ def train_model(
                 line_parts.append(color_text(timestamp, Colors.BLUE))
             line_parts.append(color_text(f"{total_steps}", Colors.CYAN))
             line_parts.append(color_text(
-                f"OOM (retry {oom_retries}/3) during {layout_choice} batch; "
-                "refreshing layout and retrying", Colors.YELLOW))
+                f"OOM (retry {oom_retries}/3) during layout {layout_serialized}; "
+                "refreshing layout and retrying",
+                Colors.YELLOW,
+            ))
             line = " | ".join(line_parts)
             print(line)
             if torch.cuda.is_available():
@@ -3986,30 +3584,16 @@ def train_model(
             continue
         eval_timer.start()
         model.eval()
-        if total_steps % 2 == 1:
-            eval_layout = "split"
-        elif args.batch_layout == "split":
-            eval_layout = "split"
-        elif args.batch_layout == "stacked":
-            eval_layout = "stacked"
-        elif args.batch_layout == "both":
-            eval_layout = "both"
-        else:
-            eval_layout = "stacked"
-        layout_uses_split = eval_layout in {"split", "both"}
-        layout_uses_stacked = eval_layout in {"stacked", "both"}
         eval_metrics: dict[str, EvalBatchStats] = {}
         with torch.no_grad():
             for split in ("train", "test"):
-                eval_metrics[split] = evaluate_single_batch(
+                eval_metrics[split] = evaluate_layout_batch(
                     args,
                     model,
                     dataset,
                     split,
-                    block_length,
-                    batch_size,
+                    layout,
                     device,
-                    layout=eval_layout,
                 )
         model.train()
         eval_timer.stop()
@@ -4079,10 +3663,10 @@ def train_model(
         sample_render = (Colors.YELLOW if sampling_strategy == 'argmax' else Colors.CYAN) + \
                         f"{sampling_strategy}:{Colors.RESET} " + sample_prefix + sample_suffix
 
-        def format_metric(dataset_split: str, key: str, use_colon: bool) -> str:
+        def format_metric(dataset_split: str, key: str) -> str:
             value = eval_metrics[dataset_split].metrics.get(key)
             if key in ROW_METRIC_LOG_GROUP:
-                sep = ": " if use_colon else "- "
+                sep = ": "
             else:
                 sep = ""
             if value is None:
@@ -4092,20 +3676,20 @@ def train_model(
         detail_keys = ROW_METRIC_LOG_KEYS
 
         def format_train_line() -> str:
-            base = format_metric("train", "target", layout_uses_split)
+            base = format_metric("train", "target")
             if not show_train_loss_details:
                 return base
             diag = " ".join(
-                format_metric("train", key, layout_uses_split) for key in detail_keys
+                format_metric("train", key) for key in detail_keys
             )
             return f"{base} {diag}"
 
         def format_test_line() -> str:
-            base = format_metric("test", "target", layout_uses_split)
+            base = format_metric("test", "target")
             if not show_test_loss_details:
                 return base
             diag = " ".join(
-                format_metric("test", key, layout_uses_split) for key in detail_keys
+                format_metric("test", key) for key in detail_keys
             )
             return f"{base} {diag}"
 
@@ -4139,22 +3723,11 @@ def train_model(
             "unix_time": float(eval_now),
             "train_cursor": int(dataset.positions.get("train", 0)),
             "test_cursor": int(dataset.positions.get("test", 0)),
-            "step_split_eval": 0.0,
         }
         record["corpus"] = args.corpus
         record["train_cycle"] = int(dataset.cycles.get("train", 0))
         record["test_cycle"] = int(dataset.cycles.get("test", 0))
-        split_rows_eval = effective_split_rows(args, batch_size) if layout_uses_split else 0
-        split_cols_eval = effective_split_length(args, block_length) if layout_uses_split else 0
-        stacked_rows_eval = batch_size if layout_uses_stacked else 0
-        stacked_cols_eval = (
-            effective_stacked_length(args, block_length) if layout_uses_stacked else 0
-        )
-        split_tokens_est = split_rows_eval * split_cols_eval
-        stacked_tokens_est = stacked_rows_eval * stacked_cols_eval
-        total_tokens_est = split_tokens_est + stacked_tokens_est
-        if total_tokens_est > 0:
-            record["step_split_eval"] = split_tokens_est / total_tokens_est
+        record["batch_layout"] = layout_serialized
         metric_keys = ["target"] + ROW_METRIC_HIST_KEYS
         for key in metric_keys:
             train_val = eval_metrics["train"].metrics.get(key)
@@ -4188,58 +3761,20 @@ def run_profile_mode(
             "torch.profiler is unavailable; upgrade to PyTorch 1.8+ to use 'profile'."
         ) from exc
 
-    split_len = effective_split_length(args, block_length)
-    stacked_len = effective_stacked_length(args, block_length)
-    split_rows = effective_split_rows(args, batch_size)
-    max_len = max(block_length, split_len, stacked_len)
-    max_rows = max(batch_size, split_rows)
-    train_chars = (max_len + 1) * max_rows * 2
+    train_chars = (block_length + 1) * batch_size * 2
     dataset.prepare_cycle("train", train_chars)
 
     def train_step(tag: str) -> float:
         model.train()
-        layout_choice = args.batch_layout
-        if layout_choice == "random":
-            layout_choice = random.choice(["split", "stacked"])
-        if layout_choice == "stacked":
-            total_loss_sum, total_tokens = train_stacked_batch(
-                args,
-                model,
-                dataset,
-                block_length,
-                batch_size,
-                device,
-            )
-        elif layout_choice == "split":
-            total_loss_sum, total_tokens = train_split_batch(
-                args,
-                model,
-                dataset,
-                block_length,
-                batch_size,
-                device,
-            )
-        elif layout_choice == "both":
-            split_loss_sum, split_tokens = train_split_batch(
-                args,
-                model,
-                dataset,
-                block_length,
-                batch_size,
-                device,
-            )
-            stacked_loss_sum, stacked_tokens = train_stacked_batch(
-                args,
-                model,
-                dataset,
-                block_length,
-                batch_size,
-                device,
-            )
-            total_loss_sum = split_loss_sum + stacked_loss_sum
-            total_tokens = split_tokens + stacked_tokens
-        else:
-            raise ValueError(f"Unknown batch layout: {layout_choice}")
+        layout = BatchLayout(args.layout, batch_size=batch_size, block_size=block_length)
+        _log_layout_warnings(args, layout)
+        total_loss_sum, total_tokens = train_layout_batch(
+            args,
+            model,
+            dataset,
+            layout,
+            device,
+        )
         if total_tokens <= 0:
             raise RuntimeError("No tokens processed during profiling step")
         loss = total_loss_sum / float(total_tokens)
@@ -5319,37 +4854,15 @@ class Runtime:
                 label = "".join(tags + plus_tags + minus_tags)
                 hours = total_train_wall / 3600.0
                 days = hours / 24.0
-                split_len = effective_split_length(self.args, self.args.block_length)
-                stacked_len = effective_stacked_length(self.args, self.args.block_length)
-                split_rows = effective_split_rows(self.args, self.args.batch_size)
-                step_layouts = build_cycle_layouts(
-                    self.args.steps,
-                    self.args.batch_layout,
-                    self.args.split_steps,
+                train_chars_cycle = (
+                    (self.args.block_length + 1)
+                    * self.args.batch_size
+                    * self.args.steps
                 )
-                train_chars_cycle = 0
-                for layout in step_layouts:
-                    if layout == "split":
-                        train_chars_cycle += (split_len + 1) * split_rows
-                    elif layout == "stacked":
-                        train_chars_cycle += (stacked_len + 1) * self.args.batch_size
-                    elif layout == "both":
-                        train_chars_cycle += (split_len + 1) * split_rows
-                        train_chars_cycle += (stacked_len + 1) * self.args.batch_size
-                    else:
-                        raise ValueError(f"Unknown batch layout: {layout}")
                 eval_calls = max(1, count_eval_calls(self.args.steps, self.args.eval_interval))
-                split_eval_chars = (split_len + 1) * split_rows
-                stacked_eval_chars = (stacked_len + 1) * self.args.batch_size
-                if self.args.batch_layout == "split":
-                    per_eval_chars = split_eval_chars
-                elif self.args.batch_layout == "stacked":
-                    per_eval_chars = stacked_eval_chars
-                elif self.args.batch_layout == "both":
-                    per_eval_chars = split_eval_chars + stacked_eval_chars
-                else:
-                    per_eval_chars = max(split_eval_chars, stacked_eval_chars)
-                test_chars_cycle = per_eval_chars * eval_calls
+                test_chars_cycle = (
+                    (self.args.block_length + 1) * self.args.batch_size * eval_calls
+                )
                 while True:
                     dataset = self.dataset
                     train_start = int(dataset.positions.get("train", 0))
@@ -5420,7 +4933,6 @@ class Runtime:
                     self.args.steps,
                     self.args.block_length,
                     self.args.batch_size,
-                    step_layouts,
                     self.args.eval_interval,
                     total_steps,
                     optimizer,
