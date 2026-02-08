@@ -29,14 +29,23 @@ SPECIAL_TOKENS = """
 DEFAULT_LIMIT = 1 * 1024 * 1024  # 1 MiB
 
 
-def read_limited_text(path: pathlib.Path, limit: int | None) -> str:
-    """Load up to ``limit`` bytes from ``path`` (expects *.txt.gz)."""
+def _open_text(path: pathlib.Path):
+    """Yield a text-mode file handle for .txt or .txt.gz inputs."""
 
     if not path.exists():
         raise FileNotFoundError(f"Text file {path} not found")
-    if path.suffix != ".gz":
-        raise ValueError(f"Expected .txt.gz input, got {path}")
-    with gzip.open(path, "rt", encoding="utf-8", errors="ignore") as handle:
+    suffix = path.suffix.lower()
+    if suffix == ".gz":
+        return gzip.open(path, "rt", encoding="utf-8", errors="ignore")
+    if suffix == ".txt":
+        return path.open("rt", encoding="utf-8", errors="ignore")
+    raise ValueError(f"Expected .txt or .txt.gz input, got {path}")
+
+
+def read_limited_text(path: pathlib.Path, limit: int | None) -> str:
+    """Load up to ``limit`` bytes from ``path`` (.txt or .txt.gz)."""
+
+    with _open_text(path) as handle:
         text = handle.read(limit)
     return text
 
@@ -78,11 +87,7 @@ def build_tokenizer(args: argparse.Namespace) -> int:
 
 
 def read_full_text(path: pathlib.Path) -> str:
-    if not path.exists():
-        raise FileNotFoundError(f"Text file {path} not found")
-    if path.suffix != ".gz":
-        raise ValueError(f"Expected .txt.gz input, got {path}")
-    with gzip.open(path, "rt", encoding="utf-8", errors="ignore") as handle:
+    with _open_text(path) as handle:
         return handle.read()
 
 
@@ -115,7 +120,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     tok = subparsers.add_parser(
         "tokenizer",
-        help="Build a tokenizer JSON from limited *.txt.gz inputs",
+        help="Build a tokenizer JSON from limited *.txt/.txt.gz inputs",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     tok.add_argument("--output", type=pathlib.Path, required=True)
@@ -126,12 +131,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=DEFAULT_LIMIT,
         help="Maximum bytes to consume from each input file",
     )
-    tok.add_argument("inputs", nargs="+", help="*.txt.gz sources", type=str)
+    tok.add_argument("inputs", nargs="+", help="*.txt or *.txt.gz sources", type=str)
     tok.set_defaults(func=build_tokenizer)
 
     enc = subparsers.add_parser(
         "tokens",
-        help="Encode a .txt.gz file into a .pt token cache",
+        help="Encode a .txt or .txt.gz file into a .pt token cache",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     enc.add_argument("--tokenizer", type=pathlib.Path, required=True)

@@ -1,23 +1,24 @@
 #!/bin/bash
 
-set -evx
-volume=${1:-0000}
+set -ex
+vocab=6000
+for volume; do
+	if [ ! -f dolma-cccc-filtered-${volume}.json.gz ]; then
+		# https://huggingface.co/datasets/common-pile/cccc_filtered/tree/main
+		wget "https://huggingface.co/datasets/common-pile/cccc_filtered/resolve/main/dolma-cccc-filtered-${volume}.json.gz"
+	fi
 
-if [ ! -f dolma-cccc-filtered-${volume}.json.gz ]; then
-	# https://huggingface.co/datasets/common-pile/cccc_filtered/tree/main
-	wget "https://huggingface.co/datasets/common-pile/cccc_filtered/resolve/main/dolma-cccc-filtered-${volume}.json.gz"
-fi
+	if [ ! -f cccclc-${volume}-train.txt.gz ]; then
+		../.venv/bin/python cccclc-split.py ${volume}
+	fi
 
-if [ ! -f cccclc-${volume}-train.txt.gz ]; then
-	../.venv/bin/python cccclc-split.py ${volume}
-fi
+	if [ ! -f cccclc-${volume}_tokens_test_${vocab}.pt ]; then
+		../.venv/bin/python ../corpus.py tokens --tokenizer cccclc_vocab_${vocab}.json \
+				--input cccclc-${volume}-test.txt.gz --output cccclc-${volume}_tokens_test_${vocab}.pt
+	fi
 
-if [ ! -f cccclc-${volume}_tokens_test_5000.pt ]; then
-	../.venv/bin/python ../corpus.py tokens --tokenizer cccclc_vocab_5000.json \
-			--input cccclc-${volume}-test.txt.gz --output cccclc-${volume}_tokens_test_5000.pt
-fi
-
-if [ ! -f cccclc-${volume}_tokens_train_5000.pt ]; then
-	../.venv/bin/python ../corpus.py tokens --tokenizer cccclc_vocab_5000.json \
-			--input cccclc-${volume}-train.txt.gz --output cccclc-${volume}_tokens_train_5000.pt
-fi
+	if [ ! -f cccclc-${volume}_tokens_train_${vocab}.pt ]; then
+		../.venv/bin/python ../corpus.py tokens --tokenizer cccclc_vocab_${vocab}.json \
+				--input cccclc-${volume}-train.txt.gz --output cccclc-${volume}_tokens_train_${vocab}.pt
+	fi
+done

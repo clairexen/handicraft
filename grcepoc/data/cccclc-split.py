@@ -6,7 +6,7 @@ import random
 import sys
 
 MAX_TRAIN = None # no limit
-MAX_BYTES = 2 * 1024  # 2 kB
+MAX_BYTES = 64 * 1024  # 64 kB
 TEST_SPLIT = 0.11
 SEP = "\n\n<|----|>\n\n"
 
