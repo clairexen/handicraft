@@ -424,6 +424,7 @@ optimization target, "encode" = loss only based on the last column of the
 encode block, "decode" = loss based on all columns of the decode block,
 and likewise for "forward" and "noattn".
 
+
 ## Mini-language for batch layouts
 
 We define a mini-language for (training and evaluating) batch layouts:
@@ -483,6 +484,17 @@ pre-processor. So the following is valid syntax:
 
 Batch layouts are passed to grce.py with --layout and --log-step-layout-times
 prints a message with concrete layout and training time for each training step.
+
+The top-level elements can be separated by , instead of +. A , denotes
+the boundary between micro-batches. Everything between two commas must
+fit onto the GPU and we run forward an backward on all of it. But instead
+of running optimize we then run forward and backward for the next micro-batch,
+accumulating gradients. So for example:
+
+	128[64f](,1[1024f]|||)
+
+This creates batches of 128x64, but in 25% of the batches an additional
+micro-batch of size 1x1024 is added and included in that optimize step.
 
 
 ## Thinking Models -- (this is future work)

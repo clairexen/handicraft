@@ -125,7 +125,7 @@ class Defaults:
     eval_interval: int = 10
     dropout: float = 0.05
     detach_span: int = 0
-    log_step_layout_times: bool = False
+    log_step_details: bool = False
 
 DEFAULTS = Defaults()
 
@@ -316,20 +316,29 @@ class RowLayout:
 
 def _split_top_level(text: str, sep: str) -> list[str]:
     parts: list[str] = []
-    depth = 0
+    depth_square = 0
+    depth_paren = 0
     start = 0
     for index, ch in enumerate(text):
         if ch == "[":
-            depth += 1
+            depth_square += 1
         elif ch == "]":
-            depth -= 1
-            if depth < 0:
+            depth_square -= 1
+            if depth_square < 0:
                 raise LayoutParseError("Unbalanced ']' in layout string")
-        elif ch == sep and depth == 0:
+        elif ch == "(":
+            depth_paren += 1
+        elif ch == ")":
+            depth_paren -= 1
+            if depth_paren < 0:
+                raise LayoutParseError("Unbalanced ')' in layout string")
+        elif ch == sep and depth_square == 0 and depth_paren == 0:
             parts.append(text[start:index].strip())
             start = index + 1
-    if depth != 0:
+    if depth_square != 0:
         raise LayoutParseError("Unbalanced '[' in layout string")
+    if depth_paren != 0:
+        raise LayoutParseError("Unbalanced '(' in layout string")
     parts.append(text[start:].strip())
     return [part for part in parts if part]
 
@@ -462,15 +471,25 @@ class BatchLayout:
         self.rng = rng or random
         self.warnings: list[str] = []
         processed = _preprocess_template(template, self.rng)
-        terms = _split_top_level(processed.replace(" ", ""), "+")
-        if not terms:
+        micro_terms = _split_top_level(processed.replace(" ", ""), ",")
+        if not micro_terms:
             raise LayoutParseError("Layout string is empty")
-        self.row_specs = [_parse_row_spec(term) for term in terms]
-        self.rows = self._materialize_rows()
+        self.micro_specs: list[list[RowSpec]] = []
+        for micro_term in micro_terms:
+            if not micro_term:
+                continue
+            row_terms = _split_top_level(micro_term, "+")
+            if not row_terms:
+                continue
+            self.micro_specs.append([_parse_row_spec(term) for term in row_terms])
+        if not self.micro_specs:
+            raise LayoutParseError("Layout string is empty")
+        self.micro_batches = [self._materialize_rows(specs) for specs in self.micro_specs]
+        self.rows = [row for batch in self.micro_batches for row in batch]
 
-    def _materialize_rows(self) -> list[RowLayout]:
+    def _materialize_rows(self, specs: Sequence[RowSpec]) -> list[RowLayout]:
         row_allocs: list[_CountAllocation] = []
-        for spec in self.row_specs:
+        for spec in specs:
             value = spec.count.sample(self.rng)
             row_allocs.append(_CountAllocation(spec.count, value))
         if not _shrink_until(self.batch_size, row_allocs, self.rng):
@@ -481,7 +500,7 @@ class BatchLayout:
         else:
             _expand_until(self.batch_size, row_allocs, self.rng)
         rows: list[RowLayout] = []
-        for spec, allocation in zip(self.row_specs, row_allocs):
+        for spec, allocation in zip(specs, row_allocs):
             segments = self._materialize_segments(spec.segments)
             rows.append(RowLayout(allocation.value, segments))
         total_rows = sum(row.rows for row in rows)
@@ -514,14 +533,18 @@ class BatchLayout:
     def serialize(self) -> str:
         """Return a deterministic layout string for the resolved layout."""
 
-        parts: list[str] = []
-        for row in self.rows:
+        micro_parts = [self.serialize_rows(batch) for batch in self.micro_batches]
+        return ",".join(micro_parts)
+
+    def serialize_rows(self, rows: Sequence[RowLayout]) -> str:
+        row_bits: list[str] = []
+        for row in rows:
             segment_bits = []
             for segment in row.segments:
                 letter = _MODE_LETTERS.get(segment.mode, segment.mode[0])
                 segment_bits.append(f"{segment.columns}{letter}")
-            parts.append(f"{row.rows}[{'/'.join(segment_bits)}]")
-        return "+".join(parts)
+            row_bits.append(f"{row.rows}[{'/'.join(segment_bits)}]")
+        return "+".join(row_bits)
 
     def expanded_rows(self) -> list[list[SegmentLayout]]:
         """Return the per-row segments with rows fully expanded."""
@@ -702,10 +725,10 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         ),
     )
     training_group.add_argument(
-        "--log-step-layout-times",
+        "--log-step-details",
         action="store_true",
-        default=DEFAULTS.log_step_layout_times,
-        help="Print per-step layout serialization plus training wall time",
+        default=DEFAULTS.log_step_details,
+        help="Print per-step micro-batch timing details",
     )
     training_group.add_argument(
         "--skip-model-update",
@@ -3293,21 +3316,22 @@ def _log_layout_warnings(args: Args, layout: BatchLayout) -> None:
         args._layout_warning_cache = cache
 
 
-def _run_layout_pass(
+def _run_microbatch_pass(
     args: Args,
     model: GRCEGPT,
     dataset: TextDataset,
-    layout: BatchLayout,
+    rows: Sequence[RowLayout],
     split: str,
     device: torch.device,
     *,
     collect_mode_metrics: bool,
-) -> LayoutPassResult:
+) -> tuple[LayoutPassResult, float]:
+    start_time = time.time()
     mode_loss_sums = {mode: 0.0 for mode in BATCH_MODES}
     mode_token_counts = {mode: 0 for mode in BATCH_MODES}
     total_loss_sum: torch.Tensor | None = None
     total_tokens = 0
-    for group in layout.rows:
+    for group in rows:
         rows = int(group.rows)
         if rows <= 0:
             continue
@@ -3351,7 +3375,8 @@ def _run_layout_pass(
             if mode != "noattn":
                 kv_chain.append(kv_out)
             cursor += cols
-    return LayoutPassResult(total_loss_sum, total_tokens, mode_loss_sums, mode_token_counts)
+    result = LayoutPassResult(total_loss_sum, total_tokens, mode_loss_sums, mode_token_counts)
+    return result, time.time() - start_time
 
 
 def train_layout_batch(
@@ -3360,19 +3385,36 @@ def train_layout_batch(
     dataset: TextDataset,
     layout: BatchLayout,
     device: torch.device,
-) -> tuple[torch.Tensor, int]:
-    result = _run_layout_pass(
-        args,
-        model,
-        dataset,
-        layout,
-        "train",
-        device,
-        collect_mode_metrics=False,
-    )
-    if result.total_loss_sum is None:
+) -> tuple[torch.Tensor, int, list[tuple[int, float, float, str]]]:
+    total_loss_sum: torch.Tensor | None = None
+    total_tokens = 0
+    micro_logs: list[tuple[int, float, float, str]] = []
+    for index, batch in enumerate(layout.micro_batches, start=1):
+        result, fwd_time = _run_microbatch_pass(
+            args,
+            model,
+            dataset,
+            batch,
+            "train",
+            device,
+            collect_mode_metrics=False,
+        )
+        if result.total_loss_sum is None or result.total_tokens <= 0:
+            micro_logs.append((index, fwd_time, 0.0, layout.serialize_rows(batch)))
+            continue
+        bwd_start = time.time()
+        result.total_loss_sum.backward()
+        bwd_time = time.time() - bwd_start
+        micro_logs.append((index, fwd_time, bwd_time, layout.serialize_rows(batch)))
+        total_loss_sum = (
+            result.total_loss_sum
+            if total_loss_sum is None
+            else total_loss_sum + result.total_loss_sum
+        )
+        total_tokens += result.total_tokens
+    if total_loss_sum is None:
         raise RuntimeError("Layout batch produced no tokens")
-    return result.total_loss_sum, result.total_tokens
+    return total_loss_sum, total_tokens, micro_logs
 
 
 def evaluate_layout_batch(
@@ -3383,28 +3425,41 @@ def evaluate_layout_batch(
     layout: BatchLayout,
     device: torch.device,
 ) -> EvalBatchStats:
-    result = _run_layout_pass(
-        args,
-        model,
-        dataset,
-        layout,
-        split,
-        device,
-        collect_mode_metrics=True,
-    )
+    aggregate_loss_sums = {mode: 0.0 for mode in BATCH_MODES}
+    aggregate_token_counts = {mode: 0 for mode in BATCH_MODES}
+    total_loss_sum: torch.Tensor | None = None
+    total_tokens = 0
+    for batch_rows in layout.micro_batches:
+        result, _ = _run_microbatch_pass(
+            args,
+            model,
+            dataset,
+            batch_rows,
+            split,
+            device,
+            collect_mode_metrics=True,
+        )
+        if result.total_loss_sum is not None:
+            total_loss_sum = (
+                result.total_loss_sum
+                if total_loss_sum is None
+                else total_loss_sum + result.total_loss_sum
+            )
+        total_tokens += result.total_tokens
+        for mode in BATCH_MODES:
+            aggregate_loss_sums[mode] += result.mode_loss_sums.get(mode, 0.0)
+            aggregate_token_counts[mode] += result.mode_token_counts.get(mode, 0)
     metrics: dict[str, float | None] = {mode: None for mode in BATCH_MODES}
-    metrics["target"] = None
-    loss_sums = {mode: float(result.mode_loss_sums.get(mode, 0.0)) for mode in BATCH_MODES}
-    token_counts = {mode: int(result.mode_token_counts.get(mode, 0)) for mode in BATCH_MODES}
-    total_loss_value = float(result.total_loss_sum.item()) if result.total_loss_sum is not None else 0.0
-    loss_sums["target"] = total_loss_value
-    token_counts["target"] = int(result.total_tokens)
+    loss_sums = {mode: aggregate_loss_sums[mode] for mode in BATCH_MODES}
+    token_counts = {mode: aggregate_token_counts[mode] for mode in BATCH_MODES}
+    total_loss_value = float(total_loss_sum.item()) if total_loss_sum is not None else 0.0
     for mode in BATCH_MODES:
         count = token_counts[mode]
         if count > 0:
             metrics[mode] = loss_sums[mode] / count
-    if result.total_tokens > 0 and result.total_loss_sum is not None:
-        metrics["target"] = total_loss_value / result.total_tokens
+    metrics["target"] = None if total_tokens <= 0 else total_loss_value / total_tokens
+    loss_sums["target"] = total_loss_value
+    token_counts["target"] = total_tokens
     return EvalBatchStats(metrics, loss_sums, token_counts)
 
 
@@ -3451,6 +3506,14 @@ def _sequence_embeddings(model: GRCEGPT, token_batch: torch.Tensor) -> torch.Ten
     tok = model.core.tok_emb(token_batch)
     pos = model.core.pos_emb(pos_idx)
     return model.core.drop(tok + pos)
+
+
+def _scale_gradients(module: nn.Module, scale: float) -> None:
+    if scale == 1.0:
+        return
+    for param in module.parameters():
+        if param.grad is not None:
+            param.grad.mul_(scale)
 
 
 
@@ -3512,7 +3575,8 @@ def train_model(
         current_step_index = total_steps + 1
         step_wall_start = time.time()
         try:
-            total_loss_sum, total_tokens = train_layout_batch(
+            optimizer.zero_grad(set_to_none=True)
+            total_loss_sum, total_tokens, micro_logs = train_layout_batch(
                 args,
                 model,
                 dataset,
@@ -3521,10 +3585,12 @@ def train_model(
             )
             if total_tokens <= 0:
                 raise RuntimeError("No tokens processed in training step")
-            total_loss = total_loss_sum / float(total_tokens)
-            optimizer.zero_grad(set_to_none=True)
-            total_loss.backward()
+            opt_start = time.time()
+            grad_scale = 1.0 / float(total_tokens)
+            _scale_gradients(model, grad_scale)
             optimizer.step()
+            opt_duration = time.time() - opt_start
+            total_loss = total_loss_sum / float(total_tokens)
         except torch.OutOfMemoryError:
             oom_retries += 1
             line_parts: List[str] = []
@@ -3546,12 +3612,18 @@ def train_model(
                 raise
             continue
         step_wall = time.time() - step_wall_start
-        if args.log_step_layout_times:
-            line = (
-                f"Step {current_step_index}: layout {layout_serialized} "
-                f"train {step_wall:.2f}s"
-            )
-            print(color_text(line, Colors.BLUE))
+        if args.log_step_details:
+            print(color_text("Step " + str(current_step_index) + ": u-batch | fwd | bwd | layout", Colors.BLUE))
+            total_fwd = 0.0
+            total_bwd = 0.0
+            for idx, fwd_time, bwd_time, rows_str in micro_logs:
+                total_fwd += fwd_time
+                total_bwd += bwd_time
+                line = f"  {idx} | {fwd_time:.2f}s | {bwd_time:.2f}s | {rows_str or layout_serialized}"
+                print(color_text(line, Colors.BLUE))
+            other_time = max(0.0, step_wall - (total_fwd + total_bwd + opt_duration))
+            summary = f"  {opt_duration:.2f}s optimize, {other_time:.2f}s other"
+            print(color_text(summary, Colors.BLUE))
         oom_retries = 0
         step += 1
         total_steps += 1

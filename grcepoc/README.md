@@ -17,12 +17,22 @@ shorter slices that randomly slide across the corpus.
 entire training/eval batch with a compact string. Each term is `ROWS[SEGMENTS]`
 where `SEGMENTS` is a `/`-delimited list of `COLS+MODE` tokens (`e`, `d`, `f`, `n`
 for encode/decode/forward/noattn). Ranges use `A-B`, optional `*` prefixes mark
-segments that can expand/shrink to fit `--batch-size` and `--block-length`, and
-parenthetical `(a|b|c)` choices are expanded before parsing. For example,
-`12[16e/16d]+4[48f]+1[8f/8d/8f]` creates three row groups with chained sequences. The
-default is `2[*d]+2[*f]+*[*1-2e/*1-4d/*1-4f/*1-2n]`, which keeps two full decode and
-forward rows and fills the rest of the batch with a randomized encode/decode/forward/
-no-attention pattern that expands to the available window.
+segments that can expand/shrink to fill up to the configured `--batch-size`, and
+parenthetical `(a|b|c)` choices are expanded before parsing. The `+` prefix behaves
+like `*` but caps growth at the specified maximum (`+12` is shorthand for `+1-12`).
+Rows separated by `+` belong to the same micro-batch, while commas split the layout
+into gradient-accumulation micro-batches. Everything between two commas must fit on
+the GPU; we run forward/backward on that slice, accumulate gradients, then advance to
+the next slice before calling `optimizer.step()`. For example
+
+```
+128[64f](,1[1024f]|||)
+```
+
+produces a 128×64 forward micro-batch, and with 25% probability appends a second
+micro-batch of size 1×1024 before the optimizer update. The default
+`2[*d]+2[*f]+*[*1-2e/*1-4d/*1-4f/*1-2n]` keeps two full decode and forward rows and
+fills the remainder with a randomized encode/decode/forward/no-attention pattern.
 
 ## How the context channel works
 
