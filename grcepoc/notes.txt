@@ -107,8 +107,40 @@ we must not use a KV-cached architecture in the case of `encode` blocks.)
 (Also note the "Experiment with different bias-injection schemes" todo item
 near the end of this document.)
 
+### Experiment with different bias-injection schemes
 
-## Rationale for the recurrent channels, additional thoughts, and predicted behavior
+The actual current injection patterns is
+
+	LN(S_i + alpha .* XCTX_Bias_i) + LD(GRCE_Bias_i),
+
+with per-feature learned gains in alpha, and where LD (Layer-Dampening) is a
+LayerNorm-like operation that removes the mean and applies per-feature (and
+per-layer and per-injection-point) learned gains, but replaces hard RMS
+normalization with soft radial dampening. (See also the implementation in class
+LayerDampening(nn.Module) in grce.py.)
+
+Instead of forcing activations onto a unit-RMS shell, LD only attenuates
+large magnitudes using a learned sharpness parameter log_k:
+
+	k = torch.exp(self.log_k)
+	denom = 1.0 + F.softplus(k * (r - 1.0)) / k
+
+This softly constrains the signal to the interior of the unit ball, rather than
+projecting it onto the unit sphere.
+
+This reduces noise from small signals by preserving them as they are, prevents
+runaway growth, and allows the model to adapt the strength of injected bias
+differently for attention and MLP paths with minimal additional parameters.
+
+I'm also considering
+
+	G' := LD(G + ..., with_gain=False)
+
+instead of the current
+
+	G' := LN(M + ...).
+
+### Rationale for the recurrent channels, additional thoughts, and predicted behavior
 
 The vector of concatenated S_i values for a position already encodes the entire
 context for the next position. The position has to evaluate that context as part
@@ -678,38 +710,3 @@ G.dot(embedding) < 1 for all GRCE state embeddings that are expected "OFF" (-1).
 # TODOs
 
 Read AGENTS.md, README.md, and the comments at the top of grce.py. Then:
-
-
-## Experiment with different bias-injection schemes
-
-My current favorite injection patterns is
-
-	LN(S_i + alpha .* XCTX_Bias_i) + LD(GRCE_Bias_i),
-
-with per-feature learned gains in alpha, and where LD (Layer-Dampening) is a
-LayerNorm-like operation that removes the mean and applies per-feature (and
-per-layer and per-injection-point) learned gains, but replaces hard RMS
-normalization with soft radial dampening. (See also the implementation in class
-LayerDampening(nn.Module) in grce.py.)
-
-Instead of forcing activations onto a unit-RMS shell, LD only attenuates
-large magnitudes using a learned sharpness parameter log_k:
-
-	k = torch.exp(self.log_k)
-	denom = 1.0 + F.softplus(k * (r - 1.0)) / k
-
-This softly constrains the signal to the interior of the unit ball, rather than
-projecting it onto the unit sphere.
-
-This reduces noise from small signals by preserving them as they are, prevents
-runaway growth, and allows the model to adapt the strength of injected bias
-differently for attention and MLP paths with minimal additional parameters.
-
-I'm also considering
-
-	G' := LD(G + ..., with_gain=False)
-
-instead of the current
-
-	G' := LN(M + ...).
-
