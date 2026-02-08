@@ -13,12 +13,12 @@ for volume; do
 	fi
 
 	if [ ! -f cccclc-${volume}_tokens_test_${vocab}.pt ]; then
-		../.venv/bin/python ../corpus.py tokens --tokenizer cccclc_vocab_${vocab}.json \
+		../.venv/bin/python ../corpus.py tokens --tokenizer vocab_${vocab}.json \
 				--input cccclc-${volume}-test.txt.gz --output cccclc-${volume}_tokens_test_${vocab}.pt
 	fi
 
 	if [ ! -f cccclc-${volume}_tokens_train_${vocab}.pt ]; then
-		../.venv/bin/python ../corpus.py tokens --tokenizer cccclc_vocab_${vocab}.json \
+		../.venv/bin/python ../corpus.py tokens --tokenizer vocab_${vocab}.json \
 				--input cccclc-${volume}-train.txt.gz --output cccclc-${volume}_tokens_train_${vocab}.pt
 	fi
 done
