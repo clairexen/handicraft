@@ -313,6 +313,12 @@ class RowLayout:
     def total_columns(self) -> int:
         return sum(segment.columns for segment in self.segments)
 
+    def token_span(self) -> int:
+        columns = self.total_columns()
+        if columns <= 0 or self.rows <= 0:
+            return 0
+        return self.rows * (columns + 1)
+
 
 def _split_top_level(text: str, sep: str) -> list[str]:
     parts: list[str] = []
@@ -486,6 +492,16 @@ class BatchLayout:
             raise LayoutParseError("Layout string is empty")
         self.micro_batches = [self._materialize_rows(specs) for specs in self.micro_specs]
         self.rows = [row for batch in self.micro_batches for row in batch]
+
+    def micro_token_spans(self) -> list[int]:
+        spans: list[int] = []
+        for batch in self.micro_batches:
+            span = sum(row.token_span() for row in batch)
+            spans.append(span)
+        return spans
+
+    def total_token_span(self) -> int:
+        return sum(self.micro_token_spans())
 
     def _materialize_rows(self, specs: Sequence[RowSpec]) -> list[RowLayout]:
         row_allocs: list[_CountAllocation] = []
@@ -2140,6 +2156,84 @@ class TextDataset:
             pos = (pos + take) % total
         return torch.cat(pieces).contiguous()
 
+    def sample_window(
+        self,
+        split: str,
+        span: int,
+        *,
+        rng: random.Random | None = None,
+    ) -> "TokenWindow":
+        if span <= 0:
+            raise ValueError("Window span must be positive")
+        chunk = self.chunks.get(split)
+        if chunk is None:
+            raise RuntimeError(f"No cached chunk for split {split!r}; call prepare_cycle first")
+        total = int(chunk.size(0))
+        if total <= 0:
+            raise ValueError(f"Chunk for split {split!r} is empty")
+        if span > total:
+            raise ValueError(
+                f"Requested window ({span}) exceeds chunk length ({total}) for split {split}"
+            )
+        rng = rng or random
+        max_offset = total - span
+        offset = rng.randint(0, max_offset) if max_offset > 0 else 0
+        return TokenWindow(chunk=chunk, start=offset, length=span, rng=rng)
+
+
+@dataclass
+class TokenWindow:
+    chunk: torch.Tensor
+    start: int
+    length: int
+    rng: random.Random
+
+    def subwindow(self, span: int) -> "TokenWindow":
+        if span <= 0:
+            raise ValueError("Subwindow span must be positive")
+        if span > self.length:
+            raise ValueError(
+                f"Requested subwindow ({span}) exceeds parent length ({self.length})"
+            )
+        max_offset = self.length - span
+        offset = self.rng.randint(0, max_offset) if max_offset > 0 else 0
+        return TokenWindow(
+            chunk=self.chunk,
+            start=self.start + offset,
+            length=span,
+            rng=self.rng,
+        )
+
+    def sample_batch(
+        self,
+        block_length: int,
+        batch_size: int,
+        device: torch.device,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if batch_size <= 0:
+            raise ValueError("Batch size must be positive when sampling tokens")
+        span = block_length + 1
+        if span <= 1:
+            raise ValueError("Block length must be >= 1 when sampling tokens")
+        if span > self.length:
+            raise ValueError(
+                f"Sequence span ({span}) exceeds available window ({self.length})"
+            )
+        max_offset = self.length - span
+        if max_offset > 0:
+            offsets = torch.randint(0, max_offset + 1, (batch_size,))
+        else:
+            offsets = torch.zeros((batch_size,), dtype=torch.long)
+        offsets = offsets.tolist()
+        windows = [
+            self.chunk[self.start + offset : self.start + offset + span]
+            for offset in offsets
+        ]
+        stacked = torch.stack(windows)
+        x = stacked[:, :-1].contiguous().to(device=device, dtype=torch.long)
+        y = stacked[:, 1:].contiguous().to(device=device, dtype=torch.long)
+        return x, y
+
 
 # -----------------------------------------------------------------------------
 # GRCE Model Components
@@ -3328,9 +3422,8 @@ def _log_layout_warnings(args: Args, layout: BatchLayout) -> None:
 def _run_microbatch_pass(
     args: Args,
     model: GRCEGPT,
-    dataset: TextDataset,
     rows: Sequence[RowLayout],
-    split: str,
+    micro_window: TokenWindow,
     device: torch.device,
     *,
     collect_mode_metrics: bool,
@@ -3347,7 +3440,12 @@ def _run_microbatch_pass(
         cols_total = group.total_columns()
         if cols_total <= 0:
             continue
-        xb, yb = dataset.get_batch(split, cols_total, rows, device)
+        try:
+            xb, yb = micro_window.sample_batch(cols_total, rows, device)
+        except ValueError as exc:
+            raise ValueError(
+                f"Unable to sample {rows} rows with {cols_total} columns from the current window"
+            ) from exc
         embeddings = _sequence_embeddings(model, xb)
         cursor = 0
         kv_chain: list[list[tuple[torch.Tensor, torch.Tensor]] | None] = []
@@ -3395,16 +3493,25 @@ def train_layout_batch(
     layout: BatchLayout,
     device: torch.device,
 ) -> tuple[torch.Tensor, int, list[tuple[int, float, float, str]]]:
+    step_span = layout.total_token_span()
+    if step_span <= 0:
+        raise ValueError("Layout produced zero tokens for training step")
+    window_rng = random.Random()
+    step_window = dataset.sample_window("train", step_span, rng=window_rng)
     total_loss_sum: torch.Tensor | None = None
     total_tokens = 0
     micro_logs: list[tuple[int, float, float, str]] = []
     for index, batch in enumerate(layout.micro_batches, start=1):
+        micro_span = sum(row.token_span() for row in batch)
+        if micro_span <= 0:
+            micro_logs.append((index, 0.0, 0.0, layout.serialize_rows(batch)))
+            continue
+        micro_window = step_window.subwindow(micro_span)
         result, fwd_time = _run_microbatch_pass(
             args,
             model,
-            dataset,
             batch,
-            "train",
+            micro_window,
             device,
             collect_mode_metrics=False,
         )
@@ -3434,17 +3541,31 @@ def evaluate_layout_batch(
     layout: BatchLayout,
     device: torch.device,
 ) -> EvalBatchStats:
+    step_span = layout.total_token_span()
     aggregate_loss_sums = {mode: 0.0 for mode in BATCH_MODES}
     aggregate_token_counts = {mode: 0 for mode in BATCH_MODES}
     total_loss_sum: torch.Tensor | None = None
     total_tokens = 0
+    if step_span <= 0:
+        metrics: dict[str, float | None] = {mode: None for mode in BATCH_MODES}
+        metrics["target"] = None
+        loss_sums = {mode: 0.0 for mode in BATCH_MODES}
+        loss_sums["target"] = 0.0
+        token_counts = {mode: 0 for mode in BATCH_MODES}
+        token_counts["target"] = 0
+        return EvalBatchStats(metrics, loss_sums, token_counts)
+    window_rng = random.Random()
+    step_window = dataset.sample_window(split, step_span, rng=window_rng)
     for batch_rows in layout.micro_batches:
+        micro_span = sum(row.token_span() for row in batch_rows)
+        if micro_span <= 0:
+            continue
+        micro_window = step_window.subwindow(micro_span)
         result, _ = _run_microbatch_pass(
             args,
             model,
-            dataset,
             batch_rows,
-            split,
+            micro_window,
             device,
             collect_mode_metrics=True,
         )
@@ -3484,6 +3605,20 @@ def count_eval_calls(steps: int, interval: int) -> int:
             eval_steps.add(current)
             current += interval
     return len(eval_steps)
+
+
+def evaluation_step_indices(steps: int, interval: int) -> list[int]:
+    """List the training steps that trigger evaluation passes."""
+
+    if steps <= 0:
+        return []
+    eval_steps: set[int] = {1, steps}
+    if interval > 0:
+        current = interval
+        while current <= steps:
+            eval_steps.add(current)
+            current += interval
+    return sorted(eval_steps)
 
 
 def loss_sum_and_token_count(
@@ -3552,6 +3687,7 @@ def train_model(
     boundary_blocklist: Sequence[int] | None = None,
     show_train_loss_details: bool = False,
     show_test_loss_details: bool = True,
+    prebuilt_layouts: Sequence[BatchLayout] | None = None,
 ) -> Tuple[int, List[Dict[str, float]], float, float]:
     """Run the main training loop for a cycle."""
 
@@ -3577,8 +3713,14 @@ def train_model(
 
     oom_retries = 0
     step = 0
+    layouts_sequence = list(prebuilt_layouts) if prebuilt_layouts is not None else None
     while step < steps:
-        layout = BatchLayout(args.layout, batch_size=batch_size, block_size=block_length)
+        if layouts_sequence is not None:
+            if step >= len(layouts_sequence):
+                raise ValueError("Not enough precomputed layouts for this cycle")
+            layout = layouts_sequence[step]
+        else:
+            layout = BatchLayout(args.layout, batch_size=batch_size, block_size=block_length)
         layout_serialized = layout.serialize()
         _log_layout_warnings(args, layout)
         current_step_index = total_steps + 1
@@ -3816,13 +3958,16 @@ def run_profile_mode(
             "torch.profiler is unavailable; upgrade to PyTorch 1.8+ to use 'profile'."
         ) from exc
 
-    train_chars = (block_length + 1) * batch_size * 2
+    profile_layout = BatchLayout(args.layout, batch_size=batch_size, block_size=block_length)
+    _log_layout_warnings(args, profile_layout)
+    step_span = profile_layout.total_token_span()
+    if step_span <= 0:
+        step_span = (block_length + 1) * batch_size
+    train_chars = step_span * 2
     dataset.prepare_cycle("train", train_chars)
 
-    def train_step(tag: str) -> float:
+    def train_step(tag: str, layout: BatchLayout) -> float:
         model.train()
-        layout = BatchLayout(args.layout, batch_size=batch_size, block_size=block_length)
-        _log_layout_warnings(args, layout)
         total_loss_sum, total_tokens = train_layout_batch(
             args,
             model,
@@ -3838,12 +3983,12 @@ def run_profile_mode(
         optimizer.step()
         return float(loss.item())
 
-    warm_loss = train_step("warmup")
+    warm_loss = train_step("warmup", profile_layout)
     print(color_text(f"Warm-up step loss: {warm_loss:.4f}", Colors.CYAN))
 
     with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=True) as prof:
         with record_function("profile_train_step"):
-            prof_loss = train_step("profile")
+            prof_loss = train_step("profile", profile_layout)
 
     print(color_text(f"Profiled step loss: {prof_loss:.4f}", Colors.CYAN))
     cuda_events = sum(
@@ -4906,15 +5051,39 @@ class Runtime:
                 label = "".join(tags + plus_tags + minus_tags)
                 hours = total_train_wall / 3600.0
                 days = hours / 24.0
-                train_chars_cycle = (
-                    (self.args.block_length + 1)
-                    * self.args.batch_size
-                    * self.args.steps
+                cycle_layouts = [
+                    BatchLayout(
+                        self.args.layout,
+                        batch_size=self.args.batch_size,
+                        block_size=self.args.block_length,
+                    )
+                    for _ in range(self.args.steps)
+                ]
+                step_token_spans = [layout.total_token_span() for layout in cycle_layouts]
+                train_chars_cycle = sum(step_token_spans)
+                if train_chars_cycle <= 0:
+                    train_chars_cycle = (
+                        (self.args.block_length + 1)
+                        * self.args.batch_size
+                        * self.args.steps
+                    )
+                train_chars_cycle = max(train_chars_cycle, 1)
+                eval_steps = evaluation_step_indices(
+                    self.args.steps,
+                    self.args.eval_interval,
                 )
-                eval_calls = max(1, count_eval_calls(self.args.steps, self.args.eval_interval))
-                test_chars_cycle = (
-                    (self.args.block_length + 1) * self.args.batch_size * eval_calls
+                test_chars_cycle = sum(
+                    step_token_spans[idx - 1]
+                    for idx in eval_steps
+                    if 1 <= idx <= len(step_token_spans)
                 )
+                if test_chars_cycle <= 0:
+                    test_chars_cycle = (
+                        max(step_token_spans)
+                        if step_token_spans
+                        else (self.args.block_length + 1) * self.args.batch_size
+                    )
+                test_chars_cycle = max(test_chars_cycle, 1)
                 while True:
                     dataset = self.dataset
                     train_start = int(dataset.positions.get("train", 0))
@@ -5001,6 +5170,7 @@ class Runtime:
                     boundary_blocklist=boundary_blocklist,
                     show_train_loss_details=self.args.show_train_loss_details,
                     show_test_loss_details=self.args.show_test_loss_details,
+                    prebuilt_layouts=cycle_layouts,
                 )
                 loss_history.extend(updates)
                 pure_train = Timer().add(train_timer).sub(eval_timer)

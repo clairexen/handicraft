@@ -724,29 +724,18 @@ instead of the current
 
 	G' := LN(M + ...).
 
-## Clean up and simpplify prompt tracking
+## Fix orpus window management
 
-Let's simplify prompt tracking in grce.py (or replace it entirely with a way
-simpler re-implementation):
+Here is how it should be:
 
-Let's get rid of --reset-prompt-each-cycle and replace 'prompt_state'
-in the .pt file with 'prompts'. (No need to convert old data from
-the old .pt format.) The new prompts format:
+we determine the per-step number of tokens by creating the sum of the tokens
+consumed by each micro-batch. then we multiply tat number by STEPS and this
+is the size of the windo we pull for each cycle.
 
-	prompts[<prompt_string>] = {
-		"expected": <expected_string>,
-		"maxarg_count": <integer>,
-		"sample_count": <integer>
-	}
+for each step we then pick a random continous sub-window of size of the sum
+we calculated. the micro-batches can only use that sub-window.
 
-In each eval cycle we first roll a dice to see if we are goinmg to evaluate a
-prompt in "sample" or "maxarg" mode. Once we have done that we weight each
-prompt with 1/(1+<count>) and also add the default prompt (--prompt) with
-weight 1 to the mix, and pick a random prompt according to these probabilities.
+each micro-batch not picks a random subwindow within the per-step window.
 
-This way prompts that have been solved more often are becoming less frequent
-but we never really "check off the list" any prompt.
+and each row picks a random subwindow within the per-microbatch window.
 
-Leave the CLI interface of the 'prompts' subcommand and it's options unchanged.
-
-I think this should simplify the codebase. Do you agree?
