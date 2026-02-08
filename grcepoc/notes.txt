@@ -377,43 +377,31 @@ kv-caches for some instances of the model, we simply rely on the other
 instances in the training batch to learn useful k/v values, which then can be
 used as detached values when training the recurrent channel.
 
+### Training and test corpus window management
+
+We determine the per-step number of tokens by creating the sum of the tokens
+consumed by each micro-batch. Then we multiply tat number by STEPS and this
+is the size of the windo we pull for each cycle.
+
+For each step we then pick a random continous sub-window of size of the sum
+we calculated. The micro-batches can only use that sub-window. Each micro-batch
+now picks a random subwindow within the per-step window. And each row picks a
+random subwindow within the per-microbatch window.
+
 ### Composition of training and evaluation batches
 
-We distinguish two different types of batches: 1) "split" and 2) "stacked".
-Each of them uses a different scheme to combine different sequence modes
-in a single (training) batch:
+Training and evaluation batch layouts are declared using the 'Mini-language for
+batch layouts', as described in the next section.
 
-1) For a "split" batch we divide the batch-size into smaller chunks for the
-different modes, and then create a TransformerStackSequence for each chunk mode
-and chunk, that spans chunk-size rows and has block-size cols.
+These batch layouts are composed from the following sequence types:
+- "encode"
+- "decode"
+- "forward"
+- "noattn"
 
-To create a "split" batch we determine the number of rows per mode:
-  rows_encode, rows_decode, rows_forward, rows_noattn
-
-(The numbers are chosen randomly so they add up to batch_size. It's possible to
-"pin" some of these values with --rows-encode N etc CLI options.)
-
-2) For a "stacked" batch we concatenate TransformerStackSequences in the "time"
-(columns) dimension. So in this case each component spans batch-size rows,
-but only spans a sub block of (<block-size) columns.
-
-So this time we determine the random number of cols per mode in the batch:
-  cols_encode, cols_decode, cols_forward, cols_noattn
-
-(The numbers are chosen randomly so they add up to block_size. It's possible to
-"pin" some of these values with --cols-encode N etc CLI options.)
-
-The sequences are attached to each other in the following order:
-
-  encode -> decode -> forward -> noattn
-
-In this succession of sequences:
-- decode is called with the kv_out from the encode block.
-- forward is called with kv_out from both encode end decode
-- noattn isn't called with any kv-cache, so there's only self-attention there
-- there's GRCE and XCTX paths going thru tyhe entire flow, but "encode"
-  and "decode" generate the GRCE and XCTX signals "blindly", as mentioned
-  in the instruction
+There's GRCE and XCTX paths going thru tyhe entire flow, but "encode"
+and "decode" generate the GRCE and XCTX signals "blindly", without means
+of "sensing" the GRCE or XCTX signals via bias injection.
 
 Note that for the "encode" sequence we must only use the prediction from the
 very last position, that predicts the next token after the encode block
@@ -723,19 +711,4 @@ I'm also considering
 instead of the current
 
 	G' := LN(M + ...).
-
-## Fix orpus window management
-
-Here is how it should be:
-
-we determine the per-step number of tokens by creating the sum of the tokens
-consumed by each micro-batch. then we multiply tat number by STEPS and this
-is the size of the windo we pull for each cycle.
-
-for each step we then pick a random continous sub-window of size of the sum
-we calculated. the micro-batches can only use that sub-window.
-
-each micro-batch not picks a random subwindow within the per-step window.
-
-and each row picks a random subwindow within the per-microbatch window.
 
