@@ -23,6 +23,7 @@ if [[ "$1" = "loop" ]]; then
         echo "----------------------------"
         for pod_dir in model_pod[0-9]*; do
             echo; ( set -ex; bash pod.sh "${pod_dir#model_pod}" pull; )
+	    continue
             for ansi_file in $pod_dir/*.ansi; do
                 sed -re 's/.\[91mRunning on remote pod/Monitoring remote pod/' \
                     < $ansi_file > $pod_dir/.new_monitor.${ansi_file#$pod_dir/}

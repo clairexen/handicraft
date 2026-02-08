@@ -247,8 +247,8 @@ def summarize_source(label: str, records: List[Dict[str, float]], filters: List[
             continue
         if non_numeric_samples:
             uniq = sorted(set(non_numeric_samples))
-            preview = ", ".join(uniq[:3])
-            suffix = "..." if len(uniq) > 3 else ""
+            preview = ", ".join(uniq[:10])
+            suffix = "..." if len(uniq) > 10 else ""
             print(
                 f"  {field}: {len(uniq)} unique values ({preview}{suffix})"
             )

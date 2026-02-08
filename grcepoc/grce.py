@@ -588,7 +588,7 @@ from collections import OrderedDict, defaultdict
 import json
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
-from typing import Dict, List, Tuple, Sequence
+from typing import Dict, List, Tuple, Sequence, Callable
 
 
 def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
@@ -732,6 +732,11 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         action="store_true",
         default=DEFAULTS.log_step_details,
         help="Print per-step micro-batch timing details",
+    )
+    training_group.add_argument(
+        "--log-grad-norms",
+        action="store_true",
+        help="Print per-micro and per-step gradient norms each step",
     )
     training_group.add_argument(
         "--skip-model-update",
@@ -3522,6 +3527,7 @@ def train_layout_batch(
     dataset: TextDataset,
     layout: BatchLayout,
     device: torch.device,
+    grad_hook: Callable[[int, int], None] | None = None,
 ) -> tuple[torch.Tensor, int, list[tuple[int, float, float, str]], dict[str, object]]:
     step_span = layout.total_token_span()
     if step_span <= 0:
@@ -3559,6 +3565,8 @@ def train_layout_batch(
             continue
         bwd_start = time.time()
         result.total_loss_sum.backward()
+        if grad_hook is not None:
+            grad_hook(index, micro_span)
         bwd_time = time.time() - bwd_start
         micro_logs.append((index, fwd_time, bwd_time, layout.serialize_rows(batch)))
         total_loss_sum = (
@@ -3704,6 +3712,16 @@ def _scale_gradients(module: nn.Module, scale: float) -> None:
             param.grad.mul_(scale)
 
 
+def _grad_norm(module: nn.Module) -> float:
+    total = 0.0
+    for param in module.parameters():
+        if param.grad is None:
+            continue
+        grad = param.grad.detach()
+        total += grad.pow(2).sum().item()
+    return math.sqrt(total)
+
+
 
 
 def train_model(
@@ -3759,6 +3777,7 @@ def train_model(
     step = 0
     layouts_sequence = list(prebuilt_layouts) if prebuilt_layouts is not None else None
     manual_layout_override: BatchLayout | None = None
+    micro_grad_norms: list[tuple[int, int, float]] = []
     while step < steps:
         if layouts_sequence is not None:
             if step >= len(layouts_sequence):
@@ -3776,18 +3795,25 @@ def train_model(
         step_wall_start = time.time()
         try:
             optimizer.zero_grad(set_to_none=True)
+            micro_grad_norms.clear()
             total_loss_sum, total_tokens, micro_logs, window_detail = train_layout_batch(
                 args,
                 model,
                 dataset,
                 layout,
                 device,
+                grad_hook=(
+                    (lambda micro_idx, micro_tokens: micro_grad_norms.append((micro_idx, micro_tokens, _grad_norm(model))))
+                    if args.log_grad_norms
+                    else None
+                ),
             )
             if total_tokens <= 0:
                 raise RuntimeError("No tokens processed in training step")
             opt_start = time.time()
             grad_scale = 1.0 / float(total_tokens)
             _scale_gradients(model, grad_scale)
+            step_grad_norm = _grad_norm(model) if args.log_grad_norms else None
             optimizer.step()
             opt_duration = time.time() - opt_start
             total_loss = total_loss_sum / float(total_tokens)
@@ -3826,6 +3852,22 @@ def train_model(
                 manual_layout_override = replacement
             continue
         step_wall = time.time() - step_wall_start
+        if args.log_grad_norms and micro_grad_norms:
+            norms = [value for _, _, value in micro_grad_norms]
+            stats_line = (
+                f"micro grad norms: min {min(norms):.4f}, max {max(norms):.4f},"
+                f" avg {sum(norms)/len(norms):.4f}"
+            )
+            detail_lines = [
+                f"  micro {idx}: {value:.4f} grad / {tokens} tokens = {value / max(1, tokens):.4f}"
+                for idx, tokens, value in micro_grad_norms
+            ]
+            step_norm_desc = (
+                f" step grad norm {step_grad_norm:.4f}" if step_grad_norm is not None else ""
+            )
+            print(color_text(stats_line + step_norm_desc, Colors.MAGENTA))
+            for entry in detail_lines:
+                print(color_text(entry, Colors.MAGENTA))
         if args.log_step_details:
             step_window_desc = (
                 f"tokens {window_detail['step_start']} - {window_detail['step_end']}"
