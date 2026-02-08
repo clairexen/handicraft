@@ -83,6 +83,25 @@ For exact counts (including the XCTX channel and bias/sampler splits) run `pytho
 
 Thinking about the stack from a geometric point of view helps explain why the recurrent shortcut is viable: attention “killed” classical recurrence by rotating the computation over depth, letting every position look backwards instead of pushing state forward. GRCE rotates a slim slice of that structure back into the time axis, but it keeps the same design philosophy—tight bottlenecks, shared samplers/decoders, and a single shared nonlinearity—so gradients never have to march through time. The heavy lifting still happens in the standard Transformer layers; the recurrent channels just recycle whatever features those layers already extracted.
 
+## Getting Started
+
+    ```bash
+    # setup python env
+    python3 -m venv .venv
+    source activate
+    pip install -r requirements.txt
+
+    # tokenize 'simplestwiki' corpus
+    cd data
+    bash simplestwiki-setup.sh
+    cd ..
+
+    # create model and run a training loop
+    grce --tiny create
+    grce --tiny corpus --set simplestwiki
+    grce --tiny --log-step-details train
+    ```
+
 ## Example training sweeps
 
 Below are two quick sweeps you can adapt.
