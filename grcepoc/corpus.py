@@ -22,9 +22,9 @@ SPECIAL_TOKENS = """
 <|lq:> <:lq|> <|hq:> <:hq|> <|!:> <:!|> <|?:> <:?|> <|*:> <:*|>
 <|-:> <:-|> <|=:> <:=|> <|/:> <:/|> <|@:> <:@|> <|reject|> <|think|>
 <|p7|> <|p6|> <|p5|> <|p4|> <|p3|> <|p2|> <|p1|> <|p0|>
+<|reserved0|> <|reserved1|> <|reserved2|> <|reserved3|>
+<|reserved4|> <|reserved5|> <|reserved6|> <|reserved7|>
 """.split()
-
-
 
 DEFAULT_LIMIT = 1 * 1024 * 1024  # 1 MiB
 

@@ -117,7 +117,7 @@ class Defaults:
     n_embd: int = MODEL_GEOMETRY_DEFAULTS.n_embd
     n_grce: int = MODEL_GEOMETRY_DEFAULTS.n_grce
     n_xctx: int = MODEL_GEOMETRY_DEFAULTS.n_xctx
-    corpus: str = "cccclc"
+    corpus: str | None = None
     steps: int = 100
     cycles: int = 100
     batch_size: int = 256
@@ -569,6 +569,7 @@ import shlex
 import sys
 import time
 from collections import OrderedDict, defaultdict
+import json
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from typing import Dict, List, Tuple, Sequence
@@ -596,16 +597,10 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         return any(arg == flag or arg.startswith(f"{flag}=") for arg in raw_cli_args)
     generic = parser.add_argument_group("Generic options")
     generic.add_argument(
-        "--corpus",
-        type=str,
-        default=DEFAULTS.corpus,
-        help="Dataset base name; expects data/<name>-train.txt.gz and ...-test.txt.gz.",
-    )
-    generic.add_argument(
         "--name",
         type=str,
-        default=None,
-        help="Run identifier used when naming checkpoints; defaults to --corpus.",
+        default="default",
+        help="Run identifier used when naming checkpoints; defaults to 'default'.",
     )
     generic.add_argument(
         "--data",
@@ -689,7 +684,7 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         action="store_true",
         help=(
             "Shortcut for --vocab-size 500 --batch-size 12 --block-size 6 --n-layer 3 --n-head 2 "
-            "--n-embd 8 --n-grce 4 --n-xctx 9 --steps 2 --cycles 1 --eval-interval 1 --corpus simplestwiki"
+            "--n-embd 8 --n-grce 4 --n-xctx 9 --steps 2 --cycles 1 --eval-interval 1"
         ),
     )
     model_group.add_argument(
@@ -697,7 +692,7 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         action="store_true",
         help=(
             "Shortcut for --vocab-size 500 --batch-size 700 --block-size 64 --n-layer 10 --n-head 4 "
-            "--n-embd 128 --n-grce 32 --n-xctx 720 --corpus simplearith"
+            "--n-embd 128 --n-grce 32 --n-xctx 720"
         ),
     )
 
@@ -1036,11 +1031,33 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         help="Comma-separated layer numbers (1-indexed) to insert during import",
     )
 
+    corpus_parser = subparsers.add_parser(
+        "corpus",
+        help="List or configure corpora stored in a checkpoint",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    corpus_parser.set_defaults(command="corpus")
+    corpus_parser.add_argument(
+        "--add",
+        dest="corpus_add",
+        metavar="NAME",
+        type=str,
+        help="Register a corpus without changing the current selection",
+    )
+    corpus_parser.add_argument(
+        "--set",
+        dest="corpus_set",
+        metavar="NAME",
+        type=str,
+        help="Register a corpus (if needed) and make it current",
+    )
+
 
     # --------------------------------------------------------
     # Run the args parser
 
     args = parser.parse_args()
+    args.corpus = None
 
     if args.command is None:
         parser.print_help()
@@ -1076,9 +1093,6 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
             args.cycles = 1
         if not flag_present("--eval-interval"):
             args.eval_interval = 1
-        if not flag_present("--corpus"):
-            args.corpus = "simplestwiki"
-
     if args.arith:
         if not flag_present("--vocab-size"):
             args.vocab_size = 313
@@ -1096,9 +1110,6 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
             args.n_grce = 32
         if not flag_present("--n-xctx"):
             args.n_xctx = 720
-        if not flag_present("--corpus"):
-            args.corpus = "simplearith"
-
     args._block_length_defined = args.block_length is not None
     if args.block_length is None:
         args.block_length = args.block_size
@@ -1108,10 +1119,6 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         parser.error("--block-length must be <= --block-size")
 
     args.prompt = normalize_prompt(args.prompt)
-
-    if not args.name:
-        args.name = args.corpus
-
 
     # --------------------------------------------------------
     # Add non-inverted option names and values for --no-* options
@@ -2006,6 +2013,8 @@ class TextDataset:
             "test_cursor": int(self.positions.get("test", 0)),
             "train_cycles": int(self.cycles.get("train", 0)),
             "test_cycles": int(self.cycles.get("test", 0)),
+            "train_count": int(self.train_tokens.numel()),
+            "test_count": int(self.test_tokens.numel()),
         }
 
     def load_state(self, state: dict | None) -> None:
@@ -4063,11 +4072,10 @@ class Runtime:
 
         self.cancel_timeout = cancel_timeout
 
-    def _prepare_corpus(
+    def _prepare_tokenizer_bundle(
         self,
     ) -> tuple[
         GPT2TokenizerWrapper,
-        TextDataset,
         int | None,
         Sequence[int] | None,
         bool,
@@ -4080,9 +4088,7 @@ class Runtime:
                 model_dir.mkdir(parents=True, exist_ok=True)
             except OSError:
                 pass
-        train_cache_path = data_dir / f"{self.args.corpus}_tokens_train_{self.args.vocab_size}.pt"
-        test_cache_path = data_dir / f"{self.args.corpus}_tokens_test_{self.args.vocab_size}.pt"
-        tokenizer_key = f"{self.args.corpus}_vocab_{self.args.vocab_size}"
+        tokenizer_key = f"vocab_{self.args.vocab_size}"
         tokenizer_path = (
             pathlib.Path(self.args.tokenizer)
             if self.args.tokenizer
@@ -4102,6 +4108,7 @@ class Runtime:
             tokenizer_json=tokenizer_json,
         )
         tokenizer_json = tokenizer_json or tokenizer_path.read_text(encoding="utf-8")
+        self.args.vocab_size = tokenizer.vocab_size
 
         newline_token_id = None
         newline_tokens = tokenizer.encode_ids("\n")
@@ -4118,6 +4125,42 @@ class Runtime:
             and prompt_needs_boundary(self.args.prompt)
         )
 
+        self.tokenizer = tokenizer
+        self.newline_token_id = newline_token_id
+        self.boundary_blocklist = boundary_blocklist
+        self.default_prompt_boundary = default_prompt_boundary
+        self.tokenizer_json = tokenizer_json
+
+        return (
+            tokenizer,
+            newline_token_id,
+            boundary_blocklist,
+            default_prompt_boundary,
+            tokenizer_json,
+        )
+
+    def _prepare_corpus(
+        self,
+    ) -> tuple[
+        GPT2TokenizerWrapper,
+        TextDataset,
+        int | None,
+        Sequence[int] | None,
+        bool,
+        str,
+    ]:
+        (
+            tokenizer,
+            newline_token_id,
+            boundary_blocklist,
+            default_prompt_boundary,
+            tokenizer_json,
+        ) = self._prepare_tokenizer_bundle()
+        if not self.args.corpus:
+            raise RuntimeError("No corpus configured; run 'grce.py corpus --set <name>' first.")
+        data_dir = pathlib.Path(self.args.data)
+        train_cache_path = data_dir / f"{self.args.corpus}_tokens_train_{self.args.vocab_size}.pt"
+        test_cache_path = data_dir / f"{self.args.corpus}_tokens_test_{self.args.vocab_size}.pt"
         train_tokens = load_cached_tokens("train", train_cache_path)
         test_tokens = load_cached_tokens("test", test_cache_path)
 
@@ -4138,12 +4181,7 @@ class Runtime:
             test_path=test_cache_path,
         )
 
-        self.tokenizer = tokenizer
         self.dataset = dataset
-        self.newline_token_id = newline_token_id
-        self.boundary_blocklist = boundary_blocklist
-        self.default_prompt_boundary = default_prompt_boundary
-        self.tokenizer_json = tokenizer_json
         self.datasets_state.setdefault(self.args.corpus, dataset.state_dict())
         return (
             tokenizer,
@@ -4153,6 +4191,52 @@ class Runtime:
             default_prompt_boundary,
             tokenizer_json,
         )
+
+    def _ensure_active_corpus(
+        self,
+        payload: dict | None,
+        model_path: pathlib.Path,
+    ) -> bool:
+        if self.args.corpus:
+            return True
+        corpus_name: str | None = None
+        if isinstance(payload, dict):
+            value = payload.get("corpus")
+            if value:
+                corpus_name = str(value)
+        if not corpus_name:
+            print(
+                color_text(
+                    (
+                        f"Checkpoint {model_path} lacks corpus metadata. "
+                        "Run 'grce.py corpus --set <name>' before training."
+                    ),
+                    Colors.RED,
+                    bold=True,
+                )
+            )
+            return False
+        self.args.corpus = corpus_name
+        return True
+
+    def _build_fresh_corpus_state(self, name: str, vocab_size: int) -> dict[str, int]:
+        data_dir = pathlib.Path(self.args.data)
+        train_cache = data_dir / f"{name}_tokens_train_{vocab_size}.pt"
+        test_cache = data_dir / f"{name}_tokens_test_{vocab_size}.pt"
+        train_tokens = load_cached_tokens("train", train_cache)
+        test_tokens = load_cached_tokens("test", test_cache)
+        train_count = int(train_tokens.numel())
+        test_count = int(test_tokens.numel())
+        del train_tokens
+        del test_tokens
+        return {
+            "train_cursor": 0,
+            "test_cursor": 0,
+            "train_cycles": 0,
+            "test_cycles": 0,
+            "train_count": train_count,
+            "test_count": test_count,
+        }
 
     def _token_cache_paths(self, corpus: str) -> tuple[pathlib.Path, pathlib.Path]:
         data_dir = pathlib.Path(self.args.data)
@@ -4270,6 +4354,90 @@ class Runtime:
                     )
         return 0
 
+    def cli_corpus(
+        self,
+        model_path: pathlib.Path,
+        payload: dict | None,
+    ) -> int:
+        if not model_path.exists():
+            raise FileNotFoundError(
+                f"Checkpoint {model_path} not found; run 'create' before managing corpora."
+            )
+        if payload is None:
+            payload = torch.load(model_path, map_location="cpu", weights_only=False)
+        if not isinstance(payload, dict):
+            raise ValueError("Checkpoint payload must be a dictionary")
+        config = payload.get("config")
+        if not isinstance(config, dict):
+            raise ValueError("Checkpoint lacks config metadata; re-run create to refresh it.")
+        vocab_size = int(config.get("vocab_size", self.args.vocab_size))
+        datasets = payload.get("datasets")
+        if not isinstance(datasets, dict):
+            datasets = {}
+        add_name = getattr(self.args, "corpus_add", None)
+        set_name = getattr(self.args, "corpus_set", None)
+        updated = False
+
+        def ensure_entry(name: str) -> dict[str, int]:
+            nonlocal updated
+            entry = datasets.get(name)
+            if not isinstance(entry, dict):
+                entry = {}
+                datasets[name] = entry
+            need_counts = "train_count" not in entry or "test_count" not in entry
+            if not entry or need_counts:
+                fresh = self._build_fresh_corpus_state(name, vocab_size)
+                entry.setdefault("train_cursor", fresh["train_cursor"])
+                entry.setdefault("test_cursor", fresh["test_cursor"])
+                entry.setdefault("train_cycles", fresh["train_cycles"])
+                entry.setdefault("test_cycles", fresh["test_cycles"])
+                entry["train_count"] = fresh["train_count"]
+                entry["test_count"] = fresh["test_count"]
+                datasets[name] = entry
+                updated = True
+                print(color_text(f"Added corpus {name}", Colors.GREEN))
+            return entry
+
+        if add_name:
+            ensure_entry(add_name)
+        if set_name:
+            ensure_entry(set_name)
+            payload["corpus"] = set_name
+            updated = True
+
+        if updated:
+            payload["datasets"] = datasets
+            torch.save(payload, model_path)
+            print(color_text(f"Saved corpus metadata to {model_path}", Colors.GREEN))
+
+        current = payload.get("corpus") if isinstance(payload, dict) else None
+        self._print_corpus_listing(datasets, current)
+        return 0
+
+    def _print_corpus_listing(self, datasets: dict, current: str | None) -> None:
+        if not datasets:
+            print(color_text("No corpora registered in checkpoint", Colors.YELLOW))
+            return
+        print(color_text("Registered corpora:", Colors.CYAN))
+        for name in sorted(datasets):
+            state = datasets.get(name) or {}
+            prefix = "*" if current == name else "-"
+            train_cursor = int(state.get("train_cursor", 0) or 0)
+            test_cursor = int(state.get("test_cursor", 0) or 0)
+            train_cycles = int(state.get("train_cycles", 0) or 0)
+            test_cycles = int(state.get("test_cycles", 0) or 0)
+            train_count = state.get("train_count")
+            test_count = state.get("test_count")
+            train_desc = f"train cursor {train_cursor:,} (cycles {train_cycles:,})"
+            if isinstance(train_count, int):
+                train_desc += f" / {train_count:,} tokens"
+            test_desc = f"test cursor {test_cursor:,} (cycles {test_cycles:,})"
+            if isinstance(test_count, int):
+                test_desc += f" / {test_count:,} tokens"
+            print(
+                f"{prefix} {name}: {train_desc}; {test_desc}"
+            )
+
     def big_fat_old_main(self) -> int:
         """Dispatch the CLI command selected by :func:`grce_cli_args`.
 
@@ -4282,16 +4450,19 @@ class Runtime:
         try:
             orig_stdout, orig_stderr, log_file = sys.stdout, sys.stderr, None
 
-            (
-                tokenizer,
-                dataset,
-                newline_token_id,
-                boundary_blocklist,
-                default_prompt_boundary,
-                tokenizer_json,
-            ) = self._prepare_corpus()
-            self.args.vocab_size = tokenizer.vocab_size
+            tokenizer: GPT2TokenizerWrapper | None = None
+            dataset: TextDataset | None = None
+            newline_token_id: int | None = None
+            boundary_blocklist: Sequence[int] | None = None
+            default_prompt_boundary = False
+            tokenizer_json: str | None = None
+
             model_dir = pathlib.Path(self.args.model)
+            if not model_dir.exists():
+                try:
+                    model_dir.mkdir(parents=True, exist_ok=True)
+                except OSError:
+                    pass
 
             if self.args.n_xctx > 0 and self.args.n_xctx % max(1, self.args.n_layer) != 0:
                 raise ValueError("--n-xctx must be divisible by --n-layer")
@@ -4311,15 +4482,74 @@ class Runtime:
                 self.args.log_path_override = log_path
             print(color_text(f"Model: {model_path}", Colors.CYAN))
             print(color_text(f"Logfile: {log_path}", Colors.BLUE))
-            requires_checkpoint = self.args.command in {"train", "report", "test"}
+            dataset_commands = {"train", "report", "test", "profile", "prompts"}
+            requires_checkpoint = self.args.command in {"train", "report", "test", "profile", "prompts"}
             if self.args.command == "create" and model_path.exists():
-                raise FileExistsError(
-                    f"Checkpoint {model_path} already exists; delete it or pick a new --model directory."
+                print(
+                    color_text(
+                        (
+                            f"Checkpoint {model_path} already exists; delete it or pick a new --model directory."
+                        ),
+                        Colors.RED,
+                        bold=True,
+                    )
                 )
+                return 1
             if requires_checkpoint and not model_path.exists():
-                raise FileNotFoundError(
-                    f"Checkpoint {model_path} not found; run 'create' first to initialize it."
+                print(
+                    color_text(
+                        (
+                            f"Checkpoint {model_path} not found; run 'create' first to initialize it."
+                        ),
+                        Colors.RED,
+                        bold=True,
+                    )
                 )
+                return 1
+
+            payload = getattr(self.args, "checkpoint_payload_override", None)
+            if payload is None and model_path.exists():
+                payload = torch.load(
+                    model_path,
+                    map_location="cpu",
+                    weights_only=False,
+                )
+                self.args.checkpoint_payload_override = payload
+
+            if self.args.command == "corpus":
+                return self.cli_corpus(model_path, payload)
+
+            needs_dataset = self.args.command in dataset_commands
+            if self.args.command == "create":
+                (
+                    tokenizer,
+                    newline_token_id,
+                    boundary_blocklist,
+                    default_prompt_boundary,
+                    tokenizer_json,
+                ) = self._prepare_tokenizer_bundle()
+            elif needs_dataset:
+                if not self._ensure_active_corpus(payload, model_path):
+                    return 1
+                (
+                    tokenizer,
+                    dataset,
+                    newline_token_id,
+                    boundary_blocklist,
+                    default_prompt_boundary,
+                    tokenizer_json,
+                ) = self._prepare_corpus()
+            else:
+                (
+                    tokenizer,
+                    newline_token_id,
+                    boundary_blocklist,
+                    default_prompt_boundary,
+                    tokenizer_json,
+                ) = self._prepare_tokenizer_bundle()
+
+            if tokenizer is None:
+                raise RuntimeError("Tokenizer initialization failed")
 
             if self.args.command == "prompts":
                 return self.cli_prompts(tokenizer, model_path)
@@ -4454,7 +4684,7 @@ class Runtime:
                                 for name, state in raw_datasets.items()
                                 if isinstance(state, dict)
                             }
-                        elif "dataset" in payload:
+                        elif "dataset" in payload and dataset is not None:
                             legacy_state = payload.get("dataset")
                             if isinstance(legacy_state, dict):
                                 dataset.load_state(legacy_state)
@@ -4521,12 +4751,10 @@ class Runtime:
                 torch.save(
                     {
                         "model": model.state_dict(),
-                        "datasets": {self.args.corpus: dataset.state_dict()},
                         "total_steps": total_steps,
                         "loss_history": loss_history,
                         "config": asdict(args_to_model_geometry(self.args)),
                         "train_wall_seconds": total_train_wall,
-                        "corpus": self.args.corpus,
                         "prompts": prompt_registry.serialize() if prompt_registry else None,
                         "tokenizer_json": tokenizer_json,
                     },
@@ -4542,26 +4770,25 @@ class Runtime:
             self.datasets_state = {
                 name: dict(state) for name, state in dataset_states.items()
             }
-            active_state = self.datasets_state.get(self.args.corpus)
-            dataset.load_state(active_state)
-            self.datasets_state[self.args.corpus] = dataset.state_dict()
+            if dataset is not None and self.args.corpus:
+                active_state = self.datasets_state.get(self.args.corpus)
+                dataset.load_state(active_state)
+                self.datasets_state[self.args.corpus] = dataset.state_dict()
 
             if self.args.command == "create":
                 checkpoint_payload = {
                     "model": model.state_dict(),
-                    "datasets": self.datasets_state,
                     "total_steps": 0,
                     "loss_history": [],
                     "config": asdict(args_to_model_geometry(self.args)),
                     "train_wall_seconds": 0.0,
-                    "corpus": self.args.corpus,
                     "prompts": prompt_registry.serialize(),
                     "tokenizer_json": tokenizer_json,
                 }
                 torch.save(checkpoint_payload, model_path)
                 print(
                     color_text(
-                        f"Created new checkpoint at {model_path}; run 'train' to begin training.",
+                        f"Created new checkpoint at {model_path}; run 'corpus --set <name>' before training.",
                         Colors.GREEN,
                     )
                 )
