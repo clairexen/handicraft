@@ -3758,14 +3758,19 @@ def train_model(
     oom_retries = 0
     step = 0
     layouts_sequence = list(prebuilt_layouts) if prebuilt_layouts is not None else None
+    manual_layout_override: BatchLayout | None = None
     while step < steps:
         if layouts_sequence is not None:
             if step >= len(layouts_sequence):
                 raise ValueError("Not enough precomputed layouts for this cycle")
             layout = layouts_sequence[step]
+        elif manual_layout_override is not None:
+            layout = manual_layout_override
+            manual_layout_override = None
         else:
             layout = BatchLayout(args.layout, batch_size=batch_size, block_size=block_length)
         layout_serialized = layout.serialize()
+        layout_span = layout.total_token_span()
         _log_layout_warnings(args, layout)
         current_step_index = total_steps + 1
         step_wall_start = time.time()
@@ -3805,6 +3810,20 @@ def train_model(
             optimizer.zero_grad(set_to_none=True)
             if oom_retries >= 3:
                 raise
+            max_span = layout_span
+            replacement = layout
+            attempts = 0
+            while True:
+                candidate = BatchLayout(args.layout, batch_size=batch_size, block_size=block_length)
+                candidate_span = candidate.total_token_span()
+                replacement = candidate
+                if max_span <= 0 or candidate_span <= max_span or attempts >= 8:
+                    break
+                attempts += 1
+            if layouts_sequence is not None:
+                layouts_sequence[step] = replacement
+            else:
+                manual_layout_override = replacement
             continue
         step_wall = time.time() - step_wall_start
         if args.log_step_details:
