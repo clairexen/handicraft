@@ -4074,6 +4074,8 @@ class Runtime:
 
     def _prepare_tokenizer_bundle(
         self,
+        *,
+        allow_files: bool,
     ) -> tuple[
         GPT2TokenizerWrapper,
         int | None,
@@ -4081,33 +4083,27 @@ class Runtime:
         bool,
         str,
     ]:
-        data_dir = pathlib.Path(self.args.data)
-        model_dir = pathlib.Path(self.args.model)
-        if not model_dir.exists():
-            try:
-                model_dir.mkdir(parents=True, exist_ok=True)
-            except OSError:
-                pass
-        tokenizer_key = f"vocab_{self.args.vocab_size}"
-        tokenizer_path = (
-            pathlib.Path(self.args.tokenizer)
-            if self.args.tokenizer
-            else (data_dir / f"{tokenizer_key}.json")
-        )
         tokenizer_json = getattr(self.args, "tokenizer_json_override", None)
         if tokenizer_json is None:
-            if tokenizer_path.exists():
-                tokenizer_json = tokenizer_path.read_text(encoding="utf-8")
-            else:
+            if not allow_files:
+                raise RuntimeError("Tokenizer JSON not available; run 'create' to refresh checkpoint metadata.")
+            data_dir = pathlib.Path(self.args.data)
+            tokenizer_key = f"vocab_{self.args.vocab_size}"
+            tokenizer_path = (
+                pathlib.Path(self.args.tokenizer)
+                if self.args.tokenizer
+                else (data_dir / f"{tokenizer_key}.json")
+            )
+            if not tokenizer_path.exists():
                 raise FileNotFoundError(
                     f"Tokenizer JSON {tokenizer_path} not found; run corpus.py tokenizer to create it."
                 )
-        print(color_text(f"Tokenizer: {tokenizer_path}", Colors.BLUE))
+            tokenizer_json = tokenizer_path.read_text(encoding="utf-8")
+            self.args.tokenizer_json_override = tokenizer_json
+            print(color_text(f"Tokenizer: {tokenizer_path}", Colors.BLUE))
         tokenizer = GPT2TokenizerWrapper(
-            tokenizer_path=tokenizer_path,
             tokenizer_json=tokenizer_json,
         )
-        tokenizer_json = tokenizer_json or tokenizer_path.read_text(encoding="utf-8")
         self.args.vocab_size = tokenizer.vocab_size
 
         newline_token_id = None
@@ -4155,7 +4151,7 @@ class Runtime:
             boundary_blocklist,
             default_prompt_boundary,
             tokenizer_json,
-        ) = self._prepare_tokenizer_bundle()
+        ) = self._prepare_tokenizer_bundle(allow_files=False)
         if not self.args.corpus:
             raise RuntimeError("No corpus configured; run 'grce.py corpus --set <name>' first.")
         data_dir = pathlib.Path(self.args.data)
@@ -4168,7 +4164,10 @@ class Runtime:
         test_token_count = int(test_tokens.numel())
         print(
             color_text(
-                f"Corpus size: {train_token_count:,} train tokens, {test_token_count:,} test tokens",
+                (
+                    f"Corpus {self.args.corpus}: "
+                    f"{train_token_count:,} train tokens, {test_token_count:,} test tokens"
+                ),
                 Colors.CYAN,
             )
         )
@@ -4507,6 +4506,16 @@ class Runtime:
                 )
                 return 1
 
+            if self.args.command != "create" and self.args.tokenizer:
+                print(
+                    color_text(
+                        "--tokenizer is only supported with the 'create' command; remove it and rerun.",
+                        Colors.RED,
+                        bold=True,
+                    )
+                )
+                return 1
+
             payload = getattr(self.args, "checkpoint_payload_override", None)
             if payload is None and model_path.exists():
                 payload = torch.load(
@@ -4515,6 +4524,27 @@ class Runtime:
                     weights_only=False,
                 )
                 self.args.checkpoint_payload_override = payload
+
+            if (
+                isinstance(payload, dict)
+                and payload.get("tokenizer_json")
+                and not self.args.tokenizer_json_override
+            ):
+                self.args.tokenizer_json_override = payload.get("tokenizer_json")
+
+            tokenizer_needed = self.args.command not in {"create", "corpus", "size"}
+            if tokenizer_needed and not self.args.tokenizer_json_override:
+                print(
+                    color_text(
+                        (
+                            f"Checkpoint {model_path} lacks embedded tokenizer data. "
+                            "Re-run 'create' to store the tokenizer snapshot."
+                        ),
+                        Colors.RED,
+                        bold=True,
+                    )
+                )
+                return 1
 
             if self.args.command == "corpus":
                 return self.cli_corpus(model_path, payload)
@@ -4527,7 +4557,7 @@ class Runtime:
                     boundary_blocklist,
                     default_prompt_boundary,
                     tokenizer_json,
-                ) = self._prepare_tokenizer_bundle()
+                ) = self._prepare_tokenizer_bundle(allow_files=True)
             elif needs_dataset:
                 if not self._ensure_active_corpus(payload, model_path):
                     return 1
@@ -4546,7 +4576,7 @@ class Runtime:
                     boundary_blocklist,
                     default_prompt_boundary,
                     tokenizer_json,
-                ) = self._prepare_tokenizer_bundle()
+                ) = self._prepare_tokenizer_bundle(allow_files=False)
 
             if tokenizer is None:
                 raise RuntimeError("Tokenizer initialization failed")
@@ -4690,14 +4720,7 @@ class Runtime:
                                 dataset.load_state(legacy_state)
                                 legacy_name = payload.get("corpus") or self.args.corpus
                                 dataset_states[legacy_name] = dataset.state_dict()
-                        if self.args.tokenizer:
-                            override_path = pathlib.Path(self.args.tokenizer)
-                            if not override_path.exists():
-                                raise FileNotFoundError(
-                                    f"Tokenizer override {override_path} not found"
-                                )
-                            tokenizer_json = override_path.read_text(encoding="utf-8")
-                        elif "tokenizer_json" in payload:
+                        if "tokenizer_json" in payload:
                             self.args.tokenizer_json_override = payload.get("tokenizer_json")
                     else:
                         model.load_state_dict(upgrade_state_dict(payload))
