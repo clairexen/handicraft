@@ -684,12 +684,13 @@ Read AGENTS.md, README.md, and the comments at the top of grce.py. Then:
 
 My current favorite injection patterns is
 
-	LN(S_i + XCTX_Bias_i) + LD(GRCE_Bias_i),
+	LN(S_i + alpha .* XCTX_Bias_i) + LD(GRCE_Bias_i),
 
-where LD (Layer-Dampening) is a LayerNorm-like operation that removes the mean
-and applies per-feature (and per-layer and per-injection-point) learned gains,
-but replaces hard RMS normalization with soft radial dampening. (See also
-the implementation in class LayerDampening(nn.Module) in grce.py.)
+with per-feature learned gains in alpha, and where LD (Layer-Dampening) is a
+LayerNorm-like operation that removes the mean and applies per-feature (and
+per-layer and per-injection-point) learned gains, but replaces hard RMS
+normalization with soft radial dampening. (See also the implementation in class
+LayerDampening(nn.Module) in grce.py.)
 
 Instead of forcing activations onto a unit-RMS shell, LD only attenuates
 large magnitudes using a learned sharpness parameter log_k:

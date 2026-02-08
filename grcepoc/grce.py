@@ -95,7 +95,7 @@ from dataclasses import dataclass
 class ModelGeometry:
     """Holds the GPT+GRCE+XCTX model geometry."""
 
-    vocab_size: int = 5000  # GPT-2 base supports ~50k merges; we stay small for the PoC.
+    vocab_size: int = 6000  # GPT-2 base supports ~50k merges; we stay small for the PoC.
     block_size: int = 256   # GPT-2 base uses 1024 tokens.
     n_layer: int = 8        # GPT-2 base uses 12 layers.
     n_head: int = 6         # GPT-2 base uses 12 attention heads.
@@ -699,16 +699,8 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         "--tiny",
         action="store_true",
         help=(
-            "Shortcut for --vocab-size 500 --batch-size 12 --block-size 6 --n-layer 3 --n-head 2 "
+            "Shortcut for --vocab-size 600 --batch-size 12 --block-size 6 --n-layer 3 --n-head 2 "
             "--n-embd 8 --n-grce 4 --n-xctx 9 --steps 2 --cycles 1 --eval-interval 1"
-        ),
-    )
-    model_group.add_argument(
-        "--arith",
-        action="store_true",
-        help=(
-            "Shortcut for --vocab-size 500 --batch-size 700 --block-size 64 --n-layer 10 --n-head 4 "
-            "--n-embd 128 --n-grce 32 --n-xctx 720"
         ),
     )
 
@@ -1088,7 +1080,7 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
 
     if args.tiny:
         if not flag_present("--vocab-size"):
-            args.vocab_size = 500
+            args.vocab_size = 600
         if not flag_present("--batch-size"):
             args.batch_size = 12
         if not flag_present("--block-size"):
@@ -1109,23 +1101,7 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
             args.cycles = 1
         if not flag_present("--eval-interval"):
             args.eval_interval = 1
-    if args.arith:
-        if not flag_present("--vocab-size"):
-            args.vocab_size = 313
-        if not flag_present("--batch-size"):
-            args.batch_size = 128
-        if not flag_present("--block-size"):
-            args.block_size = 64
-        if not flag_present("--n-layer"):
-            args.n_layer = 10
-        if not flag_present("--n-head"):
-            args.n_head = 4
-        if not flag_present("--n-embd"):
-            args.n_embd = 128
-        if not flag_present("--n-grce"):
-            args.n_grce = 32
-        if not flag_present("--n-xctx"):
-            args.n_xctx = 720
+
     args._block_length_defined = args.block_length is not None
     if args.block_length is None:
         args.block_length = args.block_size
@@ -1793,7 +1769,9 @@ class LayerDampening(nn.Module):
         k = torch.exp(self.log_k)
         denom = 1.0 + F.softplus(k * (r - 1.0)) / k
         y = x / denom
-        return y * self.gain if self.gain else y
+        if self.gain is None:
+            return y
+        return y * self.gain
 
 
 def default_prompt_entries() -> list[tuple[str, str]]:
@@ -2463,12 +2441,32 @@ class Block(nn.Module):
         self.attn = CausalSelfAttention(config)
         self.ln2 = nn.LayerNorm(config.n_embd)
         self.ff = FeedForward(config)
+        self.xctx_attn_gain = nn.Parameter(torch.ones(config.n_embd))
+        self.xctx_mlp_gain = nn.Parameter(torch.ones(config.n_embd))
+        self.grce_attn_ld = LayerDampening(config.n_embd)
+        self.grce_mlp_ld = LayerDampening(config.n_embd)
+
+    def _apply_xctx_bias(
+        self, tensor: torch.Tensor, bias: torch.Tensor | None, gain: torch.Tensor
+    ) -> torch.Tensor:
+        if bias is None:
+            return tensor
+        scaled = bias * gain.view(1, 1, -1)
+        return tensor + scaled
+
+    def _apply_grce_bias(
+        self, tensor: torch.Tensor, bias: torch.Tensor | None, ld_layer: LayerDampening
+    ) -> torch.Tensor:
+        if bias is None:
+            return tensor
+        return tensor + ld_layer(bias)
 
     def forward(
         self,
         x: torch.Tensor,
         *,
-        block_bias: torch.Tensor | None = None,
+        xctx_bias: torch.Tensor | None = None,
+        grce_bias: torch.Tensor | None = None,
         kv_cache_sources: Sequence[tuple[torch.Tensor, torch.Tensor]] | None = None,
         qh_query_callback=None,
         attn_mode: str = "decode",
@@ -2478,9 +2476,9 @@ class Block(nn.Module):
         attention_dropout_positions: torch.Tensor | None = None,
         full_attention: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor | None, tuple[torch.Tensor, torch.Tensor] | None]:
-        attn_norm = self.ln1(x)
-        if block_bias is not None:
-            attn_norm = attn_norm + block_bias
+        attn_input = self._apply_xctx_bias(x, xctx_bias, self.xctx_attn_gain)
+        attn_norm = self.ln1(attn_input)
+        attn_norm = self._apply_grce_bias(attn_norm, grce_bias, self.grce_attn_ld)
         attn_output, kv_pair = self.attn(
             attn_norm,
             disable_rows=attention_disabled_rows,
@@ -2495,9 +2493,9 @@ class Block(nn.Module):
             mask = (~attention_disabled_rows).view(-1, 1, 1).to(attn_output.dtype)
             attn_output = attn_output * mask
         x = x + attn_output
-        pre_ff = self.ln2(x)
-        if block_bias is not None:
-            pre_ff = pre_ff + block_bias
+        ff_input = self._apply_xctx_bias(x, xctx_bias, self.xctx_mlp_gain)
+        pre_ff = self.ln2(ff_input)
+        pre_ff = self._apply_grce_bias(pre_ff, grce_bias, self.grce_mlp_ld)
         ff_out, mask = self.ff(pre_ff, record_mask=record_mask)
         x = x + ff_out
         return x, mask, kv_pair
@@ -2507,15 +2505,16 @@ class Block(nn.Module):
         x: torch.Tensor,
         cache: LayerCache,
         *,
-        block_bias: torch.Tensor | None = None,
+        xctx_bias: torch.Tensor | None = None,
+        grce_bias: torch.Tensor | None = None,
         record_mask: bool = False,
         attention_disabled_rows: torch.Tensor | None = None,
         puncture_mask: torch.Tensor | None = None,
         write_cache: bool = True,
     ) -> tuple[torch.Tensor, LayerCache, torch.Tensor | None]:
-        attn_norm = self.ln1(x)
-        if block_bias is not None:
-            attn_norm = attn_norm + block_bias
+        attn_input = self._apply_xctx_bias(x, xctx_bias, self.xctx_attn_gain)
+        attn_norm = self.ln1(attn_input)
+        attn_norm = self._apply_grce_bias(attn_norm, grce_bias, self.grce_attn_ld)
         attn_out, cache = self.attn.forward_incremental(
             attn_norm,
             cache,
@@ -2527,9 +2526,9 @@ class Block(nn.Module):
             mask = (~attention_disabled_rows).view(-1, 1, 1).to(attn_out.dtype)
             attn_out = attn_out * mask
         x = x + attn_out
-        pre_ff = self.ln2(x)
-        if block_bias is not None:
-            pre_ff = pre_ff + block_bias
+        ff_input = self._apply_xctx_bias(x, xctx_bias, self.xctx_mlp_gain)
+        pre_ff = self.ln2(ff_input)
+        pre_ff = self._apply_grce_bias(pre_ff, grce_bias, self.grce_mlp_ld)
         ff_out, mask = self.ff(pre_ff, record_mask=record_mask)
         x = x + ff_out
         return x, cache, mask
@@ -2683,15 +2682,25 @@ class TransformerStackCore(nn.Module):
     def forward_grid(
         self,
         x: torch.Tensor,
-        bias_list_in: Sequence[torch.Tensor] | None = None,
-        kv_cache_list_in: Sequence[Sequence[tuple[torch.Tensor, torch.Tensor]]] | None = None,
         *,
+        xctx_bias_list_in: Sequence[torch.Tensor] | None = None,
+        grce_bias_list_in: Sequence[torch.Tensor] | None = None,
+        kv_cache_list_in: Sequence[Sequence[tuple[torch.Tensor, torch.Tensor]]] | None = None,
         mode: str = "decode",
         qh_query_callback=None,
     ) -> tuple[torch.Tensor, list[torch.Tensor], list[tuple[torch.Tensor, torch.Tensor]]]:
         rows, cols, _ = x.shape
-        bias_tensor = _merge_bias_list(
-            bias_list_in or [],
+        xctx_tensor = _merge_bias_list(
+            xctx_bias_list_in or [],
+            rows,
+            cols,
+            self.config.n_layer,
+            self.config.n_embd,
+            x.device,
+            x.dtype,
+        )
+        grce_tensor = _merge_bias_list(
+            grce_bias_list_in or [],
             rows,
             cols,
             self.config.n_layer,
@@ -2715,13 +2724,17 @@ class TransformerStackCore(nn.Module):
         samples: list[torch.Tensor] = [current]
         kv_outputs: list[tuple[torch.Tensor, torch.Tensor]] = []
         for layer_idx, block in enumerate(self.blocks):
-            layer_bias = None
-            if bias_tensor is not None:
-                layer_bias = bias_tensor[:, :, layer_idx, :]
+            layer_xctx_bias = None
+            if xctx_tensor is not None:
+                layer_xctx_bias = xctx_tensor[:, :, layer_idx, :]
+            layer_grce_bias = None
+            if grce_tensor is not None:
+                layer_grce_bias = grce_tensor[:, :, layer_idx, :]
             kv_sources = layer_kv_sources[layer_idx] or None
             current, _, kv_pair = block(
                 current,
-                block_bias=layer_bias,
+                xctx_bias=layer_xctx_bias,
+                grce_bias=layer_grce_bias,
                 kv_cache_sources=kv_sources,
                 qh_query_callback=qh_query_callback,
                 attn_mode=mode,
@@ -2743,15 +2756,17 @@ class TransformerStackGrid(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        bias_list_in: Sequence[torch.Tensor] | None = None,
-        kv_cache_list_in: Sequence[Sequence[tuple[torch.Tensor, torch.Tensor]]] | None = None,
         *,
+        xctx_bias_list_in: Sequence[torch.Tensor] | None = None,
+        grce_bias_list_in: Sequence[torch.Tensor] | None = None,
+        kv_cache_list_in: Sequence[Sequence[tuple[torch.Tensor, torch.Tensor]]] | None = None,
         qh_query_callback=None,
         mode: str = "decode",
     ) -> tuple[torch.Tensor, list[torch.Tensor], list]:
         output, samples, kv_out = self.core.forward_grid(
             x,
-            bias_list_in=bias_list_in,
+            xctx_bias_list_in=xctx_bias_list_in,
+            grce_bias_list_in=grce_bias_list_in,
             kv_cache_list_in=kv_cache_list_in,
             mode=mode,
             qh_query_callback=qh_query_callback,
@@ -2786,7 +2801,7 @@ class TransformerGRCE(nn.Module):
         hidden = max(1, 4 * self.context_dim)
         self.mlp_up = nn.Linear(self.context_dim, hidden)
         self.mlp_down = nn.Linear(hidden, self.context_dim)
-        self.output_norm = nn.LayerNorm(self.context_dim)
+        self.output_norm = LayerDampening(self.context_dim, with_gain=False)
         self.dropout = nn.Dropout(config.dropout)
 
     def initial_state(self, batch: int, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
@@ -2827,7 +2842,7 @@ class TransformerGRCE(nn.Module):
         mixed = self.mix_norm(self.dropout(combined))
         mlp_hidden = F.gelu(self.mlp_up(mixed))
         mlp_out = self.dropout(self.mlp_down(mlp_hidden))
-        return self.output_norm(mixed + mlp_out)
+        return self.output_norm(grce_state + fused + mlp_out)
 
     def parameter_breakdown(self) -> dict[str, int]:
         if self.disabled:
@@ -3018,7 +3033,8 @@ class TransformerStackSequence(nn.Module):
         x: torch.Tensor,
         grce_in: torch.Tensor | None = None,
         xctx_in: torch.Tensor | None = None,
-        bias_list_in: Sequence[torch.Tensor] | None = None,
+        grce_bias_list_in: Sequence[torch.Tensor] | None = None,
+        xctx_bias_list_in: Sequence[torch.Tensor] | None = None,
         kv_cache_list_in: Sequence[Sequence[tuple[torch.Tensor, torch.Tensor]]] | None = None,
         *,
         qh_query_callback=None,
@@ -3041,7 +3057,8 @@ class TransformerStackSequence(nn.Module):
                 x,
                 grce_state,
                 xctx_state,
-                bias_list_in=bias_list_in,
+                grce_bias_list_in=grce_bias_list_in,
+                xctx_bias_list_in=xctx_bias_list_in,
                 kv_cache_list_in=kv_cache_list_in,
                 qh_query_callback=qh_query_callback,
                 mode=mode,
@@ -3057,19 +3074,28 @@ class TransformerStackSequence(nn.Module):
         if detach_internal_kv_cache:
             kv_storage = self._allocate_detached_kv_storage(rows, cols, device, dtype)
         for col in range(cols):
-            column_biases: list[torch.Tensor] = []
-            if bias_list_in:
-                for bias in bias_list_in:
+            column_grce_biases: list[torch.Tensor] = []
+            column_xctx_biases: list[torch.Tensor] = []
+            if grce_bias_list_in:
+                for bias in grce_bias_list_in:
                     if bias is None or bias.size(1) == 0:
                         continue
                     if bias.size(1) == 1:
-                        column_biases.append(bias)
+                        column_grce_biases.append(bias)
                     elif col < bias.size(1):
-                        column_biases.append(bias[:, col : col + 1, :, :])
+                        column_grce_biases.append(bias[:, col : col + 1, :, :])
+            if xctx_bias_list_in:
+                for bias in xctx_bias_list_in:
+                    if bias is None or bias.size(1) == 0:
+                        continue
+                    if bias.size(1) == 1:
+                        column_xctx_biases.append(bias)
+                    elif col < bias.size(1):
+                        column_xctx_biases.append(bias[:, col : col + 1, :, :])
             if self.grce is not None and grce_state is not None:
-                column_biases.append(self.grce.bias_forward(grce_state))
+                column_grce_biases.append(self.grce.bias_forward(grce_state))
             if self.xctx is not None and xctx_state is not None:
-                column_biases.append(self.xctx.bias_forward(xctx_state))
+                column_xctx_biases.append(self.xctx.bias_forward(xctx_state))
             column_input = x[:, col : col + 1, :]
             column_kv_sources: list[Sequence[tuple[torch.Tensor, torch.Tensor] | None]] = []
             if base_sources:
@@ -3081,7 +3107,8 @@ class TransformerStackSequence(nn.Module):
             kv_sources_arg = column_kv_sources if column_kv_sources else None
             column_output, samples, kv_pairs = self.core.forward_grid(
                 column_input,
-                bias_list_in=column_biases,
+                xctx_bias_list_in=column_xctx_biases,
+                grce_bias_list_in=column_grce_biases,
                 kv_cache_list_in=kv_sources_arg,
                 mode="decode",
                 qh_query_callback=qh_query_callback,
@@ -3137,7 +3164,8 @@ class TransformerStackSequence(nn.Module):
         grce_state: torch.Tensor | None,
         xctx_state: torch.Tensor | None,
         *,
-        bias_list_in: Sequence[torch.Tensor] | None,
+        grce_bias_list_in: Sequence[torch.Tensor] | None,
+        xctx_bias_list_in: Sequence[torch.Tensor] | None,
         kv_cache_list_in: Sequence[Sequence[tuple[torch.Tensor, torch.Tensor]]] | None,
         qh_query_callback=None,
         mode: str,
@@ -3147,14 +3175,16 @@ class TransformerStackSequence(nn.Module):
         detach_internal_kv_cache: bool,
     ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None, list[tuple[torch.Tensor, torch.Tensor]]]:
         rows, cols, _ = x.shape
-        grid_biases = list(bias_list_in or [])
+        grid_grce_biases = list(grce_bias_list_in or [])
+        grid_xctx_biases = list(xctx_bias_list_in or [])
         if self.grce is not None and grce_state is not None:
-            grid_biases.append(self.grce.bias_forward(grce_state))
+            grid_grce_biases.append(self.grce.bias_forward(grce_state))
         if self.xctx is not None and xctx_state is not None:
-            grid_biases.append(self.xctx.bias_forward(xctx_state))
+            grid_xctx_biases.append(self.xctx.bias_forward(xctx_state))
         output, samples, kv_pairs = self.core.forward_grid(
             x,
-            bias_list_in=grid_biases,
+            xctx_bias_list_in=grid_xctx_biases,
+            grce_bias_list_in=grid_grce_biases,
             kv_cache_list_in=kv_cache_list_in,
             mode=mode,
             qh_query_callback=qh_query_callback,
@@ -3492,8 +3522,7 @@ def train_layout_batch(
     dataset: TextDataset,
     layout: BatchLayout,
     device: torch.device,
-    result_details: list[dict[str, int]] | None = None,
-) -> tuple[torch.Tensor, int, list[tuple[int, float, float, str]], list[dict[str, int]] | None]:
+) -> tuple[torch.Tensor, int, list[tuple[int, float, float, str]], dict[str, object]]:
     step_span = layout.total_token_span()
     if step_span <= 0:
         raise ValueError("Layout produced zero tokens for training step")
@@ -3540,7 +3569,7 @@ def train_layout_batch(
         total_tokens += result.total_tokens
     if total_loss_sum is None:
         raise RuntimeError("Layout batch produced no tokens")
-    meta_entry = {
+    meta_entry: dict[str, object] = {
         "step_start": head_offset,
         "step_end": head_offset + step_window.length,
         "micro": detail_entries,
@@ -3998,7 +4027,7 @@ def run_profile_mode(
 
     def train_step(tag: str, layout: BatchLayout) -> float:
         model.train()
-        total_loss_sum, total_tokens = train_layout_batch(
+        total_loss_sum, total_tokens, _, _ = train_layout_batch(
             args,
             model,
             dataset,
