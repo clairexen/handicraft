@@ -121,7 +121,7 @@ class Defaults:
     steps: int = 100
     cycles: int = 100
     batch_size: int = 256
-    layout: str = "2[*d]+2[*f]+*[*1-2e/*1-4d/*1-4f/*1-2n]"
+    layout: str = "2[*d]+2[*f],*[*1-2e/*1-4d/*1-4f/*1-2n],*[*1-2e/*1-4f/*1-4d/*1-2n]"
     eval_interval: int = 10
     dropout: float = 0.05
     detach_span: int = 0
@@ -3492,7 +3492,8 @@ def train_layout_batch(
     dataset: TextDataset,
     layout: BatchLayout,
     device: torch.device,
-) -> tuple[torch.Tensor, int, list[tuple[int, float, float, str]]]:
+    result_details: list[dict[str, int]] | None = None,
+) -> tuple[torch.Tensor, int, list[tuple[int, float, float, str]], list[dict[str, int]] | None]:
     step_span = layout.total_token_span()
     if step_span <= 0:
         raise ValueError("Layout produced zero tokens for training step")
@@ -3501,12 +3502,21 @@ def train_layout_batch(
     total_loss_sum: torch.Tensor | None = None
     total_tokens = 0
     micro_logs: list[tuple[int, float, float, str]] = []
+    detail_entries: list[dict[str, int]] = []
+    head_offset = step_window.start
     for index, batch in enumerate(layout.micro_batches, start=1):
         micro_span = sum(row.token_span() for row in batch)
         if micro_span <= 0:
             micro_logs.append((index, 0.0, 0.0, layout.serialize_rows(batch)))
             continue
         micro_window = step_window.subwindow(micro_span)
+        detail_entries.append(
+            {
+                "micro_index": index,
+                "token_start": micro_window.start,
+                "token_end": micro_window.start + micro_window.length,
+            }
+        )
         result, fwd_time = _run_microbatch_pass(
             args,
             model,
@@ -3530,7 +3540,12 @@ def train_layout_batch(
         total_tokens += result.total_tokens
     if total_loss_sum is None:
         raise RuntimeError("Layout batch produced no tokens")
-    return total_loss_sum, total_tokens, micro_logs
+    meta_entry = {
+        "step_start": head_offset,
+        "step_end": head_offset + step_window.length,
+        "micro": detail_entries,
+    }
+    return total_loss_sum, total_tokens, micro_logs, meta_entry
 
 
 def evaluate_layout_batch(
@@ -3727,7 +3742,7 @@ def train_model(
         step_wall_start = time.time()
         try:
             optimizer.zero_grad(set_to_none=True)
-            total_loss_sum, total_tokens, micro_logs = train_layout_batch(
+            total_loss_sum, total_tokens, micro_logs, window_detail = train_layout_batch(
                 args,
                 model,
                 dataset,
@@ -3764,13 +3779,28 @@ def train_model(
             continue
         step_wall = time.time() - step_wall_start
         if args.log_step_details:
-            print(color_text("Step " + str(current_step_index) + ": u-batch | fwd | bwd | layout", Colors.BLUE))
+            step_window_desc = (
+                f"tokens {window_detail['step_start']} - {window_detail['step_end']}"
+                if isinstance(window_detail, dict)
+                else ""
+            )
+            header = f"Step {current_step_index}: u-batch | fwd | bwd | "
+            header += f"(" + step_window_desc + ")  " if step_window_desc else ""
+            print(color_text(header + "layout", Colors.BLUE))
             total_fwd = 0.0
             total_bwd = 0.0
+            micro_meta = window_detail.get("micro") if isinstance(window_detail, dict) else None
             for idx, fwd_time, bwd_time, rows_str in micro_logs:
                 total_fwd += fwd_time
                 total_bwd += bwd_time
-                line = f"  {idx} | {fwd_time:.2f}s | {bwd_time:.2f}s | {rows_str or layout_serialized}"
+                token_desc = ""
+                if isinstance(micro_meta, list) and 0 < idx <= len(micro_meta):
+                    entry = micro_meta[idx - 1]
+                    token_desc = f"(offset {entry['token_start']:5})  "
+                line = (
+                    f"  {idx} | {fwd_time:.2f}s | {bwd_time:.2f}s |"
+                    f" {token_desc}{rows_str or layout_serialized}"
+                )
                 print(color_text(line, Colors.BLUE))
             other_time = max(0.0, step_wall - (total_fwd + total_bwd + opt_duration))
             summary = f"  {opt_duration:.2f}s optimize, {other_time:.2f}s other"
