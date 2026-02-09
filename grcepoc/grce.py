@@ -734,6 +734,11 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         help="Print per-step micro-batch timing details",
     )
     training_group.add_argument(
+        "--no-grad-summary",
+        action="store_true",
+        help="Disable per-cycle gradient summary logging",
+    )
+    training_group.add_argument(
         "--log-grad-norms",
         action="store_true",
         help="Print per-micro and per-step gradient norms each step",
@@ -1125,6 +1130,8 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
             assert type(v) is bool
             args.__dict__[k[3:]] = not v
             # del args.__dict__[k]
+    if not hasattr(args, "grad_summary"):
+        args.grad_summary = getattr(args, "no_grad_summary", False) is False
 
 
     # --------------------------------------------------------
@@ -3778,6 +3785,9 @@ def train_model(
     layouts_sequence = list(prebuilt_layouts) if prebuilt_layouts is not None else None
     manual_layout_override: BatchLayout | None = None
     micro_grad_norms: list[tuple[int, int, float]] = []
+    cycle_micro_norms: list[float] = []
+    cycle_step_norms: list[float] = []
+    need_grad_tracking = args.log_grad_norms or args.grad_summary
     while step < steps:
         if layouts_sequence is not None:
             if step >= len(layouts_sequence):
@@ -3796,24 +3806,29 @@ def train_model(
         try:
             optimizer.zero_grad(set_to_none=True)
             micro_grad_norms.clear()
+            def _record_micro_grad(micro_idx: int, micro_tokens: int) -> None:
+                raw_norm = _grad_norm(model)
+                norm = raw_norm / max(1, micro_tokens)
+                if args.log_grad_norms:
+                    micro_grad_norms.append((micro_idx, micro_tokens, raw_norm, norm))
+                if args.grad_summary:
+                    cycle_micro_norms.append(norm)
             total_loss_sum, total_tokens, micro_logs, window_detail = train_layout_batch(
                 args,
                 model,
                 dataset,
                 layout,
                 device,
-                grad_hook=(
-                    (lambda micro_idx, micro_tokens: micro_grad_norms.append((micro_idx, micro_tokens, _grad_norm(model))))
-                    if args.log_grad_norms
-                    else None
-                ),
+                grad_hook=_record_micro_grad if need_grad_tracking else None,
             )
             if total_tokens <= 0:
                 raise RuntimeError("No tokens processed in training step")
             opt_start = time.time()
             grad_scale = 1.0 / float(total_tokens)
             _scale_gradients(model, grad_scale)
-            step_grad_norm = _grad_norm(model) if args.log_grad_norms else None
+            step_grad_norm = _grad_norm(model) if need_grad_tracking else None
+            if args.grad_summary and step_grad_norm is not None:
+                cycle_step_norms.append(step_grad_norm)
             optimizer.step()
             opt_duration = time.time() - opt_start
             total_loss = total_loss_sum / float(total_tokens)
@@ -3853,14 +3868,14 @@ def train_model(
             continue
         step_wall = time.time() - step_wall_start
         if args.log_grad_norms and micro_grad_norms:
-            norms = [value for _, _, value in micro_grad_norms]
+            norms = [value for _, _, _, value in micro_grad_norms]
             stats_line = (
                 f"micro grad norms: min {min(norms):.4f}, max {max(norms):.4f},"
                 f" avg {sum(norms)/len(norms):.4f}"
             )
             detail_lines = [
-                f"  micro {idx}: {value:.4f} grad / {tokens} tokens = {value / max(1, tokens):.4f}"
-                for idx, tokens, value in micro_grad_norms
+                f"  micro {idx}: {raw:.4f} grad / {tokens} tokens = {value:.4f}"
+                for idx, tokens, raw, value in micro_grad_norms
             ]
             step_norm_desc = (
                 f" step grad norm {step_grad_norm:.4f}" if step_grad_norm is not None else ""
@@ -3868,6 +3883,9 @@ def train_model(
             print(color_text(stats_line + step_norm_desc, Colors.MAGENTA))
             for entry in detail_lines:
                 print(color_text(entry, Colors.MAGENTA))
+            cycle_micro_norms.extend(norms)
+            if step_grad_norm is not None:
+                cycle_step_norms.append(step_grad_norm)
         if args.log_step_details:
             step_window_desc = (
                 f"tokens {window_detail['step_start']} - {window_detail['step_end']}"
@@ -4055,6 +4073,17 @@ def train_model(
                 record[f"test_loss_{key}"] = float(test_val)
         history_updates.append(record)
 
+    if args.grad_summary:
+        parts = [color_text(f"[grad norms] ", Colors.CYAN)]
+        if cycle_micro_norms:
+            parts.append(color_text(
+                f"micro: min {min(cycle_micro_norms):.4f}, max {max(cycle_micro_norms):.4f}, "
+                f"avg {sum(cycle_micro_norms)/len(cycle_micro_norms):.4f}; ", Colors.MAGENTA))
+        if cycle_step_norms:
+            parts.append(color_text(
+                f"steps: min {min(cycle_step_norms):.4f}, max {max(cycle_step_norms):.4f}, "
+                f"avg {sum(cycle_step_norms)/len(cycle_step_norms):.4f}", Colors.GREEN))
+        print("".join(parts))
     return total_steps, history_updates, loop_timer.stop(), eval_timer
 
 

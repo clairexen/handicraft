@@ -85,6 +85,8 @@ Thinking about the stack from a geometric point of view helps explain why the re
 
 ## Getting Started
 
+Setting up and testing the toolchain:
+
     ```bash
     # setup python env
     python3 -m venv .venv

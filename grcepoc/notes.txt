@@ -710,3 +710,13 @@ G.dot(embedding) < 1 for all GRCE state embeddings that are expected "OFF" (-1).
 # TODOs
 
 Read AGENTS.md, README.md, and the comments at the top of grce.py. Then:
+
+---------------------------------------------------------------------------
+
+Current experiments:
+
+while true; do
+python grce.py --name dec24f --cycles 50 --batch-size 128 --block-length 256 --time --layout '*[*d(/2-4f||||)]' train
+python grce.py --name allfwd --cycles 50 --batch-size 70 --block-length 128 --time --layout '*[*f]' train
+done
+
