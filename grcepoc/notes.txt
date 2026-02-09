@@ -140,6 +140,20 @@ instead of the current
 
 	G' := LN(M + ...).
 
+### Future/Next Experiments
+
+We propose a “Radial Gated Mixer” (RGM) for the recurrent update. Right now every
+partial sum inside GRCE/XCTX passes through Layer Dampening, so the model has to
+keep rebuilding old signals (G' = LD(G + delta)). In RGM we add a per-feature gate
+alpha and define
+
+      G' = alpha * G + dampen(delta)
+
+where dampen(delta) uses the same soft radial shrinkage to keep the resulting
+G' inside the unit ball. Redundant or oversized delta terms are softened or even
+eliminated before they modify the state, while the residual alpha * G carries
+useful information forward without extra amplification.
+
 ### Rationale for the recurrent channels, additional thoughts, and predicted behavior
 
 The vector of concatenated S_i values for a position already encodes the entire
