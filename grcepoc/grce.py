@@ -2234,7 +2234,8 @@ class TokenWindow:
         block_length: int,
         batch_size: int,
         device: torch.device,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    position_offset: int = 0,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         if batch_size <= 0:
             raise ValueError("Batch size must be positive when sampling tokens")
         span = block_length + 1
@@ -2250,14 +2251,16 @@ class TokenWindow:
         else:
             offsets = torch.zeros((batch_size,), dtype=torch.long)
         offsets = offsets.tolist()
-        windows = [
-            self.chunk[self.start + offset : self.start + offset + span]
-            for offset in offsets
-        ]
+        windows = []
+        positions = []
+        for offset in offsets:
+            window_start = self.start + offset
+            windows.append(self.chunk[window_start : window_start + span])
+            positions.append(position_offset + offset)
         stacked = torch.stack(windows)
         x = stacked[:, :-1].contiguous().to(device=device, dtype=torch.long)
         y = stacked[:, 1:].contiguous().to(device=device, dtype=torch.long)
-        return x, y
+        return x, y, torch.tensor(positions, device=device, dtype=torch.long)
 
 
 # -----------------------------------------------------------------------------
@@ -3518,7 +3521,7 @@ def _run_microbatch_pass(
         if cols_total <= 0:
             continue
         try:
-            xb, yb = micro_window.sample_batch(cols_total, rows, device)
+            xb, yb, pos_offsets = micro_window.sample_batch(cols_total, rows, device)
         except ValueError as exc:
             raise ValueError(
                 f"Unable to sample {rows} rows with {cols_total} columns from the current window"
@@ -3543,6 +3546,7 @@ def _run_microbatch_pass(
                 kv_cache_list_in=kv_sources,
                 mode=mode,
                 detach_internal_kv_cache=args.detach_kv_cache,
+                position_offsets=pos_offsets,
             )
             logits = model.core.head(model.core.ln_f(chunk_output))
             loss_sum, token_count = loss_sum_and_token_count(
@@ -3866,6 +3870,11 @@ def train_model(
                     micro_grad_norms.append((micro_idx, micro_tokens, raw_norm, norm))
                 if args.grad_summary:
                     cycle_micro_norms.append(norm)
+            position_offset: torch.Tensor | None = None
+            if args.block_length < args.block_size:
+                max_shift = max(0, args.block_size - args.block_length)
+                offset_value = random.randint(0, max_shift)
+                position_offset = torch.full((layout.batch_size,), offset_value, dtype=torch.long, device=device)
             total_loss_sum, total_tokens, micro_logs, window_detail = train_layout_batch(
                 args,
                 model,
@@ -3873,6 +3882,7 @@ def train_model(
                 layout,
                 device,
                 grad_hook=_record_micro_grad if need_grad_tracking else None,
+                position_offsets=position_offset,
             )
             if total_tokens <= 0:
                 raise RuntimeError("No tokens processed in training step")
