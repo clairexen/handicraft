@@ -3881,14 +3881,25 @@ def train_model(
 
     long_loss_header = " ".join([""] + [f"{': ' if key in ROW_METRIC_LOG_GROUP else ''}{key}" for key in ROW_METRIC_LOG_KEYS])
 
-    line_parts: List[str] = []
+    header_columns: List[Tuple[str, str]] = []
     if show_time:
-        line_parts.append(color_text("time", Colors.BLUE))
-    line_parts.append(color_text(f"step", Colors.CYAN))
-    line_parts.append(color_text("train" + (long_loss_header if show_train_loss_details else ""), Colors.MAGENTA))
-    line_parts.append(color_text("test" + (long_loss_header if show_test_loss_details else ""), Colors.GREEN))
-    line = " | ".join(line_parts) + " |"
-    print(line)
+        header_columns.append(("time", Colors.BLUE))
+    header_columns.append(("step", Colors.CYAN))
+    header_columns.append(
+        (
+            "train" + (long_loss_header if show_train_loss_details else ""),
+            Colors.MAGENTA,
+        )
+    )
+    header_columns.append(
+        (
+            "test" + (long_loss_header if show_test_loss_details else ""),
+            Colors.GREEN,
+        )
+    )
+    header_columns.append(("lr", Colors.YELLOW))
+    header_line = " | ".join(color_text(label, color) for label, color in header_columns)
+    print(header_line + " |")
 
     oom_retries = 0
     step = 0
@@ -4170,7 +4181,7 @@ def train_model(
         line_parts.append(color_text(f"{total_steps}", Colors.CYAN))
         line_parts.append(color_text(train_values, Colors.MAGENTA))
         line_parts.append(color_text(test_values, Colors.GREEN))
-        line_parts.append(color_text(f"lr={current_lr:.4g}", Colors.YELLOW))
+        line_parts.append(color_text(f"{current_lr:.4g}", Colors.YELLOW))
         line = " | ".join(line_parts) + " | " + sample_render
         print(line)
 
