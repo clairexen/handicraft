@@ -3927,12 +3927,11 @@ def train_model(
         current_step_index = total_steps + 1
         step_wall_start = time.time()
         try:
-            run_step_index = max(0, total_steps - start_step)
             current_lr = _scheduled_lr(
                 args.learning_rate,
                 args.lr_warmup,
                 run_total_steps,
-                run_step_index,
+                max(0, total_steps),
             )
             for group in optimizer.param_groups:
                 group["lr"] = current_lr
