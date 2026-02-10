@@ -135,6 +135,7 @@ class Defaults:
     lr_decay_style: str = "none"
     lr_decay_min: float = 0.0
     no_detach_ctx: bool = False
+    prompt_no_prefix: bool = False
 
 DEFAULTS = Defaults()
 
@@ -145,12 +146,23 @@ GeometryLike = ModelGeometry | Args
 
 FANCY_SPACE = "\u2423"  # Open Box symbol for visible spaces
 FANCY_ENTER = "\u23CE " # Return symbol for visible newlines
+PROMPT_PREFIX_TEXT = "\n\n"
 
 def normalize_prompt(text: str) -> str:
     """Map placeholder characters back to literal spaces/newlines."""
 
     return text.replace(FANCY_SPACE, " ").replace(FANCY_ENTER, "\n"). \
             replace(FANCY_ENTER.replace(" ", "\n"), "\n")
+
+
+def apply_prompt_prefix(text: str, *, enabled: bool) -> str:
+    """Optionally prefix prompts before tokenization."""
+
+    if not enabled:
+        return text
+    if text.startswith(PROMPT_PREFIX_TEXT):
+        return text
+    return f"{PROMPT_PREFIX_TEXT}{text}"
 
 
 # -----------------------------------------------------------------------------
@@ -302,10 +314,22 @@ class SegmentSpec:
     mode: str
 
 
+@dataclass(frozen=True)
+class RowModifiers:
+    detach_kv_cache: bool = False
+    detach_span: int | None = None
+    no_detach_ctx: bool = False
+    raw: str = ""
+
+    def render(self) -> str:
+        return self.raw
+
+
 @dataclass
 class RowSpec:
     count: CountSpec
     segments: list[SegmentSpec]
+    modifiers: RowModifiers | None = None
 
 
 @dataclass
@@ -318,6 +342,7 @@ class SegmentLayout:
 class RowLayout:
     rows: int
     segments: list[SegmentLayout]
+    modifiers: RowModifiers | None = None
 
     def total_columns(self) -> int:
         return sum(segment.columns for segment in self.segments)
@@ -367,14 +392,19 @@ def _parse_row_spec(token: str) -> RowSpec:
         raise LayoutParseError(f"Invalid row term '{token}'")
     count_token = token[: bracket].strip()
     segments_body = token[bracket + 1 : -1]
-    if not count_token:
-        raise LayoutParseError("Row group missing row count")
-    count_spec = CountSpec.parse(count_token)
+    count_text, modifier_text = _split_row_count_and_modifiers(count_token)
+    if not count_text:
+        if modifier_text:
+            count_text = "1"
+        else:
+            raise LayoutParseError("Row group missing row count")
+    count_spec = CountSpec.parse(count_text)
+    modifiers = _parse_row_modifiers(modifier_text)
     if not segments_body:
         raise LayoutParseError("Row group requires at least one segment")
     segment_tokens = _split_segments(segments_body)
     segments = [_parse_segment_spec(item) for item in segment_tokens]
-    return RowSpec(count_spec, segments)
+    return RowSpec(count_spec, segments, modifiers)
 
 
 def _split_segments(body: str) -> list[str]:
@@ -405,6 +435,64 @@ def _parse_segment_spec(text: str) -> SegmentSpec:
         raise LayoutParseError(f"Unsupported mode '{mode_token}'")
     size_spec = CountSpec.parse(size_token or "1")
     return SegmentSpec(size_spec, _MODE_ALIASES[mode_token])
+
+
+_ROW_COUNT_CHARS = set("0123456789+-*")
+
+
+def _split_row_count_and_modifiers(token: str) -> tuple[str, str]:
+    token = token.strip()
+    if not token:
+        return "", ""
+    idx = 0
+    while idx < len(token) and token[idx] in _ROW_COUNT_CHARS:
+        idx += 1
+    count_text = token[:idx]
+    modifiers_text = token[idx:]
+    return count_text, modifiers_text
+
+
+def _parse_row_modifiers(text: str) -> RowModifiers | None:
+    text = text.strip()
+    if not text:
+        return None
+    idx = 0
+    detach_kv = False
+    detach_span: int | None = None
+    no_detach_ctx = False
+    raw_parts: list[str] = []
+    while idx < len(text):
+        ch = text[idx]
+        if ch == "k":
+            detach_kv = True
+            raw_parts.append("k")
+            idx += 1
+            continue
+        if ch == "c":
+            no_detach_ctx = True
+            raw_parts.append("c")
+            idx += 1
+            continue
+        if ch == "s":
+            idx += 1
+            start = idx
+            while idx < len(text) and text[idx].isdigit():
+                idx += 1
+            digits = text[start:idx]
+            span_value = int(digits) if digits else 1
+            if span_value <= 0:
+                raise LayoutParseError("s modifiers require a positive span")
+            detach_span = span_value
+            raw_parts.append("s" + digits)
+            continue
+        raise LayoutParseError(f"Unknown row modifier '{ch}' in '{text}'")
+    raw = "".join(raw_parts)
+    return RowModifiers(
+        detach_kv_cache=detach_kv,
+        detach_span=detach_span,
+        no_detach_ctx=no_detach_ctx,
+        raw=raw,
+    )
 
 
 @dataclass
@@ -527,7 +615,7 @@ class BatchLayout:
         rows: list[RowLayout] = []
         for spec, allocation in zip(specs, row_allocs):
             segments = self._materialize_segments(spec.segments)
-            rows.append(RowLayout(allocation.value, segments))
+            rows.append(RowLayout(allocation.value, segments, spec.modifiers))
         total_rows = sum(row.rows for row in rows)
         if total_rows > self.batch_size:
             self.warnings.append(
@@ -568,7 +656,8 @@ class BatchLayout:
             for segment in row.segments:
                 letter = _MODE_LETTERS.get(segment.mode, segment.mode[0])
                 segment_bits.append(f"{segment.columns}{letter}")
-            row_bits.append(f"{row.rows}[{'/'.join(segment_bits)}]")
+            modifier_text = row.modifiers.render() if row.modifiers else ""
+            row_bits.append(f"{row.rows}{modifier_text}[{'/'.join(segment_bits)}]")
         return "+".join(row_bits)
 
     def expanded_rows(self) -> list[list[SegmentLayout]]:
@@ -875,6 +964,12 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         type=str,
         default="ai will",
         help="Prompt used for generation",
+    )
+    sampling_group.add_argument(
+        "--no-prompt-prefix",
+        action="store_true",
+        default=DEFAULTS.prompt_no_prefix,
+        help="Do not prepend blank lines to prompts before tokenization",
     )
     sampling_group.add_argument(
         "--generate",
@@ -2866,7 +2961,7 @@ class TransformerGRCE(nn.Module):
         self.n_layers = config.n_layer
         self.n_embd = config.n_embd
         self.detach_span = max(0, int(config.detach_span))
-        self.detach_ctx_enabled = not getattr(config, "no_detach_ctx", False)
+        self.detach_ctx_enabled_default = not getattr(config, "no_detach_ctx", False)
         if self.disabled:
             return
         self.sample_norms = nn.ModuleList(
@@ -2906,13 +3001,19 @@ class TransformerGRCE(nn.Module):
         position: int,
         *,
         detach_samples: bool = False,
+        detach_ctx_enabled: bool | None = None,
+        detach_span_override: int | None = None,
     ) -> torch.Tensor:
         if self.disabled:
             return grce_state
+        span_value = self.detach_span if detach_span_override is None else max(0, detach_span_override)
         should_detach = detach_samples or (
-            self.detach_span > 0 and (position % self.detach_span) == 0
+            span_value > 0 and (position % span_value) == 0
         )
-        if should_detach and self.detach_ctx_enabled and grce_state is not None:
+        state_detach_enabled = (
+            self.detach_ctx_enabled_default if detach_ctx_enabled is None else detach_ctx_enabled
+        )
+        if should_detach and state_detach_enabled and grce_state is not None:
             grce_state = grce_state.detach()
         messages: list[torch.Tensor] = []
         for layer_idx in range(self.n_layers):
@@ -2958,7 +3059,7 @@ class TransformerXCTX(nn.Module):
         self.inner_dim = _get_inner_xctx_width(config)
         self.squeeze_dim = max(1, self.context_dim // 2)
         self.detach_span = max(0, int(config.detach_span))
-        self.detach_ctx_enabled = not getattr(config, "no_detach_ctx", False)
+        self.detach_ctx_enabled_default = not getattr(config, "no_detach_ctx", False)
         if self.disabled:
             return
         self.sample_linear = nn.ModuleList(
@@ -3009,13 +3110,19 @@ class TransformerXCTX(nn.Module):
         position: int,
         *,
         detach_samples: bool = False,
+        detach_ctx_enabled: bool | None = None,
+        detach_span_override: int | None = None,
     ) -> torch.Tensor:
         if self.disabled:
             return xctx_state
+        span_value = self.detach_span if detach_span_override is None else max(0, detach_span_override)
         should_detach = detach_samples or (
-            self.detach_span > 0 and (position % self.detach_span) == 0
+            span_value > 0 and (position % span_value) == 0
         )
-        if should_detach and self.detach_ctx_enabled and xctx_state is not None:
+        state_detach_enabled = (
+            self.detach_ctx_enabled_default if detach_ctx_enabled is None else detach_ctx_enabled
+        )
+        if should_detach and state_detach_enabled and xctx_state is not None:
             xctx_state = xctx_state.detach()
         messages: list[torch.Tensor] = []
         for idx in range(self.n_layers):
@@ -3130,6 +3237,8 @@ class TransformerStackSequence(nn.Module):
         detach_samples_span: int = 0,
         detach_grce_span: int = 0,
         detach_xctx_span: int = 0,
+        context_detach_span: int | None = None,
+        context_detach_enabled: bool | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None, list]:
         if mode not in {"forward", "encode", "decode", "noattn"}:
             raise ValueError(f"Unknown TransformerStackSequence mode: {mode}")
@@ -3153,6 +3262,8 @@ class TransformerStackSequence(nn.Module):
                 detach_grce_span=detach_grce_span,
                 detach_xctx_span=detach_xctx_span,
                 detach_internal_kv_cache=detach_internal_kv_cache,
+                context_detach_span=context_detach_span,
+                context_detach_enabled=context_detach_enabled,
             )
         use_internal_cache = mode != "noattn"
         base_sources = list(kv_cache_list_in or [])
@@ -3225,6 +3336,8 @@ class TransformerStackSequence(nn.Module):
                     samples,
                     col,
                     detach_samples=detach_samples,
+                    detach_ctx_enabled=context_detach_enabled,
+                    detach_span_override=context_detach_span,
                 )
             if self.xctx is not None and xctx_state is not None:
                 if detach_xctx_span > 0 and (col % detach_xctx_span) == 0:
@@ -3234,6 +3347,8 @@ class TransformerStackSequence(nn.Module):
                     samples,
                     col,
                     detach_samples=detach_samples,
+                    detach_ctx_enabled=context_detach_enabled,
+                    detach_span_override=context_detach_span,
                 )
         stacked = torch.cat(outputs, dim=1)
         if detach_internal_kv_cache and kv_storage is not None:
@@ -3260,6 +3375,8 @@ class TransformerStackSequence(nn.Module):
         detach_grce_span: int,
         detach_xctx_span: int,
         detach_internal_kv_cache: bool,
+        context_detach_span: int | None,
+        context_detach_enabled: bool | None,
     ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None, list[tuple[torch.Tensor, torch.Tensor]]]:
         rows, cols, _ = x.shape
         grid_grce_biases = list(grce_bias_list_in or [])
@@ -3295,6 +3412,8 @@ class TransformerStackSequence(nn.Module):
                     slice_samples,
                     col,
                     detach_samples=detach_samples,
+                    detach_ctx_enabled=context_detach_enabled,
+                    detach_span_override=context_detach_span,
                 )
             if self.xctx is not None and xctx_state is not None:
                 if detach_xctx_span > 0 and (col % detach_xctx_span) == 0:
@@ -3304,6 +3423,8 @@ class TransformerStackSequence(nn.Module):
                     slice_samples,
                     col,
                     detach_samples=detach_samples,
+                    detach_ctx_enabled=context_detach_enabled,
+                    detach_span_override=context_detach_span,
                 )
         return output, grce_state, xctx_state, kv_out
 
@@ -3572,6 +3693,14 @@ def _run_microbatch_pass(
         kv_chain: list[list[tuple[torch.Tensor, torch.Tensor]] | None] = []
         grce_state = None
         xctx_state = None
+        modifiers = group.modifiers
+        detach_span_override = (
+            modifiers.detach_span if modifiers and modifiers.detach_span is not None else None
+        )
+        row_detach_kv_cache = args.detach_kv_cache or (
+            modifiers.detach_kv_cache if modifiers else False
+        )
+        context_detach_override = False if (modifiers and modifiers.no_detach_ctx) else None
         for segment in group.segments:
             cols = int(segment.columns)
             if cols <= 0:
@@ -3586,7 +3715,9 @@ def _run_microbatch_pass(
                 xctx_in=xctx_state,
                 kv_cache_list_in=kv_sources,
                 mode=mode,
-                detach_internal_kv_cache=args.detach_kv_cache,
+                detach_internal_kv_cache=row_detach_kv_cache,
+                context_detach_span=detach_span_override,
+                context_detach_enabled=context_detach_override,
             )
             logits = model.core.head(model.core.ln_f(chunk_output))
             loss_sum, token_count = loss_sum_and_token_count(
@@ -4129,7 +4260,11 @@ def train_model(
             if used_default:
                 prompt_input = sample_prompt
             else:
-                prompt_tokens = tokenizer.encode(picked_prompt).unsqueeze(0).to(device)
+                prefixed_prompt = apply_prompt_prefix(
+                    picked_prompt,
+                    enabled=getattr(args, "prompt_prefix", True),
+                )
+                prompt_tokens = tokenizer.encode(prefixed_prompt).unsqueeze(0).to(device)
                 prompt_input = prompt_tokens
             prompt_needs_boundary_flag = (
                 boundary_blocklist is not None and prompt_needs_boundary(picked_prompt)
@@ -5111,7 +5246,11 @@ class Runtime:
 
             device = torch.device(self.args.device)
             try:
-                prompt_tokens = tokenizer.encode(self.args.prompt)
+                prompt_text_for_tokens = apply_prompt_prefix(
+                    self.args.prompt,
+                    enabled=getattr(self.args, "prompt_prefix", True),
+                )
+                prompt_tokens = tokenizer.encode(prompt_text_for_tokens)
             except KeyError as exc:  # pragma: no cover - user misconfiguration
                 raise ValueError(
                     "Prompt contains characters outside the tokenizer vocabulary. "
