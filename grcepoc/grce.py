@@ -1126,6 +1126,7 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
     # Run the args parser
 
     args = parser.parse_args()
+    args.completed_cycles = 0
     args.corpus = None
 
     if args.command is None:
@@ -2250,8 +2251,7 @@ class TokenWindow:
         block_length: int,
         batch_size: int,
         device: torch.device,
-        position_offset: int = 0,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         if batch_size <= 0:
             raise ValueError("Batch size must be positive when sampling tokens")
         span = block_length + 1
@@ -2267,16 +2267,14 @@ class TokenWindow:
         else:
             offsets = torch.zeros((batch_size,), dtype=torch.long)
         offsets = offsets.tolist()
-        windows = []
-        positions = []
-        for offset in offsets:
-            window_start = self.start + offset
-            windows.append(self.chunk[window_start : window_start + span])
-            positions.append(position_offset + offset)
+        windows = [
+            self.chunk[self.start + offset : self.start + offset + span]
+            for offset in offsets
+        ]
         stacked = torch.stack(windows)
         x = stacked[:, :-1].contiguous().to(device=device, dtype=torch.long)
         y = stacked[:, 1:].contiguous().to(device=device, dtype=torch.long)
-        return x, y, torch.tensor(positions, device=device, dtype=torch.long)
+        return x, y
 
 
 # -----------------------------------------------------------------------------
@@ -2754,6 +2752,7 @@ class TransformerStackCore(nn.Module):
         kv_cache_list_in: Sequence[Sequence[tuple[torch.Tensor, torch.Tensor]]] | None = None,
         mode: str = "decode",
         qh_query_callback=None,
+        position_offsets: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, list[torch.Tensor], list[tuple[torch.Tensor, torch.Tensor]]]:
         rows, cols, _ = x.shape
         xctx_tensor = _merge_bias_list(
@@ -3538,17 +3537,15 @@ def _run_microbatch_pass(
         if cols_total <= 0:
             continue
         try:
-            xb, yb, pos_offsets = micro_window.sample_batch(
-                cols_total,
-                rows,
-                device,
-                position_offset=position_shift,
-            )
+            xb, yb = micro_window.sample_batch(cols_total, rows, device)
         except ValueError as exc:
             raise ValueError(
                 f"Unable to sample {rows} rows with {cols_total} columns from the current window"
             ) from exc
-        embeddings = _sequence_embeddings(model, xb)
+        pos_offsets = None
+        if position_shift:
+            pos_offsets = torch.full((rows,), position_shift, dtype=torch.long, device=device)
+        embeddings = _sequence_embeddings_with_offsets(model, xb, pos_offsets)
         cursor = 0
         kv_chain: list[list[tuple[torch.Tensor, torch.Tensor]] | None] = []
         grce_state = None
@@ -3568,7 +3565,6 @@ def _run_microbatch_pass(
                 kv_cache_list_in=kv_sources,
                 mode=mode,
                 detach_internal_kv_cache=args.detach_kv_cache,
-                position_offsets=pos_offsets,
             )
             logits = model.core.head(model.core.ln_f(chunk_output))
             loss_sum, token_count = loss_sum_and_token_count(
@@ -3767,8 +3763,16 @@ def loss_sum_and_token_count(
 def _sequence_embeddings(model: GRCEGPT, token_batch: torch.Tensor) -> torch.Tensor:
     """Project token IDs into dropout'd embeddings for stack sequence calls."""
 
+    return _sequence_embeddings_with_offsets(model, token_batch, None)
+
+
+def _sequence_embeddings_with_offsets(
+    model: GRCEGPT,
+    token_batch: torch.Tensor,
+    position_offsets: torch.Tensor | None,
+) -> torch.Tensor:
     batch_size, seq_len = token_batch.shape
-    pos_idx = model._position_ids(seq_len, batch_size, token_batch.device, None)
+    pos_idx = model._position_ids(seq_len, batch_size, token_batch.device, position_offsets)
     tok = model.core.tok_emb(token_batch)
     pos = model.core.pos_emb(pos_idx)
     return model.core.drop(tok + pos)
@@ -3932,8 +3936,9 @@ def train_model(
                     cycle_micro_norms.append(norm)
             position_shift = 0
             if args.block_length < args.block_size:
-                max_shift = max(0, args.block_size - args.block_length)
-                position_shift = random.randint(0, max_shift)
+                headroom = max(0, args.block_size - args.block_length)
+                if headroom > 0:
+                    position_shift = random.randint(0, headroom)
             total_loss_sum, total_tokens, micro_logs, window_detail = train_layout_batch(
                 args,
                 model,
@@ -4210,6 +4215,7 @@ def train_model(
                 Colors.GREEN,
             )
         print(summary)
+
     args.completed_cycles = cycle_end
     return total_steps, history_updates, loop_timer.stop(), eval_timer
 
@@ -4246,8 +4252,9 @@ def run_profile_mode(
         model.train()
         position_shift = 0
         if block_length < block_size:
-            max_shift = max(0, block_size - block_length)
-            position_shift = random.randint(0, max_shift)
+            headroom = max(0, block_size - block_length)
+            if headroom > 0:
+                position_shift = random.randint(0, headroom)
         total_loss_sum, total_tokens, _, _ = train_layout_batch(
             args,
             model,
@@ -5121,6 +5128,7 @@ class Runtime:
             if payload is not None:
                 try:
                     if isinstance(payload, dict) and "model" in payload:
+                        self.args.completed_cycles = int(payload.get("completed_cycles", 0) or 0)
                         upgraded = upgrade_state_dict(payload["model"])
                         payload["model"] = upgraded
                         model.load_state_dict(upgraded)
