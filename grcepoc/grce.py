@@ -709,6 +709,16 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
     )
     def flag_present(flag: str) -> bool:
         return any(arg == flag or arg.startswith(f"{flag}=") for arg in raw_cli_args)
+
+    def raw_flag_value(flag: str) -> str | None:
+        for idx, arg in enumerate(raw_cli_args):
+            if arg == flag:
+                if idx + 1 < len(raw_cli_args):
+                    return raw_cli_args[idx + 1]
+                return None
+            if arg.startswith(f"{flag}="):
+                return arg.split("=", 1)[1]
+        return None
     generic = parser.add_argument_group("Generic options")
     generic.add_argument(
         "--name",
@@ -798,7 +808,7 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         action="store_true",
         help=(
             "Shortcut for --vocab-size 600 --batch-size 12 --block-size 6 --n-layer 3 --n-head 2 "
-            "--n-embd 8 --n-grce 4 --n-xctx 9 --steps 2 --cycles 1 --eval-interval 1"
+            "--n-embd 8 --n-grce 4 --n-xctx 9 --steps 2 --cycles +1 --eval-interval 1"
         ),
     )
 
@@ -1239,6 +1249,21 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
     args = parser.parse_args()
     args.completed_cycles = 0
     args.corpus = None
+    args._cycles_is_delta = False
+    args._cycles_delta = 0
+
+    cycles_raw = raw_flag_value("--cycles")
+    if cycles_raw and cycles_raw.startswith("+"):
+        if len(cycles_raw) == 1:
+            parser.error("--cycles +N requires a numeric offset")
+        try:
+            delta = int(cycles_raw[1:])
+        except ValueError:
+            parser.error(f"Invalid value for --cycles: {cycles_raw}")
+        if delta < 0:
+            parser.error("--cycles +N requires N >= 0")
+        args._cycles_is_delta = True
+        args._cycles_delta = delta
 
     if args.command is None:
         parser.print_help()
@@ -5411,6 +5436,12 @@ class Runtime:
                     )
                 )
                 return
+
+            if getattr(self.args, "_cycles_is_delta", False):
+                delta = int(getattr(self.args, "_cycles_delta", 0))
+                base_cycles = int(getattr(self.args, "completed_cycles", 0))
+                self.args.cycles = base_cycles + delta
+
             self.datasets_state = {
                 name: dict(state) for name, state in dataset_states.items()
             }
