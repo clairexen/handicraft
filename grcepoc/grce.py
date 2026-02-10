@@ -4211,7 +4211,7 @@ def train_model(
         line_parts.append(color_text(f"{total_steps}", Colors.CYAN))
         line_parts.append(color_text(train_values, Colors.MAGENTA))
         line_parts.append(color_text(test_values, Colors.GREEN))
-        line_parts.append(color_text(f"{current_lr:.4g}", Colors.YELLOW))
+        line_parts.append(color_text(f"{current_lr:.2e}", Colors.YELLOW))
         line = " | ".join(line_parts) + " | " + sample_render
         print(line)
 
