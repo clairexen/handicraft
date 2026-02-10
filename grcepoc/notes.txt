@@ -734,3 +734,12 @@ python grce.py --name dec24f --cycles 50 --batch-size 128 --block-length 256 --t
 python grce.py --name allfwd --cycles 50 --batch-size 70 --block-length 128 --time --layout '*[*f]' train
 done
 
+while true; do
+python grce.py --name alldec --cycles 50 --batch-size 70 --block-length 128 --time --layout '*[*d]' train
+python grce.py --name decdec --cycles 50 --batch-size 70 --block-length 128 --time --layout '*[*d/*d]' train
+done
+
+python grce.py --n-xctx 0 --n-grce 0 --cycles 500 --layout '*[*d]' create
+python grce.py --n-xctx 0 --n-grce 0 --cycles 500 --layout '*[*d]' corpus --set cccclc-0000
+python grce.py --n-xctx 0 --n-grce 0 --cycles 500 --layout '*[*d]' --batch-size 200 train
+
