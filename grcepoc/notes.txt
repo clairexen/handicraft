@@ -753,7 +753,17 @@ python grce.py --n-xctx 0 --n-grce 0 --cycles 500 --layout '*[*d]' create
 python grce.py --n-xctx 0 --n-grce 0 --cycles 500 --layout '*[*d]' corpus --set cccclc-0000
 python grce.py --n-xctx 0 --n-grce 0 --cycles 500 --layout '*[*d]' --batch-size 200 train
 
-grce_run="--name lrschedule --n-xctx 0 --n-grce 0 --cycles 500 --layout *[*d] --batch-size 200 \
+grce_run="--name lrschedule --n-xctx 0 --n-grce 0 --cycles 500 --layout '*[*d]' --batch-size 200 \
           --lr-warmup 500 --lr-decay-style cosine --learning-rate 3e-4 --lr-decay-min 3e-5 --time"
 python grce.py $grce_run create && python grce.py $grce_run corpus --set cccclc-0000
 python grce.py $grce_run train
+
+grce_run="--name lrschedule2 --n-xctx 0 --n-grce 0 --cycles 500 --layout '*[*d]' --batch-size 200 \
+          --lr-warmup 500 --learning-rate 4e-4 --time"
+eval "python grce.py $grce_run create && python grce.py $grce_run corpus --set cccclc-0000"
+eval "python grce.py $grce_run train"
+
+grce_run="--name lrwarmup_big --n-xctx 0 --n-grce 0 --cycles 500 --layout '*[*d]' --batch-size 80 \
+          --lr-warmup 500 --time --n-layer 12 --n-head 12 --n-embd 768"
+eval "python grce.py $grce_run create && python grce.py $grce_run corpus --set cccclc-0000"
+eval "python grce.py $grce_run train"

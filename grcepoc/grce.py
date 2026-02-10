@@ -134,6 +134,7 @@ class Defaults:
     lr_warmup: int = 0
     lr_decay_style: str = "none"
     lr_decay_min: float = 0.0
+    lr_steady: int = 0
     no_detach_ctx: bool = False
     prompt_no_prefix: bool = False
 
@@ -876,6 +877,12 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         type=int,
         default=DEFAULTS.lr_warmup,
         help="Number of optimizer steps to linearly warm up the learning rate",
+    )
+    training_group.add_argument(
+        "--lr-steady",
+        type=int,
+        default=DEFAULTS.lr_steady,
+        help="Number of steps to hold the peak learning rate before decay",
     )
     training_group.add_argument(
         "--lr-decay-style",
@@ -3995,6 +4002,7 @@ def _optimizer_param_groups(module: nn.Module, weight_decay: float) -> list[dict
 def _scheduled_lr(
     base_lr: float,
     warmup_steps: int,
+    steady_steps: int,
     total_run_steps: int,
     step_index: int,
     *,
@@ -4004,15 +4012,20 @@ def _scheduled_lr(
     if base_lr <= 0.0:
         return 0.0
     warmup_steps = max(0, warmup_steps)
+    steady_steps = max(0, steady_steps)
     total_run_steps = max(1, total_run_steps)
     step_index = max(0, step_index)
     # Linear warmup
     if warmup_steps > 0 and step_index < warmup_steps:
         return base_lr * float(step_index + 1) / float(warmup_steps)
 
+    if steady_steps > 0 and step_index < warmup_steps + steady_steps:
+        return base_lr
+
     decay_min = max(0.0, min(decay_min, base_lr))
-    decay_span = max(1, total_run_steps - warmup_steps)
-    decay_progress = min(1.0, max(0.0, (step_index - warmup_steps) / decay_span))
+    decay_span = max(1, total_run_steps - warmup_steps - steady_steps)
+    decay_offset = max(0, step_index - warmup_steps - steady_steps)
+    decay_progress = min(1.0, decay_offset / decay_span)
 
     if decay_style == "cosine":
         # Cosine decays smoothly toward decay_min.
@@ -4122,6 +4135,7 @@ def train_model(
             current_lr = _scheduled_lr(
                 args.learning_rate,
                 args.lr_warmup,
+                args.lr_steady,
                 run_total_steps,
                 max(0, total_steps),
                 decay_style=args.lr_decay_style,

@@ -38,8 +38,12 @@ ALLOWED_FIELDS = {
     "test_loss_noattn",
     "train_wall_seconds",
     "unix_time",
+    "corpus",
     "train_cursor",
     "test_cursor",
+    "train_cycle",
+    "test_cycle",
+    "learning_rate"
 }
 
 
