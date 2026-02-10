@@ -131,6 +131,7 @@ class Defaults:
     adam_beta1: float = 0.9
     adam_beta2: float = 0.95
     adam_eps: float = 1e-8
+    lr_warmup: int = 0
 
 DEFAULTS = Defaults()
 
@@ -769,6 +770,12 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         help="AdamW epsilon value",
     )
     training_group.add_argument(
+        "--lr-warmup",
+        type=int,
+        default=DEFAULTS.lr_warmup,
+        help="Number of optimizer steps to linearly warm up the learning rate",
+    )
+    training_group.add_argument(
         "--no-grad-summary",
         action="store_true",
         help="Disable per-cycle gradient summary logging",
@@ -788,11 +795,20 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         action="store_true",
         help="Reinitialize the optimizer at the beginning of every cycle",
     )
-    training_group.add_argument(
+    checkpoint_group = training_group.add_mutually_exclusive_group()
+    checkpoint_group.add_argument(
         "--checkpoint-optimizer",
+        dest="checkpoint_optimizer",
         action="store_true",
         help="Serialize optimizer state to checkpoints so runs can resume without momentum reset",
     )
+    checkpoint_group.add_argument(
+        "--no-checkpoint-optimizer",
+        dest="checkpoint_optimizer",
+        action="store_false",
+        help="Disable optimizer state checkpointing",
+    )
+    parser.set_defaults(checkpoint_optimizer=True)
     training_group.add_argument(
         "--no-kv-rebalance",
         action="store_true",
@@ -2234,7 +2250,7 @@ class TokenWindow:
         block_length: int,
         batch_size: int,
         device: torch.device,
-    position_offset: int = 0,
+        position_offset: int = 0,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         if batch_size <= 0:
             raise ValueError("Batch size must be positive when sampling tokens")
@@ -3507,6 +3523,7 @@ def _run_microbatch_pass(
     device: torch.device,
     *,
     collect_mode_metrics: bool,
+    position_shift: int = 0,
 ) -> tuple[LayoutPassResult, float]:
     start_time = time.time()
     mode_loss_sums = {mode: 0.0 for mode in BATCH_MODES}
@@ -3521,7 +3538,12 @@ def _run_microbatch_pass(
         if cols_total <= 0:
             continue
         try:
-            xb, yb, pos_offsets = micro_window.sample_batch(cols_total, rows, device)
+            xb, yb, pos_offsets = micro_window.sample_batch(
+                cols_total,
+                rows,
+                device,
+                position_offset=position_shift,
+            )
         except ValueError as exc:
             raise ValueError(
                 f"Unable to sample {rows} rows with {cols_total} columns from the current window"
@@ -3574,6 +3596,7 @@ def train_layout_batch(
     layout: BatchLayout,
     device: torch.device,
     grad_hook: Callable[[int, int], None] | None = None,
+    position_shift: int = 0,
 ) -> tuple[torch.Tensor, int, list[tuple[int, float, float, str]], dict[str, object]]:
     step_span = layout.total_token_span()
     if step_span <= 0:
@@ -3605,6 +3628,7 @@ def train_layout_batch(
             micro_window,
             device,
             collect_mode_metrics=False,
+            position_shift=position_shift,
         )
         if result.total_loss_sum is None or result.total_tokens <= 0:
             micro_logs.append((index, fwd_time, 0.0, layout.serialize_rows(batch)))
@@ -3786,6 +3810,29 @@ def _optimizer_param_groups(module: nn.Module, weight_decay: float) -> list[dict
     return groups if groups else [{"params": module.parameters(), "weight_decay": weight_decay}]
 
 
+def _scheduled_lr(
+    base_lr: float,
+    warmup_steps: int,
+    total_run_steps: int,
+    step_index: int,
+) -> float:
+    if base_lr <= 0.0:
+        return 0.0
+    warmup_steps = max(0, warmup_steps)
+    total_run_steps = max(1, total_run_steps)
+    # Linear warmup
+    if warmup_steps > 0 and step_index < warmup_steps:
+        return base_lr * float(step_index + 1) / float(warmup_steps)
+    return base_lr
+
+
+def atomic_torch_save(payload: dict, target_path: pathlib.Path) -> None:
+    tmp_path = target_path.with_suffix(target_path.suffix + "_")
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(payload, tmp_path)
+    tmp_path.replace(target_path)
+
+
 
 
 def train_model(
@@ -3825,6 +3872,8 @@ def train_model(
     eval_interval = max(1, int(eval_interval))
     loop_timer = Timer().start()
     eval_timer = Timer()
+    run_total_steps = max(1, args.steps * args.cycles)
+    current_lr = args.learning_rate
 
     long_loss_header = " ".join([""] + [f"{': ' if key in ROW_METRIC_LOG_GROUP else ''}{key}" for key in ROW_METRIC_LOG_KEYS])
 
@@ -3845,6 +3894,8 @@ def train_model(
     cycle_micro_norms: list[float] = []
     cycle_step_norms: list[float] = []
     need_grad_tracking = args.log_grad_norms or args.grad_summary
+    completed_cycles = getattr(args, "completed_cycles", 0)
+    cycle_end = completed_cycles + args.cycles
     while step < steps:
         if layouts_sequence is not None:
             if step >= len(layouts_sequence):
@@ -3861,6 +3912,15 @@ def train_model(
         current_step_index = total_steps + 1
         step_wall_start = time.time()
         try:
+            run_step_index = max(0, total_steps - start_step)
+            current_lr = _scheduled_lr(
+                args.learning_rate,
+                args.lr_warmup,
+                run_total_steps,
+                run_step_index,
+            )
+            for group in optimizer.param_groups:
+                group["lr"] = current_lr
             optimizer.zero_grad(set_to_none=True)
             micro_grad_norms.clear()
             def _record_micro_grad(micro_idx: int, micro_tokens: int) -> None:
@@ -3870,11 +3930,10 @@ def train_model(
                     micro_grad_norms.append((micro_idx, micro_tokens, raw_norm, norm))
                 if args.grad_summary:
                     cycle_micro_norms.append(norm)
-            position_offset: torch.Tensor | None = None
+            position_shift = 0
             if args.block_length < args.block_size:
                 max_shift = max(0, args.block_size - args.block_length)
-                offset_value = random.randint(0, max_shift)
-                position_offset = torch.full((layout.batch_size,), offset_value, dtype=torch.long, device=device)
+                position_shift = random.randint(0, max_shift)
             total_loss_sum, total_tokens, micro_logs, window_detail = train_layout_batch(
                 args,
                 model,
@@ -3882,7 +3941,7 @@ def train_model(
                 layout,
                 device,
                 grad_hook=_record_micro_grad if need_grad_tracking else None,
-                position_offsets=position_offset,
+                position_shift=position_shift,
             )
             if total_tokens <= 0:
                 raise RuntimeError("No tokens processed in training step")
@@ -4106,6 +4165,7 @@ def train_model(
         line_parts.append(color_text(f"{total_steps}", Colors.CYAN))
         line_parts.append(color_text(train_values, Colors.MAGENTA))
         line_parts.append(color_text(test_values, Colors.GREEN))
+        line_parts.append(color_text(f"lr={current_lr:.4g}", Colors.YELLOW))
         line = " | ".join(line_parts) + " | " + sample_render
         print(line)
 
@@ -4126,6 +4186,7 @@ def train_model(
         record["train_cycle"] = int(dataset.cycles.get("train", 0))
         record["test_cycle"] = int(dataset.cycles.get("test", 0))
         record["batch_layout"] = layout_serialized
+        record["learning_rate"] = current_lr
         metric_keys = ["target"] + ROW_METRIC_HIST_KEYS
         for key in metric_keys:
             train_val = eval_metrics["train"].metrics.get(key)
@@ -4137,16 +4198,19 @@ def train_model(
         history_updates.append(record)
 
     if args.grad_summary:
-        parts = [color_text(f"[grad norms] ", Colors.CYAN)]
+        summary = color_text("[grad norms]", Colors.CYAN) + " "
         if cycle_micro_norms:
-            parts.append(color_text(
-                f"micro: min {min(cycle_micro_norms):.4f}, max {max(cycle_micro_norms):.4f}, "
-                f"avg {sum(cycle_micro_norms)/len(cycle_micro_norms):.4f}; ", Colors.MAGENTA))
+            summary += color_text(
+                f"micro min {min(cycle_micro_norms):.4f} max {max(cycle_micro_norms):.4f} avg {sum(cycle_micro_norms)/len(cycle_micro_norms):.4f}; ",
+                Colors.MAGENTA,
+            )
         if cycle_step_norms:
-            parts.append(color_text(
-                f"steps: min {min(cycle_step_norms):.4f}, max {max(cycle_step_norms):.4f}, "
-                f"avg {sum(cycle_step_norms)/len(cycle_step_norms):.4f}", Colors.GREEN))
-        print("".join(parts))
+            summary += color_text(
+                f"steps min {min(cycle_step_norms):.4f} max {max(cycle_step_norms):.4f} avg {sum(cycle_step_norms)/len(cycle_step_norms):.4f}",
+                Colors.GREEN,
+            )
+        print(summary)
+    args.completed_cycles = cycle_end
     return total_steps, history_updates, loop_timer.stop(), eval_timer
 
 
@@ -4180,12 +4244,17 @@ def run_profile_mode(
 
     def train_step(tag: str, layout: BatchLayout) -> float:
         model.train()
+        position_shift = 0
+        if block_length < block_size:
+            max_shift = max(0, block_size - block_length)
+            position_shift = random.randint(0, max_shift)
         total_loss_sum, total_tokens, _, _ = train_layout_batch(
             args,
             model,
             dataset,
             layout,
             device,
+            position_shift=position_shift,
         )
         if total_tokens <= 0:
             raise RuntimeError("No tokens processed during profiling step")
@@ -4686,7 +4755,7 @@ class Runtime:
             changed = True
         if changed:
             payload["prompts"] = registry.serialize()
-            torch.save(payload, target_path)
+            atomic_torch_save(payload, target_path)
             print(color_text(f"Updated prompts in {target_path}", Colors.GREEN))
         show_list = self.args.list or not changed
         if show_list:
@@ -4763,7 +4832,7 @@ class Runtime:
 
         if updated:
             payload["datasets"] = datasets
-            torch.save(payload, model_path)
+            atomic_torch_save(payload, model_path)
             print(color_text(f"Saved corpus metadata to {model_path}", Colors.GREEN))
 
         current = payload.get("corpus") if isinstance(payload, dict) else None
@@ -5128,7 +5197,7 @@ class Runtime:
                 total_train_wall = float(meta.get("train_wall_seconds", 0.0))
                 loss_history = []
                 write_timer = Timer().start()
-                torch.save(
+                atomic_torch_save(
                     {
                         "model": model.state_dict(),
                         "total_steps": total_steps,
@@ -5137,6 +5206,7 @@ class Runtime:
                         "train_wall_seconds": total_train_wall,
                         "prompts": prompt_registry.serialize() if prompt_registry else None,
                         "tokenizer_json": tokenizer_json,
+                        "completed_cycles": int(meta.get("completed_cycles", 0)),
                     },
                     model_path,
                 )
@@ -5164,8 +5234,9 @@ class Runtime:
                     "train_wall_seconds": 0.0,
                     "prompts": prompt_registry.serialize(),
                     "tokenizer_json": tokenizer_json,
+                    "completed_cycles": 0,
                 }
-                torch.save(checkpoint_payload, model_path)
+                atomic_torch_save(checkpoint_payload, model_path)
                 print(
                     color_text(
                         f"Created new checkpoint at {model_path}; run 'corpus --set <name>' before training.",
@@ -5256,7 +5327,10 @@ class Runtime:
 
             acc_train = Timer()
             acc_eval = Timer()
-            for cycle in range(1, self.args.cycles + 1):
+            completed_cycles = getattr(self.args, "completed_cycles", 0)
+            cycle_start = completed_cycles + 1
+            cycle_end = completed_cycles + self.args.cycles
+            for cycle in range(cycle_start, cycle_end + 1):
                 dataset = self.dataset
                 cycle_wall = time.time()
                 tags = ["GPT"]
@@ -5348,9 +5422,10 @@ class Runtime:
                         Colors.CYAN,
                     )
                 )
+                per_run_idx = cycle - completed_cycles
                 print(
                     color_text(
-                        f"[{label}] Training Cycle {cycle}/{self.args.cycles}. "
+                        f"[{label}] Training Cycle {per_run_idx}/{self.args.cycles} (global {cycle}). "
                         f"Total training so far: {total_steps} steps, {hours:.2f} hours ({days:.2f} days)",
                         Colors.BLUE,
                     )
@@ -5401,7 +5476,12 @@ class Runtime:
                 total_train_wall += train_timer.wall_secs
                 self.datasets_state[self.args.corpus] = dataset.state_dict()
                 if not self.args.skip_model_update:
-                    torch.save(
+                    include_optimizer = (
+                        self.args.checkpoint_optimizer
+                        and not self.args.restart_optimizer
+                        and cycle < cycle_end
+                    )
+                    atomic_torch_save(
                         {
                             "model": model.state_dict(),
                             "datasets": self.datasets_state,
@@ -5412,9 +5492,10 @@ class Runtime:
                             "corpus": self.args.corpus,
                             "prompts": prompt_registry.serialize() if prompt_registry else None,
                             "tokenizer_json": tokenizer_json,
+                            "completed_cycles": cycle,
                             **(
                                 {"optimizer": optimizer.state_dict()}
-                                if self.args.checkpoint_optimizer and not self.args.restart_optimizer
+                                if include_optimizer
                                 else {}
                             ),
                         },
@@ -5442,9 +5523,9 @@ class Runtime:
                 if ansi_file is not None:
                     ansi_file.flush()
 
-                if self.args.restart_optimizer:
-                    # Drop the cycle-local optimizer before the next pass
-                    optimizer = None
+            if self.args.restart_optimizer:
+                optimizer = None
+            self.args.completed_cycles = cycle_end
 
         except KeyboardInterrupt:
             if self.args.debug_interrupt:
