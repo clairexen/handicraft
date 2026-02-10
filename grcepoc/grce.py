@@ -126,6 +126,11 @@ class Defaults:
     dropout: float = 0.05
     detach_span: int = 0
     log_step_details: bool = False
+    learning_rate: float = 3e-4
+    weight_decay: float = 0.01
+    adam_beta1: float = 0.9
+    adam_beta2: float = 0.95
+    adam_eps: float = 1e-8
 
 DEFAULTS = Defaults()
 
@@ -588,7 +593,7 @@ from collections import OrderedDict, defaultdict
 import json
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
-from typing import Dict, List, Tuple, Sequence, Callable
+from typing import Any, Dict, List, Tuple, Sequence, Callable
 
 
 def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
@@ -732,6 +737,36 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         action="store_true",
         default=DEFAULTS.log_step_details,
         help="Print per-step micro-batch timing details",
+    )
+    training_group.add_argument(
+        "--learning-rate",
+        type=float,
+        default=DEFAULTS.learning_rate,
+        help="AdamW learning rate",
+    )
+    training_group.add_argument(
+        "--weight-decay",
+        type=float,
+        default=DEFAULTS.weight_decay,
+        help="AdamW weight decay applied to matrix weights",
+    )
+    training_group.add_argument(
+        "--adam-beta1",
+        type=float,
+        default=DEFAULTS.adam_beta1,
+        help="AdamW beta1 hyper-parameter",
+    )
+    training_group.add_argument(
+        "--adam-beta2",
+        type=float,
+        default=DEFAULTS.adam_beta2,
+        help="AdamW beta2 hyper-parameter",
+    )
+    training_group.add_argument(
+        "--adam-eps",
+        type=float,
+        default=DEFAULTS.adam_eps,
+        help="AdamW epsilon value",
     )
     training_group.add_argument(
         "--no-grad-summary",
@@ -3729,6 +3764,24 @@ def _grad_norm(module: nn.Module) -> float:
     return math.sqrt(total)
 
 
+def _optimizer_param_groups(module: nn.Module, weight_decay: float) -> list[dict[str, Any]]:
+    decay: list[torch.Tensor] = []
+    no_decay: list[torch.Tensor] = []
+    for name, param in module.named_parameters():
+        if not param.requires_grad:
+            continue
+        if param.ndim <= 1 or name.endswith("bias"):
+            no_decay.append(param)
+        else:
+            decay.append(param)
+    groups: list[dict[str, Any]] = []
+    if decay:
+        groups.append({"params": decay, "weight_decay": weight_decay})
+    if no_decay:
+        groups.append({"params": no_decay, "weight_decay": 0.0})
+    return groups if groups else [{"params": module.parameters(), "weight_decay": weight_decay}]
+
+
 
 
 def train_model(
@@ -5138,7 +5191,12 @@ class Runtime:
                 return
 
             if self.args.command == "profile":
-                optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
+                optimizer = torch.optim.AdamW(
+                    _optimizer_param_groups(model, self.args.weight_decay),
+                    lr=self.args.learning_rate,
+                    betas=(self.args.adam_beta1, self.args.adam_beta2),
+                    eps=self.args.adam_eps,
+                )
                 if self.args.checkpoint_optimizer and optimizer_state:
                     try:
                         optimizer.load_state_dict(optimizer_state)
@@ -5162,7 +5220,12 @@ class Runtime:
                 return
 
             def build_optimizer() -> torch.optim.Optimizer:
-                return torch.optim.AdamW(model.parameters(), lr=3e-4)
+                return torch.optim.AdamW(
+                    _optimizer_param_groups(model, self.args.weight_decay),
+                    lr=self.args.learning_rate,
+                    betas=(self.args.adam_beta1, self.args.adam_beta2),
+                    eps=self.args.adam_eps,
+                )
 
             shared_optimizer: torch.optim.Optimizer | None = None
             if not self.args.restart_optimizer:
