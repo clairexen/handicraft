@@ -743,3 +743,8 @@ python grce.py --n-xctx 0 --n-grce 0 --cycles 500 --layout '*[*d]' create
 python grce.py --n-xctx 0 --n-grce 0 --cycles 500 --layout '*[*d]' corpus --set cccclc-0000
 python grce.py --n-xctx 0 --n-grce 0 --cycles 500 --layout '*[*d]' --batch-size 200 train
 
+grce_run="--name lrschedule --n-xctx 0 --n-grce 0 --cycles 500 --layout *[*d] --batch-size 200 \
+          --lr-warmup 500 --lr-decay-style cosine --learning-rate 3e-4 --lr-decay-min 3e-5"
+grce.py $grce_run create && python grce.py $grce_run corpus --set cccclc-0000
+python grce.py $grce_run train
+
