@@ -530,6 +530,16 @@ accumulating gradients. So for example:
 This creates batches of 128x64, but in 25% of the batches an additional
 micro-batch of size 1x1024 is added and included in that optimize step.
 
+Modifiers for the [...] block can be inserted directly before the [ char:
+
+	k   enable --detach-kv-cache for the [...] block
+	sN  enable --detach-span N for the [...] block ('s' is short for 's1')
+	c   enable --no-detach-ctx for the [...] block
+
+This means 'sc[*f]' has a deep path along the context, but we never backprop
+into the transformer. 'ks3[*f}' on the other hand will backprop a few columns
+of the transforer, but it will not visit later positions via the attn mechanism,
+because of the detached kv-cache.
 
 ## Thinking Models -- (this is future work)
 

@@ -134,6 +134,7 @@ class Defaults:
     lr_warmup: int = 0
     lr_decay_style: str = "none"
     lr_decay_min: float = 0.0
+    no_detach_ctx: bool = False
 
 DEFAULTS = Defaults()
 
@@ -2865,6 +2866,7 @@ class TransformerGRCE(nn.Module):
         self.n_layers = config.n_layer
         self.n_embd = config.n_embd
         self.detach_span = max(0, int(config.detach_span))
+        self.detach_ctx_enabled = not getattr(config, "no_detach_ctx", False)
         if self.disabled:
             return
         self.sample_norms = nn.ModuleList(
@@ -2910,6 +2912,8 @@ class TransformerGRCE(nn.Module):
         should_detach = detach_samples or (
             self.detach_span > 0 and (position % self.detach_span) == 0
         )
+        if should_detach and self.detach_ctx_enabled and grce_state is not None:
+            grce_state = grce_state.detach()
         messages: list[torch.Tensor] = []
         for layer_idx in range(self.n_layers):
             layer_sample = samples[layer_idx][:, -1, :]
@@ -2954,6 +2958,7 @@ class TransformerXCTX(nn.Module):
         self.inner_dim = _get_inner_xctx_width(config)
         self.squeeze_dim = max(1, self.context_dim // 2)
         self.detach_span = max(0, int(config.detach_span))
+        self.detach_ctx_enabled = not getattr(config, "no_detach_ctx", False)
         if self.disabled:
             return
         self.sample_linear = nn.ModuleList(
@@ -3010,6 +3015,8 @@ class TransformerXCTX(nn.Module):
         should_detach = detach_samples or (
             self.detach_span > 0 and (position % self.detach_span) == 0
         )
+        if should_detach and self.detach_ctx_enabled and xctx_state is not None:
+            xctx_state = xctx_state.detach()
         messages: list[torch.Tensor] = []
         for idx in range(self.n_layers):
             layer_sample = samples[idx][:, -1, :]
