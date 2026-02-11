@@ -121,7 +121,7 @@ class Defaults:
     steps: int = 100
     cycles: int = 100
     batch_size: int = 256
-    layout: str = "2[*d]+2[*f],*[*1-2e/*1-4d/*1-4f/*1-2n],*[*1-2e/*1-4f/*1-4d/*1-2n]"
+    layout: str = "2[*d]+2[*f],*[*1-2e=*1-4d=*1-4f=*1-2n],*[*1-2e=*1-4f=*1-4d=*1-2n]"
     eval_interval: int = 10
     dropout: float = 0.05
     detach_span: int = 0
@@ -180,7 +180,9 @@ def apply_prompt_prefix(text: str, *, enabled: bool) -> str:
 # The implementation mirrors the specification in the user instructions:
 # 
 # * ``A+B+...`` concatenates row groups; each group is ``ROWS[SEGMENTS]``.
-# * ``SEGMENTS`` are slash-separated ``COLS``+``MODE`` tokens (``16e/32d``).
+# * ``SEGMENTS`` are ``COLS``+``MODE`` tokens chained with ``=`` (e.g. ``16e=32d``).
+#   ``>`` behaves like ``=`` but resets the KV cache before the following segment.
+#   Legacy ``/`` separators are treated like ``=``.
 # * Ranges use ``START-END`` (inclusive) and may be prefixed by ``*`` or ``+`` to allow
 #   dynamic expansion when additional rows/columns are needed.
 # * Bare ``*`` behaves like ``*0-0`` for the baseline and participates in expansion with
@@ -344,6 +346,7 @@ class SegmentSpec:
     size: CountSpec
     mode: str
     context_enabled: bool = True
+    connector: str | None = None
 
 
 @dataclass(frozen=True)
@@ -369,6 +372,7 @@ class SegmentLayout:
     mode: str
     columns: int
     context_enabled: bool = True
+    connector: str | None = None
 
 
 @dataclass
@@ -436,24 +440,30 @@ def _parse_row_spec(token: str) -> RowSpec:
     if not segments_body:
         raise LayoutParseError("Row group requires at least one segment")
     segment_tokens = _split_segments(segments_body)
-    segments = [_parse_segment_spec(item) for item in segment_tokens]
+    segments = [_parse_segment_spec(token, connector) for token, connector in segment_tokens]
     return RowSpec(count_spec, segments, modifiers)
 
 
-def _split_segments(body: str) -> list[str]:
-    parts: list[str] = []
+def _split_segments(body: str) -> list[tuple[str, str | None]]:
+    parts: list[tuple[str, str | None]] = []
     start = 0
+    connector: str | None = None
     for index, ch in enumerate(body):
         if ch in "[]()":
             raise LayoutParseError("Unexpected bracket in segment string")
-        if ch == "/":
-            parts.append(body[start:index].strip())
+        if ch in "/=>":
+            token = body[start:index].strip()
+            if token:
+                parts.append((token, connector))
+            connector = ch
             start = index + 1
-    parts.append(body[start:].strip())
-    return [part for part in parts if part]
+    token = body[start:].strip()
+    if token:
+        parts.append((token, connector))
+    return parts
 
 
-def _parse_segment_spec(text: str) -> SegmentSpec:
+def _parse_segment_spec(text: str, connector: str | None) -> SegmentSpec:
     text = text.strip()
     if not text:
         raise LayoutParseError("Empty segment definition")
@@ -470,7 +480,11 @@ def _parse_segment_spec(text: str) -> SegmentSpec:
     if mode_key not in _MODE_ALIASES:
         raise LayoutParseError(f"Unsupported mode '{mode_token}'")
     size_spec = CountSpec.parse(size_token or "1")
-    return SegmentSpec(size_spec, _MODE_ALIASES[mode_key], context_enabled)
+    if connector == "/":
+        connector = "="
+    if connector not in {None, "=", ">"}:
+        raise LayoutParseError(f"Unsupported segment connector '{connector}'")
+    return SegmentSpec(size_spec, _MODE_ALIASES[mode_key], context_enabled, connector)
 
 
 _ROW_COUNT_CHARS = set("0123456789+-*")
@@ -681,7 +695,12 @@ class BatchLayout:
         else:
             _expand_until(self.block_size, allocations, self.rng)
         segments = [
-            SegmentLayout(spec.mode, allocation.value, spec.context_enabled)
+            SegmentLayout(
+                spec.mode,
+                allocation.value,
+                spec.context_enabled,
+                spec.connector,
+            )
             for spec, allocation in zip(specs, allocations)
         ]
         max_cols = sum(segment.columns for segment in segments)
@@ -701,11 +720,15 @@ class BatchLayout:
         row_bits: list[str] = []
         for row in rows:
             segment_bits = []
-            for segment in row.segments:
+            for idx, segment in enumerate(row.segments):
                 letter = _MODE_LETTERS.get(segment.mode, segment.mode[0])
                 if not segment.context_enabled:
                     letter = letter.upper()
-                segment_bits.append(f"{segment.columns}{letter}")
+                bit = f"{segment.columns}{letter}"
+                if idx > 0:
+                    connector = segment.connector or "="
+                    bit = connector + bit
+                segment_bits.append(bit)
             modifier_text = row.modifiers.render() if row.modifiers else ""
             row_bits.append(f"{row.rows}{modifier_text}[{'/'.join(segment_bits)}]")
         return "+".join(row_bits)
@@ -718,7 +741,7 @@ class BatchLayout:
             for _ in range(group.rows):
                 rows.append(
                     [
-                        SegmentLayout(seg.mode, seg.columns, seg.context_enabled)
+                        SegmentLayout(seg.mode, seg.columns, seg.context_enabled, seg.connector)
                         for seg in group.segments
                     ]
                 )
@@ -3868,6 +3891,9 @@ def _run_microbatch_pass(
             if cols <= 0:
                 continue
             mode = segment.mode
+            connector = getattr(segment, "connector", None)
+            if connector == ">":
+                kv_chain = []
             chunk_input = embeddings[:, cursor : cursor + cols, :]
             chunk_target = yb[:, cursor : cursor + cols]
             kv_sources = None if mode == "noattn" else (kv_chain if kv_chain else None)
@@ -4833,6 +4859,9 @@ def _evaluate_row_block(
             raise ValueError(
                 "Layout segment exceeds available token columns during evaluation"
             )
+        connector = getattr(segment, "connector", None)
+        if connector == ">":
+            kv_chain = []
         chunk_input = embeddings[:, cursor : cursor + cols, :]
         chunk_target = targets[:, cursor : cursor + cols]
         chunk_capture = None

@@ -463,7 +463,7 @@ and likewise for "forward" and "noattn".
 
 We define a mini-language for (training and evaluating) batch layouts:
 
-	12[16e/16d]+4[48f]+1[8f/8d/8f]
+	12[16e=16d]+4[48f]+1[8f=8d=8f]
 
 This means example means with first have 12 rows wide stack of the following
 sequences: first a 16 columns long "encode" sequence, followed by a 16 columns
@@ -483,7 +483,7 @@ There's more syntax to introduce randomness and dynamically adjust a layout
 to a given --batch-size and --block-size/--block-length. The default --layout
 is:
 
-	2[*d]+2[*f]+*[*1-2e/*1-4d/*1-4f/*1-2n]
+	2[*d]+2[*f]+*[*1-2e=*1-4d=*1-4f=*1-2n]
 
 So we have 2 rows by block-size cols of "decode", then 2 by block_size "forward",
 then batch_size-4 rows of a encode-decode-forward-noattn pattern, with the cols
@@ -517,7 +517,7 @@ In addition to that we define a simple pre-processing language, using '(', '|',
 and ')' to express alternatives for random choices. This is a pure text-based
 pre-processor. So the following is valid syntax:
 
-	*[*e(/|]+*[)*d]    ... for either  *[*e/*d]  or  *[*e]+*[*d]
+	*[*e(=|]+*[)*d]    ... for either  *[*e=*d]  or  *[*e]+*[*d]
 
 Batch layouts are passed to grce.py with --layout and --log-step-layout-times
 prints a message with concrete layout and training time for each training step.
@@ -545,11 +545,16 @@ of the transforer, but it will not visit later positions via the attn mechanism,
 because of the detached kv-cache.
 
 Instead of e d f n one can also use E D F N as sequence type. In that case
-the recurrent outputs of the block remain unused. The layout [*d/*d] generates
+the recurrent outputs of the block remain unused. The layout [*d=*d] generates
 XCTX and GRCE signals "blindly" in the first decode block, and then they are being
 passed to the first row of the second block, which receives biases from that
-recurrent context. (backprop for [*d/*d] takes about twice as long ans [*d].)
-The layout [*D/*d] on the other hand is functionally equivalent to [*d].
+recurrent context. (backprop for [*d=*d] takes about twice as long ans [*d].)
+The layout [*D=*d] on the other hand is functionally equivalent to [*d].
+
+We also allow > instead of = for chaining sequences inside of a [...] block.
+The difference is that with > we drop the entire k/v-history at this point,
+so only the recurrenct channels can pass information along that barrier.
+
 
 ## Thinking Models -- (this is future work)
 
