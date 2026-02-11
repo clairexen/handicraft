@@ -109,6 +109,12 @@ def parse_args() -> argparse.Namespace:
         help="For each group of N samples, drop the smallest/largest 25% before plotting",
     )
     parser.add_argument(
+        "--median",
+        type=int,
+        default=0,
+        help="For each group of N samples, replace the block with its median",
+    )
+    parser.add_argument(
         "--plot-steps",
         nargs="*",
         help="Plot step vs metric (default: test_loss); use ':' to split metrics into subplots",
@@ -387,6 +393,35 @@ def _apply_filter_groups(
     return filtered_x, filtered_y
 
 
+def _apply_median_groups(
+    x_values: List[float],
+    y_values: List[float],
+    group_size: int,
+) -> Tuple[List[float], List[float]]:
+    if group_size <= 1 or not y_values:
+        return x_values, y_values
+    result_x: List[float] = []
+    result_y: List[float] = []
+    total = len(y_values)
+    for start in range(0, total, group_size):
+        end = min(total, start + group_size)
+        block_y = y_values[start:end]
+        block_x = x_values[start:end]
+        if not block_y:
+            continue
+        if len(block_y) == 1:
+            result_x.append(block_x[0])
+            result_y.append(block_y[0])
+            continue
+        clean = [val for val in block_y if not math.isnan(val)]
+        if not clean:
+            continue
+        median_val = float(np.median(clean))
+        result_x.append(block_x[-1])
+        result_y.append(median_val)
+    return result_x, result_y
+
+
 def _fit_line(points: List[Tuple[float, float]]) -> Tuple[float, float] | None:
     if len(points) < 2:
         return None
@@ -442,6 +477,7 @@ def plot_metric_traces(
     fit_quad: int = 0,
     scatter: bool = False,
     value_filter: int = 0,
+    group_median: int = 0,
 ) -> None:
     num_groups = max(1, len(metric_groups))
     fig, axes = plt.subplots(
@@ -469,6 +505,8 @@ def plot_metric_traces(
                 y_series = y_values
                 if value_filter > 1:
                     x_series, y_series = _apply_filter_groups(x_series, y_series, value_filter)
+                if group_median > 1:
+                    x_series, y_series = _apply_median_groups(x_series, y_series, group_median)
                 if x_field == "step" and step_period > 1:
                     y_segments = _split_segments(y_series, step_period)
                     x_segments = [list(range(len(seg))) for seg in y_segments]
@@ -686,6 +724,7 @@ def main() -> None:
             fit_quad=args.fit_quad,
             scatter=args.scatter,
             value_filter=args.filter,
+            group_median=args.median,
         )
         performed = True
     if args.plot_time is not None:
@@ -702,6 +741,7 @@ def main() -> None:
             fit_quad=args.fit_quad,
             scatter=args.scatter,
             value_filter=args.filter,
+            group_median=args.median,
         )
         performed = True
     if args.plot_timestamp is not None:
@@ -718,6 +758,7 @@ def main() -> None:
             fit_quad=args.fit_quad,
             scatter=args.scatter,
             value_filter=args.filter,
+            group_median=args.median,
         )
         performed = True
     if not performed:
