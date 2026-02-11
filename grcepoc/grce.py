@@ -1133,6 +1133,13 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         help="Cursor offset within the test corpus to begin evaluation (ignored when passing text)",
     )
     eval_parser.add_argument(
+        "--rand",
+        dest="eval_random",
+        type=int,
+        default=0,
+        help="When >0, run evaluation N times on random offsets instead of using --start",
+    )
+    eval_parser.add_argument(
         "text",
         nargs="*",
         help=(
@@ -5912,6 +5919,37 @@ class Runtime:
                     joined = " ".join(raw_text).strip()
                     if joined:
                         custom_text = joined
+                if custom_text:
+                    run_eval_layout(
+                        args=self.args,
+                        dataset=dataset,
+                        tokenizer=tokenizer,
+                        model=model,
+                        block_length=self.args.block_length,
+                        start_pos=self.args.eval_start,
+                        custom_text=custom_text,
+                    )
+                    return
+                rand_runs = max(0, int(getattr(self.args, "eval_random", 0)))
+                if rand_runs > 0:
+                    total = len(dataset.test_tokens)
+                    if total <= 0:
+                        raise ValueError("Test corpus is empty; cannot run random evaluations")
+                    rng = random.Random()
+                    window = max(1, total - (self.args.block_length + 1))
+                    for run_idx in range(rand_runs):
+                        start_pos = rng.randint(0, window - 1)
+                        print(color_text(f"[eval random #{run_idx + 1}] offset {start_pos}", Colors.BLUE))
+                        run_eval_layout(
+                            args=self.args,
+                            dataset=dataset,
+                            tokenizer=tokenizer,
+                            model=model,
+                            block_length=self.args.block_length,
+                            start_pos=start_pos,
+                            custom_text=None,
+                        )
+                    return
                 run_eval_layout(
                     args=self.args,
                     dataset=dataset,
@@ -5919,7 +5957,7 @@ class Runtime:
                     model=model,
                     block_length=self.args.block_length,
                     start_pos=self.args.eval_start,
-                    custom_text=custom_text,
+                    custom_text=None,
                 )
                 return
 
