@@ -1118,6 +1118,11 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
             " the test corpus (quote the text to preserve spaces)."
         ),
     )
+    test_parser.add_argument(
+        "--attn-map",
+        action="store_true",
+        help="Render per-layer attention weights for the final prediction",
+    )
 
     eval_parser = subparsers.add_parser(
         "eval",
@@ -2514,6 +2519,7 @@ class CausalSelfAttention(nn.Module):
         qh_query_callback=None,
         attn_mode: str = "decode",
         layer_idx: int | None = None,
+        attention_capture: AttentionCapture | None = None,
     ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
         B, T, C = x.shape
         head_dim = C // self.n_head
@@ -2614,6 +2620,15 @@ class CausalSelfAttention(nn.Module):
             ext_coeff = None
 
         local_weights = self.dropout(local_weights)
+        if attention_capture is not None and attention_capture.columns:
+            for col in attention_capture.columns:
+                if 0 <= col < local_weights.size(2):
+                    weights = local_weights[:, :, col, :]
+                    attention_capture.record(
+                        layer_idx or 0,
+                        attention_capture.absolute_offset + col,
+                        weights,
+                    )
         y_local = torch.einsum("bhtl,bhlv->bhtv", local_weights, all_v)
         attn_output = y_local
         if ext_coeff is not None:
@@ -2731,6 +2746,7 @@ class Block(nn.Module):
         attention_disabled_rows: torch.Tensor | None = None,
         attention_dropout_positions: torch.Tensor | None = None,
         full_attention: bool = False,
+        attention_capture: AttentionCapture | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor | None, tuple[torch.Tensor, torch.Tensor] | None]:
         attn_input = self._apply_xctx_bias(x, xctx_bias, self.xctx_attn_gain)
         attn_norm = self.ln1(attn_input)
@@ -2744,6 +2760,7 @@ class Block(nn.Module):
             qh_query_callback=qh_query_callback,
             attn_mode=attn_mode,
             layer_idx=layer_idx,
+            attention_capture=attention_capture,
         )
         if attention_disabled_rows is not None and attention_disabled_rows.any():
             mask = (~attention_disabled_rows).view(-1, 1, 1).to(attn_output.dtype)
@@ -2945,6 +2962,7 @@ class TransformerStackCore(nn.Module):
         mode: str = "decode",
         qh_query_callback=None,
         position_offsets: torch.Tensor | None = None,
+        attention_capture: AttentionCapture | None = None,
     ) -> tuple[torch.Tensor, list[torch.Tensor], list[tuple[torch.Tensor, torch.Tensor]]]:
         rows, cols, _ = x.shape
         xctx_tensor = _merge_bias_list(
@@ -2997,6 +3015,7 @@ class TransformerStackCore(nn.Module):
                 attn_mode=mode,
                 layer_idx=layer_idx,
                 full_attention=(mode == "encode"),
+                attention_capture=attention_capture,
             )
             samples.append(current)
             kv_outputs.append(kv_pair if kv_pair is not None else None)
@@ -3320,6 +3339,7 @@ class TransformerStackSequence(nn.Module):
         detach_xctx_span: int = 0,
         context_detach_span: int | None = None,
         context_detach_enabled: bool | None = None,
+        attention_capture: AttentionCapture | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None, list]:
         if mode not in {"forward", "encode", "decode", "noattn"}:
             raise ValueError(f"Unknown TransformerStackSequence mode: {mode}")
@@ -3345,6 +3365,7 @@ class TransformerStackSequence(nn.Module):
                 detach_internal_kv_cache=detach_internal_kv_cache,
                 context_detach_span=context_detach_span,
                 context_detach_enabled=context_detach_enabled,
+                attention_capture=attention_capture,
             )
         use_internal_cache = mode != "noattn"
         base_sources = list(kv_cache_list_in or [])
@@ -3384,6 +3405,9 @@ class TransformerStackSequence(nn.Module):
             elif (not detach_internal_kv_cache) and use_internal_cache and kv_history:
                 column_kv_sources.extend(kv_history)
             kv_sources_arg = column_kv_sources if column_kv_sources else None
+            column_capture = None
+            if attention_capture is not None:
+                column_capture = attention_capture.subset(col, 1)
             column_output, samples, kv_pairs = self.core.forward_grid(
                 column_input,
                 xctx_bias_list_in=column_xctx_biases,
@@ -3391,6 +3415,7 @@ class TransformerStackSequence(nn.Module):
                 kv_cache_list_in=kv_sources_arg,
                 mode="decode",
                 qh_query_callback=qh_query_callback,
+                attention_capture=column_capture,
             )
             if detach_internal_kv_cache:
                 column_output = column_output.detach()
@@ -3458,6 +3483,7 @@ class TransformerStackSequence(nn.Module):
         detach_internal_kv_cache: bool,
         context_detach_span: int | None,
         context_detach_enabled: bool | None,
+        attention_capture: AttentionCapture | None,
     ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None, list[tuple[torch.Tensor, torch.Tensor]]]:
         rows, cols, _ = x.shape
         grid_grce_biases = list(grce_bias_list_in or [])
@@ -3473,6 +3499,7 @@ class TransformerStackSequence(nn.Module):
             kv_cache_list_in=kv_cache_list_in,
             mode=mode,
             qh_query_callback=qh_query_callback,
+            attention_capture=attention_capture,
         )
         kv_out = kv_pairs
         if detach_internal_kv_cache:
@@ -4650,6 +4677,34 @@ def _row_description(layout: BatchLayout, row: RowLayout) -> str:
 
 
 @dataclass
+class AttentionCapture:
+    columns: set[int]
+    storage: dict[int, dict[int, torch.Tensor]]
+    absolute_offset: int = 0
+
+    def subset(self, start: int, length: int) -> "AttentionCapture | None":
+        if not self.columns:
+            return None
+        local = {
+            col - start
+            for col in self.columns
+            if start <= col < start + length
+        }
+        if not local:
+            return None
+        return AttentionCapture(
+            columns=local,
+            storage=self.storage,
+            absolute_offset=self.absolute_offset + start,
+        )
+
+    def record(self, layer_idx: int, column_index: int, weights: torch.Tensor) -> None:
+        layer_store = self.storage.setdefault(layer_idx, {})
+        absolute_col = self.absolute_offset + column_index
+        layer_store[absolute_col] = weights.squeeze(0).detach().cpu()
+
+
+@dataclass
 class RowEvalResult:
     logits: torch.Tensor
     supervision_mask: torch.Tensor
@@ -4658,6 +4713,16 @@ class RowEvalResult:
     mode_token_counts: dict[str, int]
     total_loss_sum: float
     total_tokens: int
+    attention_maps: dict[int, dict[int, torch.Tensor]] | None = None
+    block_attentions: list["BlockAttention"] | None = None
+
+
+@dataclass
+class BlockAttention:
+    mode: str
+    tokens: list[int]
+    target_token: int
+    layer_weights: dict[int, torch.Tensor]
 
 
 def _evaluate_row_block(
@@ -4666,6 +4731,9 @@ def _evaluate_row_block(
     row: RowLayout,
     embeddings: torch.Tensor,
     targets: torch.Tensor,
+    *,
+    input_tokens: torch.Tensor,
+    capture_columns: set[int] | None = None,
 ) -> RowEvalResult:
     device = embeddings.device
     eval_block_length = embeddings.size(1)
@@ -4676,6 +4744,15 @@ def _evaluate_row_block(
     total_loss = 0.0
     total_tokens = 0
     logits_buffer: list[torch.Tensor] = []
+    attention_storage: dict[int, dict[int, torch.Tensor]] = {}
+    base_capture = None
+    if capture_columns:
+        base_capture = AttentionCapture(
+            columns=set(capture_columns),
+            storage=attention_storage,
+            absolute_offset=0,
+        )
+    block_attentions: list[BlockAttention] = []
     cursor = 0
     kv_chain: list[list[tuple[torch.Tensor, torch.Tensor]] | None] = []
     grce_state = None
@@ -4689,6 +4766,7 @@ def _evaluate_row_block(
     )
     context_detach_override = False if (modifiers and modifiers.no_detach_ctx) else None
     for segment in row.segments:
+        segment_start = cursor
         cols = int(segment.columns)
         if cols <= 0:
             continue
@@ -4698,6 +4776,9 @@ def _evaluate_row_block(
             )
         chunk_input = embeddings[:, cursor : cursor + cols, :]
         chunk_target = targets[:, cursor : cursor + cols]
+        chunk_capture = None
+        if base_capture is not None:
+            chunk_capture = base_capture.subset(cursor, cols)
         kv_sources = None if segment.mode == "noattn" else (kv_chain if kv_chain else None)
         chunk_output, grce_state, xctx_state, kv_out = model.stack_sequence.forward(
             chunk_input,
@@ -4708,6 +4789,7 @@ def _evaluate_row_block(
             detach_internal_kv_cache=row_detach_kv_cache,
             context_detach_span=detach_span_override,
             context_detach_enabled=context_detach_override,
+            attention_capture=chunk_capture,
         )
         logits = model.core.head(model.core.ln_f(chunk_output))
         logits_buffer.append(logits)
@@ -4729,6 +4811,25 @@ def _evaluate_row_block(
             column_modes[idx] = segment.mode
             if segment.mode == "encode" and local_idx < cols - 1:
                 supervision_mask[idx] = False
+        if chunk_capture is not None and segment.mode in {"decode", "encode"}:
+            abs_col = chunk_capture.absolute_offset + (cols - 1)
+            layer_weights: dict[int, torch.Tensor] = {}
+            for layer_idx, store in attention_storage.items():
+                weights = store.get(abs_col)
+                if weights is not None:
+                    layer_weights[layer_idx] = weights[:, -cols:].contiguous()
+            if layer_weights:
+                token_slice = input_tokens[segment_start : segment_start + cols]
+                block_tokens = token_slice.view(-1).tolist()
+                target_token = int(targets[0, segment_start + cols - 1].item())
+                block_attentions.append(
+                    BlockAttention(
+                        mode=segment.mode,
+                        tokens=block_tokens,
+                        target_token=target_token,
+                        layer_weights=layer_weights,
+                    )
+                )
         cursor += cols
     if cursor != eval_block_length:
         raise ValueError("Layout columns do not match the evaluated token span")
@@ -4743,6 +4844,8 @@ def _evaluate_row_block(
         mode_token_counts=mode_token_counts,
         total_loss_sum=total_loss,
         total_tokens=total_tokens,
+        attention_maps=attention_storage if capture_columns else None,
+        block_attentions=block_attentions,
     )
 
 
@@ -4837,8 +4940,19 @@ def run_test_slice(
             row_desc = _row_description(layout, row)
             print(color_text(f"Row block #{row_idx}: {row_desc}", Colors.YELLOW))
 
+            capture_columns = None
+            if getattr(args, "attn_map", False):
+                capture_columns = {eval_block_length - 1}
             try:
-                row_result = _evaluate_row_block(args, model, row, embeddings, yb)
+                row_result = _evaluate_row_block(
+                    args,
+                    model,
+                    row,
+                    embeddings,
+                    yb,
+                    input_tokens=column_tokens,
+                    capture_columns=capture_columns,
+                )
             except ValueError as exc:
                 print(color_text(f"  (error evaluating row: {exc})", Colors.RED))
                 continue
@@ -4893,10 +5007,54 @@ def run_test_slice(
                 f"{pad}{summary_label} | {summary_target:<{token_width}} | {row_avg_loss_text} nats/token"
             )
 
+            print(row_result.attention_maps)
+            if getattr(args, "attn_map", False) and row_result.block_attentions:
+                for block in row_result.block_attentions:
+                    _print_attention_heatmap(
+                        tokenizer,
+                        block,
+                        pad,
+                        token_width,
+                        model.config.n_layer,
+                    )
+
     if was_training:
         model.train()
 
 
+def _print_attention_heatmap(
+    tokenizer: GPT2TokenizerWrapper,
+    block: BlockAttention,
+    pad: str,
+    token_width: int,
+    n_layers: int,
+) -> None:
+    layers = [idx for idx in range(n_layers) if idx in block.layer_weights]
+    if not layers:
+        return
+    target_text = _format_token_fragment(tokenizer, block.target_token)
+    print(color_text(
+        f"Attention heatmap for predicting {target_text} ({block.mode} block):",
+        Colors.CYAN,
+    ))
+    header = f"{pad}{'':4s} | {'':<{token_width}} | "
+    header += " ".join(f"L_{idx}".rjust(4) for idx in layers)
+    print(header)
+    for idx, token in enumerate(block.tokens):
+        token_text = _format_token_fragment(tokenizer, token)
+        row_text = f"{pad}{idx:4d} | {token_text:<{token_width}} |"
+        for layer_idx in layers:
+            weights = block.layer_weights.get(layer_idx)
+            if weights is None or idx >= weights.size(1):
+                row_text += " ----"
+                continue
+            head_weights = weights[:, idx]
+            digits = []
+            for head_weight in head_weights:
+                scaled = min(9, int(round(float(head_weight.item()) * 9)))
+                digits.append(str(scaled))
+            row_text += f" {''.join(digits):>4}"
+        print(row_text)
 def _format_eval_metric_value(key: str, value: float | None) -> str:
     sep = ": " if key in ROW_METRIC_LOG_GROUP else ""
     if value is None:
@@ -4966,7 +5124,14 @@ def run_eval_layout(
         for row_idx, row in enumerate(layout.rows, start=1):
             row_desc = _row_description(layout, row)
             try:
-                row_result = _evaluate_row_block(args, model, row, embeddings, yb)
+                row_result = _evaluate_row_block(
+                    args,
+                    model,
+                    row,
+                    embeddings,
+                    yb,
+                    input_tokens=inputs,
+                )
             except ValueError as exc:
                 print(color_text(f"Row block #{row_idx}: {row_desc} -> error: {exc}", Colors.RED))
                 continue
