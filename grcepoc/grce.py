@@ -809,7 +809,7 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         action="store_true",
         help=(
             "Shortcut for --vocab-size 600 --batch-size 12 --block-size 6 --n-layer 3 --n-head 2 "
-            "--n-embd 8 --n-grce 4 --n-xctx 9 --steps 2 --cycles +1 --eval-interval 1"
+            "--n-embd 8 --n-grce 4 --n-xctx 9 --steps 2 --eval-interval 1"
         ),
     )
 
@@ -817,9 +817,9 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
     training_group.add_argument("--steps", type=int, default=DEFAULTS.steps, help="Training steps per cycle")
     training_group.add_argument(
         "--cycles",
-        type=int,
-        default=DEFAULTS.cycles,
-        help="Repeat the full training/eval/update cycle N times.",
+        type=str,
+        default="+1",
+        help="Repeat the full training/eval/update cycle N times (supports +N to extend).",
     )
     training_group.add_argument(
         "--batch-size",
@@ -1303,18 +1303,25 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
     args._cycles_is_delta = False
     args._cycles_delta = 0
 
-    cycles_raw = raw_flag_value("--cycles")
-    if cycles_raw and cycles_raw.startswith("+"):
-        if len(cycles_raw) == 1:
+    raw_cycles = getattr(args, "cycles", "+1")
+    if isinstance(raw_cycles, str) and raw_cycles.startswith("+"):
+        digits = raw_cycles[1:]
+        if not digits:
             parser.error("--cycles +N requires a numeric offset")
         try:
-            delta = int(cycles_raw[1:])
+            delta = int(digits)
         except ValueError:
-            parser.error(f"Invalid value for --cycles: {cycles_raw}")
+            parser.error(f"Invalid value for --cycles: {raw_cycles}")
         if delta < 0:
             parser.error("--cycles +N requires N >= 0")
         args._cycles_is_delta = True
         args._cycles_delta = delta
+        args.cycles = delta
+    else:
+        try:
+            args.cycles = int(raw_cycles)
+        except (TypeError, ValueError):
+            parser.error(f"--cycles must be an integer or +N, not {raw_cycles!r}")
 
     if args.command is None:
         parser.print_help()
@@ -1346,8 +1353,6 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
             args.n_xctx = 9
         if not flag_present("--steps"):
             args.steps = 2
-        if not flag_present("--cycles"):
-            args.cycles = 1
         if not flag_present("--eval-interval"):
             args.eval_interval = 1
 
