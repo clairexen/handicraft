@@ -22,7 +22,7 @@ if [[ "$1" = "loop" ]]; then
         date
         echo "----------------------------"
         for pod_dir in model_pod[0-9]*; do
-            echo; ( set -ex; bash pod.sh "${pod_dir#model_pod}" pull; )
+            echo; ( set -ex; time bash pod.sh "${pod_dir#model_pod}" pull; )
 	    continue
             for ansi_file in $pod_dir/*.ansi; do
                 sed -re 's/.\[91mRunning on remote pod/Monitoring remote pod/' \
@@ -43,7 +43,7 @@ if [[ "$1" = "loop" ]]; then
                 rm "$new_monitor"
             done
         done
-        echo; ( set -ex; sleep 300; )
+        echo; ( set -ex; sleep 1200; )
     done
     exit 0
 fi

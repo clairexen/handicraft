@@ -1099,7 +1099,7 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
 
     test_parser = subparsers.add_parser(
         "test",
-        help="Print block-length tokens from the test corpus",
+        help="Inspect tokens from the test corpus or custom text",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     test_parser.set_defaults(command="test")
@@ -1109,6 +1109,14 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         type=int,
         default=0,
         help="Cursor offset within the test corpus to begin printing",
+    )
+    test_parser.add_argument(
+        "text",
+        nargs="*",
+        help=(
+            "Optional literal text to evaluate instead of pulling a --start slice from"
+            " the test corpus (quote the text to preserve spaces)."
+        ),
     )
 
 
@@ -4585,6 +4593,21 @@ def run_report_mode(
         print(color_text(f"Sample #{idx + 1}: {prompt_text}{completion}", Colors.GREEN))
 
 
+def _format_token_fragment(tokenizer: GPT2TokenizerWrapper, token_id: int) -> str:
+    piece = tokenizer.decode_one(int(token_id))
+    if not piece:
+        return "<∅>"
+    piece = piece.replace(" ", FANCY_SPACE)
+    replacement = FANCY_ENTER if "\n" in piece else None
+    if replacement is not None:
+        piece = piece.replace("\n", replacement)
+    return piece
+
+
+def _row_description(layout: BatchLayout, row: RowLayout) -> str:
+    return layout.serialize_rows([RowLayout(1, row.segments, row.modifiers)])
+
+
 def run_test_slice(
     args: Args,
     dataset: TextDataset,
@@ -4592,13 +4615,167 @@ def run_test_slice(
     model: GRCEGPT,
     block_length: int,
     start_pos: int,
+    *,
+    custom_text: str | None = None,
 ) -> None:
-    """Print a colored snippet from the test set for ``train --test-slice``."""
+    """Run the layout on either a corpus slice or custom text and log per-token stats."""
 
-    tokens = dataset.looped_slice("test", start_pos, block_length)
-    pretty_text = tokenizer.decode_pretty(args, tokens)
-    print(color_text(f"Test slice @ {start_pos}:", Colors.CYAN))
-    print(pretty_text)
+    if block_length <= 0 and not custom_text:
+        raise ValueError("--block-length must be positive for corpus-based test slices")
+
+    model_device = next(model.parameters()).device
+    was_training = model.training
+    model.eval()
+
+    with torch.no_grad():
+        if custom_text:
+            provided = tokenizer.encode(custom_text)
+            if provided.numel() < 2:
+                raise ValueError("Custom text must produce at least two tokens for evaluation")
+            if provided.numel() - 1 > args.block_size:
+                raise ValueError(
+                    "Custom text exceeds the configured --block-size; shorten the text or "
+                    "increase --block-size."
+                )
+            context_tokens = provided
+            source_label = "custom text"
+        else:
+            span = block_length + 1
+            if span <= 1:
+                raise ValueError("--block-length must be >= 1 for evaluation")
+            context_tokens = dataset.looped_slice("test", start_pos, span)
+            source_label = f"test split offset {start_pos}"
+
+        inputs = context_tokens[:-1]
+        targets = context_tokens[1:]
+        eval_block_length = inputs.numel()
+        if eval_block_length <= 0:
+            raise ValueError("Not enough tokens collected for evaluation")
+
+        layout = BatchLayout(args.layout, batch_size=args.batch_size, block_size=eval_block_length)
+        _log_layout_warnings(args, layout)
+
+        pretty_text = tokenizer.decode_pretty(args, context_tokens)
+        print(color_text(f"Evaluating layout '{args.layout}' on {source_label}:", Colors.CYAN))
+        print(pretty_text)
+        print(color_text(
+            f"Sequence tokens: {eval_block_length} inputs (context) + 1 target tail", Colors.CYAN
+        ))
+
+        xb = inputs.unsqueeze(0).to(model_device)
+        yb = targets.unsqueeze(0).to(model_device)
+        embeddings = _sequence_embeddings(model, xb)
+        vocab_size = model.config.vocab_size
+
+        column_tokens = inputs.clone()
+        column_targets = targets.clone()
+
+        for row_idx, row in enumerate(layout.rows, start=1):
+            row_desc = _row_description(layout, row)
+            print(color_text(f"Row block #{row_idx}: {row_desc}", Colors.YELLOW))
+
+            cursor = 0
+            kv_chain: list[list[tuple[torch.Tensor, torch.Tensor]] | None] = []
+            grce_state = None
+            xctx_state = None
+            logits_buffer: list[torch.Tensor] = []
+            modifiers = row.modifiers
+            detach_span_override = (
+                modifiers.detach_span if modifiers and modifiers.detach_span is not None else None
+            )
+            row_detach_kv_cache = args.detach_kv_cache or (
+                modifiers.detach_kv_cache if modifiers else False
+            )
+            context_detach_override = False if (modifiers and modifiers.no_detach_ctx) else None
+            supervision_mask = torch.ones(eval_block_length, dtype=torch.bool, device=model_device)
+            column_modes: list[str] = [""] * eval_block_length
+            for segment in row.segments:
+                cols = int(segment.columns)
+                if cols <= 0:
+                    continue
+                if cursor + cols > eval_block_length:
+                    raise ValueError(
+                        "Layout segment exceeds available token columns during test evaluation"
+                    )
+                chunk_input = embeddings[:, cursor : cursor + cols, :]
+                chunk_target = yb[:, cursor : cursor + cols]
+                kv_sources = None if segment.mode == "noattn" else (kv_chain if kv_chain else None)
+                chunk_output, grce_state, xctx_state, kv_out = model.stack_sequence.forward(
+                    chunk_input,
+                    grce_in=grce_state,
+                    xctx_in=xctx_state,
+                    kv_cache_list_in=kv_sources,
+                    mode=segment.mode,
+                    detach_internal_kv_cache=row_detach_kv_cache,
+                    context_detach_span=detach_span_override,
+                    context_detach_enabled=context_detach_override,
+                )
+                logits = model.core.head(model.core.ln_f(chunk_output))
+                logits_buffer.append(logits)
+                if segment.mode != "noattn":
+                    kv_chain.append(kv_out)
+                for local_idx in range(cols):
+                    column_modes[cursor + local_idx] = segment.mode
+                    if segment.mode == "encode" and local_idx < cols - 1:
+                        supervision_mask[cursor + local_idx] = False
+                cursor += cols
+
+            if cursor != eval_block_length:
+                raise ValueError("Layout columns do not match the evaluated token span")
+            if not logits_buffer:
+                print(color_text("  (row produced no segments)", Colors.RED))
+                continue
+
+            row_logits = torch.cat(logits_buffer, dim=1)
+            log_probs = torch.log_softmax(row_logits, dim=-1)
+            gathered = torch.gather(
+                log_probs,
+                dim=-1,
+                index=yb.unsqueeze(-1),
+            ).squeeze(-1)
+            per_token_loss = (-gathered).squeeze(0)
+
+            top_k = min(5, vocab_size)
+            top_logp, top_indices = torch.topk(log_probs, k=top_k, dim=-1)
+            top_probs = top_logp.exp()
+
+            losses_cpu = per_token_loss.cpu().tolist()
+            mask_cpu = supervision_mask.cpu().tolist()
+            inputs_cpu = column_tokens.tolist()
+            targets_cpu = column_targets.tolist()
+            modes_cpu = column_modes
+            top_indices_cpu = top_indices.squeeze(0).cpu().tolist()
+            top_probs_cpu = top_probs.squeeze(0).cpu().tolist()
+
+            idx_width = 4
+            token_width = max(
+                len(_format_token_fragment(tokenizer, tok)) for tok in inputs_cpu + targets_cpu
+            )
+            pad = " " * 4
+            for col in range(eval_block_length):
+                token_text = _format_token_fragment(tokenizer, inputs_cpu[col])
+                loss_value = losses_cpu[col] if mask_cpu[col] else None
+                ranking: list[str] = []
+                for idx, prob in zip(top_indices_cpu[col], top_probs_cpu[col]):
+                    token_piece = _format_token_fragment(tokenizer, idx)
+                    ranking.append(f"{token_piece} ({prob * 100:.1f}%)")
+                loss_display = f"{loss_value:7.3f}" if loss_value is not None else "   --  "
+                idx_text = f"{col:4d}"
+                print(
+                    f"{pad}{idx_text} | {token_text:<{token_width}} | {loss_display} | {', '.join(ranking)}"
+                )
+
+            summary_target = _format_token_fragment(tokenizer, targets_cpu[-1])
+            row_total_loss = sum(loss for loss, keep in zip(losses_cpu, mask_cpu) if keep)
+            row_token_count = sum(1 for keep in mask_cpu if keep)
+            row_avg_loss = row_total_loss / max(1, row_token_count)
+            summary_label = "*" * idx_width
+            print(
+                f"{pad}{summary_label} | {summary_target:<{token_width}} | {row_avg_loss:7.3f} nats/token"
+            )
+
+    if was_training:
+        model.train()
 
 
 def preprocess_runtime_args(args: Args) -> None:
@@ -5500,6 +5677,12 @@ class Runtime:
                 return
 
             if self.args.command == "test":
+                custom_text = None
+                raw_text = getattr(self.args, "text", None)
+                if raw_text:
+                    joined = " ".join(raw_text).strip()
+                    if joined:
+                        custom_text = joined
                 run_test_slice(
                     args=self.args,
                     dataset=dataset,
@@ -5507,6 +5690,7 @@ class Runtime:
                     model=model,
                     block_length=self.args.block_length,
                     start_pos=self.args.test_start,
+                    custom_text=custom_text,
                 )
                 return
 

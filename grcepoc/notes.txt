@@ -763,7 +763,8 @@ grce_run="--name lrschedule2 --n-xctx 0 --n-grce 0 --cycles 500 --layout '*[*d]'
 eval "python grce.py $grce_run create && python grce.py $grce_run corpus --set cccclc-0000"
 eval "python grce.py $grce_run train"
 
-grce_run="--name lrwarmup_big --n-xctx 0 --n-grce 0 --cycles 500 --layout '*[*d]' --batch-size 80 \
-          --lr-warmup 500 --time --n-layer 12 --n-head 12 --n-embd 768"
+grce_run="--name lrwarmup_big --n-xctx 0 --n-grce 0 --n-layer 12 --n-head 12 --n-embd 768 \
+	--cycles 1000 --layout '*[*d]' --batch-size 80 --time --learning-rate 3e-4 \
+	--lr-warmup 500 --lr-steady 75000 --lr-decay-style cosine --lr-decay-min 3e-5"
 eval "python grce.py $grce_run create && python grce.py $grce_run corpus --set cccclc-0000"
 eval "python grce.py $grce_run train"
