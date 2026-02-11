@@ -487,14 +487,12 @@ def plot_metric_traces(
                         continue
                     label_name = f"{label} – {metric}"
                     if scatter:
-                        ax.plot(
+                        ax.scatter(
                             x_plot,
                             y_plot,
                             label=label_name,
-                            linestyle="",
-                            marker=".",
-                            markersize=4,
-                            linewidth=0,
+                            s=9,
+                            alpha=0.9,
                         )
                     else:
                         ax.plot(
