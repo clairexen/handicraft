@@ -5007,7 +5007,6 @@ def run_test_slice(
                 f"{pad}{summary_label} | {summary_target:<{token_width}} | {row_avg_loss_text} nats/token"
             )
 
-            print(row_result.attention_maps)
             if getattr(args, "attn_map", False) and row_result.block_attentions:
                 for block in row_result.block_attentions:
                     _print_attention_heatmap(
