@@ -1,7 +1,7 @@
 #!/bin/bash
 
 set -ex
-vocab=6000
+vocab=32000
 for volume; do
 	if [ ! -f dolma-cccc-filtered-${volume}.json.gz ]; then
 		# https://huggingface.co/datasets/common-pile/cccc_filtered/tree/main

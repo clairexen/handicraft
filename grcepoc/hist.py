@@ -12,11 +12,6 @@ from typing import Dict, Iterable, List, Tuple
 import matplotlib.pyplot as plt
 import numpy as np
 
-LEGACY_TARGET_FIELDS = {
-    # "train_loss": "train_loss_target",
-    # "test_loss": "test_loss_target",
-}
-
 LEGACY_SPECIAL_FIELDS = {
     # "train_loss_noatt": "train_loss_noattn",
     # "test_loss_noatt": "test_loss_noattn",
@@ -26,12 +21,14 @@ ALLOWED_FIELDS = {
     "step",
     "step_split_eval",
     "batch_layout",
-    "train_loss_target",
+    "train_loss",
+    # "train_loss_target",
     "train_loss_encode",
     "train_loss_decode",
     "train_loss_forward",
     "train_loss_noattn",
-    "test_loss_target",
+    "test_loss",
+    # "test_loss_target",
     "test_loss_encode",
     "test_loss_decode",
     "test_loss_forward",
@@ -199,7 +196,6 @@ def normalize_entry(entry: Dict[str, float]) -> Dict[str, float]:
             if new_key not in out:
                 out[new_key] = value
 
-    apply_alias(LEGACY_TARGET_FIELDS)
     apply_alias(LEGACY_SPECIAL_FIELDS)
     filtered = {k: v for k, v in out.items() if k in ALLOWED_FIELDS}
     return filtered
