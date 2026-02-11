@@ -264,6 +264,8 @@ class CountSpec:
     expandable: bool
     constant_weight: bool = False
     cap: int | None = None
+    numerator: int | None = None
+    denominator: int | None = None
 
     @classmethod
     def parse(cls, token: str) -> "CountSpec":
@@ -280,6 +282,27 @@ class CountSpec:
         expandable = prefix in {"*", "+"}
         constant_weight = prefix == "+"
         cap: int | None = None
+        if "/" in token:
+            if prefix is not None:
+                raise LayoutParseError("Fractional sizes cannot use '*' or '+' prefixes")
+            if "-" in token:
+                raise LayoutParseError("Fractional sizes do not support ranges")
+            num_text, den_text = token.split("/", 1)
+            if not num_text or not den_text:
+                raise LayoutParseError(f"Invalid fraction '{token}'")
+            numerator = int(num_text)
+            denominator = int(den_text)
+            if numerator <= 0 or denominator <= 0:
+                raise LayoutParseError("Fractional sizes require positive integers")
+            return cls(
+                minimum=0,
+                maximum=0,
+                expandable=False,
+                constant_weight=False,
+                cap=None,
+                numerator=numerator,
+                denominator=denominator,
+            )
         if prefix == "+" and token and "-" not in token:
             minimum = 1
             maximum = int(token)
@@ -303,7 +326,14 @@ class CountSpec:
             raise LayoutParseError(f"Invalid range {minimum}-{maximum}")
         return cls(minimum, maximum, expandable, constant_weight, cap)
 
-    def sample(self, rng: random.Random) -> int:
+    def is_fraction(self) -> bool:
+        return self.numerator is not None and self.denominator is not None
+
+    def sample(self, rng: random.Random, base_size: int | None = None) -> int:
+        if self.is_fraction():
+            if base_size is None:
+                raise ValueError("Fractional size requires a reference size")
+            return (self.numerator * base_size) // self.denominator  # type: ignore
         if self.minimum == self.maximum:
             return self.minimum
         return rng.randint(self.minimum, self.maximum)
@@ -500,8 +530,11 @@ def _parse_row_modifiers(text: str) -> RowModifiers | None:
 class _CountAllocation:
     spec: CountSpec
     value: int
+    fixed: bool = False
 
     def can_shrink(self) -> bool:
+        if self.fixed:
+            return False
         return self.value > self.spec.minimum
 
     def shrink(self) -> None:
@@ -510,6 +543,8 @@ class _CountAllocation:
         self.value -= 1
 
     def can_expand(self) -> bool:
+        if self.fixed:
+            return False
         if not self.spec.expandable:
             return False
         if self.spec.cap is not None and self.value >= self.spec.cap:
@@ -604,8 +639,10 @@ class BatchLayout:
     def _materialize_rows(self, specs: Sequence[RowSpec]) -> list[RowLayout]:
         row_allocs: list[_CountAllocation] = []
         for spec in specs:
-            value = spec.count.sample(self.rng)
-            row_allocs.append(_CountAllocation(spec.count, value))
+            value = spec.count.sample(self.rng, base_size=self.batch_size)
+            row_allocs.append(
+                _CountAllocation(spec.count, value, fixed=spec.count.is_fraction())
+            )
         if not _shrink_until(self.batch_size, row_allocs, self.rng):
             min_rows = sum(item.spec.minimum for item in row_allocs)
             self.warnings.append(
@@ -627,8 +664,10 @@ class BatchLayout:
     def _materialize_segments(self, specs: Sequence[SegmentSpec]) -> list[SegmentLayout]:
         allocations: list[_CountAllocation] = []
         for spec in specs:
-            value = spec.size.sample(self.rng)
-            allocations.append(_CountAllocation(spec.size, value))
+            value = spec.size.sample(self.rng, base_size=self.block_size)
+            allocations.append(
+                _CountAllocation(spec.size, value, fixed=spec.size.is_fraction())
+            )
         if not _shrink_until(self.block_size, allocations, self.rng):
             min_cols = sum(item.spec.minimum for item in allocations)
             self.warnings.append(
