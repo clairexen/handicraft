@@ -1286,6 +1286,13 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         help="Register a corpus (if needed) and make it current",
     )
 
+    reset_parser = subparsers.add_parser(
+        "reset",
+        help="Clear loss history and completed cycle counters in a checkpoint",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    reset_parser.set_defaults(command="reset")
+
 
     # --------------------------------------------------------
     # Run the args parser
@@ -5462,6 +5469,38 @@ class Runtime:
         self._print_corpus_listing(datasets, current)
         return 0
 
+    def cli_reset(
+        self,
+        model_path: pathlib.Path,
+        payload: dict | None,
+    ) -> int:
+        if not model_path.exists():
+            raise FileNotFoundError(
+                f"Checkpoint {model_path} not found; cannot reset counters."
+            )
+        if payload is None:
+            payload = torch.load(model_path, map_location="cpu", weights_only=False)
+        if not isinstance(payload, dict):
+            raise ValueError("Checkpoint payload must be a dictionary")
+        baseline_loss_history = payload.get("loss_history")
+        baseline_cycles = int(payload.get("completed_cycles", 0) or 0)
+        baseline_steps = int(payload.get("total_steps", 0) or 0)
+        payload["loss_history"] = []
+        payload["completed_cycles"] = 0
+        payload["total_steps"] = 0
+        payload["train_wall_seconds"] = 0.0
+        atomic_torch_save(payload, model_path)
+        print(
+            color_text(
+                (
+                    f"Reset checkpoint {model_path.name}: cycles {baseline_cycles}→0,"
+                    f" steps {baseline_steps}→0, cleared {len(baseline_loss_history or [])} history entries"
+                ),
+                Colors.GREEN,
+            )
+        )
+        return 0
+
     def _print_corpus_listing(self, datasets: dict, current: str | None) -> None:
         if not datasets:
             print(color_text("No corpora registered in checkpoint", Colors.YELLOW))
@@ -5531,7 +5570,7 @@ class Runtime:
             print(color_text(f"Model: {model_path}", Colors.CYAN))
             print(color_text(f"Logfile: {log_path}", Colors.BLUE))
             dataset_commands = {"train", "report", "test", "eval", "profile", "prompts"}
-            requires_checkpoint = self.args.command in {"train", "report", "test", "eval", "profile", "prompts"}
+            requires_checkpoint = self.args.command in {"train", "report", "test", "eval", "profile", "prompts", "reset", "corpus"}
             if self.args.command == "create" and model_path.exists():
                 print(
                     color_text(
@@ -5597,6 +5636,8 @@ class Runtime:
 
             if self.args.command == "corpus":
                 return self.cli_corpus(model_path, payload)
+            if self.args.command == "reset":
+                return self.cli_reset(model_path, payload)
 
             needs_dataset = self.args.command in dataset_commands
             if self.args.command == "create":
