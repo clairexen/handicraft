@@ -103,6 +103,12 @@ def parse_args() -> argparse.Namespace:
         help="Plot the cumulative sum (integral) of each trace",
     )
     parser.add_argument(
+        "--filter",
+        type=int,
+        default=0,
+        help="For each group of N samples, drop the smallest/largest 25% before plotting",
+    )
+    parser.add_argument(
         "--plot-steps",
         nargs="*",
         help="Plot step vs metric (default: test_loss); use ':' to split metrics into subplots",
@@ -347,6 +353,40 @@ def _apply_transforms(
     return x_proc, y_proc
 
 
+def _apply_filter_groups(
+    x_values: List[float],
+    y_values: List[float],
+    group_size: int,
+) -> Tuple[List[float], List[float]]:
+    if group_size <= 1 or not y_values:
+        return x_values, y_values
+    filtered_x: List[float] = []
+    filtered_y: List[float] = []
+    total = len(y_values)
+    for start in range(0, total, group_size):
+        end = min(total, start + group_size)
+        block_x = x_values[start:end]
+        block_y = y_values[start:end]
+        if not block_y:
+            continue
+        if any(math.isnan(val) for val in block_y):
+            filtered_x.extend(block_x)
+            filtered_y.extend(block_y)
+            continue
+        drop = int(len(block_y) * 0.25)
+        if drop <= 0 or drop * 2 >= len(block_y):
+            mask = [True] * len(block_y)
+        else:
+            sorted_indices = sorted(range(len(block_y)), key=lambda idx: block_y[idx])
+            drop_set = set(sorted_indices[:drop] + sorted_indices[-drop:])
+            mask = [idx not in drop_set for idx in range(len(block_y))]
+        for keep, x_val, y_val in zip(mask, block_x, block_y):
+            if keep:
+                filtered_x.append(x_val)
+                filtered_y.append(y_val)
+    return filtered_x, filtered_y
+
+
 def _fit_line(points: List[Tuple[float, float]]) -> Tuple[float, float] | None:
     if len(points) < 2:
         return None
@@ -401,6 +441,7 @@ def plot_metric_traces(
     fit_line: int = 0,
     fit_quad: int = 0,
     scatter: bool = False,
+    value_filter: int = 0,
 ) -> None:
     num_groups = max(1, len(metric_groups))
     fig, axes = plt.subplots(
@@ -426,6 +467,8 @@ def plot_metric_traces(
                     continue
                 x_series = x_values
                 y_series = y_values
+                if value_filter > 1:
+                    x_series, y_series = _apply_filter_groups(x_series, y_series, value_filter)
                 if x_field == "step" and step_period > 1:
                     y_segments = _split_segments(y_series, step_period)
                     x_segments = [list(range(len(seg))) for seg in y_segments]
@@ -644,6 +687,7 @@ def main() -> None:
             fit_line=args.fit_line,
             fit_quad=args.fit_quad,
             scatter=args.scatter,
+            value_filter=args.filter,
         )
         performed = True
     if args.plot_time is not None:
@@ -659,6 +703,7 @@ def main() -> None:
             fit_line=args.fit_line,
             fit_quad=args.fit_quad,
             scatter=args.scatter,
+            value_filter=args.filter,
         )
         performed = True
     if args.plot_timestamp is not None:
@@ -674,6 +719,7 @@ def main() -> None:
             fit_line=args.fit_line,
             fit_quad=args.fit_quad,
             scatter=args.scatter,
+            value_filter=args.filter,
         )
         performed = True
     if not performed:
