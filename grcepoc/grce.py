@@ -1119,6 +1119,28 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         ),
     )
 
+    eval_parser = subparsers.add_parser(
+        "eval",
+        help="Run a layout evaluation on a deterministic slice",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    eval_parser.set_defaults(command="eval")
+    eval_parser.add_argument(
+        "--start",
+        dest="eval_start",
+        type=int,
+        default=0,
+        help="Cursor offset within the test corpus to begin evaluation (ignored when passing text)",
+    )
+    eval_parser.add_argument(
+        "text",
+        nargs="*",
+        help=(
+            "Optional literal text to evaluate instead of pulling a --start slice from"
+            " the test corpus (quote the text to preserve spaces)."
+        ),
+    )
+
 
     # --------------------------------------------------------
     # Subcommand args parser for "profile"
@@ -4608,6 +4630,137 @@ def _row_description(layout: BatchLayout, row: RowLayout) -> str:
     return layout.serialize_rows([RowLayout(1, row.segments, row.modifiers)])
 
 
+@dataclass
+class RowEvalResult:
+    logits: torch.Tensor
+    supervision_mask: torch.Tensor
+    column_modes: list[str]
+    mode_loss_sums: dict[str, float]
+    mode_token_counts: dict[str, int]
+    total_loss_sum: float
+    total_tokens: int
+
+
+def _evaluate_row_block(
+    args: Args,
+    model: GRCEGPT,
+    row: RowLayout,
+    embeddings: torch.Tensor,
+    targets: torch.Tensor,
+) -> RowEvalResult:
+    device = embeddings.device
+    eval_block_length = embeddings.size(1)
+    column_modes: list[str] = [""] * eval_block_length
+    supervision_mask = torch.ones(eval_block_length, dtype=torch.bool, device=device)
+    mode_loss_sums = {mode: 0.0 for mode in BATCH_MODES}
+    mode_token_counts = {mode: 0 for mode in BATCH_MODES}
+    total_loss = 0.0
+    total_tokens = 0
+    logits_buffer: list[torch.Tensor] = []
+    cursor = 0
+    kv_chain: list[list[tuple[torch.Tensor, torch.Tensor]] | None] = []
+    grce_state = None
+    xctx_state = None
+    modifiers = row.modifiers
+    detach_span_override = (
+        modifiers.detach_span if modifiers and modifiers.detach_span is not None else None
+    )
+    row_detach_kv_cache = args.detach_kv_cache or (
+        modifiers.detach_kv_cache if modifiers else False
+    )
+    context_detach_override = False if (modifiers and modifiers.no_detach_ctx) else None
+    for segment in row.segments:
+        cols = int(segment.columns)
+        if cols <= 0:
+            continue
+        if cursor + cols > eval_block_length:
+            raise ValueError(
+                "Layout segment exceeds available token columns during evaluation"
+            )
+        chunk_input = embeddings[:, cursor : cursor + cols, :]
+        chunk_target = targets[:, cursor : cursor + cols]
+        kv_sources = None if segment.mode == "noattn" else (kv_chain if kv_chain else None)
+        chunk_output, grce_state, xctx_state, kv_out = model.stack_sequence.forward(
+            chunk_input,
+            grce_in=grce_state,
+            xctx_in=xctx_state,
+            kv_cache_list_in=kv_sources,
+            mode=segment.mode,
+            detach_internal_kv_cache=row_detach_kv_cache,
+            context_detach_span=detach_span_override,
+            context_detach_enabled=context_detach_override,
+        )
+        logits = model.core.head(model.core.ln_f(chunk_output))
+        logits_buffer.append(logits)
+        loss_sum, token_count = loss_sum_and_token_count(
+            logits,
+            chunk_target,
+            last_only=(segment.mode == "encode"),
+        )
+        if token_count > 0:
+            loss_value = float(loss_sum.detach().item())
+            mode_loss_sums[segment.mode] += loss_value
+            mode_token_counts[segment.mode] += token_count
+            total_loss += loss_value
+            total_tokens += token_count
+        if segment.mode != "noattn":
+            kv_chain.append(kv_out)
+        for local_idx in range(cols):
+            idx = cursor + local_idx
+            column_modes[idx] = segment.mode
+            if segment.mode == "encode" and local_idx < cols - 1:
+                supervision_mask[idx] = False
+        cursor += cols
+    if cursor != eval_block_length:
+        raise ValueError("Layout columns do not match the evaluated token span")
+    if not logits_buffer:
+        raise ValueError("Row block produced no segments during evaluation")
+    row_logits = torch.cat(logits_buffer, dim=1)
+    return RowEvalResult(
+        logits=row_logits,
+        supervision_mask=supervision_mask,
+        column_modes=column_modes,
+        mode_loss_sums=mode_loss_sums,
+        mode_token_counts=mode_token_counts,
+        total_loss_sum=total_loss,
+        total_tokens=total_tokens,
+    )
+
+
+def _prepare_eval_tokens(
+    args: Args,
+    dataset: TextDataset,
+    tokenizer: GPT2TokenizerWrapper,
+    *,
+    block_length: int,
+    start_pos: int,
+    custom_text: str | None,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, int, str, str]:
+    if custom_text:
+        provided = tokenizer.encode(custom_text)
+        if provided.numel() < 2:
+            raise ValueError("Custom text must produce at least two tokens for evaluation")
+        if provided.numel() - 1 > args.block_size:
+            raise ValueError(
+                "Custom text exceeds the configured --block-size; shorten the text or increase --block-size."
+            )
+        context_tokens = provided
+        source_label = "custom text"
+    else:
+        span = block_length + 1
+        if span <= 1:
+            raise ValueError("--block-length must be >= 1 for evaluation")
+        context_tokens = dataset.looped_slice("test", start_pos, span)
+        source_label = f"test split offset {start_pos}"
+    if context_tokens.numel() < 2:
+        raise ValueError("Not enough tokens collected for evaluation")
+    inputs = context_tokens[:-1]
+    targets = context_tokens[1:]
+    eval_block_length = inputs.numel()
+    pretty_text = tokenizer.decode_pretty(args, context_tokens)
+    return context_tokens, inputs, targets, eval_block_length, source_label, pretty_text
+
+
 def run_test_slice(
     args: Args,
     dataset: TextDataset,
@@ -4628,34 +4781,25 @@ def run_test_slice(
     model.eval()
 
     with torch.no_grad():
-        if custom_text:
-            provided = tokenizer.encode(custom_text)
-            if provided.numel() < 2:
-                raise ValueError("Custom text must produce at least two tokens for evaluation")
-            if provided.numel() - 1 > args.block_size:
-                raise ValueError(
-                    "Custom text exceeds the configured --block-size; shorten the text or "
-                    "increase --block-size."
-                )
-            context_tokens = provided
-            source_label = "custom text"
-        else:
-            span = block_length + 1
-            if span <= 1:
-                raise ValueError("--block-length must be >= 1 for evaluation")
-            context_tokens = dataset.looped_slice("test", start_pos, span)
-            source_label = f"test split offset {start_pos}"
-
-        inputs = context_tokens[:-1]
-        targets = context_tokens[1:]
-        eval_block_length = inputs.numel()
-        if eval_block_length <= 0:
-            raise ValueError("Not enough tokens collected for evaluation")
+        (
+            context_tokens,
+            inputs,
+            targets,
+            eval_block_length,
+            source_label,
+            pretty_text,
+        ) = _prepare_eval_tokens(
+            args,
+            dataset,
+            tokenizer,
+            block_length=block_length,
+            start_pos=start_pos,
+            custom_text=custom_text,
+        )
 
         layout = BatchLayout(args.layout, batch_size=args.batch_size, block_size=eval_block_length)
         _log_layout_warnings(args, layout)
 
-        pretty_text = tokenizer.decode_pretty(args, context_tokens)
         print(color_text(f"Evaluating layout '{args.layout}' on {source_label}:", Colors.CYAN))
         print(pretty_text)
         print(color_text(
@@ -4674,59 +4818,13 @@ def run_test_slice(
             row_desc = _row_description(layout, row)
             print(color_text(f"Row block #{row_idx}: {row_desc}", Colors.YELLOW))
 
-            cursor = 0
-            kv_chain: list[list[tuple[torch.Tensor, torch.Tensor]] | None] = []
-            grce_state = None
-            xctx_state = None
-            logits_buffer: list[torch.Tensor] = []
-            modifiers = row.modifiers
-            detach_span_override = (
-                modifiers.detach_span if modifiers and modifiers.detach_span is not None else None
-            )
-            row_detach_kv_cache = args.detach_kv_cache or (
-                modifiers.detach_kv_cache if modifiers else False
-            )
-            context_detach_override = False if (modifiers and modifiers.no_detach_ctx) else None
-            supervision_mask = torch.ones(eval_block_length, dtype=torch.bool, device=model_device)
-            column_modes: list[str] = [""] * eval_block_length
-            for segment in row.segments:
-                cols = int(segment.columns)
-                if cols <= 0:
-                    continue
-                if cursor + cols > eval_block_length:
-                    raise ValueError(
-                        "Layout segment exceeds available token columns during test evaluation"
-                    )
-                chunk_input = embeddings[:, cursor : cursor + cols, :]
-                chunk_target = yb[:, cursor : cursor + cols]
-                kv_sources = None if segment.mode == "noattn" else (kv_chain if kv_chain else None)
-                chunk_output, grce_state, xctx_state, kv_out = model.stack_sequence.forward(
-                    chunk_input,
-                    grce_in=grce_state,
-                    xctx_in=xctx_state,
-                    kv_cache_list_in=kv_sources,
-                    mode=segment.mode,
-                    detach_internal_kv_cache=row_detach_kv_cache,
-                    context_detach_span=detach_span_override,
-                    context_detach_enabled=context_detach_override,
-                )
-                logits = model.core.head(model.core.ln_f(chunk_output))
-                logits_buffer.append(logits)
-                if segment.mode != "noattn":
-                    kv_chain.append(kv_out)
-                for local_idx in range(cols):
-                    column_modes[cursor + local_idx] = segment.mode
-                    if segment.mode == "encode" and local_idx < cols - 1:
-                        supervision_mask[cursor + local_idx] = False
-                cursor += cols
-
-            if cursor != eval_block_length:
-                raise ValueError("Layout columns do not match the evaluated token span")
-            if not logits_buffer:
-                print(color_text("  (row produced no segments)", Colors.RED))
+            try:
+                row_result = _evaluate_row_block(args, model, row, embeddings, yb)
+            except ValueError as exc:
+                print(color_text(f"  (error evaluating row: {exc})", Colors.RED))
                 continue
 
-            row_logits = torch.cat(logits_buffer, dim=1)
+            row_logits = row_result.logits
             log_probs = torch.log_softmax(row_logits, dim=-1)
             gathered = torch.gather(
                 log_probs,
@@ -4740,10 +4838,10 @@ def run_test_slice(
             top_probs = top_logp.exp()
 
             losses_cpu = per_token_loss.cpu().tolist()
-            mask_cpu = supervision_mask.cpu().tolist()
+            mask_cpu = row_result.supervision_mask.cpu().tolist()
             inputs_cpu = column_tokens.tolist()
             targets_cpu = column_targets.tolist()
-            modes_cpu = column_modes
+            modes_cpu = row_result.column_modes
             top_indices_cpu = top_indices.squeeze(0).cpu().tolist()
             top_probs_cpu = top_probs.squeeze(0).cpu().tolist()
 
@@ -4766,18 +4864,131 @@ def run_test_slice(
                 )
 
             summary_target = _format_token_fragment(tokenizer, targets_cpu[-1])
-            row_total_loss = sum(loss for loss, keep in zip(losses_cpu, mask_cpu) if keep)
-            row_token_count = sum(1 for keep in mask_cpu if keep)
-            row_avg_loss = row_total_loss / max(1, row_token_count)
+            row_total_loss = row_result.total_loss_sum
+            if row_result.total_tokens > 0:
+                row_avg_loss_text = f"{row_total_loss / row_result.total_tokens:7.3f}"
+            else:
+                row_avg_loss_text = "   --  "
             summary_label = "*" * idx_width
             print(
-                f"{pad}{summary_label} | {summary_target:<{token_width}} | {row_avg_loss:7.3f} nats/token"
+                f"{pad}{summary_label} | {summary_target:<{token_width}} | {row_avg_loss_text} nats/token"
             )
 
     if was_training:
         model.train()
 
 
+def _format_eval_metric_value(key: str, value: float | None) -> str:
+    sep = ": " if key in ROW_METRIC_LOG_GROUP else ""
+    if value is None:
+        return f"{sep}****"
+    return f"{sep}{value:.3f}"
+
+
+def run_eval_layout(
+    args: Args,
+    dataset: TextDataset,
+    tokenizer: GPT2TokenizerWrapper,
+    model: GRCEGPT,
+    block_length: int,
+    start_pos: int,
+    *,
+    custom_text: str | None = None,
+) -> None:
+    """Evaluate the layout on a deterministic slice and print per-row metrics."""
+
+    if block_length <= 0 and not custom_text:
+        raise ValueError("--block-length must be positive for corpus-based evaluation")
+
+    model_device = next(model.parameters()).device
+    was_training = model.training
+    model.eval()
+
+    with torch.no_grad():
+        (
+            context_tokens,
+            inputs,
+            targets,
+            eval_block_length,
+            source_label,
+            pretty_text,
+        ) = _prepare_eval_tokens(
+            args,
+            dataset,
+            tokenizer,
+            block_length=block_length,
+            start_pos=start_pos,
+            custom_text=custom_text,
+        )
+
+        layout = BatchLayout(args.layout, batch_size=args.batch_size, block_size=eval_block_length)
+        _log_layout_warnings(args, layout)
+
+        print(color_text(f"Evaluating layout '{args.layout}' on {source_label}:", Colors.CYAN))
+        print(pretty_text)
+
+        xb = inputs.unsqueeze(0).to(model_device)
+        yb = targets.unsqueeze(0).to(model_device)
+        embeddings = _sequence_embeddings(model, xb)
+
+        overall_loss_sums = {mode: 0.0 for mode in BATCH_MODES}
+        overall_token_counts = {mode: 0 for mode in BATCH_MODES}
+        overall_loss_sums["target"] = 0.0
+        overall_token_counts["target"] = 0
+
+        def format_metrics(metric_map: dict[str, float | None]) -> str:
+            base = _format_eval_metric_value("target", metric_map.get("target"))
+            diag = " ".join(
+                _format_eval_metric_value(key, metric_map.get(key))
+                for key in ROW_METRIC_LOG_KEYS
+            )
+            return f"{base} {diag}"
+
+        for row_idx, row in enumerate(layout.rows, start=1):
+            row_desc = _row_description(layout, row)
+            try:
+                row_result = _evaluate_row_block(args, model, row, embeddings, yb)
+            except ValueError as exc:
+                print(color_text(f"Row block #{row_idx}: {row_desc} -> error: {exc}", Colors.RED))
+                continue
+
+            metrics: dict[str, float | None] = {}
+            if row_result.total_tokens > 0:
+                metrics["target"] = row_result.total_loss_sum / row_result.total_tokens
+            else:
+                metrics["target"] = None
+            for mode in BATCH_MODES:
+                count = row_result.mode_token_counts.get(mode, 0)
+                if count > 0:
+                    metrics[mode] = row_result.mode_loss_sums.get(mode, 0.0) / count
+                else:
+                    metrics[mode] = None
+
+            line = format_metrics(metrics)
+            print(f"Row block #{row_idx}: {row_desc} (rows={row.rows}) -> {line}")
+
+            weight = max(0, int(row.rows))
+            if weight <= 0:
+                continue
+            overall_loss_sums["target"] += row_result.total_loss_sum * weight
+            overall_token_counts["target"] += row_result.total_tokens * weight
+            for mode in BATCH_MODES:
+                overall_loss_sums[mode] += row_result.mode_loss_sums.get(mode, 0.0) * weight
+                overall_token_counts[mode] += row_result.mode_token_counts.get(mode, 0) * weight
+
+        overall_metrics: dict[str, float | None] = {}
+        for key in ["target"] + list(BATCH_MODES):
+            count = overall_token_counts.get(key, 0)
+            if count > 0:
+                overall_metrics[key] = overall_loss_sums.get(key, 0.0) / count
+            else:
+                overall_metrics[key] = None
+
+        overall_line = format_metrics(overall_metrics)
+        print(color_text(f"Overall (weighted by rows): {overall_line}", Colors.CYAN))
+
+    if was_training:
+        model.train()
 def preprocess_runtime_args(args: Args) -> None:
     """Resolve checkpoint overrides and derived paths before runtime spins up."""
 
@@ -5312,8 +5523,8 @@ class Runtime:
                 self.args.log_path_override = log_path
             print(color_text(f"Model: {model_path}", Colors.CYAN))
             print(color_text(f"Logfile: {log_path}", Colors.BLUE))
-            dataset_commands = {"train", "report", "test", "profile", "prompts"}
-            requires_checkpoint = self.args.command in {"train", "report", "test", "profile", "prompts"}
+            dataset_commands = {"train", "report", "test", "eval", "profile", "prompts"}
+            requires_checkpoint = self.args.command in {"train", "report", "test", "eval", "profile", "prompts"}
             if self.args.command == "create" and model_path.exists():
                 print(
                     color_text(
@@ -5690,6 +5901,24 @@ class Runtime:
                     model=model,
                     block_length=self.args.block_length,
                     start_pos=self.args.test_start,
+                    custom_text=custom_text,
+                )
+                return
+
+            if self.args.command == "eval":
+                custom_text = None
+                raw_text = getattr(self.args, "text", None)
+                if raw_text:
+                    joined = " ".join(raw_text).strip()
+                    if joined:
+                        custom_text = joined
+                run_eval_layout(
+                    args=self.args,
+                    dataset=dataset,
+                    tokenizer=tokenizer,
+                    model=model,
+                    block_length=self.args.block_length,
+                    start_pos=self.args.eval_start,
                     custom_text=custom_text,
                 )
                 return
