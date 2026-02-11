@@ -510,6 +510,9 @@ it participates in expansion with a constant weight of 1 regardless of
 current size. These prefixes work exactly the same way for rows (outside of
 [...]) and cols (inside of [...]).
 
+Instead of an integer one can also use a fraction A/B. In this case this
+represents (A * (batch-size or block-length)) // B.
+
 In addition to that we define a simple pre-processing language, using '(', '|',
 and ')' to express alternatives for random choices. This is a pure text-based
 pre-processor. So the following is valid syntax:
@@ -540,6 +543,13 @@ This means 'sc[*f]' has a deep path along the context, but we never backprop
 into the transformer. 'ks3[*f}' on the other hand will backprop a few columns
 of the transforer, but it will not visit later positions via the attn mechanism,
 because of the detached kv-cache.
+
+Instead of e d f n one can also use E D F N as sequence type. In that case
+the recurrent outputs of the block remain unused. The layout [*d/*d] generates
+XCTX and GRCE signals "blindly" in the first decode block, and then they are being
+passed to the first row of the second block, which receives biases from that
+recurrent context. (backprop for [*d/*d] takes about twice as long ans [*d].)
+The layout [*D/*d] on the other hand is functionally equivalent to [*d].
 
 ## Thinking Models -- (this is future work)
 

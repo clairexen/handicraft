@@ -343,6 +343,7 @@ class CountSpec:
 class SegmentSpec:
     size: CountSpec
     mode: str
+    context_enabled: bool = True
 
 
 @dataclass(frozen=True)
@@ -367,6 +368,7 @@ class RowSpec:
 class SegmentLayout:
     mode: str
     columns: int
+    context_enabled: bool = True
 
 
 @dataclass
@@ -461,11 +463,14 @@ def _parse_segment_spec(text: str) -> SegmentSpec:
     if index == len(text):
         raise LayoutParseError(f"Missing mode in segment '{text}'")
     size_token = text[:index]
-    mode_token = text[index:].lower()
-    if mode_token not in _MODE_ALIASES:
+    mode_token = text[index:]
+    mode_char = mode_token[0]
+    context_enabled = mode_char.islower()
+    mode_key = mode_char.lower()
+    if mode_key not in _MODE_ALIASES:
         raise LayoutParseError(f"Unsupported mode '{mode_token}'")
     size_spec = CountSpec.parse(size_token or "1")
-    return SegmentSpec(size_spec, _MODE_ALIASES[mode_token])
+    return SegmentSpec(size_spec, _MODE_ALIASES[mode_key], context_enabled)
 
 
 _ROW_COUNT_CHARS = set("0123456789+-*")
@@ -675,7 +680,10 @@ class BatchLayout:
             )
         else:
             _expand_until(self.block_size, allocations, self.rng)
-        segments = [SegmentLayout(spec.mode, allocation.value) for spec, allocation in zip(specs, allocations)]
+        segments = [
+            SegmentLayout(spec.mode, allocation.value, spec.context_enabled)
+            for spec, allocation in zip(specs, allocations)
+        ]
         max_cols = sum(segment.columns for segment in segments)
         if max_cols > self.block_size:
             self.warnings.append(
@@ -695,6 +703,8 @@ class BatchLayout:
             segment_bits = []
             for segment in row.segments:
                 letter = _MODE_LETTERS.get(segment.mode, segment.mode[0])
+                if not segment.context_enabled:
+                    letter = letter.upper()
                 segment_bits.append(f"{segment.columns}{letter}")
             modifier_text = row.modifiers.render() if row.modifiers else ""
             row_bits.append(f"{row.rows}{modifier_text}[{'/'.join(segment_bits)}]")
@@ -706,7 +716,12 @@ class BatchLayout:
         rows: list[list[SegmentLayout]] = []
         for group in self.rows:
             for _ in range(group.rows):
-                rows.append([SegmentLayout(seg.mode, seg.columns) for seg in group.segments])
+                rows.append(
+                    [
+                        SegmentLayout(seg.mode, seg.columns, seg.context_enabled)
+                        for seg in group.segments
+                    ]
+                )
         return rows
 
 # -----------------------------------------------------------------------------
@@ -3856,6 +3871,8 @@ def _run_microbatch_pass(
             chunk_input = embeddings[:, cursor : cursor + cols, :]
             chunk_target = yb[:, cursor : cursor + cols]
             kv_sources = None if mode == "noattn" else (kv_chain if kv_chain else None)
+            prev_grce_state = grce_state
+            prev_xctx_state = xctx_state
             chunk_output, grce_state, xctx_state, kv_out = model.stack_sequence.forward(
                 chunk_input,
                 grce_in=grce_state,
@@ -3866,6 +3883,9 @@ def _run_microbatch_pass(
                 context_detach_span=detach_span_override,
                 context_detach_enabled=context_detach_override,
             )
+            if not getattr(segment, "context_enabled", True):
+                grce_state = prev_grce_state
+                xctx_state = prev_xctx_state
             logits = model.core.head(model.core.ln_f(chunk_output))
             loss_sum, token_count = loss_sum_and_token_count(
                 logits,
@@ -4819,6 +4839,8 @@ def _evaluate_row_block(
         if base_capture is not None:
             chunk_capture = base_capture.subset(cursor, cols)
         kv_sources = None if segment.mode == "noattn" else (kv_chain if kv_chain else None)
+        prev_grce_state = grce_state
+        prev_xctx_state = xctx_state
         chunk_output, grce_state, xctx_state, kv_out = model.stack_sequence.forward(
             chunk_input,
             grce_in=grce_state,
@@ -4830,6 +4852,9 @@ def _evaluate_row_block(
             context_detach_enabled=context_detach_override,
             attention_capture=chunk_capture,
         )
+        if not segment.context_enabled:
+            grce_state = prev_grce_state
+            xctx_state = prev_xctx_state
         logits = model.core.head(model.core.ln_f(chunk_output))
         logits_buffer.append(logits)
         loss_sum, token_count = loss_sum_and_token_count(
