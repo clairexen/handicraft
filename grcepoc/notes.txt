@@ -783,3 +783,9 @@ grce_run="--name lrwarmup_big --n-xctx 0 --n-grce 0 --n-layer 12 --n-head 12 --n
 	--lr-warmup 500 --lr-steady 75000 --lr-decay-style cosine --lr-decay-min 3e-5"
 eval "python grce.py $grce_run create && python grce.py $grce_run corpus --set cccclc-0000"
 eval "python grce.py $grce_run train"
+
+grce_run="--name baseline_wp --n-xctx 0 --n-grce 0 --n-layer 12 --n-head 12 --n-embd 768 \
+	--cycles 1000 --layout '*[*d],*[*d]' --batch-size 60 --time --learning-rate 3e-4 \
+	--lr-warmup 500 --lr-steady 95000 --lr-decay-style cosine --lr-decay-min 3e-5"
+eval "python grce.py $grce_run create && python grce.py $grce_run corpus --set wp-en-0000"
+eval "python grce.py $grce_run train"
