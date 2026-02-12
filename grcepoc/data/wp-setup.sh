@@ -4,7 +4,7 @@ set -ex
 vocab=32000
 
 lang=simple
-if [ ! -f wp-{$lang}-train.txt.gz ]; then
+if [ ! -f wp-${lang}-train.txt.gz ]; then
 	../.venv/bin/python wp-split.py simple
 fi
 if [ ! -f wp-${lang}_tokens_test_${vocab}.pt ]; then
