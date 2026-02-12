@@ -7,6 +7,7 @@ import argparse
 import gzip
 import json
 import pathlib
+import time
 from typing import Iterable
 
 import torch
@@ -27,6 +28,7 @@ SPECIAL_TOKENS = """
 """.split()
 
 DEFAULT_LIMIT = 1 * 1024 * 1024  # 1 MiB
+ENCODE_BATCH_SIZE = 64  # number of text chunks per encode_batch call
 
 
 def _open_text(path: pathlib.Path):
@@ -86,23 +88,61 @@ def build_tokenizer(args: argparse.Namespace) -> int:
     return 0
 
 
-def read_full_text(path: pathlib.Path) -> str:
-    with _open_text(path) as handle:
-        return handle.read()
-
-
 def encode_corpus(args: argparse.Namespace) -> int:
     tokenizer = Tokenizer.from_file(str(args.tokenizer))
-    text = read_full_text(args.input)
-    if not text:
-        raise ValueError(f"Input corpus {args.input} is empty")
-    chunk = args.chunk_chars
+    chunk_chars = args.chunk_chars
     token_ids: list[int] = []
-    for offset in range(0, len(text), chunk):
-        piece = text[offset : offset + chunk]
-        token_ids.extend(tokenizer.encode(piece).ids)
+    batch: list[str] = []
+    total_bytes = 0
+    saw_text = False
+    total_tokens = 0
+    next_log_tokens = 1 << 64
+    start_time = time.monotonic()
+
+    def maybe_log_progress() -> None:
+        nonlocal next_log_tokens
+        if total_tokens < next_log_tokens:
+            return
+        while total_tokens >= next_log_tokens:
+            elapsed = time.monotonic() - start_time
+            minutes = elapsed / 60 if elapsed > 0 else 0.0
+            bytes_per_min = total_bytes / minutes if minutes else 0.0
+            tokens_per_min = total_tokens / minutes if minutes else 0.0
+            print(
+                f"[encode tokens] elapsed={elapsed:.1f}s bytes={total_bytes} tokens={total_tokens} "
+                f"bytes/min={bytes_per_min:.1f} tokens/min={tokens_per_min:.1f}"
+            )
+            next_log_tokens <<= 1
+
+    def flush_batch() -> None:
+        nonlocal total_tokens
+        if not batch:
+            return
+        encodings = tokenizer.encode_batch(batch)
+        for encoding in encodings:
+            ids = encoding.ids
+            token_ids.extend(ids)
+            total_tokens += len(ids)
+            maybe_log_progress()
+        batch.clear()
+
+    with _open_text(args.input) as handle:
+        while True:
+            piece = handle.read(chunk_chars)
+            if not piece:
+                break
+            saw_text = True
+            batch.append(piece)
+            total_bytes += len(piece.encode("utf-8"))
+            if len(batch) >= ENCODE_BATCH_SIZE:
+                flush_batch()
+        flush_batch()
+
+    if not saw_text:
+        raise ValueError(f"Input corpus {args.input} is empty")
+
     tensor = torch.tensor(token_ids, dtype=torch.uint16)
-    payload = {"tokens": tensor, "bytes": len(text.encode("utf-8"))}
+    payload = {"tokens": tensor, "bytes": total_bytes}
     args.output.parent.mkdir(parents=True, exist_ok=True)
     torch.save(payload, args.output)
     print(

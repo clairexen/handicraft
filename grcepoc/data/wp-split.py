@@ -34,6 +34,8 @@ dataset = load_dataset(
      split="train"
 )
 
+dataset = dataset.shuffle(seed=42)
+
 if NUM_SHARDS:
     dataset = dataset.shard(num_shards=NUM_SHARDS, index=SHARD_IDX)
 
