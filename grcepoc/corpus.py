@@ -96,7 +96,7 @@ def encode_corpus(args: argparse.Namespace) -> int:
     total_bytes = 0
     saw_text = False
     total_tokens = 0
-    next_log_tokens = 1 << 64
+    next_log_tokens = 1 << 16
     start_time = time.monotonic()
 
     def maybe_log_progress() -> None:
@@ -110,7 +110,7 @@ def encode_corpus(args: argparse.Namespace) -> int:
             tokens_per_min = total_tokens / minutes if minutes else 0.0
             print(
                 f"[encode tokens] elapsed={elapsed:.1f}s bytes={total_bytes} tokens={total_tokens} "
-                f"bytes/min={bytes_per_min:.1f} tokens/min={tokens_per_min:.1f}"
+                f"MB/min={bytes_per_min/1e6:.2f} MT/min={tokens_per_min/1e6:.2f}"
             )
             next_log_tokens <<= 1
 
