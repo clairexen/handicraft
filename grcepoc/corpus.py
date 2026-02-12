@@ -109,7 +109,7 @@ def encode_corpus(args: argparse.Namespace) -> int:
             bytes_per_min = total_bytes / minutes if minutes else 0.0
             tokens_per_min = total_tokens / minutes if minutes else 0.0
             print(
-                f"[encode tokens] elapsed={elapsed:.1f}s bytes={total_bytes} tokens={total_tokens} "
+                f"[encode tokens] elapsed={elapsed:.1f}s MB={total_bytes/1e6:.2f} MT={total_tokens/1e6:.2f} "
                 f"MB/min={bytes_per_min/1e6:.2f} MT/min={tokens_per_min/1e6:.2f}"
             )
             next_log_tokens <<= 1
