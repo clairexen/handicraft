@@ -8,6 +8,7 @@ else
 	PS1="(grce)${PS1#(.venv)}"
 	VIRTUAL_ENV_PROMPT="(grce) "
 	grce() { python3 "$(dirname $VIRTUAL_ENV)/grce.py" "$@"; }
+	plot() { python3 "$(dirname $VIRTUAL_ENV)/plot.py" "$@"; }
 	pod() { bash "$(dirname $VIRTUAL_ENV)/pod.sh" "$@"; }
-	eval "$(typeset -f deactivate | sed 's/^}/unset -f grce pod; }/')"
+	eval "$(typeset -f deactivate | sed 's/^}/unset -f grce plot pod; }/')"
 fi
