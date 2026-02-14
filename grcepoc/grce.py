@@ -6419,7 +6419,17 @@ class Runtime:
                             )
                         )
                 print(color_text(f"Model: {model_path}", Colors.CYAN))
-                print(color_text(f"Active corpus: {self.args.corpus}", Colors.CYAN))
+                corpus_entry = self.active_corpus_entry or {}
+                used_tokens = int(corpus_entry.get("used_train_tokens", 0) or 0)
+                num_tokens = int(corpus_entry.get("num_train_tokens", dataset.train_tokens.numel()) or dataset.train_tokens.numel())
+                max_tokens = int(corpus_entry.get("max_train_tokens", num_tokens) or num_tokens)
+                used_pct = (used_tokens / max(1, num_tokens)) * 100.0 if num_tokens > 0 else 0.0
+                max_pct = (max_tokens / max(1, num_tokens)) * 100.0 if num_tokens > 0 else 0.0
+                corpus_status = (
+                    f"Active corpus: {self.args.corpus} ({used_tokens:,} / {num_tokens:,}"
+                    f" = {used_pct:.2f}% tokens used; max = {max_pct:.2f}%)"
+                )
+                print(color_text(corpus_status, Colors.CYAN))
                 per_run_idx = cycle
                 print(
                     color_text(
