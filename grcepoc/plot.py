@@ -6,8 +6,7 @@ import argparse
 import json
 import math
 import pathlib
-import shutil
-from typing import Dict, Iterable, List, Tuple
+from typing import Dict, List, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -47,39 +46,22 @@ ALLOWED_FIELDS = {
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--pt",
-        action="append",
-        type=pathlib.Path,
-        default=[],
-        help="Checkpoint .pt file to inspect (repeatable)",
-    )
-    parser.add_argument(
         "--json",
         action="append",
         type=pathlib.Path,
         default=[],
-        help="Pre-exported history JSON file (see --write-json)",
+        help="Checkpoint JSON file produced by --json training dumps (repeatable)",
     )
     parser.add_argument(
         "--model",
         type=pathlib.Path,
         default=pathlib.Path("model"),
-        help="Directory to search for checkpoints when --pt/--json are omitted",
+        help="Directory to search for checkpoints when --json is omitted",
     )
     parser.add_argument(
         "--list",
         nargs="*",
         help="List summary stats (optionally specify metric names)",
-    )
-    parser.add_argument(
-        "--write-json",
-        type=pathlib.Path,
-        help="Write normalized records to JSON file",
-    )
-    parser.add_argument(
-        "--write-json-dir",
-        type=pathlib.Path,
-        help="Write per-source JSON files into the specified directory",
     )
     parser.add_argument(
         "--step-period",
@@ -165,35 +147,15 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def load_history(pt_path: pathlib.Path) -> Tuple[str, List[Dict[str, float]], bool]:
-    import torch
-
-    payload = torch.load(pt_path, map_location="cpu")
-    if not isinstance(payload, dict):
-        return pt_path.name, [], False
+def load_checkpoint_json(json_path: pathlib.Path) -> Tuple[str, List[Dict[str, float]]]:
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
     history_payload = payload.get("loss_history")
     if not isinstance(history_payload, list):
-        return pt_path.name, [], False
+        return json_path.name, []
     normalized = [
         normalize_entry(item) for item in history_payload if isinstance(item, dict)
     ]
-    return pt_path.name, normalized, True
-
-
-def load_json_history(json_path: pathlib.Path) -> Tuple[str, List[Dict[str, float]]]:
-    payload = json.loads(json_path.read_text(encoding="utf-8"))
-    columns = payload.get("columns", [])
-    rows = payload.get("data", [])
-    records: List[Dict[str, float]] = []
-    for row in rows:
-        record = {}
-        for idx, field in enumerate(columns):
-            if idx < len(row):
-                value = row[idx]
-                if value is not None:
-                    record[field] = value
-        records.append(normalize_entry(record))
-    return json_path.name, records
+    return json_path.name, normalized
 
 
 def normalize_entry(entry: Dict[str, float]) -> Dict[str, float]:
@@ -270,45 +232,6 @@ def summarize_source(label: str, records: List[Dict[str, float]], filters: List[
                 f"  {field}: {len(uniq)} unique values ({preview}{suffix})"
             )
 
-
-def combine_records(sources: List[Tuple[str, List[Dict[str, float]]]]) -> Tuple[List[str], List[List[float]]]:
-    field_set = set()
-    for _, history in sources:
-        for record in history:
-            field_set.update(record.keys())
-    fields = sorted(field_set)
-    data: List[List[object]] = []
-    for _, history in sources:
-        for record in history:
-            row = [record.get(field) if field in record else None for field in fields]
-            data.append(row)
-    return fields, data
-
-
-def format_table_json(columns: List[str], rows: List[List[float]]) -> str:
-    def encode_scalar(value: float | None) -> str:
-        if value is None:
-            return "null"
-        if isinstance(value, float):
-            return f"{value:.5f}"
-        return json.dumps(value)
-
-    column_line = "[" + ",".join(json.dumps(col) for col in columns) + "]"
-    if rows:
-        row_lines = [
-            "    [" + ",".join(encode_scalar(val) for val in row) + "]"
-            for row in rows
-        ]
-        data_block = "[\n" + ",\n".join(row_lines) + "\n  ]"
-    else:
-        data_block = "[]"
-    lines = [
-        "{",
-        f"  \"columns\": {column_line},",
-        f"  \"data\": {data_block}",
-        "}",
-    ]
-    return "\n".join(lines)
 
 
 def _series_from_field(history: List[Dict[str, float]], field: str, default_sequence=False) -> List[float]:
@@ -633,37 +556,19 @@ def plot_metric_traces(
 
 def main() -> None:
     args = parse_args()
-    auto_pt_sources: set[pathlib.Path] = set()
-    source_path_lookup: Dict[str, pathlib.Path] = {}
-    if not args.pt and not args.json:
+    if not args.json:
         model_dir = args.model
         if model_dir.exists():
-            pt_files = sorted(model_dir.glob("*.pt"))
-            if pt_files:
-                args.pt.extend(pt_files)
-                auto_pt_sources = set(pt_files)
-            else:
-                json_files = sorted(model_dir.glob("*.json"))
-                args.json.extend(json_files)
+            json_files = sorted(model_dir.glob("*.json"))
+            args.json.extend(json_files)
         else:
             print(f"warning: model directory {model_dir} not found")
     sources: List[Tuple[str, List[Dict[str, float]]]] = []
-    for pt_path in args.pt:
-        if not pt_path.exists():
-            print(f"warning: missing checkpoint {pt_path}")
-            continue
-        label, history, has_history = load_history(pt_path)
-        source_path_lookup[label] = pt_path
-        if pt_path in auto_pt_sources and not has_history:
-            print(f"Ignored: {pt_path.name}")
-            continue
-        sources.append((label, history))
     for json_path in args.json:
         if not json_path.exists():
             print(f"warning: missing json source {json_path}")
             continue
-        label, history = load_json_history(json_path)
-        source_path_lookup[label] = json_path
+        label, history = load_checkpoint_json(json_path)
         sources.append((label, history))
     if args.backtrace > 0:
         trimmed_sources: List[Tuple[str, List[Dict[str, float]]]] = []
@@ -683,39 +588,10 @@ def main() -> None:
         print("no data sources provided")
         return
     performed = False
-    list_filters = None
-    if args.list is not None:
-        list_filters = args.list if args.list else None
-    if args.list is not None or not args.write_json:
-        for label, history in sources:
-            summarize_source(label, history, filters=list_filters)
-        performed = True
-    if args.write_json:
-        if len(sources) != 1:
-            raise SystemExit("--write-json expects exactly one source (--pt or --json)")
-        columns, matrix = combine_records(sources)
-        json_text = format_table_json(columns, matrix)
-        args.write_json.write_text(json_text + "\n")
-        print(f"wrote {len(matrix)} rows to {args.write_json}")
-        performed = True
-    if args.write_json_dir:
-        args.write_json_dir.mkdir(parents=True, exist_ok=True)
-        for label, history in sources:
-            columns, matrix = combine_records([(label, history)])
-            json_text = format_table_json(columns, matrix)
-            safe_name = pathlib.Path(label).name
-            output_name = pathlib.Path(safe_name).stem + ".json"
-            output_path = args.write_json_dir / output_name
-            output_path.write_text(json_text + "\n")
-            print(f"wrote {len(matrix)} rows to {output_path}")
-            src = source_path_lookup.get(label)
-            if src is not None:
-                log_candidate = src.with_suffix(".log")
-                if log_candidate.exists():
-                    dest_log = args.write_json_dir / log_candidate.name
-                    shutil.copy(log_candidate, dest_log)
-                    print(f"copied log to {dest_log}")
-        performed = True
+    list_filters = args.list if (args.list is not None and args.list) else None
+    for label, history in sources:
+        summarize_source(label, history, filters=list_filters)
+    performed = True
     if args.plot_steps is not None:
         metric_groups = _build_metric_groups(args.plot_steps, ["test_loss"])
         plot_metric_traces(
@@ -772,7 +648,7 @@ def main() -> None:
         )
         performed = True
     if not performed:
-        print("no action taken (no list, plot or write-json requested)")
+        print("no action taken (no list or plot requested)")
 
 
 if __name__ == "__main__":

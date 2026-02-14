@@ -1160,6 +1160,12 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     train_parser.set_defaults(command="train")
+    train_parser.add_argument(
+        "--json",
+        dest="train_json",
+        action="store_true",
+        help="Write a JSON checkpoint without model weights alongside the .pt file",
+    )
 
     report_parser = subparsers.add_parser(
         "report",
@@ -1314,6 +1320,13 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         help="Remove the prompt at index N (can be repeated)",
     )
     prompt_parser.set_defaults(command="prompts")
+
+    json_parser = subparsers.add_parser(
+        "json",
+        help="Export the current checkpoint metadata to JSON and exit",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    json_parser.set_defaults(command="json")
 
 
     # --------------------------------------------------------
@@ -4174,6 +4187,26 @@ def atomic_torch_save(payload: dict, target_path: pathlib.Path) -> None:
     tmp_path.replace(target_path)
 
 
+def _jsonify_checkpoint_value(value: Any) -> Any:
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    if isinstance(value, torch.Tensor):
+        return value.item() if value.ndim == 0 else value.tolist()
+    if isinstance(value, pathlib.Path):
+        return str(value)
+    if isinstance(value, dict):
+        return {str(key): _jsonify_checkpoint_value(val) for key, val in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_jsonify_checkpoint_value(item) for item in value]
+    return str(value)
+
+
+def write_checkpoint_json(payload: dict[str, Any], target_path: pathlib.Path) -> None:
+    sanitized = {key: _jsonify_checkpoint_value(val) for key, val in payload.items()}
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    target_path.write_text(json.dumps(sanitized, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
 
 
 def train_model(
@@ -4189,6 +4222,7 @@ def train_model(
     optimizer: torch.optim.Optimizer,
     sample_prompt: torch.Tensor,
     sample_chars: int,
+    total_train_tokens_start: int,
     tokenizer: GPT2TokenizerWrapper,
     suppress_newlines: bool,
     newline_token_id: int | None,
@@ -4214,6 +4248,7 @@ def train_model(
     loop_timer = Timer().start()
     eval_timer = Timer()
     train_tokens_used = 0
+    base_total_train_tokens = int(total_train_tokens_start)
     run_total_steps = max(1, args.steps * args.cycles)
     current_lr = args.learning_rate
 
@@ -4544,6 +4579,7 @@ def train_model(
         cycle_wall_elapsed = max(0.0, eval_now - cycle_wall_start)
         total_wall_seconds = base_wall_seconds + cycle_wall_elapsed
 
+        current_total_train_tokens = base_total_train_tokens + train_tokens_used
         record = {
             "step": total_steps,
             "train_loss": float(eval_metrics["train"].metrics.get("target", 0.0) or 0.0),
@@ -4551,11 +4587,12 @@ def train_model(
             "train_wall_seconds": float(total_wall_seconds),
             "unix_time": float(eval_now),
             "train_tokens": total_tokens,
+            "total_train_tokens": int(current_total_train_tokens),
         }
         record["corpus"] = args.corpus
         record["batch_layout"] = layout_serialized
         record["learning_rate"] = current_lr
-        metric_keys = ["target"] + ROW_METRIC_HIST_KEYS
+        metric_keys = list(ROW_METRIC_HIST_KEYS)
         for key in metric_keys:
             train_val = eval_metrics["train"].metrics.get(key)
             test_val = eval_metrics["test"].metrics.get(key)
@@ -5751,6 +5788,29 @@ class Runtime:
                     )
         return 0
 
+    def cli_json_export(
+        self,
+        model_path: pathlib.Path,
+        payload: dict | None,
+    ) -> int:
+        if payload is None:
+            if not model_path.exists():
+                print(color_text(f"Checkpoint {model_path} not found; cannot export JSON.", Colors.RED, bold=True))
+                return 1
+            payload = torch.load(model_path, map_location="cpu", weights_only=False)
+        if not isinstance(payload, dict):
+            print(color_text("Checkpoint payload is not a metadata dictionary; rerun training with --json.", Colors.RED, bold=True))
+            return 1
+        json_payload = {
+            key: value
+            for key, value in payload.items()
+            if key not in {"model", "tokenizer_json", "optimizer"}
+        }
+        target = model_path.with_suffix(".json")
+        write_checkpoint_json(json_payload, target)
+        print(color_text(f"Wrote checkpoint JSON to {target}", Colors.GREEN))
+        return 0
+
     def cli_corpus(
         self,
         model_path: pathlib.Path,
@@ -5981,6 +6041,8 @@ class Runtime:
                 return self.cli_corpus(model_path, payload)
             if self.args.command == "reset":
                 return self.cli_reset(model_path, payload)
+            if self.args.command == "json":
+                return self.cli_json_export(model_path, payload if isinstance(payload, dict) else None)
 
             needs_dataset = self.args.command in dataset_commands
             if self.args.command == "create":
@@ -6029,16 +6091,22 @@ class Runtime:
             embedding_params = summary_counts.get("embeddings", 0)
             non_emb_params = total_params - embedding_params
             print(
-                f"Trainable model params: {total_params:,}; "
-                f"excl. embeddings: {non_emb_params:,}"
+                color_text(
+                    f"Trainable model params: {total_params:,}; "
+                    f"excl. embeddings: {non_emb_params:,}",
+                    Colors.BLUE,
+                )
             )
             tok_vecs = config.vocab_size
             pos_vecs = config.block_size
             emb_vectors = tok_vecs + pos_vecs
             emb_params = embedding_params
             print(
-                f"Learned embedding vectors: {emb_vectors} "
-                f"(token={tok_vecs}, position={pos_vecs}); params={emb_params:,}"
+                color_text(
+                    f"Learned embedding vectors: {emb_vectors} "
+                    f"(token={tok_vecs}, position={pos_vecs}); params={emb_params:,}",
+                    Colors.BLUE,
+                )
             )
 
             cmdline = " ".join(shlex.quote(arg) for arg in sys.argv)
@@ -6114,6 +6182,7 @@ class Runtime:
             total_steps = 0
             loss_history: List[Dict[str, float]] = []
             total_train_wall = 0.0
+            total_train_tokens = 0
             payload = getattr(self.args, "checkpoint_payload_override", None)
             optimizer_state = None
             if payload is None and model_path.exists():
@@ -6136,6 +6205,7 @@ class Runtime:
                         total_steps = int(payload.get("total_steps", 0))
                         loss_history = list(payload.get("loss_history", []))
                         total_train_wall = float(payload.get("train_wall_seconds", 0.0))
+                        total_train_tokens = int(payload.get("total_train_tokens", 0) or 0)
                         prompt_registry = PromptRegistry(
                             tokenizer,
                             payload.get("prompts"),
@@ -6191,6 +6261,7 @@ class Runtime:
                 )
                 total_steps = int(meta.get("total_steps", 0))
                 total_train_wall = float(meta.get("train_wall_seconds", 0.0))
+                total_train_tokens = int(meta.get("total_train_tokens", 0) or 0)
                 loss_history = []
                 write_timer = Timer().start()
                 atomic_torch_save(
@@ -6200,6 +6271,7 @@ class Runtime:
                         "loss_history": loss_history,
                         "config": asdict(args_to_model_geometry(self.args)),
                         "train_wall_seconds": total_train_wall,
+                        "total_train_tokens": total_train_tokens,
                         "prompts": prompt_registry.serialize() if prompt_registry else None,
                         "tokenizer_json": tokenizer_json,
                         "completed_cycles": int(meta.get("completed_cycles", 0)),
@@ -6227,6 +6299,7 @@ class Runtime:
                     "loss_history": [],
                     "config": asdict(args_to_model_geometry(self.args)),
                     "train_wall_seconds": 0.0,
+                    "total_train_tokens": 0,
                     "prompts": prompt_registry.serialize(),
                     "tokenizer_json": tokenizer_json,
                     "completed_cycles": 0,
@@ -6466,6 +6539,7 @@ class Runtime:
                     optimizer,
                     prompt_tokens,
                     self.args.generate,
+                    total_train_tokens,
                     tokenizer,
                     suppress_newlines=self.args.no_newlines,
                     newline_token_id=newline_token_id,
@@ -6487,6 +6561,7 @@ class Runtime:
                 acc_train.add(pure_train)
                 acc_eval.add(eval_timer)
                 total_train_wall += train_timer.wall_secs
+                total_train_tokens += int(tokens_consumed)
                 update_wall: float | None = None
                 if not self.args.skip_model_update:
                     include_optimizer = (
@@ -6495,25 +6570,31 @@ class Runtime:
                         and cycle < cycle_end
                     )
                     update_timer = Timer().start()
-                    atomic_torch_save(
-                        {
-                            "model": model.state_dict(),
-                            "corpua": self.corpua,
-                            "total_steps": total_steps,
-                            "loss_history": loss_history,
-                            "config": asdict(args_to_model_geometry(self.args)),
-                            "train_wall_seconds": total_train_wall,
-                            "prompts": prompt_registry.serialize() if prompt_registry else None,
-                            "tokenizer_json": tokenizer_json,
-                            "completed_cycles": cycle,
-                            **(
-                                {"optimizer": optimizer.state_dict()}
-                                if include_optimizer
-                                else {}
-                            ),
-                        },
-                        model_path,
-                    )
+                    checkpoint_payload: dict[str, Any] = {
+                        "model": model.state_dict(),
+                        "corpua": self.corpua,
+                        "total_steps": total_steps,
+                        "loss_history": loss_history,
+                        "config": asdict(args_to_model_geometry(self.args)),
+                        "train_wall_seconds": total_train_wall,
+                        "total_train_tokens": total_train_tokens,
+                        "prompts": prompt_registry.serialize() if prompt_registry else None,
+                        "tokenizer_json": tokenizer_json,
+                        "completed_cycles": cycle,
+                        **(
+                            {"optimizer": optimizer.state_dict()}
+                            if include_optimizer
+                            else {}
+                        ),
+                    }
+                    atomic_torch_save(checkpoint_payload, model_path)
+                    if getattr(self.args, "train_json", False):
+                        json_payload = {
+                            key: value
+                            for key, value in checkpoint_payload.items()
+                            if key not in {"model", "tokenizer_json", "optimizer"}
+                        }
+                        write_checkpoint_json(json_payload, model_path.with_suffix(".json"))
                     update_wall = update_timer.stop().wall_secs
                 cycle_part = color_text(f"[cycle {cycle} (wall/cpu/gpu)]", Colors.CYAN)
                 train_part = color_text(f" train: {pure_train};", Colors.MAGENTA)

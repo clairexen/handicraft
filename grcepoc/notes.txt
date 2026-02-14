@@ -769,5 +769,5 @@ eval "python grce.py $grce_run train"
 
 cp model/baseline_wp_model_v32000_bs256_emb768_layers12_heads12.pt model/baseline_wp_retrain_decay.pt
 python grce.py --pt model/baseline_wp_retrain_decay.pt reset
-python grce.py --pt model/baseline_wp_retrain_decay.pt --cycles 100 --layout '*[*d]' --batch-size 60 --time --lr-warmup 100 --lr-decay 10000 train
+python grce.py --pt model/baseline_wp_retrain_decay.pt --cycles 100 --layout '*[*d]' --batch-size 60 --time --lr-warmup 100 --lr-decay 10000 train --json
 

@@ -159,6 +159,14 @@ rsync_pull() {
     fi
 }
 
+rsync_peek() {
+    mkdir -p "$LOCAL_MODEL_DIR"
+    rsync "${RSYNC_COMMON[@]}" \
+        --include='*/' --include='*.json' --exclude='*' \
+        -e "$(join_cmd "${RSYNC_SSH[@]}")" \
+        "${REMOTE_HOST}:${REMOTE_DIR}/model/" "$LOCAL_MODEL_DIR/"
+}
+
 case "${1:-}" in
     go)
         pod_init
@@ -183,6 +191,9 @@ case "${1:-}" in
         ;;
     pull)
         rsync_pull
+        ;;
+    peek)
+        rsync_peek
         ;;
     *)
         echo "Usage: bash pod.sh [CFG] {go|init|shell|update|put|push|pull|monitor|loop}" >&2
