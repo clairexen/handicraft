@@ -1416,6 +1416,7 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
     # Run the args parser
 
     args = parser.parse_args()
+    setattr(args, "_lr_steady_defined", flag_present("--lr-steady-steps"))
     if hasattr(args, "lr_linear_min") and args.lr_linear_min is None:
         args.lr_linear_min = args.lr_base * 0.1
     args.completed_cycles = 0
@@ -4153,13 +4154,13 @@ def _scheduled_lr(
     base_lr: float,
     warmup_steps: int,
     steady_steps: int,
+    steady_defined: bool,
     linear_steps: int,
     linear_min: float,
     cosine_steps: int,
     total_run_steps: int,
     step_index: int,
 ) -> float:
-    del total_run_steps  # retained for compatibility; schedule is explicit
     base_lr = max(0.0, base_lr)
     if base_lr <= 0.0:
         return 0.0
@@ -4169,6 +4170,9 @@ def _scheduled_lr(
     cosine_steps = max(0, cosine_steps)
     linear_min = max(0.0, min(linear_min, base_lr))
     step = max(0, step_index)
+    if not steady_defined:
+        remaining = total_run_steps - warmup_steps - linear_steps - cosine_steps
+        steady_steps = max(0, remaining)
 
     if warmup_steps > 0:
         if step < warmup_steps:
@@ -4319,6 +4323,7 @@ def train_model(
                 args.lr_base,
                 args.lr_warmup_steps,
                 args.lr_steady_steps,
+                getattr(args, "_lr_steady_defined", False),
                 args.lr_linear_steps,
                 args.lr_linear_min,
                 args.lr_cosine_steps,
