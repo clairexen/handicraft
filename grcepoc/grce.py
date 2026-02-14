@@ -126,6 +126,7 @@ class Defaults:
     dropout: float = 0.05
     detach_span: int = 0
     log_step_details: bool = False
+    log_row_details: bool = False
     learning_rate: float = 3e-4
     weight_decay: float = 0.01
     adam_beta1: float = 0.9
@@ -376,7 +377,7 @@ class SegmentLayout:
 
 
 @dataclass
-class RowLayout:
+class BlockLayout:
     rows: int
     segments: list[SegmentLayout]
     modifiers: RowModifiers | None = None
@@ -451,7 +452,9 @@ def _split_segments(body: str) -> list[tuple[str, str | None]]:
     for index, ch in enumerate(body):
         if ch in "[]()":
             raise LayoutParseError("Unexpected bracket in segment string")
-        if ch in "/=>":
+        if ch == "/":
+            raise LayoutParseError("Use '=' between segments; '/' is reserved for fractions")
+        if ch in "=>":
             token = body[start:index].strip()
             if token:
                 parts.append((token, connector))
@@ -480,8 +483,6 @@ def _parse_segment_spec(text: str, connector: str | None) -> SegmentSpec:
     if mode_key not in _MODE_ALIASES:
         raise LayoutParseError(f"Unsupported mode '{mode_token}'")
     size_spec = CountSpec.parse(size_token or "1")
-    if connector == "/":
-        connector = "="
     if connector not in {None, "=", ">"}:
         raise LayoutParseError(f"Unsupported segment connector '{connector}'")
     return SegmentSpec(size_spec, _MODE_ALIASES[mode_key], context_enabled, connector)
@@ -655,7 +656,7 @@ class BatchLayout:
     def total_token_span(self) -> int:
         return sum(self.micro_token_spans())
 
-    def _materialize_rows(self, specs: Sequence[RowSpec]) -> list[RowLayout]:
+    def _materialize_rows(self, specs: Sequence[RowSpec]) -> list[BlockLayout]:
         row_allocs: list[_CountAllocation] = []
         for spec in specs:
             value = spec.count.sample(self.rng, base_size=self.batch_size)
@@ -669,10 +670,10 @@ class BatchLayout:
             )
         else:
             _expand_until(self.batch_size, row_allocs, self.rng)
-        rows: list[RowLayout] = []
+        rows: list[BlockLayout] = []
         for spec, allocation in zip(specs, row_allocs):
             segments = self._materialize_segments(spec.segments)
-            rows.append(RowLayout(allocation.value, segments, spec.modifiers))
+            rows.append(BlockLayout(allocation.value, segments, spec.modifiers))
         total_rows = sum(row.rows for row in rows)
         if total_rows > self.batch_size:
             self.warnings.append(
@@ -716,7 +717,7 @@ class BatchLayout:
         micro_parts = [self.serialize_rows(batch) for batch in self.micro_batches]
         return ",".join(micro_parts)
 
-    def serialize_rows(self, rows: Sequence[RowLayout]) -> str:
+    def serialize_rows(self, rows: Sequence[BlockLayout]) -> str:
         row_bits: list[str] = []
         for row in rows:
             segment_bits = []
@@ -730,7 +731,7 @@ class BatchLayout:
                     bit = connector + bit
                 segment_bits.append(bit)
             modifier_text = row.modifiers.render() if row.modifiers else ""
-            row_bits.append(f"{row.rows}{modifier_text}[{'/'.join(segment_bits)}]")
+            row_bits.append(f"{row.rows}{modifier_text}[{''.join(segment_bits)}]")
         return "+".join(row_bits)
 
     def expanded_rows(self) -> list[list[SegmentLayout]]:
@@ -918,6 +919,12 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         action="store_true",
         default=DEFAULTS.log_step_details,
         help="Print per-step micro-batch timing details",
+    )
+    training_group.add_argument(
+        "--log-row-details",
+        action="store_true",
+        default=DEFAULTS.log_row_details,
+        help="Print per-row metrics and window spans (implies --log-step-details)",
     )
     training_group.add_argument(
         "--learning-rate",
@@ -1356,16 +1363,26 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
     corpus_parser.add_argument(
         "--add",
         dest="corpus_add",
-        metavar="NAME",
-        type=str,
-        help="Register a corpus without changing the current selection",
+        action="store_true",
+        help="Register the listed corpora without changing their order",
     )
     corpus_parser.add_argument(
         "--set",
         dest="corpus_set",
-        metavar="NAME",
-        type=str,
-        help="Register a corpus (if needed) and make it current",
+        action="store_true",
+        help="Register the listed corpora (if needed) and move them to the front",
+    )
+    corpus_parser.add_argument(
+        "--reuse",
+        dest="corpus_reuse",
+        type=float,
+        default=1.0,
+        help="Multiplier applied to num_train_tokens when computing max_train_tokens",
+    )
+    corpus_parser.add_argument(
+        "names",
+        nargs="*",
+        help="Corpus names consumed by --add/--set (supports shell brace expansion)",
     )
 
     reset_parser = subparsers.add_parser(
@@ -1445,6 +1462,8 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         parser.error("--block-length must be positive")
     if args.block_length > args.block_size:
         parser.error("--block-length must be <= --block-size")
+    if args.log_row_details:
+        args.log_step_details = True
 
     args.prompt = normalize_prompt(args.prompt)
 
@@ -2322,7 +2341,7 @@ def load_cached_tokens(split: str, cache_path: pathlib.Path) -> torch.Tensor:
 
 @dataclass
 class TextDataset:
-    """Holds rolling corpus state for :class:`Runtime` training/eval loops."""
+    """Stores train/test tensors and samples random spans from each corpus."""
 
     train_tokens: torch.Tensor
     test_tokens: torch.Tensor
@@ -2330,103 +2349,73 @@ class TextDataset:
     test_text: str | None
     train_path: pathlib.Path
     test_path: pathlib.Path
-    positions: Dict[str, int] = field(
-        default_factory=lambda: {"train": 0, "test": 0}
-    )
-    cycles: Dict[str, int] = field(
-        default_factory=lambda: {"train": 0, "test": 0}
-    )
-    chunks: Dict[str, torch.Tensor] = field(default_factory=dict)
-    chunk_offsets: Dict[str, int] = field(default_factory=dict)
 
-    def state_dict(self) -> Dict[str, int]:
-        return {
-            "train_cursor": int(self.positions.get("train", 0)),
-            "test_cursor": int(self.positions.get("test", 0)),
-            "train_cycles": int(self.cycles.get("train", 0)),
-            "test_cycles": int(self.cycles.get("test", 0)),
-            "train_count": int(self.train_tokens.numel()),
-            "test_count": int(self.test_tokens.numel()),
-        }
+    def state_dict(self) -> dict[str, int]:
+        """Compat shim for legacy checkpoints; no rolling state is tracked now."""
+
+        return {}
 
     def load_state(self, state: dict | None) -> None:
-        self.positions = {"train": 0, "test": 0}
-        self.cycles = {"train": 0, "test": 0}
-        if not state:
-            return
-        if "positions" in state:
-            legacy_positions = state.get("positions", {})
-            for split in ("train", "test"):
-                value = int(legacy_positions.get(split, 0) or 0)
-                total = len(self.train_tokens if split == "train" else self.test_tokens)
-                if total:
-                    value %= total
-                self.positions[split] = value
-            return
-        for split, key in (("train", "train_cursor"), ("test", "test_cursor")):
-            value = int(state.get(key, 0) or 0)
-            total = len(self.train_tokens if split == "train" else self.test_tokens)
-            if total:
-                value %= total
-            self.positions[split] = value
-        for split, key in (("train", "train_cycles"), ("test", "test_cycles")):
-            value = int(state.get(key, 0) or 0)
-            self.cycles[split] = max(0, value)
+        """No-op since datasets are sampled from the full corpus every time."""
 
-    def prepare_cycle(self, split: str, total_chars: int) -> bool:
-        if split not in {"train", "test"}:
-            raise ValueError(f"Unknown split {split!r}")
-        source = self.train_tokens if split == "train" else self.test_tokens
-        text = self.train_text if split == "train" else self.test_text
-        if total_chars <= 0 or total_chars > len(source):
-            total_chars = len(source)
-        start = self.positions[split]
-        chunk, _ = self._slice_with_wrap(source, text, start, total_chars)
-        if len(chunk) <= 1:
-            raise ValueError(f"Not enough tokens in {split} split to build a chunk")
-        wrapped = False
-        if len(source) > 0:
-            span = start + total_chars
-            wrapped = span >= len(source)
-            self.positions[split] = span % len(source)
-            if wrapped:
-                self.cycles[split] = self.cycles.get(split, 0) + 1
-        self.chunks[split] = chunk
-        self.chunk_offsets[split] = start % len(source)
-        return wrapped
+        _ = state
 
-    def get_batch(
+    def _tokens_for_split(self, split: str) -> torch.Tensor:
+        if split == "train":
+            return self.train_tokens
+        if split == "test":
+            return self.test_tokens
+        raise ValueError(f"Unknown split {split!r}")
+
+    def sample_row_batch(
         self,
         split: str,
-        block_length: int,
-        batch_size: int,
+        columns: int,
+        rows: int,
         device: torch.device,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        chunk = self.chunks.get(split)
-        if chunk is None:
-            raise RuntimeError(
-                f"No cached chunk for split {split}. Call prepare_cycle first."
-            )
-        chunk_offset = self.chunk_offsets.get(split)
-        if chunk_offset is None:
-            raise RuntimeError(f"Missing chunk offset for split {split}")
-        span = block_length + 1
-        if len(chunk) <= span:
+        *,
+        rng: random.Random | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, list[dict[str, int]]]:
+        if columns <= 0 or rows <= 0:
+            raise ValueError("Row sampling requires positive columns and rows")
+        tokens = self._tokens_for_split(split)
+        total = int(tokens.numel())
+        seq_span = columns + 1
+        if seq_span <= 1:
+            raise ValueError("Row sampling span must exceed 1 token")
+        if total <= 0:
+            raise ValueError(f"No tokens available for split {split!r}")
+        if seq_span > total:
             raise ValueError(
-                f"Chunk for {split} must be larger than block length ({len(chunk)} <= {span})."
+                f"Requested span {seq_span} exceeds available {total} tokens in split {split}"
             )
-        max_start = len(chunk) - span
-        ix = torch.randint(0, max_start + 1, (batch_size,))
-        windows = [chunk[i : i + span] for i in ix]
+        rng = rng or random
+        windows: list[torch.Tensor] = []
+        metadata: list[dict[str, int]] = []
+        for row_idx in range(rows):
+            start = rng.randint(0, total - 1)
+            chunk, _ = self._slice_with_wrap(tokens, None, start, seq_span)
+            windows.append(chunk)
+            end = start + seq_span - 1
+            metadata.append(
+                {
+                    "token_start": start,
+                    "token_end": end % total,
+                    "token_span": seq_span,
+                    "wrapped": 1 if end >= total else 0,
+                    "total_tokens": total,
+                    "row": row_idx + 1,
+                }
+            )
         stacked = torch.stack(windows)
         x = stacked[:, :-1].contiguous().to(device)
         y = stacked[:, 1:].contiguous().to(device)
-        return x, y
+        return x, y, metadata
 
     def _slice_with_wrap(
         self,
         tokens: torch.Tensor,
-        text: str,
+        text: str | None,
         start: int,
         needed: int,
     ) -> Tuple[torch.Tensor, list[str]]:
@@ -2471,84 +2460,6 @@ class TextDataset:
             remaining -= take
             pos = (pos + take) % total
         return torch.cat(pieces).contiguous()
-
-    def sample_window(
-        self,
-        split: str,
-        span: int,
-        *,
-        rng: random.Random | None = None,
-    ) -> "TokenWindow":
-        if span <= 0:
-            raise ValueError("Window span must be positive")
-        chunk = self.chunks.get(split)
-        if chunk is None:
-            raise RuntimeError(f"No cached chunk for split {split!r}; call prepare_cycle first")
-        total = int(chunk.size(0))
-        if total <= 0:
-            raise ValueError(f"Chunk for split {split!r} is empty")
-        if span > total:
-            raise ValueError(
-                f"Requested window ({span}) exceeds chunk length ({total}) for split {split}"
-            )
-        rng = rng or random
-        max_offset = total - span
-        offset = rng.randint(0, max_offset) if max_offset > 0 else 0
-        return TokenWindow(chunk=chunk, start=offset, length=span, rng=rng)
-
-
-@dataclass
-class TokenWindow:
-    chunk: torch.Tensor
-    start: int
-    length: int
-    rng: random.Random
-
-    def subwindow(self, span: int) -> "TokenWindow":
-        if span <= 0:
-            raise ValueError("Subwindow span must be positive")
-        if span > self.length:
-            raise ValueError(
-                f"Requested subwindow ({span}) exceeds parent length ({self.length})"
-            )
-        max_offset = self.length - span
-        offset = self.rng.randint(0, max_offset) if max_offset > 0 else 0
-        return TokenWindow(
-            chunk=self.chunk,
-            start=self.start + offset,
-            length=span,
-            rng=self.rng,
-        )
-
-    def sample_batch(
-        self,
-        block_length: int,
-        batch_size: int,
-        device: torch.device,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        if batch_size <= 0:
-            raise ValueError("Batch size must be positive when sampling tokens")
-        span = block_length + 1
-        if span <= 1:
-            raise ValueError("Block length must be >= 1 when sampling tokens")
-        if span > self.length:
-            raise ValueError(
-                f"Sequence span ({span}) exceeds available window ({self.length})"
-            )
-        max_offset = self.length - span
-        if max_offset > 0:
-            offsets = torch.randint(0, max_offset + 1, (batch_size,))
-        else:
-            offsets = torch.zeros((batch_size,), dtype=torch.long)
-        offsets = offsets.tolist()
-        windows = [
-            self.chunk[self.start + offset : self.start + offset + span]
-            for offset in offsets
-        ]
-        stacked = torch.stack(windows)
-        x = stacked[:, :-1].contiguous().to(device=device, dtype=torch.long)
-        y = stacked[:, 1:].contiguous().to(device=device, dtype=torch.long)
-        return x, y
 
 
 # -----------------------------------------------------------------------------
@@ -3845,34 +3756,45 @@ def _log_layout_warnings(args: Args, layout: BatchLayout) -> None:
 def _run_microbatch_pass(
     args: Args,
     model: GRCEGPT,
-    rows: Sequence[RowLayout],
-    micro_window: TokenWindow,
+    dataset: TextDataset,
+    split: str,
+    rows: Sequence[BlockLayout],
     device: torch.device,
     *,
     collect_mode_metrics: bool,
     position_shift: int = 0,
-) -> tuple[LayoutPassResult, float]:
+    rng: random.Random | None = None,
+    row_serializer: Callable[[Sequence[BlockLayout]], str] | None = None,
+) -> tuple[LayoutPassResult, float, list[dict[str, object]]]:
     start_time = time.time()
+    rng = rng or random
     mode_loss_sums = {mode: 0.0 for mode in BATCH_MODES}
     mode_token_counts = {mode: 0 for mode in BATCH_MODES}
     total_loss_sum: torch.Tensor | None = None
     total_tokens = 0
+    row_details: list[dict[str, object]] = []
     for group in rows:
-        rows = int(group.rows)
-        if rows <= 0:
+        row_count = int(group.rows)
+        if row_count <= 0:
             continue
         cols_total = group.total_columns()
         if cols_total <= 0:
             continue
         try:
-            xb, yb = micro_window.sample_batch(cols_total, rows, device)
+            xb, yb, metadata = dataset.sample_row_batch(
+                split,
+                cols_total,
+                row_count,
+                device,
+                rng=rng,
+            )
         except ValueError as exc:
             raise ValueError(
-                f"Unable to sample {rows} rows with {cols_total} columns from the current window"
+                f"Unable to sample {row_count} rows with {cols_total} columns from the corpus"
             ) from exc
         pos_offsets = None
         if position_shift:
-            pos_offsets = torch.full((rows,), position_shift, dtype=torch.long, device=device)
+            pos_offsets = torch.full((row_count,), position_shift, dtype=torch.long, device=device)
         embeddings = _sequence_embeddings_with_offsets(model, xb, pos_offsets)
         cursor = 0
         kv_chain: list[list[tuple[torch.Tensor, torch.Tensor]] | None] = []
@@ -3886,6 +3808,23 @@ def _run_microbatch_pass(
             modifiers.detach_kv_cache if modifiers else False
         )
         context_detach_override = False if (modifiers and modifiers.no_detach_ctx) else None
+        layout_text = row_serializer([group]) if row_serializer else ""
+        row_entries: list[dict[str, object]] = []
+        for idx in range(row_count):
+            meta = metadata[idx] if idx < len(metadata) else {}
+            row_entries.append(
+                {
+                    "layout": layout_text,
+                    "row": int(meta.get("row", idx + 1)),
+                    "token_start": int(meta.get("token_start", 0)),
+                    "token_end": int(meta.get("token_end", 0)),
+                    "token_span": int(meta.get("token_span", 0)),
+                    "wrapped": bool(meta.get("wrapped", 0)),
+                    "total_tokens": int(meta.get("total_tokens", 0)),
+                    "loss_sum": 0.0,
+                    "token_count": 0,
+                }
+            )
         for segment in group.segments:
             cols = int(segment.columns)
             if cols <= 0:
@@ -3913,7 +3852,12 @@ def _run_microbatch_pass(
                 grce_state = prev_grce_state
                 xctx_state = prev_xctx_state
             logits = model.core.head(model.core.ln_f(chunk_output))
-            loss_sum, token_count = loss_sum_and_token_count(
+            (
+                loss_sum,
+                token_count,
+                row_loss_sums,
+                row_token_counts,
+            ) = loss_sum_token_count_with_rows(
                 logits,
                 chunk_target,
                 last_only=(mode == "encode"),
@@ -3924,11 +3868,20 @@ def _run_microbatch_pass(
                 if collect_mode_metrics:
                     mode_loss_sums[mode] += float(loss_sum.detach().item())
                     mode_token_counts[mode] += token_count
+                if row_loss_sums is not None and row_token_counts is not None:
+                    loss_values = row_loss_sums.detach().cpu().tolist()
+                    token_values = row_token_counts.detach().cpu().tolist()
+                    for idx, entry in enumerate(row_entries):
+                        if idx >= len(loss_values):
+                            break
+                        entry["loss_sum"] = entry.get("loss_sum", 0.0) + float(loss_values[idx])
+                        entry["token_count"] = int(entry.get("token_count", 0)) + int(token_values[idx])
             if mode != "noattn":
                 kv_chain.append(kv_out)
             cursor += cols
+        row_details.extend(row_entries)
     result = LayoutPassResult(total_loss_sum, total_tokens, mode_loss_sums, mode_token_counts)
-    return result, time.time() - start_time
+    return result, time.time() - start_time, row_details
 
 
 def train_layout_batch(
@@ -3944,34 +3897,31 @@ def train_layout_batch(
     if step_span <= 0:
         raise ValueError("Layout produced zero tokens for training step")
     window_rng = random.Random()
-    step_window = dataset.sample_window("train", step_span, rng=window_rng)
     total_loss_sum: torch.Tensor | None = None
     total_tokens = 0
     micro_logs: list[tuple[int, float, float, str]] = []
-    detail_entries: list[dict[str, int]] = []
-    head_offset = step_window.start
+    detail_entries: list[dict[str, object]] = []
     for index, batch in enumerate(layout.micro_batches, start=1):
         micro_span = sum(row.token_span() for row in batch)
         if micro_span <= 0:
             micro_logs.append((index, 0.0, 0.0, layout.serialize_rows(batch)))
             continue
-        micro_window = step_window.subwindow(micro_span)
-        detail_entries.append(
-            {
-                "micro_index": index,
-                "token_start": micro_window.start,
-                "token_end": micro_window.start + micro_window.length,
-            }
-        )
-        result, fwd_time = _run_microbatch_pass(
+        result, fwd_time, row_details = _run_microbatch_pass(
             args,
             model,
+            dataset,
+            "train",
             batch,
-            micro_window,
             device,
             collect_mode_metrics=False,
             position_shift=position_shift,
+            rng=window_rng,
+            row_serializer=layout.serialize_rows,
         )
+        for entry in row_details:
+            copy = dict(entry)
+            copy["micro_index"] = index
+            detail_entries.append(copy)
         if result.total_loss_sum is None or result.total_tokens <= 0:
             micro_logs.append((index, fwd_time, 0.0, layout.serialize_rows(batch)))
             continue
@@ -3989,11 +3939,7 @@ def train_layout_batch(
         total_tokens += result.total_tokens
     if total_loss_sum is None:
         raise RuntimeError("Layout batch produced no tokens")
-    meta_entry: dict[str, object] = {
-        "step_start": head_offset,
-        "step_end": head_offset + step_window.length,
-        "micro": detail_entries,
-    }
+    meta_entry: dict[str, object] = {"rows": detail_entries}
     return total_loss_sum, total_tokens, micro_logs, meta_entry
 
 
@@ -4019,19 +3965,19 @@ def evaluate_layout_batch(
         token_counts["target"] = 0
         return EvalBatchStats(metrics, loss_sums, token_counts)
     window_rng = random.Random()
-    step_window = dataset.sample_window(split, step_span, rng=window_rng)
     for batch_rows in layout.micro_batches:
         micro_span = sum(row.token_span() for row in batch_rows)
         if micro_span <= 0:
             continue
-        micro_window = step_window.subwindow(micro_span)
-        result, _ = _run_microbatch_pass(
+        result, _, _ = _run_microbatch_pass(
             args,
             model,
+            dataset,
+            split,
             batch_rows,
-            micro_window,
             device,
             collect_mode_metrics=True,
+            rng=window_rng,
         )
         if result.total_loss_sum is not None:
             total_loss_sum = (
@@ -4091,6 +4037,24 @@ def loss_sum_and_token_count(
     *,
     last_only: bool = False,
 ) -> tuple[torch.Tensor, int]:
+    return _loss_sum_token_count_internal(logits, targets, last_only, False)[0:2]
+
+
+def loss_sum_token_count_with_rows(
+    logits: torch.Tensor,
+    targets: torch.Tensor,
+    *,
+    last_only: bool = False,
+) -> tuple[torch.Tensor, int, torch.Tensor, torch.Tensor]:
+    return _loss_sum_token_count_internal(logits, targets, last_only, True)
+
+
+def _loss_sum_token_count_internal(
+    logits: torch.Tensor,
+    targets: torch.Tensor,
+    last_only: bool,
+    return_rows: bool,
+) -> tuple[torch.Tensor, int, torch.Tensor | None, torch.Tensor | None]:
     if last_only:
         logits = logits[:, -1:, :]
         targets = targets[:, -1:]
@@ -4103,7 +4067,11 @@ def loss_sum_and_token_count(
     valid_mask = (targets != LOSS_IGNORE_INDEX).to(per_token.dtype)
     loss_sum = (per_token * valid_mask).sum()
     token_count = int(valid_mask.sum().item())
-    return loss_sum, token_count
+    if not return_rows:
+        return loss_sum, token_count, None, None
+    row_loss_sums = (per_token * valid_mask).sum(dim=1)
+    row_token_counts = valid_mask.sum(dim=1)
+    return loss_sum, token_count, row_loss_sums, row_token_counts
 
 
 def _sequence_embeddings(model: GRCEGPT, token_batch: torch.Tensor) -> torch.Tensor:
@@ -4233,7 +4201,7 @@ def train_model(
     show_train_loss_details: bool = False,
     show_test_loss_details: bool = True,
     prebuilt_layouts: Sequence[BatchLayout] | None = None,
-) -> Tuple[int, List[Dict[str, float]], float, float]:
+) -> Tuple[int, List[Dict[str, float]], float, float, int]:
     """Run the main training loop for a cycle."""
 
     if optimizer is None:
@@ -4244,6 +4212,7 @@ def train_model(
     eval_interval = max(1, int(eval_interval))
     loop_timer = Timer().start()
     eval_timer = Timer()
+    train_tokens_used = 0
     run_total_steps = max(1, args.steps * args.cycles)
     current_lr = args.learning_rate
 
@@ -4338,6 +4307,7 @@ def train_model(
             optimizer.step()
             opt_duration = time.time() - opt_start
             total_loss = total_loss_sum / float(total_tokens)
+            train_tokens_used += total_tokens
         except torch.OutOfMemoryError:
             oom_retries += 1
             line_parts: List[str] = []
@@ -4393,32 +4363,44 @@ def train_model(
             if step_grad_norm is not None:
                 cycle_step_norms.append(step_grad_norm)
         if args.log_step_details:
-            step_window_desc = (
-                f"tokens {window_detail['step_start']} - {window_detail['step_end']}"
-                if isinstance(window_detail, dict)
-                else ""
-            )
-            header = f"Step {current_step_index}: u-batch | fwd | bwd | "
-            header += f"(" + step_window_desc + ")  " if step_window_desc else ""
-            print(color_text(header + "layout", Colors.BLUE))
+            row_meta = window_detail.get("rows") if isinstance(window_detail, dict) else None
+            row_count_desc = f" ({len(row_meta)} row windows)" if isinstance(row_meta, list) else ""
+            header = f"Step {current_step_index}: u-batch | fwd | bwd | layout{row_count_desc}"
+            print(color_text(header, Colors.BLUE))
             total_fwd = 0.0
             total_bwd = 0.0
-            micro_meta = window_detail.get("micro") if isinstance(window_detail, dict) else None
             for idx, fwd_time, bwd_time, rows_str in micro_logs:
                 total_fwd += fwd_time
                 total_bwd += bwd_time
-                token_desc = ""
-                if isinstance(micro_meta, list) and 0 < idx <= len(micro_meta):
-                    entry = micro_meta[idx - 1]
-                    token_desc = f"(offset {entry['token_start']:5})  "
                 line = (
-                    f"  {idx} | {fwd_time:.2f}s | {bwd_time:.2f}s |"
-                    f" {token_desc}{rows_str or layout_serialized}"
+                    f"  {idx} | {fwd_time:.2f}s | {bwd_time:.2f}s | {rows_str or layout_serialized}"
                 )
                 print(color_text(line, Colors.BLUE))
             other_time = max(0.0, step_wall - (total_fwd + total_bwd + opt_duration))
             summary = f"  {opt_duration:.2f}s optimize, {other_time:.2f}s other"
             print(color_text(summary, Colors.BLUE))
+            if args.log_row_details and isinstance(row_meta, list) and row_meta:
+                print(color_text("  per-row details:", Colors.BLUE))
+                for detail in row_meta:
+                    micro_idx = detail.get("micro_index")
+                    layout_text = detail.get("layout") or ""
+                    start = int(detail.get("token_start", 0))
+                    end = int(detail.get("token_end", 0))
+                    span = int(detail.get("token_span", 0))
+                    wrapped = " wrap" if detail.get("wrapped") else ""
+                    token_count = int(detail.get("token_count", 0))
+                    loss_sum = float(detail.get("loss_sum", 0.0))
+                    avg_loss = loss_sum / token_count if token_count > 0 else None
+                    row_no = detail.get("row")
+                    row_line = (
+                        f"    micro {micro_idx} row {row_no}: tokens {start}-{end}"
+                        f" (span {span}{wrapped})"
+                    )
+                    if avg_loss is not None:
+                        row_line += f" | avg loss {avg_loss:.4f}"
+                    if layout_text:
+                        row_line += f" | {layout_text}"
+                    print(color_text(row_line, Colors.BLUE))
         oom_retries = 0
         step += 1
         total_steps += 1
@@ -4567,12 +4549,9 @@ def train_model(
             "test_loss": float(eval_metrics["test"].metrics.get("target", 0.0) or 0.0),
             "train_wall_seconds": float(total_wall_seconds),
             "unix_time": float(eval_now),
-            "train_cursor": int(dataset.positions.get("train", 0)),
-            "test_cursor": int(dataset.positions.get("test", 0)),
+            "train_tokens": total_tokens,
         }
         record["corpus"] = args.corpus
-        record["train_cycle"] = int(dataset.cycles.get("train", 0))
-        record["test_cycle"] = int(dataset.cycles.get("test", 0))
         record["batch_layout"] = layout_serialized
         record["learning_rate"] = current_lr
         metric_keys = ["target"] + ROW_METRIC_HIST_KEYS
@@ -4599,7 +4578,7 @@ def train_model(
             )
         print(summary)
 
-    return total_steps, history_updates, loop_timer.stop(), eval_timer
+    return total_steps, history_updates, loop_timer.stop(), eval_timer, train_tokens_used
 
 
 def run_profile_mode(
@@ -4612,7 +4591,7 @@ def run_profile_mode(
     batch_size: int,
     device: torch.device,
     block_size: int,
-) -> None:
+    ) -> None:
     """Warm up once, profile a second training step, and report CUDA stats."""
 
     try:
@@ -4624,11 +4603,6 @@ def run_profile_mode(
 
     profile_layout = BatchLayout(args.layout, batch_size=batch_size, block_size=block_length)
     _log_layout_warnings(args, profile_layout)
-    step_span = profile_layout.total_token_span()
-    if step_span <= 0:
-        step_span = (block_length + 1) * batch_size
-    train_chars = step_span * 2
-    dataset.prepare_cycle("train", train_chars)
 
     def train_step(tag: str, layout: BatchLayout) -> float:
         model.train()
@@ -4757,8 +4731,8 @@ def _format_token_fragment(tokenizer: GPT2TokenizerWrapper, token_id: int) -> st
     return piece
 
 
-def _row_description(layout: BatchLayout, row: RowLayout) -> str:
-    return layout.serialize_rows([RowLayout(1, row.segments, row.modifiers)])
+def _row_description(layout: BatchLayout, row: BlockLayout) -> str:
+    return layout.serialize_rows([BlockLayout(1, row.segments, row.modifiers)])
 
 
 @dataclass
@@ -4813,7 +4787,7 @@ class BlockAttention:
 def _evaluate_row_block(
     args: Args,
     model: GRCEGPT,
-    row: RowLayout,
+    row: BlockLayout,
     embeddings: torch.Tensor,
     targets: torch.Tensor,
     *,
@@ -5350,7 +5324,9 @@ class Runtime:
         self.model_path: pathlib.Path | None = None
         self.log_path: pathlib.Path | None = None
         self.tokenizer_json: str | None = None
-        self.datasets_state: dict[str, dict[str, int]] = {}
+        self.corpua: list[dict[str, int]] = []
+        self.dataset_cache: dict[str, TextDataset] = {}
+        self.active_corpus_entry: dict[str, int] | None = None
 
     class TimeoutAlarm(Exception):
         pass
@@ -5453,8 +5429,229 @@ class Runtime:
             tokenizer_json,
         )
 
+    def _normalize_corpus_entry(self, entry: dict[str, object] | None) -> dict[str, int] | None:
+        if not isinstance(entry, dict):
+            return None
+        name = entry.get("corpus") or entry.get("name")
+        if not name:
+            return None
+        try:
+            num_tokens = int(entry.get("num_train_tokens", 0) or 0)
+        except (TypeError, ValueError):
+            num_tokens = 0
+        try:
+            max_tokens = int(entry.get("max_train_tokens", num_tokens) or 0)
+        except (TypeError, ValueError):
+            max_tokens = num_tokens
+        try:
+            used_tokens = int(entry.get("used_train_tokens", 0) or 0)
+        except (TypeError, ValueError):
+            used_tokens = 0
+        num_tokens = max(0, num_tokens)
+        max_tokens = max(num_tokens, max_tokens)
+        used_tokens = max(0, min(used_tokens, max_tokens))
+        return {
+            "corpus": str(name),
+            "num_train_tokens": num_tokens,
+            "max_train_tokens": max_tokens,
+            "used_train_tokens": used_tokens,
+        }
+
+    def _convert_legacy_corpora(self, payload: dict[str, object]) -> list[dict[str, int]]:
+        datasets = payload.get("datasets")
+        if not isinstance(datasets, dict):
+            return []
+        entries: list[dict[str, int]] = []
+        for name, state in datasets.items():
+            if not isinstance(state, dict):
+                continue
+            try:
+                train_count = int(state.get("train_count", 0) or 0)
+            except (TypeError, ValueError):
+                train_count = 0
+            try:
+                train_cursor = int(state.get("train_cursor", 0) or 0)
+            except (TypeError, ValueError):
+                train_cursor = 0
+            try:
+                train_cycles = int(state.get("train_cycles", 0) or 0)
+            except (TypeError, ValueError):
+                train_cycles = 0
+            used_tokens = max(0, train_cycles * max(train_count, 0) + max(0, min(train_cursor, train_count)))
+            entries.append(
+                {
+                    "corpus": str(name),
+                    "num_train_tokens": max(0, train_count),
+                    "max_train_tokens": max(0, train_count),
+                    "used_train_tokens": used_tokens,
+                }
+            )
+        current = payload.get("corpus")
+        if current:
+            current_name = str(current)
+            prioritized = [entry for entry in entries if entry["corpus"] == current_name]
+            remaining = [entry for entry in entries if entry["corpus"] != current_name]
+            entries = prioritized + remaining
+        return entries
+
+    def _load_corpua_from_payload(self, payload: dict | None) -> list[dict[str, int]]:
+        if self.corpua:
+            return self.corpua
+        entries: list[dict[str, int]] = []
+        if isinstance(payload, dict):
+            raw_list = payload.get("corpua")
+            if isinstance(raw_list, list) and raw_list:
+                for raw_entry in raw_list:
+                    normalized = self._normalize_corpus_entry(raw_entry)
+                    if normalized:
+                        entries.append(normalized)
+            else:
+                entries = self._convert_legacy_corpora(payload)
+        self.corpua = entries
+        return entries
+
+    def _write_corpua_to_payload(self, payload: dict[str, object], corpua: list[dict[str, int]]) -> None:
+        payload["corpua"] = [
+            {
+                "corpus": entry["corpus"],
+                "num_train_tokens": int(entry["num_train_tokens"]),
+                "max_train_tokens": int(entry["max_train_tokens"]),
+                "used_train_tokens": int(entry["used_train_tokens"]),
+            }
+            for entry in corpua
+        ]
+        payload.pop("datasets", None)
+        payload.pop("corpus", None)
+
+    def _aggregate_corpus_counts(self, name: str, vocab_size: int) -> tuple[int, int]:
+        train_cache, test_cache = self._token_cache_paths(name, vocab_size=vocab_size)
+        train_tokens = load_cached_tokens("train", train_cache)
+        test_tokens = load_cached_tokens("test", test_cache)
+        train_count = int(train_tokens.numel())
+        test_count = int(test_tokens.numel())
+        del train_tokens
+        del test_tokens
+        return train_count, test_count
+
+    def _select_corpus_entry(self) -> tuple[dict[str, int], bool]:
+        if not self.corpua:
+            raise RuntimeError(
+                "No corpora configured; run 'grce.py corpus --add <name>' before training."
+            )
+        ready_entry = next(
+            (
+                entry
+                for entry in self.corpua
+                if entry.get("used_train_tokens", 0)
+                < max(1, int(entry.get("max_train_tokens", entry.get("num_train_tokens", 0)) or 0))
+            ),
+            None,
+        )
+        if ready_entry is not None:
+            return ready_entry, False
+        best_idx = 0
+        best_ratio: int | None = None
+        for idx, entry in enumerate(self.corpua):
+            max_tokens = max(1, int(entry.get("max_train_tokens", entry.get("num_train_tokens", 1)) or 1))
+            used_tokens = int(entry.get("used_train_tokens", 0) or 0)
+            ratio = used_tokens // max_tokens
+            if best_ratio is None or ratio < best_ratio:
+                best_ratio = ratio
+                best_idx = idx
+        return self.corpua[best_idx], True
+
+    def _load_dataset_for_entry(self, entry: dict[str, int]) -> TextDataset:
+        name = entry["corpus"]
+        cached = self.dataset_cache.get(name)
+        if cached is not None:
+            return cached
+        train_cache, test_cache = self._token_cache_paths(name)
+        train_tokens = load_cached_tokens("train", train_cache)
+        test_tokens = load_cached_tokens("test", test_cache)
+        actual_count = int(train_tokens.numel())
+        expected_count = int(entry.get("num_train_tokens", actual_count) or actual_count)
+        if expected_count and expected_count != actual_count:
+            raise ValueError(
+                f"Corpus {name} expected {expected_count:,} train tokens but found {actual_count:,}; rerun 'corpus --add {name}'."
+            )
+        entry["num_train_tokens"] = actual_count
+        entry["max_train_tokens"] = max(int(entry.get("max_train_tokens", actual_count) or actual_count), actual_count)
+        dataset = TextDataset(
+            train_tokens=train_tokens,
+            test_tokens=test_tokens,
+            train_text=None,
+            test_text=None,
+            train_path=train_cache,
+            test_path=test_cache,
+        )
+        self.dataset_cache[name] = dataset
+        return dataset
+
+    def _activate_corpus(self, *, announce: bool = False) -> TextDataset:
+        entry, recycled = self._select_corpus_entry()
+        previous = self.active_corpus_entry
+        changed = previous is not entry
+        self.active_corpus_entry = entry
+        dataset = self._load_dataset_for_entry(entry) if changed else self.dataset_cache.get(entry["corpus"])
+        if dataset is None:
+            dataset = self._load_dataset_for_entry(entry)
+        self.dataset = dataset
+        self.args.corpus = entry["corpus"]
+        if announce:
+            used_tokens = int(entry.get("used_train_tokens", 0) or 0)
+            max_tokens = int(entry.get("max_train_tokens", entry.get("num_train_tokens", dataset.train_tokens.numel())) or 0)
+            train_count = int(dataset.train_tokens.numel())
+            test_count = int(dataset.test_tokens.numel())
+            status = (
+                f"Corpus {entry['corpus']}: {train_count:,} train tokens, {test_count:,} test tokens;"
+                f" used {used_tokens:,} / {max(1, max_tokens):,}"
+            )
+            print(color_text(status, Colors.CYAN))
+            if recycled:
+                ratio = used_tokens // max(1, max_tokens)
+                warning = (
+                    f"All corpora exhausted; reusing {entry['corpus']} (reuse cycle {ratio + 1})."
+                )
+                print(color_text(warning, Colors.YELLOW))
+        return dataset
+
+    def _ensure_corpus_entry(
+        self,
+        corpua: list[dict[str, int]],
+        name: str,
+        *,
+        vocab_size: int,
+        reuse_multiplier: float,
+    ) -> tuple[dict[str, int], bool]:
+        reuse_multiplier = max(1.0, float(reuse_multiplier))
+        entry = next((item for item in corpua if item["corpus"] == name), None)
+        train_count, _ = self._aggregate_corpus_counts(name, vocab_size)
+        target_max = max(train_count, int(train_count * reuse_multiplier))
+        updated = False
+        if entry is None:
+            entry = {
+                "corpus": name,
+                "num_train_tokens": train_count,
+                "max_train_tokens": target_max,
+                "used_train_tokens": 0,
+            }
+            corpua.append(entry)
+            updated = True
+            print(color_text(f"Added corpus {name}", Colors.GREEN))
+        else:
+            if entry.get("num_train_tokens") != train_count:
+                entry["num_train_tokens"] = train_count
+                updated = True
+            previous_max = entry.get("max_train_tokens", train_count)
+            if target_max != previous_max:
+                entry["max_train_tokens"] = target_max
+                updated = True
+        return entry, updated
+
     def _prepare_corpus(
         self,
+        payload: dict | None,
+        model_path: pathlib.Path,
     ) -> tuple[
         GPT2TokenizerWrapper,
         TextDataset,
@@ -5470,36 +5667,16 @@ class Runtime:
             default_prompt_boundary,
             tokenizer_json,
         ) = self._prepare_tokenizer_bundle(allow_files=False)
-        if not self.args.corpus:
-            raise RuntimeError("No corpus configured; run 'grce.py corpus --set <name>' first.")
-        data_dir = pathlib.Path(self.args.data)
-        train_cache_path = data_dir / f"{self.args.corpus}_tokens_train_{self.args.vocab_size}.pt"
-        test_cache_path = data_dir / f"{self.args.corpus}_tokens_test_{self.args.vocab_size}.pt"
-        train_tokens = load_cached_tokens("train", train_cache_path)
-        test_tokens = load_cached_tokens("test", test_cache_path)
-
-        train_token_count = int(train_tokens.numel())
-        test_token_count = int(test_tokens.numel())
-        print(
-            color_text(
+        corpua = self._load_corpua_from_payload(payload)
+        if not corpua:
+            raise RuntimeError(
                 (
-                    f"Corpus {self.args.corpus}: "
-                    f"{train_token_count:,} train tokens, {test_token_count:,} test tokens"
-                ),
-                Colors.CYAN,
+                    f"Checkpoint {model_path} has no corpora registered. "
+                    "Run 'grce.py corpus --add <name>' to register datasets before training."
+                )
             )
-        )
-        dataset = TextDataset(
-            train_tokens=train_tokens,
-            test_tokens=test_tokens,
-            train_text=None,
-            test_text=None,
-            train_path=train_cache_path,
-            test_path=test_cache_path,
-        )
-
-        self.dataset = dataset
-        self.datasets_state.setdefault(self.args.corpus, dataset.state_dict())
+        self.corpua = corpua
+        dataset = self._activate_corpus(announce=False)
         return (
             tokenizer,
             dataset,
@@ -5509,115 +5686,17 @@ class Runtime:
             tokenizer_json,
         )
 
-    def _ensure_active_corpus(
+    def _token_cache_paths(
         self,
-        payload: dict | None,
-        model_path: pathlib.Path,
-    ) -> bool:
-        if self.args.corpus:
-            return True
-        corpus_name: str | None = None
-        if isinstance(payload, dict):
-            value = payload.get("corpus")
-            if value:
-                corpus_name = str(value)
-        if not corpus_name:
-            print(
-                color_text(
-                    (
-                        f"Checkpoint {model_path} lacks corpus metadata. "
-                        "Run 'grce.py corpus --set <name>' before training."
-                    ),
-                    Colors.RED,
-                    bold=True,
-                )
-            )
-            return False
-        self.args.corpus = corpus_name
-        return True
-
-    def _build_fresh_corpus_state(self, name: str, vocab_size: int) -> dict[str, int]:
+        corpus: str,
+        *,
+        vocab_size: int | None = None,
+    ) -> tuple[pathlib.Path, pathlib.Path]:
         data_dir = pathlib.Path(self.args.data)
-        train_cache = data_dir / f"{name}_tokens_train_{vocab_size}.pt"
-        test_cache = data_dir / f"{name}_tokens_test_{vocab_size}.pt"
-        train_tokens = load_cached_tokens("train", train_cache)
-        test_tokens = load_cached_tokens("test", test_cache)
-        train_count = int(train_tokens.numel())
-        test_count = int(test_tokens.numel())
-        del train_tokens
-        del test_tokens
-        return {
-            "train_cursor": 0,
-            "test_cursor": 0,
-            "train_cycles": 0,
-            "test_cycles": 0,
-            "train_count": train_count,
-            "test_count": test_count,
-        }
-
-    def _token_cache_paths(self, corpus: str) -> tuple[pathlib.Path, pathlib.Path]:
-        data_dir = pathlib.Path(self.args.data)
-        train_cache = data_dir / f"{corpus}_tokens_train_{self.args.vocab_size}.pt"
-        test_cache = data_dir / f"{corpus}_tokens_test_{self.args.vocab_size}.pt"
+        vocab = self.args.vocab_size if vocab_size is None else vocab_size
+        train_cache = data_dir / f"{corpus}_tokens_train_{vocab}.pt"
+        test_cache = data_dir / f"{corpus}_tokens_test_{vocab}.pt"
         return train_cache, test_cache
-
-    def _corpus_tokens_available(self, corpus: str) -> bool:
-        train_cache, test_cache = self._token_cache_paths(corpus)
-        return train_cache.exists() and test_cache.exists()
-
-    def _save_active_dataset_state(self) -> None:
-        if self.dataset is None:
-            return
-        self.datasets_state[self.args.corpus] = self.dataset.state_dict()
-
-    def _instantiate_dataset_for_corpus(self, corpus: str) -> TextDataset:
-        train_cache, test_cache = self._token_cache_paths(corpus)
-        train_tokens = load_cached_tokens("train", train_cache)
-        test_tokens = load_cached_tokens("test", test_cache)
-        dataset = TextDataset(
-            train_tokens=train_tokens,
-            test_tokens=test_tokens,
-            train_text=None,
-            test_text=None,
-            train_path=train_cache,
-            test_path=test_cache,
-        )
-        state = self.datasets_state.get(corpus)
-        dataset.load_state(state)
-        self.datasets_state[corpus] = dataset.state_dict()
-        return dataset
-
-    def _auto_advance_corpus_volume(self) -> bool:
-        if self.tokenizer is None:
-            return False
-        current = self.args.corpus
-        match = re.match(r"^(.*?)-(\d{4})$", current)
-        if not match:
-            return False
-        prefix, digits = match.groups()
-        next_idx = int(digits) + 1
-        candidates: list[str] = [f"{prefix}-{next_idx:04d}"]
-        fallback = f"{prefix}-0000"
-        if fallback not in candidates:
-            candidates.append(fallback)
-        for candidate in candidates:
-            if not self._corpus_tokens_available(candidate):
-                continue
-            self._save_active_dataset_state()
-            new_dataset = self._instantiate_dataset_for_corpus(candidate)
-            self.dataset = new_dataset
-            self.args.corpus = candidate
-            print(
-                color_text(
-                    f"Auto-switched to corpus {candidate}",
-                    Colors.YELLOW,
-                )
-            )
-            return True
-        missing = ", ".join(candidates)
-        raise FileNotFoundError(
-            f"Unable to locate next corpus volume(s): {missing}. Add the pre-tokenized files or run 'corpus --init'."
-        )
 
     def cli_prompts(
         self,
@@ -5688,47 +5767,52 @@ class Runtime:
         if not isinstance(config, dict):
             raise ValueError("Checkpoint lacks config metadata; re-run create to refresh it.")
         vocab_size = int(config.get("vocab_size", self.args.vocab_size))
-        datasets = payload.get("datasets")
-        if not isinstance(datasets, dict):
-            datasets = {}
-        add_name = getattr(self.args, "corpus_add", None)
-        set_name = getattr(self.args, "corpus_set", None)
+        corpua = self._load_corpua_from_payload(payload)
+        names = getattr(self.args, "names", []) or []
+        reuse_multiplier = getattr(self.args, "corpus_reuse", 1.0) or 1.0
+        add_flag = bool(getattr(self.args, "corpus_add", False))
+        set_flag = bool(getattr(self.args, "corpus_set", False))
         updated = False
 
-        def ensure_entry(name: str) -> dict[str, int]:
-            nonlocal updated
-            entry = datasets.get(name)
-            if not isinstance(entry, dict):
-                entry = {}
-                datasets[name] = entry
-            need_counts = "train_count" not in entry or "test_count" not in entry
-            if not entry or need_counts:
-                fresh = self._build_fresh_corpus_state(name, vocab_size)
-                entry.setdefault("train_cursor", fresh["train_cursor"])
-                entry.setdefault("test_cursor", fresh["test_cursor"])
-                entry.setdefault("train_cycles", fresh["train_cycles"])
-                entry.setdefault("test_cycles", fresh["test_cycles"])
-                entry["train_count"] = fresh["train_count"]
-                entry["test_count"] = fresh["test_count"]
-                datasets[name] = entry
+        if add_flag and names:
+            for name in names:
+                _, changed = self._ensure_corpus_entry(
+                    corpua,
+                    name,
+                    vocab_size=vocab_size,
+                    reuse_multiplier=reuse_multiplier,
+                )
+                updated = updated or changed
+
+        if set_flag and names:
+            for name in names:
+                _, changed = self._ensure_corpus_entry(
+                    corpua,
+                    name,
+                    vocab_size=vocab_size,
+                    reuse_multiplier=reuse_multiplier,
+                )
+                updated = updated or changed
+            prioritized: list[dict[str, int]] = []
+            seen: set[str] = set()
+            for name in names:
+                for entry in corpua:
+                    if entry["corpus"] == name and entry["corpus"] not in seen:
+                        prioritized.append(entry)
+                        seen.add(entry["corpus"])
+                        break
+            prioritized.extend(entry for entry in corpua if entry["corpus"] not in seen)
+            if prioritized != corpua:
+                corpua = prioritized
                 updated = True
-                print(color_text(f"Added corpus {name}", Colors.GREEN))
-            return entry
 
-        if add_name:
-            ensure_entry(add_name)
-        if set_name:
-            ensure_entry(set_name)
-            payload["corpus"] = set_name
-            updated = True
-
+        self.corpua = corpua
         if updated:
-            payload["datasets"] = datasets
+            self._write_corpua_to_payload(payload, corpua)
             atomic_torch_save(payload, model_path)
             print(color_text(f"Saved corpus metadata to {model_path}", Colors.GREEN))
 
-        current = payload.get("corpus") if isinstance(payload, dict) else None
-        self._print_corpus_listing(datasets, current)
+        self._print_corpus_listing(corpua)
         return 0
 
     def cli_reset(
@@ -5763,29 +5847,25 @@ class Runtime:
         )
         return 0
 
-    def _print_corpus_listing(self, datasets: dict, current: str | None) -> None:
-        if not datasets:
+    def _print_corpus_listing(self, corpua: Sequence[dict[str, int]]) -> None:
+        if not corpua:
             print(color_text("No corpora registered in checkpoint", Colors.YELLOW))
             return
         print(color_text("Registered corpora:", Colors.CYAN))
-        for name in sorted(datasets):
-            state = datasets.get(name) or {}
-            prefix = "*" if current == name else "-"
-            train_cursor = int(state.get("train_cursor", 0) or 0)
-            test_cursor = int(state.get("test_cursor", 0) or 0)
-            train_cycles = int(state.get("train_cycles", 0) or 0)
-            test_cycles = int(state.get("test_cycles", 0) or 0)
-            train_count = state.get("train_count")
-            test_count = state.get("test_count")
-            train_desc = f"train cursor {train_cursor:,} (cycles {train_cycles:,})"
-            if isinstance(train_count, int):
-                train_desc += f" / {train_count:,} tokens"
-            test_desc = f"test cursor {test_cursor:,} (cycles {test_cycles:,})"
-            if isinstance(test_count, int):
-                test_desc += f" / {test_count:,} tokens"
-            print(
-                f"{prefix} {name}: {train_desc}; {test_desc}"
+        for idx, entry in enumerate(corpua, start=1):
+            name = entry.get("corpus", "<unknown>")
+            num_tokens = int(entry.get("num_train_tokens", 0) or 0)
+            max_tokens = max(num_tokens, int(entry.get("max_train_tokens", 0) or 0))
+            used_tokens = int(entry.get("used_train_tokens", 0) or 0)
+            reuse = (max_tokens / num_tokens) if num_tokens > 0 else 0.0
+            progress = (used_tokens / max_tokens) if max_tokens > 0 else 0.0
+            line = (
+                f"{idx:>2}. {name}: used {used_tokens:,} / {max_tokens:,}"
+                f" ({progress:.1%}) of {num_tokens:,} tokens"
             )
+            if reuse > 1.0:
+                line += f" [reuse x{reuse:.2f}]"
+            print(line)
 
     def big_fat_old_main(self) -> int:
         """Dispatch the CLI command selected by :func:`grce_cli_args`.
@@ -5911,8 +5991,6 @@ class Runtime:
                     tokenizer_json,
                 ) = self._prepare_tokenizer_bundle(allow_files=True)
             elif needs_dataset:
-                if not self._ensure_active_corpus(payload, model_path):
-                    return 1
                 (
                     tokenizer,
                     dataset,
@@ -5920,7 +5998,7 @@ class Runtime:
                     boundary_blocklist,
                     default_prompt_boundary,
                     tokenizer_json,
-                ) = self._prepare_corpus()
+                ) = self._prepare_corpus(payload, model_path)
             else:
                 (
                     tokenizer,
@@ -6037,7 +6115,6 @@ class Runtime:
             total_train_wall = 0.0
             payload = getattr(self.args, "checkpoint_payload_override", None)
             optimizer_state = None
-            dataset_states: dict[str, dict[str, int]] = {}
             if payload is None and model_path.exists():
                 if self.args.command == "create" and self.args.create_args.import_model:
                     raise ValueError(
@@ -6064,19 +6141,6 @@ class Runtime:
                         )
                         if self.args.checkpoint_optimizer:
                             optimizer_state = payload.get("optimizer")
-                        raw_datasets = payload.get("datasets")
-                        if isinstance(raw_datasets, dict):
-                            dataset_states = {
-                                str(name): dict(state)
-                                for name, state in raw_datasets.items()
-                                if isinstance(state, dict)
-                            }
-                        elif "dataset" in payload and dataset is not None:
-                            legacy_state = payload.get("dataset")
-                            if isinstance(legacy_state, dict):
-                                dataset.load_state(legacy_state)
-                                legacy_name = payload.get("corpus") or self.args.corpus
-                                dataset_states[legacy_name] = dataset.state_dict()
                         if "tokenizer_json" in payload:
                             self.args.tokenizer_json_override = payload.get("tokenizer_json")
                     else:
@@ -6138,6 +6202,7 @@ class Runtime:
                         "prompts": prompt_registry.serialize() if prompt_registry else None,
                         "tokenizer_json": tokenizer_json,
                         "completed_cycles": int(meta.get("completed_cycles", 0)),
+                        "corpua": self.corpua,
                     },
                     model_path,
                 )
@@ -6154,14 +6219,6 @@ class Runtime:
                 base_cycles = int(getattr(self.args, "completed_cycles", 0))
                 self.args.cycles = base_cycles + delta
 
-            self.datasets_state = {
-                name: dict(state) for name, state in dataset_states.items()
-            }
-            if dataset is not None and self.args.corpus:
-                active_state = self.datasets_state.get(self.args.corpus)
-                dataset.load_state(active_state)
-                self.datasets_state[self.args.corpus] = dataset.state_dict()
-
             if self.args.command == "create":
                 checkpoint_payload = {
                     "model": model.state_dict(),
@@ -6172,11 +6229,12 @@ class Runtime:
                     "prompts": prompt_registry.serialize(),
                     "tokenizer_json": tokenizer_json,
                     "completed_cycles": 0,
+                    "corpua": self.corpua,
                 }
                 atomic_torch_save(checkpoint_payload, model_path)
                 print(
                     color_text(
-                        f"Created new checkpoint at {model_path}; run 'corpus --set <name>' before training.",
+                        f"Created new checkpoint at {model_path}; run 'corpus --add <name>' before training.",
                         Colors.GREEN,
                     )
                 )
@@ -6324,7 +6382,7 @@ class Runtime:
             cycle_start = completed_cycles + 1
             cycle_end = max(completed_cycles, self.args.cycles)
             for cycle in range(cycle_start, cycle_end + 1):
-                dataset = self.dataset
+                dataset = self._activate_corpus(announce=True)
                 cycle_wall = time.time()
                 tags = ["GPT"]
                 plus_tags: list[str] = []
@@ -6348,54 +6406,6 @@ class Runtime:
                     )
                     for _ in range(self.args.steps)
                 ]
-                step_token_spans = [layout.total_token_span() for layout in cycle_layouts]
-                train_chars_cycle = sum(step_token_spans)
-                if train_chars_cycle <= 0:
-                    train_chars_cycle = (
-                        (self.args.block_length + 1)
-                        * self.args.batch_size
-                        * self.args.steps
-                    )
-                train_chars_cycle = max(train_chars_cycle, 1)
-                eval_steps = evaluation_step_indices(
-                    self.args.steps,
-                    self.args.eval_interval,
-                )
-                test_chars_cycle = sum(
-                    step_token_spans[idx - 1]
-                    for idx in eval_steps
-                    if 1 <= idx <= len(step_token_spans)
-                )
-                if test_chars_cycle <= 0:
-                    test_chars_cycle = (
-                        max(step_token_spans)
-                        if step_token_spans
-                        else (self.args.block_length + 1) * self.args.batch_size
-                    )
-                test_chars_cycle = max(test_chars_cycle, 1)
-                while True:
-                    dataset = self.dataset
-                    train_start = int(dataset.positions.get("train", 0))
-                    train_wrapped = dataset.prepare_cycle("train", train_chars_cycle)
-                    if train_wrapped and self._auto_advance_corpus_volume():
-                        continue
-                    test_start = int(dataset.positions.get("test", 0))
-                    dataset.prepare_cycle("test", test_chars_cycle)
-                    break
-
-                train_chunk = dataset.chunks.get("train")
-                test_chunk = dataset.chunks.get("test")
-
-                def format_range(start: int, span: int) -> str:
-                    if span <= 0:
-                        return f"{start:,} - {start:,}"
-                    end = start + span - 1
-                    return f"{start:,} - {end:,}"
-
-                train_span = int(train_chunk.size(0)) if train_chunk is not None else 0
-                test_span = int(test_chunk.size(0)) if test_chunk is not None else 0
-                train_range = format_range(train_start, train_span)
-                test_range = format_range(test_start, test_span)
                 print()
                 pod_path = pathlib.Path(".podname")
                 if pod_path.exists():
@@ -6409,12 +6419,7 @@ class Runtime:
                             )
                         )
                 print(color_text(f"Model: {model_path}", Colors.CYAN))
-                print(
-                    color_text(
-                        f"Corpus {self.args.corpus}: train tokens {train_range}, test tokens {test_range}",
-                        Colors.CYAN,
-                    )
-                )
+                print(color_text(f"Active corpus: {self.args.corpus}", Colors.CYAN))
                 per_run_idx = cycle
                 print(
                     color_text(
@@ -6436,6 +6441,7 @@ class Runtime:
                     updates,
                     train_timer,
                     eval_timer,
+                    tokens_consumed,
                 ) = train_model(
                     self.args,
                     model,
@@ -6463,11 +6469,13 @@ class Runtime:
                     prebuilt_layouts=cycle_layouts,
                 )
                 loss_history.extend(updates)
+                entry = self.active_corpus_entry
+                if entry is not None:
+                    entry["used_train_tokens"] = int(entry.get("used_train_tokens", 0)) + int(tokens_consumed)
                 pure_train = Timer().add(train_timer).sub(eval_timer)
                 acc_train.add(pure_train)
                 acc_eval.add(eval_timer)
                 total_train_wall += train_timer.wall_secs
-                self.datasets_state[self.args.corpus] = dataset.state_dict()
                 if not self.args.skip_model_update:
                     include_optimizer = (
                         self.args.checkpoint_optimizer
@@ -6477,12 +6485,11 @@ class Runtime:
                     atomic_torch_save(
                         {
                             "model": model.state_dict(),
-                            "datasets": self.datasets_state,
+                            "corpua": self.corpua,
                             "total_steps": total_steps,
                             "loss_history": loss_history,
                             "config": asdict(args_to_model_geometry(self.args)),
                             "train_wall_seconds": total_train_wall,
-                            "corpus": self.args.corpus,
                             "prompts": prompt_registry.serialize() if prompt_registry else None,
                             "tokenizer_json": tokenizer_json,
                             "completed_cycles": cycle,
