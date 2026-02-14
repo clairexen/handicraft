@@ -5656,7 +5656,7 @@ class Runtime:
         self.dataset_cache[name] = dataset
         return dataset
 
-    def _activate_corpus(self, *, announce: bool = False) -> TextDataset:
+    def _activate_corpus(self) -> TextDataset:
         entry, recycled = self._select_corpus_entry()
         previous = self.active_corpus_entry
         changed = previous is not entry
@@ -5666,22 +5666,12 @@ class Runtime:
             dataset = self._load_dataset_for_entry(entry)
         self.dataset = dataset
         self.args.corpus = entry["corpus"]
-        if announce:
-            used_tokens = int(entry.get("used_train_tokens", 0) or 0)
-            max_tokens = int(entry.get("max_train_tokens", entry.get("num_train_tokens", dataset.train_tokens.numel())) or 0)
-            train_count = int(dataset.train_tokens.numel())
-            test_count = int(dataset.test_tokens.numel())
-            status = (
-                f"Corpus {entry['corpus']}: {train_count:,} train tokens, {test_count:,} test tokens;"
-                f" used {used_tokens:,} / {max(1, max_tokens):,}"
+        if recycled:
+            ratio = used_tokens // max(1, max_tokens)
+            warning = (
+                f"All corpora exhausted; reusing {entry['corpus']} (reuse cycle {ratio + 1})."
             )
-            print(color_text(status, Colors.CYAN))
-            if recycled:
-                ratio = used_tokens // max(1, max_tokens)
-                warning = (
-                    f"All corpora exhausted; reusing {entry['corpus']} (reuse cycle {ratio + 1})."
-                )
-                print(color_text(warning, Colors.YELLOW))
+            print(color_text(warning, Colors.YELLOW))
         return dataset
 
     def _ensure_corpus_entry(
@@ -5745,7 +5735,7 @@ class Runtime:
                 )
             )
         self.corpua = corpua
-        dataset = self._activate_corpus(announce=False)
+        dataset = self._activate_corpus()
         return (
             tokenizer,
             dataset,
@@ -6002,7 +5992,7 @@ class Runtime:
                 self.args.model_path_override = model_path
                 self.args.log_path_override = log_path
             print(color_text(f"Model: {model_path}", Colors.CYAN))
-            print(color_text(f"Logfile: {log_path}", Colors.BLUE))
+            print(color_text(f"Logfile: {log_path}", Colors.CYAN))
             dataset_commands = {"train", "report", "test", "eval", "profile", "prompts"}
             requires_checkpoint = self.args.command in {"train", "report", "test", "eval", "profile", "prompts", "reset", "corpus"}
             if self.args.command == "create" and model_path.exists():
@@ -6487,7 +6477,7 @@ class Runtime:
             cycle_start = completed_cycles + 1
             cycle_end = max(completed_cycles, self.args.cycles)
             for cycle in range(cycle_start, cycle_end + 1):
-                dataset = self._activate_corpus(announce=True)
+                dataset = self._activate_corpus()
                 cycle_wall = time.time()
                 tags = ["GPT"]
                 plus_tags: list[str] = []

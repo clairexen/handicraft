@@ -774,7 +774,12 @@ python grce.py --pt model/baseline_wp_retrain_decay.pt --cycles 100 --layout '*[
 ----------------
 
 python grce.py --pt model/baseline_wikipedia.pt create
-python grce.py --pt model/baseline_wikipedia.pt corpus --add wikipedia-simple wikipedia-en-000{0,1,2,3,4,5,6,7}
+python grce.py --pt model/baseline_wikipedia.pt corpus --add wikipedia-simple wikipedia-en-000{0,1}
 python grce.py --pt model/baseline_wikipedia.pt --cycles 100 --lr-warmup-steps 200 --lr-linear-steps 500 --lr-cosine-steps 200 \
+  --batch-size 100 --layout '50[4-16E=240D],5[16E=*D],100[16e=32f],100[16e>32n]' train --json
+
+python grce.py --pt model/baseline_wikipedia_nosimple.pt create
+python grce.py --pt model/baseline_wikipedia_nosimple.pt corpus --add wikipedia-en-000{0,1}
+python grce.py --pt model/baseline_wikipedia_nosimple.pt --cycles 100 --lr-warmup-steps 200 --lr-linear-steps 500 --lr-cosine-steps 200 \
   --batch-size 100 --layout '50[4-16E=240D],5[16E=*D],100[16e=32f],100[16e>32n]' train --json
 
