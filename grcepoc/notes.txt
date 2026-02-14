@@ -750,33 +750,44 @@ G.dot(embedding) < 1 for all GRCE state embeddings that are expected "OFF" (-1).
 
 Read AGENTS.md, README.md, and the comments at the top of grce.py. Then:
 
+Let's re-design the way we manage and sample corpa in grce.py.
+
+On the management side, we get rid of pt["corpus"] and pt["dataset"].
+Instead we create a pt["corpua"] array of objects:
+	pt["corpa"] = [
+		{
+			corpus="wp-en-0000",
+			num_train_tokens=351949459,
+			max_train_tokens=351949459,
+			used_train_tokens=295690541,
+		},
+		...
+	]
+
+So num_train_tokens is the number of tokens in the trai file. Let's print an
+error if we open the file and there's a mismatch. And max_train_tokens is
+by default 1.0*num_train_tokens, but a different multiplyer can be passed
+with "corpus --add --reuse 2.0 wp-en-000{0,1,2,3,,5,6,7}".
+
+used_train_tokens is the number of training tokens used in training.
+We train on the first corpus with used_train_tokens < max_train_tokens.
+(We switch to a new corpus before the start of a cycle.)
+
+If there's no such corpus, we print a warning message, and then train
+on the first corpus with lowest used_train_tokens // max_train_tokens.
+
+We get rid of per-cycle, per-step, and per-microbatch windows. Each time
+we sample we sample from the entire current corpus. We add --log-row-details
+which implies --log-step-details, and prints per-row metrics and the window
+in the corpus used for that row.
+
+This is a larger change, however, for the most part it's just simplifying
+the code and getting rid of complexity that is not needed anymore. Do you
+agree?
+
 ---------------------------------------------------------------------------
 
 Current experiments:
-
-while true; do
-python grce.py --name dec24f --cycles 50 --batch-size 128 --block-length 256 --time --layout '*[*d(/2-4f||||)]' train
-python grce.py --name allfwd --cycles 50 --batch-size 70 --block-length 128 --time --layout '*[*f]' train
-done
-
-while true; do
-python grce.py --name alldec --cycles 50 --batch-size 70 --block-length 128 --time --layout '*[*d]' train
-python grce.py --name decdec --cycles 50 --batch-size 70 --block-length 128 --time --layout '*[*d/*d]' train
-done
-
-python grce.py --n-xctx 0 --n-grce 0 --cycles 500 --layout '*[*d]' create
-python grce.py --n-xctx 0 --n-grce 0 --cycles 500 --layout '*[*d]' corpus --set cccclc-0000
-python grce.py --n-xctx 0 --n-grce 0 --cycles 500 --layout '*[*d]' --batch-size 200 train
-
-grce_run="--name lrschedule --n-xctx 0 --n-grce 0 --cycles 500 --layout '*[*d]' --batch-size 200 \
-          --lr-warmup 500 --lr-decay-style cosine --learning-rate 3e-4 --lr-decay-min 3e-5 --time"
-python grce.py $grce_run create && python grce.py $grce_run corpus --set cccclc-0000
-python grce.py $grce_run train
-
-grce_run="--name lrschedule2 --n-xctx 0 --n-grce 0 --cycles 500 --layout '*[*d]' --batch-size 200 \
-          --lr-warmup 500 --learning-rate 4e-4 --time"
-eval "python grce.py $grce_run create && python grce.py $grce_run corpus --set cccclc-0000"
-eval "python grce.py $grce_run train"
 
 grce_run="--name lrwarmup_big --n-xctx 0 --n-grce 0 --n-layer 12 --n-head 12 --n-embd 768 \
 	--cycles 1000 --layout '*[*d]' --batch-size 80 --time --learning-rate 3e-4 \
