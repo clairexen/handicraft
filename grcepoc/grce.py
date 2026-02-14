@@ -127,15 +127,16 @@ class Defaults:
     detach_span: int = 0
     log_step_details: bool = False
     log_row_details: bool = False
-    learning_rate: float = 3e-4
+    lr_base: float = 3e-4
     weight_decay: float = 0.01
     adam_beta1: float = 0.9
     adam_beta2: float = 0.95
     adam_eps: float = 1e-8
-    lr_warmup: int = 0
-    lr_decay: int = 0
-    lr_decay_min: float = 0.0
-    lr_linear_decay: bool = False
+    lr_warmup_steps: int = 0
+    lr_steady_steps: int = 0
+    lr_linear_steps: int = 0
+    lr_linear_min: float | None = None
+    lr_cosine_steps: int = 0
     no_detach_ctx: bool = False
     prompt_no_prefix: bool = False
 
@@ -927,10 +928,10 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         help="Print per-row metrics and window spans (implies --log-step-details)",
     )
     training_group.add_argument(
-        "--learning-rate",
+        "--lr-base",
         type=float,
-        default=DEFAULTS.learning_rate,
-        help="AdamW learning rate",
+        default=DEFAULTS.lr_base,
+        help="Base learning rate after warmup",
     )
     training_group.add_argument(
         "--weight-decay",
@@ -957,28 +958,34 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         help="AdamW epsilon value",
     )
     training_group.add_argument(
-        "--lr-warmup",
+        "--lr-warmup-steps",
         type=int,
-        default=DEFAULTS.lr_warmup,
-        help="Number of optimizer steps to linearly warm up the learning rate",
+        default=DEFAULTS.lr_warmup_steps,
+        help="Linear warmup steps (0 disables warmup)",
     )
     training_group.add_argument(
-        "--lr-decay",
+        "--lr-steady-steps",
         type=int,
-        default=DEFAULTS.lr_decay,
-        help="Number of final steps to decay the learning rate (0 disables decay)",
+        default=DEFAULTS.lr_steady_steps,
+        help="Steps to hold the base LR before decays begin",
     )
     training_group.add_argument(
-        "--lr-decay-min",
+        "--lr-linear-steps",
+        type=int,
+        default=DEFAULTS.lr_linear_steps,
+        help="Steps for the linear decay phase down to --lr-linear-min",
+    )
+    training_group.add_argument(
+        "--lr-linear-min",
         type=float,
-        default=DEFAULTS.lr_decay_min,
-        help="Minimum learning rate during decay phase",
+        default=DEFAULTS.lr_linear_min,
+        help="Target LR at the end of the linear decay (default: 0.1 * --lr-base)",
     )
     training_group.add_argument(
-        "--lr-linear-decay",
-        action="store_true",
-        default=DEFAULTS.lr_linear_decay,
-        help="Use linear instead of cosine decay when --lr-decay > 0",
+        "--lr-cosine-steps",
+        type=int,
+        default=DEFAULTS.lr_cosine_steps,
+        help="Steps for the final cosine decay from --lr-linear-min to zero",
     )
     training_group.add_argument(
         "--no-grad-summary",
@@ -1409,6 +1416,8 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
     # Run the args parser
 
     args = parser.parse_args()
+    if hasattr(args, "lr_linear_min") and args.lr_linear_min is None:
+        args.lr_linear_min = args.lr_base * 0.1
     args.completed_cycles = 0
     args.corpus = None
     args._cycles_is_delta = False
@@ -4143,41 +4152,49 @@ def _optimizer_param_groups(module: nn.Module, weight_decay: float) -> list[dict
 def _scheduled_lr(
     base_lr: float,
     warmup_steps: int,
-    decay_steps: int,
+    steady_steps: int,
+    linear_steps: int,
+    linear_min: float,
+    cosine_steps: int,
     total_run_steps: int,
     step_index: int,
-    *,
-    linear_decay: bool = False,
-    decay_min: float = 0.0,
 ) -> float:
+    del total_run_steps  # retained for compatibility; schedule is explicit
+    base_lr = max(0.0, base_lr)
     if base_lr <= 0.0:
         return 0.0
     warmup_steps = max(0, warmup_steps)
-    total_run_steps = max(1, total_run_steps)
-    step_index = max(0, step_index)
-    # Linear warmup
-    if warmup_steps > 0 and step_index < warmup_steps:
-        return base_lr * float(step_index + 1) / float(warmup_steps)
+    steady_steps = max(0, steady_steps)
+    linear_steps = max(0, linear_steps)
+    cosine_steps = max(0, cosine_steps)
+    linear_min = max(0.0, min(linear_min, base_lr))
+    step = max(0, step_index)
 
-    decay_steps = max(0, decay_steps)
-    usable_decay = min(decay_steps, max(0, total_run_steps - warmup_steps))
-    steady_steps = max(0, total_run_steps - warmup_steps - usable_decay)
+    if warmup_steps > 0:
+        if step < warmup_steps:
+            return base_lr * float(step + 1) / float(warmup_steps)
+        step -= warmup_steps
 
-    if usable_decay <= 0 or step_index < warmup_steps + steady_steps:
-        return base_lr
+    if steady_steps > 0:
+        if step < steady_steps:
+            return base_lr
+        step -= steady_steps
 
-    decay_min = max(0.0, min(decay_min, base_lr))
-    decay_offset = max(0, step_index - warmup_steps - steady_steps)
-    decay_progress = min(1.0, decay_offset / max(1, usable_decay))
-    amplitude = base_lr - decay_min
-    if amplitude <= 0:
-        return decay_min
+    current_lr = base_lr
+    if linear_steps > 0:
+        if step < linear_steps:
+            ratio = step / max(1, linear_steps)
+            return current_lr + (linear_min - current_lr) * ratio
+        step -= linear_steps
+        current_lr = linear_min
 
-    if linear_decay:
-        # Linear decay to decay_min over the decay window.
-        return decay_min + amplitude * (1.0 - decay_progress)
-    # Cosine decay smoothly approaches decay_min.
-    return decay_min + 0.5 * amplitude * (1.0 + math.cos(math.pi * decay_progress))
+    if cosine_steps > 0:
+        if step < cosine_steps:
+            progress = step / max(1, cosine_steps)
+            return 0.5 * current_lr * (1.0 + math.cos(math.pi * progress))
+        return 0.0
+
+    return current_lr
 
 
 def atomic_torch_save(payload: dict, target_path: pathlib.Path) -> None:
@@ -4250,7 +4267,7 @@ def train_model(
     train_tokens_used = 0
     base_total_train_tokens = int(total_train_tokens_start)
     run_total_steps = max(1, args.steps * args.cycles)
-    current_lr = args.learning_rate
+    current_lr = args.lr_base
 
     long_loss_header = " ".join([""] + [f"{': ' if key in ROW_METRIC_LOG_GROUP else ''}{key}" for key in ROW_METRIC_LOG_KEYS])
 
@@ -4299,13 +4316,14 @@ def train_model(
         step_wall_start = time.time()
         try:
             current_lr = _scheduled_lr(
-                args.learning_rate,
-                args.lr_warmup,
-                args.lr_decay,
+                args.lr_base,
+                args.lr_warmup_steps,
+                args.lr_steady_steps,
+                args.lr_linear_steps,
+                args.lr_linear_min,
+                args.lr_cosine_steps,
                 run_total_steps,
                 max(0, total_steps),
-                linear_decay=args.lr_linear_decay,
-                decay_min=args.lr_decay_min,
             )
             for group in optimizer.param_groups:
                 group["lr"] = current_lr
@@ -6399,7 +6417,7 @@ class Runtime:
             if self.args.command == "profile":
                 optimizer = torch.optim.AdamW(
                     _optimizer_param_groups(model, self.args.weight_decay),
-                    lr=self.args.learning_rate,
+                    lr=self.args.lr_base,
                     betas=(self.args.adam_beta1, self.args.adam_beta2),
                     eps=self.args.adam_eps,
                 )
@@ -6428,7 +6446,7 @@ class Runtime:
             def build_optimizer() -> torch.optim.Optimizer:
                 return torch.optim.AdamW(
                     _optimizer_param_groups(model, self.args.weight_decay),
-                    lr=self.args.learning_rate,
+                    lr=self.args.lr_base,
                     betas=(self.args.adam_beta1, self.args.adam_beta2),
                     eps=self.args.adam_eps,
                 )
