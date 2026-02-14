@@ -5310,6 +5310,10 @@ def preprocess_runtime_args(args: Args) -> None:
     if args.pt:
         checkpoint_path = args.pt
         if not checkpoint_path.exists():
+            if args.command == "create":
+                args.model_path_override = checkpoint_path
+                args.log_path_override = checkpoint_path.with_suffix(".log")
+                return
             raise FileNotFoundError(f"Checkpoint {checkpoint_path} not found")
         payload = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
         saved_config = payload.get("config")
@@ -6003,7 +6007,7 @@ class Runtime:
                     )
                 )
                 return 1
-            if requires_checkpoint and not model_path.exists():
+            if requires_checkpoint and self.args.command != "create" and not model_path.exists():
                 print(
                     color_text(
                         (
