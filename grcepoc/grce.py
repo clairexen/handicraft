@@ -4637,6 +4637,10 @@ def train_model(
                 f"steps min {min(cycle_step_norms):.4f} max {max(cycle_step_norms):.4f} avg {sum(cycle_step_norms)/len(cycle_step_norms):.4f}",
                 Colors.GREEN,
             )
+        summary += color_text(
+            f"; processed {train_tokens_used:,} tokens",
+            Colors.BLUE,
+        )
         print(summary)
 
     return total_steps, history_updates, loop_timer.stop(), eval_timer, train_tokens_used
