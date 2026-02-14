@@ -96,12 +96,12 @@ class ModelGeometry:
     """Holds the GPT+GRCE+XCTX model geometry."""
 
     vocab_size: int = 32000 # GPT-2 base supports ~50k merges.
-    block_size: int = 256   # GPT-2 base uses 1024 tokens.
-    n_layer: int = 8        # GPT-2 base uses 12 layers.
-    n_head: int = 6         # GPT-2 base uses 12 attention heads.
-    n_embd: int = 384       # GPT-2 base uses 768 embedding dims.
+    block_size: int = 1024  # GPT-2 base uses 1024 tokens.
+    n_layer: int = 12       # GPT-2 base uses 12 layers.
+    n_head: int = 12        # GPT-2 base uses 12 attention heads.
+    n_embd: int = 768       # GPT-2 base uses 768 embedding dims.
     n_grce: int = 64        # Narrow GRCE context dims.
-    n_xctx: int = 720       # Wide XCTX context dims.
+    n_xctx: int = 1536      # Wide XCTX context dims.
 
 MODEL_GEOMETRY_DEFAULTS = ModelGeometry()
 
