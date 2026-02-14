@@ -6487,12 +6487,14 @@ class Runtime:
                 acc_train.add(pure_train)
                 acc_eval.add(eval_timer)
                 total_train_wall += train_timer.wall_secs
+                update_wall: float | None = None
                 if not self.args.skip_model_update:
                     include_optimizer = (
                         self.args.checkpoint_optimizer
                         and not self.args.restart_optimizer
                         and cycle < cycle_end
                     )
+                    update_timer = Timer().start()
                     atomic_torch_save(
                         {
                             "model": model.state_dict(),
@@ -6512,13 +6514,18 @@ class Runtime:
                         },
                         model_path,
                     )
+                    update_wall = update_timer.stop().wall_secs
                 cycle_part = color_text(f"[cycle {cycle} (wall/cpu/gpu)]", Colors.CYAN)
                 train_part = color_text(f" train: {pure_train};", Colors.MAGENTA)
                 eval_part = color_text(f" eval: {eval_timer};", Colors.GREEN)
                 if self.args.skip_model_update:
                     updated_part = color_text(" model update skipped; flushing logs.", Colors.YELLOW)
                 else:
-                    updated_part = color_text(" model updated; flushing logs.", Colors.YELLOW)
+                    wall_text = f"{update_wall:.2f}s" if update_wall is not None else "?"
+                    updated_part = color_text(
+                        f" model update: {wall_text}; flushing logs.",
+                        Colors.YELLOW,
+                    )
                 print(cycle_part + train_part + eval_part + updated_part)
 
                 cumulative_part = color_text("[cumulative]", Colors.CYAN)
