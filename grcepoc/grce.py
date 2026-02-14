@@ -133,9 +133,9 @@ class Defaults:
     adam_beta2: float = 0.95
     adam_eps: float = 1e-8
     lr_warmup: int = 0
-    lr_decay_style: str = "none"
+    lr_decay: int = 0
     lr_decay_min: float = 0.0
-    lr_steady: int = 0
+    lr_linear_decay: bool = False
     no_detach_ctx: bool = False
     prompt_no_prefix: bool = False
 
@@ -963,23 +963,22 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         help="Number of optimizer steps to linearly warm up the learning rate",
     )
     training_group.add_argument(
-        "--lr-steady",
+        "--lr-decay",
         type=int,
-        default=DEFAULTS.lr_steady,
-        help="Number of steps to hold the peak learning rate before decay",
-    )
-    training_group.add_argument(
-        "--lr-decay-style",
-        type=str,
-        choices=("none", "cosine", "linear"),
-        default=DEFAULTS.lr_decay_style,
-        help="Learning rate decay schedule after warmup",
+        default=DEFAULTS.lr_decay,
+        help="Number of final steps to decay the learning rate (0 disables decay)",
     )
     training_group.add_argument(
         "--lr-decay-min",
         type=float,
         default=DEFAULTS.lr_decay_min,
         help="Minimum learning rate during decay phase",
+    )
+    training_group.add_argument(
+        "--lr-linear-decay",
+        action="store_true",
+        default=DEFAULTS.lr_linear_decay,
+        help="Use linear instead of cosine decay when --lr-decay > 0",
     )
     training_group.add_argument(
         "--no-grad-summary",
@@ -4131,39 +4130,41 @@ def _optimizer_param_groups(module: nn.Module, weight_decay: float) -> list[dict
 def _scheduled_lr(
     base_lr: float,
     warmup_steps: int,
-    steady_steps: int,
+    decay_steps: int,
     total_run_steps: int,
     step_index: int,
     *,
-    decay_style: str = "none",
+    linear_decay: bool = False,
     decay_min: float = 0.0,
 ) -> float:
     if base_lr <= 0.0:
         return 0.0
     warmup_steps = max(0, warmup_steps)
-    steady_steps = max(0, steady_steps)
     total_run_steps = max(1, total_run_steps)
     step_index = max(0, step_index)
     # Linear warmup
     if warmup_steps > 0 and step_index < warmup_steps:
         return base_lr * float(step_index + 1) / float(warmup_steps)
 
-    if steady_steps > 0 and step_index < warmup_steps + steady_steps:
+    decay_steps = max(0, decay_steps)
+    usable_decay = min(decay_steps, max(0, total_run_steps - warmup_steps))
+    steady_steps = max(0, total_run_steps - warmup_steps - usable_decay)
+
+    if usable_decay <= 0 or step_index < warmup_steps + steady_steps:
         return base_lr
 
     decay_min = max(0.0, min(decay_min, base_lr))
-    decay_span = max(1, total_run_steps - warmup_steps - steady_steps)
     decay_offset = max(0, step_index - warmup_steps - steady_steps)
-    decay_progress = min(1.0, decay_offset / decay_span)
+    decay_progress = min(1.0, decay_offset / max(1, usable_decay))
+    amplitude = base_lr - decay_min
+    if amplitude <= 0:
+        return decay_min
 
-    if decay_style == "cosine":
-        # Cosine decays smoothly toward decay_min.
-        amplitude = base_lr - decay_min
-        return decay_min + 0.5 * amplitude * (1.0 + math.cos(math.pi * decay_progress))
-    if decay_style == "linear":
-        # Linear decay to decay_min after warmup.
-        return decay_min + (base_lr - decay_min) * (1.0 - decay_progress)
-    return base_lr
+    if linear_decay:
+        # Linear decay to decay_min over the decay window.
+        return decay_min + amplitude * (1.0 - decay_progress)
+    # Cosine decay smoothly approaches decay_min.
+    return decay_min + 0.5 * amplitude * (1.0 + math.cos(math.pi * decay_progress))
 
 
 def atomic_torch_save(payload: dict, target_path: pathlib.Path) -> None:
@@ -4265,10 +4266,10 @@ def train_model(
             current_lr = _scheduled_lr(
                 args.learning_rate,
                 args.lr_warmup,
-                args.lr_steady,
+                args.lr_decay,
                 run_total_steps,
                 max(0, total_steps),
-                decay_style=args.lr_decay_style,
+                linear_decay=args.lr_linear_decay,
                 decay_min=args.lr_decay_min,
             )
             for group in optimizer.param_groups:

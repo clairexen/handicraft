@@ -147,6 +147,11 @@ def parse_args() -> argparse.Namespace:
         help="Least-squares fit of a quadratic to the last N samples of each plotted trace",
     )
     parser.add_argument(
+        "--fit-only-first-plot",
+        action="store_true",
+        help="When plotting multiple subplots, only fit/extrapolate on the first",
+    )
+    parser.add_argument(
         "--scatter",
         action="store_true",
         help="Plot raw values as scatter points instead of continuous lines",
@@ -475,6 +480,7 @@ def plot_metric_traces(
     cumulative: bool = False,
     fit_line: int = 0,
     fit_quad: int = 0,
+    fit_only_first_plot: bool = False,
     scatter: bool = False,
     value_filter: int = 0,
     group_median: int = 0,
@@ -489,6 +495,7 @@ def plot_metric_traces(
     if num_groups == 1:
         axes = [axes]
     for idx_ax, (ax, metrics) in enumerate(zip(axes, metric_groups)):
+        allow_fit = not fit_only_first_plot or idx_ax == 0
         for label, history in sources:
             if not history:
                 continue
@@ -539,7 +546,7 @@ def plot_metric_traces(
                             label=label_name,
                             linewidth=2,
                         )
-                    if (fit_line or fit_quad) and len(x_plot) >= 2:
+                    if allow_fit and (fit_line or fit_quad) and len(x_plot) >= 2:
                         pairs = [
                             (x_val, y_val)
                             for x_val, y_val in zip(x_plot, y_plot)
@@ -722,6 +729,7 @@ def main() -> None:
             cumulative=args.plot_sum,
             fit_line=args.fit_line,
             fit_quad=args.fit_quad,
+            fit_only_first_plot=args.fit_only_first_plot,
             scatter=args.scatter,
             value_filter=args.filter,
             group_median=args.median,
@@ -739,6 +747,7 @@ def main() -> None:
             cumulative=args.plot_sum,
             fit_line=args.fit_line,
             fit_quad=args.fit_quad,
+            fit_only_first_plot=args.fit_only_first_plot,
             scatter=args.scatter,
             value_filter=args.filter,
             group_median=args.median,
@@ -756,6 +765,7 @@ def main() -> None:
             cumulative=args.plot_sum,
             fit_line=args.fit_line,
             fit_quad=args.fit_quad,
+            fit_only_first_plot=args.fit_only_first_plot,
             scatter=args.scatter,
             value_filter=args.filter,
             group_median=args.median,
