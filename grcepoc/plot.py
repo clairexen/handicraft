@@ -144,6 +144,11 @@ def parse_args() -> argparse.Namespace:
         default=0,
         help="Ignore the last N samples from each history before plotting/exporting",
     )
+    parser.add_argument(
+        "--stack-sources",
+        action="store_true",
+        help="Offset each source's x-axis by the last x value of the previous source",
+    )
     return parser.parse_args()
 
 
@@ -407,6 +412,7 @@ def plot_metric_traces(
     scatter: bool = False,
     value_filter: int = 0,
     group_median: int = 0,
+    stack_sources: bool = False,
 ) -> None:
     num_groups = max(1, len(metric_groups))
     fig, axes = plt.subplots(
@@ -418,6 +424,7 @@ def plot_metric_traces(
     if num_groups == 1:
         axes = [axes]
     for idx_ax, (ax, metrics) in enumerate(zip(axes, metric_groups)):
+        stack_offset = 0.0
         allow_fit = not fit_only_first_plot or idx_ax == 0
         for label, history in sources:
             if not history:
@@ -427,6 +434,10 @@ def plot_metric_traces(
                 x_values = [val / 3600.0 if not math.isnan(val) else val for val in x_values]
             if not any(not math.isnan(val) for val in x_values):
                 continue
+            last_valid_x = next((val for val in reversed(x_values) if not math.isnan(val)), None)
+            if stack_sources and last_valid_x is not None:
+                x_values = [val + stack_offset if not math.isnan(val) else val for val in x_values]
+            plotted_label = False
             for metric in metrics:
                 y_values = _series_from_field(history, metric)
                 if not any(not math.isnan(val) for val in y_values):
@@ -453,6 +464,7 @@ def plot_metric_traces(
                     )
                     if not y_plot:
                         continue
+                    plotted_label = True
                     label_name = f"{label} – {metric}"
                     if scatter:
                         ax.scatter(
@@ -542,6 +554,8 @@ def plot_metric_traces(
                                         linewidth=2,
                                         label=f"{label} – {metric} quad extrap",
                                     )
+            if stack_sources and last_valid_x is not None and plotted_label:
+                stack_offset += last_valid_x
         ylabel = ", ".join(metrics) if metrics else "metric"
         ax.set_ylabel(ylabel)
         if idx_ax == num_groups - 1:
@@ -609,6 +623,7 @@ def main() -> None:
             scatter=args.scatter,
             value_filter=args.filter,
             group_median=args.median,
+            stack_sources=args.stack_sources,
         )
         performed = True
     if args.plot_time is not None:
@@ -627,6 +642,7 @@ def main() -> None:
             scatter=args.scatter,
             value_filter=args.filter,
             group_median=args.median,
+            stack_sources=args.stack_sources,
         )
         performed = True
     if args.plot_timestamp is not None:
@@ -645,6 +661,7 @@ def main() -> None:
             scatter=args.scatter,
             value_filter=args.filter,
             group_median=args.median,
+            stack_sources=args.stack_sources,
         )
         performed = True
     if not performed:
