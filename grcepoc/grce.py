@@ -5186,6 +5186,7 @@ def _print_attention_heatmap(
                 digits.append(str(scaled))
             row_text += f" {''.join(digits):>4}"
         print(row_text)
+
 def _format_eval_metric_value(key: str, value: float | None) -> str:
     sep = ": " if key in ROW_METRIC_LOG_GROUP else ""
     if value is None:
@@ -5304,6 +5305,7 @@ def run_eval_layout(
 
     if was_training:
         model.train()
+
 def preprocess_runtime_args(args: Args) -> None:
     """Resolve checkpoint overrides and derived paths before runtime spins up."""
 
