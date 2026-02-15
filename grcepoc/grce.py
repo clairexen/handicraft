@@ -6504,7 +6504,7 @@ class Runtime:
                     for _ in range(self.args.steps)
                 ]
                 print()
-                pod_path = pathlib.Path(".podname")
+                pod_path = pathlib.Path("/.podname")
                 if pod_path.exists():
                     pod_label = pod_path.read_text(encoding="utf-8").strip()
                     if pod_label:

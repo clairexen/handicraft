@@ -65,7 +65,7 @@ open_shell() {
 }
 
 pod_init() {
-        run_ssh "set -ex; ln -sf /usr/share/zoneinfo/Europe/Vienna /etc/localtime; mkdir -p $REMOTE_DIR/data $REMOTE_DIR/model; echo $POD_NAME > $REMOTE_DIR/.podname; apt update; apt install -y rsync; pip install --break-system-packages tokenizers transformers nvidia-ml-py"
+        run_ssh "set -ex; ln -sf /usr/share/zoneinfo/Europe/Vienna /etc/localtime; mkdir -p $REMOTE_DIR/data $REMOTE_DIR/model; echo $POD_NAME > /.podname; apt update; apt install -y rsync; pip install --break-system-packages tokenizers transformers nvidia-ml-py"
 }
 
 rsync_update() {
@@ -158,7 +158,7 @@ case "${1:-}" in
         rsync_peek
         ;;
     *)
-        echo "Usage: bash pod.sh [CFG] {go|init|shell|update|put|push|pull|monitor|loop}" >&2
+        echo "Usage: bash pod.sh [CFG] {go|init|shell|update|put|push|pull}" >&2
         exit 1
         ;;
 esac
