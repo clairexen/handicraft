@@ -1174,6 +1174,19 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         help="Write a JSON checkpoint without model weights alongside the .pt file",
     )
 
+    try_parser = subparsers.add_parser(
+        "try",
+        help="Run the training loop without overwriting the checkpoint",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    try_parser.set_defaults(command="try", skip_model_update=True)
+    try_parser.add_argument(
+        "--json",
+        dest="train_json",
+        action="store_true",
+        help="Write a JSON checkpoint without model weights alongside the .pt file",
+    )
+
     report_parser = subparsers.add_parser(
         "report",
         help="Skip training and generate completions",
@@ -5995,8 +6008,8 @@ class Runtime:
                 self.args.log_path_override = log_path
             print(color_text(f"Model: {model_path}", Colors.CYAN))
             print(color_text(f"Logfile: {log_path}", Colors.CYAN))
-            dataset_commands = {"train", "report", "test", "eval", "profile", "prompts"}
-            requires_checkpoint = self.args.command in {"train", "report", "test", "eval", "profile", "prompts", "reset", "corpus"}
+            dataset_commands = {"train", "try", "report", "test", "eval", "profile", "prompts"}
+            requires_checkpoint = self.args.command in {"train", "try", "report", "test", "eval", "profile", "prompts", "reset", "corpus"}
             if self.args.command == "create" and model_path.exists():
                 print(
                     color_text(
