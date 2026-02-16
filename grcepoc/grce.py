@@ -3934,36 +3934,50 @@ def train_layout_batch(
     total_tokens = 0
     micro_logs: list[tuple[int, float, float, str]] = []
     detail_entries: list[dict[str, object]] = []
+    layout_text = layout.serialize()
     for index, batch in enumerate(layout.micro_batches, start=1):
         micro_span = sum(row.token_span() for row in batch)
         if micro_span <= 0:
             micro_logs.append((index, 0.0, 0.0, layout.serialize_rows(batch)))
             continue
-        result, fwd_time, row_details = _run_microbatch_pass(
-            args,
-            model,
-            dataset,
-            "train",
-            batch,
-            device,
-            collect_mode_metrics=False,
-            position_shift=position_shift,
-            rng=window_rng,
-            row_serializer=layout.serialize_rows,
-        )
+        rows_text = layout.serialize_rows(batch)
+        micro_detail = {
+            "index": index,
+            "token_span": micro_span,
+            "row_count": sum(max(0, row.rows) for row in batch),
+            "rows_text": rows_text,
+            "layout": layout_text,
+        }
+        try:
+            result, fwd_time, row_details = _run_microbatch_pass(
+                args,
+                model,
+                dataset,
+                "train",
+                batch,
+                device,
+                collect_mode_metrics=False,
+                position_shift=position_shift,
+                rng=window_rng,
+                row_serializer=layout.serialize_rows,
+            )
+        except torch.OutOfMemoryError as exc:
+            if not hasattr(exc, "microbatch_detail"):
+                exc.microbatch_detail = micro_detail
+            raise
         for entry in row_details:
             copy = dict(entry)
             copy["micro_index"] = index
             detail_entries.append(copy)
         if result.total_loss_sum is None or result.total_tokens <= 0:
-            micro_logs.append((index, fwd_time, 0.0, layout.serialize_rows(batch)))
+            micro_logs.append((index, fwd_time, 0.0, rows_text))
             continue
         bwd_start = time.time()
         result.total_loss_sum.backward()
         if grad_hook is not None:
             grad_hook(index, micro_span)
         bwd_time = time.time() - bwd_start
-        micro_logs.append((index, fwd_time, bwd_time, layout.serialize_rows(batch)))
+        micro_logs.append((index, fwd_time, bwd_time, rows_text))
         total_loss_sum = (
             result.total_loss_sum
             if total_loss_sum is None
@@ -4307,6 +4321,7 @@ def train_model(
     print(header_line + " |")
 
     oom_retries = 0
+    oom_retry_limit = 10
     step = 0
     layouts_sequence = list(prebuilt_layouts) if prebuilt_layouts is not None else None
     manual_layout_override: BatchLayout | None = None
@@ -4378,15 +4393,33 @@ def train_model(
             opt_duration = time.time() - opt_start
             total_loss = total_loss_sum / float(total_tokens)
             train_tokens_used += total_tokens
-        except torch.OutOfMemoryError:
+        except torch.OutOfMemoryError as oom_err:
             oom_retries += 1
             line_parts: List[str] = []
             if show_time:
                 timestamp = time.strftime("%H:%M", time.localtime())
                 line_parts.append(color_text(timestamp, Colors.BLUE))
             line_parts.append(color_text(f"{total_steps}", Colors.CYAN))
+            detail_note = ""
+            detail = getattr(oom_err, "microbatch_detail", None)
+            if isinstance(detail, dict):
+                pieces: list[str] = []
+                micro_idx = detail.get("index")
+                if micro_idx is not None:
+                    pieces.append(f"micro {micro_idx}")
+                span = detail.get("token_span")
+                if span:
+                    pieces.append(f"span {span}")
+                row_count = detail.get("row_count")
+                if row_count:
+                    pieces.append(f"rows {row_count}")
+                rows_text = detail.get("rows_text")
+                if rows_text:
+                    pieces.append(rows_text)
+                if pieces:
+                    detail_note = " (" + "; ".join(str(piece) for piece in pieces if piece) + ")"
             line_parts.append(color_text(
-                f"OOM (retry {oom_retries}/3) during layout {layout_serialized}; "
+                f"OOM (retry {oom_retries}/{oom_retry_limit}) during layout {layout_serialized}{detail_note}; "
                 "refreshing layout and retrying",
                 Colors.YELLOW,
             ))
@@ -4395,7 +4428,7 @@ def train_model(
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
             optimizer.zero_grad(set_to_none=True)
-            if oom_retries >= 3:
+            if oom_retries >= oom_retry_limit:
                 raise
             max_span = layout_span
             replacement = layout

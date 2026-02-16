@@ -790,3 +790,8 @@ python grce.py --pt model/baseline_wikipedia_en.pt corpus --add wikipedia-en-000
 python grce.py --pt model/baseline_wikipedia_en.pt --cycles 100 --lr-warmup-steps 200 --lr-linear-steps 5000 \
   --batch-size 100 --layout '50[4-16E=240D],5[16E=*D],100[16e=32f],100[16e>32n]' train --json
 
+python grce.py --pt model/decoder_wikipedia_en.pt create
+python grce.py --pt model/decoder_wikipedia_en.pt corpus --add wikipedia-en-000{0,1}
+python grce.py --pt model/decoder_wikipedia_en.pt --cycles 100 --lr-warmup-steps 200 --lr-linear-steps 5000 \
+  --batch-size 100 --layout '50[4-8E=240D],5[16E=*D],100[16E=32D],100[16E=32D]' train --json
+
