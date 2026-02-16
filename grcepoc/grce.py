@@ -70,15 +70,13 @@ from __future__ import annotations
 
 PROMPT_GOALS = [
     ("one plus one is", " two"),
+    ("earth's satellite is the", " moon"),
     ("fire is hot and ice is", " cold"),
-    ("the opposite of up is", " down"),
     ("ice is cold and fire is", " hot"),
-    ("the first letter of the alphabet is", " a"),
-    ("the first letter of the alphabet is the letter", " a"),
-    ("the color of a red apple is", " red"),
+    ("the opposite of up is", " down"),
     ("the sun rises in the", " east"),
     ("the sun sets in the", " west"),
-    ("earth's satellite is the", " moon"),
+    ("the color of a red apple is", " red"),
     ("a baby dog is called a puppy and a baby cat is called a", " kitten"),
     ("a baby cat is called a kitten and a baby dog is called a", " puppy"),
     ("celsius is based on the freezing and boiling points of water. water freezes at", " 0"),
