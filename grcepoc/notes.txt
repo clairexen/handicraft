@@ -18,8 +18,7 @@ about the intended design behavior, mostly directed at AI agents (= OpenAI Codex
 GRCE and XCTX both sample the n_layer input vectors to the transformer blocks in the
 stack at a position, mix with a recurrent GRCE or XCTX signal (G or X), remix, and
 update the recurrent signal (G' and X'), and then inject the context information into the
-transformer layers at later positions. Each have a per-layer sample stage, a shared
-mix and remix stage, and then per-layer bias-injection stage in the next position.
+transformer layers at later positions. Each has a per-layer sample stage, a shared mix and remix stage, and then a per-layer bias-injection stage in the next position.
 
 Let's call the recurrent GRCE signal G, the updated recurrent signal G'. Let the
 sampled signal from the input to transformer layer i be S_i, and let the per-layer bias
@@ -61,7 +60,7 @@ Let Dn4xG() be a learned linear from 4*n_grce to n_grce
 The GRCE architecture is almost identical to a block of the transformer stack,
 except that it has the transformer stack itself in its first half, instead of
 the attention mechanism that we find in the first half of each block of the
-transformer stack. Note that via the path B_i -> Z_j (with i<j) thru the
+transformer stack. Note that via the path B_i -> Z_j (with i<j) through the
 transformer, the GRCE path can access compute resources inside the transformer
 stack, and thus only one shared MLP layer is ever needed in the GRCE data path
 itself, for remixing the mixed G and Z_i signals from different layers into an
@@ -94,7 +93,7 @@ GRCE, but shapes noise, manages dimensionality of updates, and incorporates
 other changes, such as using a direction-preserving norm (RMSNorm instead of
 LN) in the recurrent path, that makes XCTX better suited to perform short-term
 memory and working memory functions, instead of the position-by-position
-state-machine like functionalities that the GRCE channel can implement better
+state-machine-like functionalities that the GRCE channel can implement better
 and more easily.
 
 **Note:** To obtain true left-to-right evaluation, the Transformer core must be
@@ -158,7 +157,7 @@ useful information forward without extra amplification.
 
 The vector of concatenated S_i values for a position already encodes the entire
 context for the next position. The position has to evaluate that context as part
-of predicting that token. Experiments show that we can disable grandient
+of predicting that token. Experiments show that we can disable gradient
 propagation at this interface entirely (--detach-span 1) and observe
 almost no difference in how well and/or quickly the network can learn the GRCE
 and XCTX functionality. This demonstrates that all the context information is
@@ -166,14 +165,14 @@ already present in the set of S_i vectors, we only need to learn how to sample
 and extract that already-present information from that vector using the GRCE
 and XCTX sample-mix-remix pipelines.
 
-That has trememdous implications! It basically means we have an easy pathway to
+That has tremendous implications! It basically means we have an easy pathway to
 learning a recurrent large language model without having to learn a deep and
 complex recurrent function: we instead just augment the transformer with two
 simple mechanisms to "shout" important information into the future, that the
 future will "see" without any need to explicitly query it. And then we use
 dropout-style training scenarios that force optimization to build redundant
 structures with GRCE and XCTX, that can "help out" when we drop out attention
-for a position, until we can disable attention entirely and still get resonable
+for a position, until we can disable attention entirely and still get reasonable
 results, at least on short sequences, with GRCE and XCTX as the only path that
 allows flow of information between transformer stacks.
 
@@ -183,16 +182,16 @@ and (2) models that can be debugged more easily, even on a very low level.
 The GRCE and XCTX channels provide model stability wrt to the current "role"
 and other information. Whenever a model fails to "stay in character", or
 "drift out of character", this will be manifest in the GRCE and XCTX signals!
-So it will be possible to just sample those signals, and inject them into a
-new model instance and present the model with <|!:> (dump context begin) and
-the model can verbalize it's context. This mode/information can then even be
+So it will be possible to just sample those signals, inject them into a
+new model instance, and present the model with <|!:> (dump context begin) so it
+can verbalize its context. This mode/information can then even be
 used to automatically learn certain GRCE embeddings, once the model has been
 trained to extract and verbalize the right information. (In reality this may
 very well turn out to be simple in some cases and very much not so in others... ;)
 
-The GRCE channel is low-dimension/low-bandwith and we expect it to learn to
+The GRCE channel is low-dimension/low-bandwidth and we expect it to learn to
 encode and send forward properties like the "current role" that may be
-stable without "drift" for a certain time, then maybe change sharply whenver
+stable without "drift" for a certain time, then maybe change sharply whenever
 the role changes, and we also expect it to learn to encode and send forward
 properties that are only useful for the immediate next token or maybe word,
 such as grammatical context for the next token or word. The remixing stage of
@@ -203,7 +202,7 @@ forms of state machines.
 
 For XCTX channel on the other hand we first squeeze the M vector into a n_xctx/2
 dimensional vector space before the MLP. Resampling that by projecting back to
-n_xctx followed by GELU is exactly enough to fuly GELU-decompose the n_xctx/2
+n_xctx followed by GELU is exactly enough to fully GELU-decompose the n_xctx/2
 wide channel. There is no down-projection after the GELU layer, we stay in
 n_xctx, just perform a single linear from n_xctx to n_xctx, and then use a
 direction-preserving norm for the recurrent path, so no noise is introduced
@@ -211,7 +210,7 @@ into the channel that is not intentional signal interaction, because we can
 always learn n_xctx (almost) linearly independent row/columns in W, whenever
 independent channels in the XCTX recurrent path are desired. This path is meant
 to be able to accumulate information over a span of positions and just carry them
-forward in time for as long as bandwith is available in the path, with new
+forward in time for as long as bandwidth is available in the path, with new
 information cleanly overwriting or adding to older information, without adding
 any "architectural noise" into the critical (recurrent) path in the process.
 
@@ -238,12 +237,12 @@ parallel running sequences (= "batch size") and 'cols' = positions in
 time-domain (= "block size"). The main output 'y' has the same size
 as 'x'. So the "stack" in "StackGrid" really is only the stack of transformer
 blocks, without the embeddings generating the n_embd-sized input vectors in 'x'
-and the decoder interpreting the n_emdb-sized output vectors in 'y'.
+and the decoder interpreting the n_embd-sized output vectors in 'y'.
 
-The (posibly empty) list 'bias_list_in' contains tensors of maximum size
+The (possibly empty) list 'bias_list_in' contains tensors of maximum size
 [rows, <=cols, <=n_layers, n_embd]. (Each tensor in a list can have a different
 size in its second of third dimension, as long as the 2nd dim is <=cols and the
-thirdt dimensionis <=n-layers. The tensors contain the 'biases' added to the
+third dimension is <=n-layers. The tensors contain the 'biases' added to the
 two n_embd-sized LN() output vectors in each block in the stack, for the first
 <=cols columns in the grid, and the first <=n_layers. (usually <=cols is simply
 either one or cols, and <=n_layers is usually either one or n_layer.)
@@ -268,8 +267,8 @@ max_i(x_i=Q*K_i^T) value for the row/col/head specified in k. S_k is the
 sum_j(exp(x_j - M_k)).  And T_k is the H value for the external contribution
 only: sum_i(V_i*exp(x_i - M_k)) / S_k.
 
-With mode="decode" we perform masked causal senf-attention. With mode="encode"
-each position can attent to any other position in the grid. And with
+With mode="decode" we perform masked causal self-attention. With mode="encode"
+each position can attend to any other position in the grid. And with
 mode="noattn" we only perform self-attention and no attention between
 positions of this grid ('kv_cache_list_in' and 'qh_query_callback' are
 always used regardless of 'mode' selection.)
@@ -294,7 +293,7 @@ and then immediately re-shape them into the "API form".
 
 ### GRCE and XCTX shims
 
-With GRCE and/or XCTX enabld we can not create an entire multi-column grid
+With GRCE and/or XCTX enabled we cannot create an entire multi-column grid
 at once, because the recurrent GRCE/XCTX channels force us to evaluate the
 transformers sequentially, one time-position at once.
 
@@ -326,8 +325,8 @@ the arguments to .sample_forward():
 	detached_grce_out = grce.sample_forward(grce_in.detach(), S_in, detach_samples=True)
 	detached_xctx_out = xctx.sample_forward(xctx_in.detach(), S_in, detach_samples=True)
 
-When this is done for all positions, then the recurrence collapses and maximum
-path-length for backprop is alost unchanged by the addition if the recurrent
+When this is done for all positions, the recurrence collapses and maximum
+path-length for backprop is almost unchanged by the addition of the recurrent
 GRCE and XCTX paths.
 
 In summary: bias_forward() always consumes the recurrent state from the
@@ -340,7 +339,7 @@ TransformerStackColumn simply is a grid with cols=1, and added GRCE and XCTX
 bias and sample shims.
 
 TransformerStackSequence is a 2-D (rows x cols) sequence of such columns,
-resambling a StackGrid, but with added GRCE and XCTX channels:
+resembling a StackGrid, but with added GRCE and XCTX channels:
 
 	seq = TransformerStackSequence(settings)
 	y, grce_out, xctx_out, kv_out = seq.forward(x, grce_in, xctx_in,
@@ -367,7 +366,7 @@ k/v-caches in sequences" below, which we return as kv_out.
 When mode="noattn" we skip applying the internal kv_cache. Thus in "noattn"
 mode the recurrent channels are the only way of passing information forward
 within the sequence. (Note that we still apply self-attention and we still
-attent to 'kv_cache_list_in' and 'qh_query_callback'.)
+attend to 'kv_cache_list_in' and 'qh_query_callback'.)
 
 When mode is "encode" or "decode", then a single large internal stack grid
 is created that covers all the positions in the sequence. In this case we
@@ -413,11 +412,11 @@ When in detach_internal_kv_cache=True mode we simply pre-allocate kv_out.
 For each position we then create a list[n_layers] of 2-tuples of tensors[:,:pos,:,:]
 kv_cache that we can pass in kv_cache_list_in to .forward().
 
-When we receive a kv_out we simply store a .detached() copy of it in a slice of
+When we receive a kv_out we simply store a .detach()'d copy of it in a slice of
 our pre-allocated kv_out tensor pair.
 
-Each of those modes are available in evaluation and training! kv-detached cache
-is NOT just meant inference-only optimization. Instead, we can use it to speed
+Both of those modes are available in evaluation and training! The kv-detached cache
+is NOT just an inference-only optimization. Instead, we can use it to speed
 up training for sequences with GRCE/XCTX enabled. In those cases, with detached
 kv-caches for some instances of the model, we simply rely on the other
 instances in the training batch to learn useful k/v values, which then can be
@@ -426,13 +425,13 @@ used as detached values when training the recurrent channel.
 ### Training and test corpus window management
 
 We determine the per-step number of tokens by creating the sum of the tokens
-consumed by each micro-batch. Then we multiply tat number by STEPS and this
-is the size of the windo we pull for each cycle.
+consumed by each micro-batch. Then we multiply that number by STEPS and this
+is the size of the window we pull for each cycle.
 
-For each step we then pick a random continous sub-window of size of the sum
-we calculated. The micro-batches can only use that sub-window. Each micro-batch
-now picks a random subwindow within the per-step window. And each row picks a
-random subwindow within the per-microbatch window.
+For each step we then pick a random continuous sub-window of the calculated sum.
+The micro-batches can only use that sub-window. Each micro-batch now picks a
+random sub-window within the per-step window. Each row then picks a random
+sub-window within the per-microbatch window.
 
 ### Composition of training and evaluation batches
 
@@ -445,7 +444,7 @@ These batch layouts are composed from the following sequence types:
 - "forward"
 - "noattn"
 
-There's GRCE and XCTX paths going thru tyhe entire flow, but "encode"
+There's GRCE and XCTX paths going through the entire flow, but "encode"
 and "decode" generate the GRCE and XCTX signals "blindly", without means
 of "sensing" the GRCE or XCTX signals via bias injection.
 
@@ -465,14 +464,14 @@ We define a mini-language for (training and evaluating) batch layouts:
 
 	12[16e=16d]+4[48f]+1[8f=8d=8f]
 
-This means example means with first have 12 rows wide stack of the following
-sequences: first a 16 columns long "encode" sequence, followed by a 16 columns
-long "decode" sequence, with the outputs of the first 16 cols sequence are
-connected to the inputs of the second sequence.
+This example means we first have a 12-row-wide stack of the following
+sequences: a 16-column-long "encode" sequence followed by a 16-column-long
+"decode" sequence, with the outputs of the first sequence connected to the
+inputs of the second sequence.
 
-The next we have a single 4-rows by 48-columns big "forward" sequence. And
-finally there's a single-row sequence with 8 cols "forward", followed by
-8 cols "decode", followed by another 8 cols "forward".
+Next we have a single 4-row by 48-column "forward" sequence. Finally there's a
+single-row sequence with 8 columns of "forward", followed by 8 columns of
+"decode", and another 8 columns of "forward".
 
 We remove all --rows-*, --cols-*, --split-* CLI options, and --batch-layout,
 and replace it all by a single --layout STR option, that accepts the above
@@ -486,13 +485,13 @@ is:
 	2[*d]+2[*f]+*[*1-2e=*1-4d=*1-4f=*1-2n]
 
 So we have 2 rows by block-size cols of "decode", then 2 by block_size "forward",
-then batch_size-4 rows of a encode-decode-forward-noattn pattern, with the cols
-assign as following: first a random number in the range of 1-2 is allocated for
+then batch_size-4 rows of an encode-decode-forward-noattn pattern, with the columns
+assigned as follows: first a random number in the range of 1-2 is allocated for
 "encode"; then numbers in the range 1-4 for the "decode" and "forward" sequences;
 and finally a number in the range 1-2 for "noattn".
 
 If the available --block-size/--block-length is smaller than the resulting total
-sequence lenght, we randomly select sub-blocks that are still over their lower
+sequence length, we randomly select sub-blocks that are still over their lower
 bound, and decrement them, until block_size is reached, or each segment is at its
 lower bound.
 
@@ -541,7 +540,7 @@ Modifiers for the [...] block can be inserted directly before the [ char:
 
 This means 'sc[*f]' has a deep path along the context, but we never backprop
 into the transformer. 'ks3[*f}' on the other hand will backprop a few columns
-of the transforer, but it will not visit later positions via the attn mechanism,
+of the transformer, but it will not visit later positions via the attn mechanism,
 because of the detached kv-cache.
 
 Instead of e d f n one can also use E D F N as sequence type. In that case
@@ -553,7 +552,7 @@ The layout [*D=*d] on the other hand is functionally equivalent to [*d].
 
 We also allow > instead of = for chaining sequences inside of a [...] block.
 The difference is that with > we drop the entire k/v-history at this point,
-so only the recurrenct channels can pass information along that barrier.
+so only the recurrent channels can pass information along that barrier.
 
 
 ## Thinking Models -- (this is future work)
@@ -650,7 +649,7 @@ embedding names that correspond to special tokens below.
 (currently all unused but reserved in tokenizer for later special use)
 
 <|----|>
-  article seperator
+  article separator
 
 <|tokipona:> <|english:>
   start of new tokipona/english input-section
@@ -660,7 +659,7 @@ embedding names that correspond to special tokens below.
   output-section
 
 <|//|>
-  verse seperator
+  verse separator
 
 <|lq:> ... <:lq|>
   potential "low-quality" block of training data.
@@ -709,13 +708,13 @@ embedding names that correspond to special tokens below.
   immediate next token for the next N positions, and is instead free to use its
   attention heads and compute to re-structure what it knows and make that
   re-structured information available to the later positions in the sequence,
-  in whatever way of form turns out to be usful within the training corpus.
+  in whatever way of form turns out to be useful within the training corpus.
   In a transformer without recurrent path this exercise would be pointless.
   But with the added recurrent GRCE and XCTX channels, just adding those
   process-tokens is already enough to enable a simple first mode of "additional
   thinking time". (We usually add such a sequence in training in a special
   training mode, where we add them at random positions in the corpus, always
-  between a puncuation mark (!?:;,. or ") and a whitespace that follows it.
+  between a punctuation mark (!?:;,. or ") and a whitespace that follows it.
 
 
 ## Special GRCE embeddings -- (this is future work)
@@ -794,4 +793,3 @@ python grce.py --pt model/decoder_wikipedia_en.pt create
 python grce.py --pt model/decoder_wikipedia_en.pt corpus --add wikipedia-en-000{0,1}
 python grce.py --pt model/decoder_wikipedia_en.pt --cycles 100 --lr-warmup-steps 200 --lr-linear-steps 5000 \
   --batch-size 100 --layout '50[4-8E=240D],5[16E=*D],100[16E=32D],100[16E=32D]' train --json
-
