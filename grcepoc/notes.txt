@@ -539,7 +539,7 @@ Modifiers for the [...] block can be inserted directly before the [ char:
 	c   enable --no-detach-ctx for the [...] block
 
 This means 'sc[*f]' has a deep path along the context, but we never backprop
-into the transformer. 'ks3[*f}' on the other hand will backprop a few columns
+into the transformer. 'ks3[*f]' on the other hand will backprop a few columns
 of the transformer, but it will not visit later positions via the attn mechanism,
 because of the detached kv-cache.
 
