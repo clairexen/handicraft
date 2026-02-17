@@ -542,6 +542,7 @@ Modifiers for the [...] block can be inserted directly before the [ char:
 	c   enable --no-detach-ctx for the [...] block
 	T   freeze recurrent parameters so only the transformer stack learns
 	C   freeze transformer parameters so only the context/recurrent channels learn
+	P   suppress positional encodings within this block
 
 In this context "transformer parameters" include everything that shapes the
 encode/decode (E/D) stack, while "recurrent parameters" cover the GRCE/XCTX
@@ -563,6 +564,11 @@ Lowercase `r` defines a "reverse" sequence: it behaves like `d` (decode)
 but uses the transpose of the standard causal mask, so each position attends
 to future tokens instead of the past. Uppercase `R` works the same way but
 disables recurrent/context updates, mirroring how `E/D/F/N` behave.
+
+Appending `p`/`P` to a mode (e.g. `16ep` or `4Rp`) suppresses positional
+embeddings inside that block. This trains the model to rely on contextual
+state for indexing rather than absolute positions; the uppercase/lowercase
+rules still apply in addition to the positional suppression.
 
 We also allow > instead of = for chaining sequences inside of a [...] block.
 The difference is that with > we drop the entire k/v-history at this point,
@@ -784,3 +790,7 @@ python grce.py --pt model/unfrozen_retrain_test.pt --cycles 5 --batch-size 32 --
 cp model/decoder_wikipedia_en.pt model/frozen_retrain_test.pt
 python grce.py --pt model/frozen_retrain_test.pt reset
 python grce.py --pt model/frozen_retrain_test.pt --cycles 5 --batch-size 32 --layout '*C[16e=32f]+*C[16e>32n]' train --json
+
+cp model/decoder_wikipedia_en.pt model/reverse_retrain_test.pt
+python grce.py --pt model/reverse_retrain_test.pt reset
+python grce.py --pt model/reverse_retrain_test.pt --cycles 5 --batch-size 32 --layout '*[64R],*[64D]' train --json
