@@ -538,7 +538,7 @@ Modifiers for the [...] block can be inserted directly before the [ char:
 	sN  enable --detach-span N for the [...] block ('s' is short for 's1')
 	c   enable --no-detach-ctx for the [...] block
 	T   freeze recurrent parameters so only the transformer stack learns
-	R   freeze transformer parameters so only the recurrent channels learn
+	C   freeze transformer parameters so only the context/recurrent channels learn
 
 In this context "transformer parameters" include everything that shapes the
 encode/decode (E/D) stack, while "recurrent parameters" cover the GRCE/XCTX
@@ -775,4 +775,4 @@ python grce.py --pt model/unfrozen_retrain_test.pt --cycles 5 --batch-size 32 --
 
 cp model/decoder_wikipedia_en.pt model/frozen_retrain_test.pt
 python grce.py --pt model/frozen_retrain_test.pt reset
-python grce.py --pt model/frozen_retrain_test.pt --cycles 5 --batch-size 32 --layout '*R[16e=32f]+*R[16e>32n]' train --json
+python grce.py --pt model/frozen_retrain_test.pt --cycles 5 --batch-size 32 --layout '*C[16e=32f]+*C[16e>32n]' train --json

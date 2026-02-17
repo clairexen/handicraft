@@ -528,14 +528,14 @@ def _parse_row_modifiers(text: str) -> RowModifiers | None:
             raw_parts.append("c")
             idx += 1
             continue
-        if ch in {"T", "R"}:
+        if ch in {"T", "C"}:
             if ch == "T":
                 if train_recurrent_only:
-                    raise LayoutParseError("Row modifiers cannot include both 'T' and 'R'")
+                    raise LayoutParseError("Row modifiers cannot include both 'T' and 'C'")
                 train_transformer_only = True
-            else:
+            else:  # 'C'
                 if train_transformer_only:
-                    raise LayoutParseError("Row modifiers cannot include both 'T' and 'R'")
+                    raise LayoutParseError("Row modifiers cannot include both 'T' and 'C'")
                 train_recurrent_only = True
             raw_parts.append(ch)
             idx += 1
