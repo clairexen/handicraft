@@ -349,6 +349,7 @@ class SegmentSpec:
     mode: str
     context_enabled: bool = True
     connector: str | None = None
+    suppress_positional: bool = False
 
 
 @dataclass(frozen=True)
@@ -377,6 +378,7 @@ class SegmentLayout:
     columns: int
     context_enabled: bool = True
     connector: str | None = None
+    suppress_positional: bool = False
 
 
 @dataclass
@@ -480,6 +482,14 @@ def _parse_segment_spec(text: str, connector: str | None) -> SegmentSpec:
         raise LayoutParseError(f"Missing mode in segment '{text}'")
     size_token = text[:index]
     mode_token = text[index:]
+    if not mode_token:
+        raise LayoutParseError("Missing mode in segment")
+    suppress_positional = False
+    if mode_token[-1] in {"p", "P"}:
+        suppress_positional = True
+        mode_token = mode_token[:-1]
+        if not mode_token:
+            raise LayoutParseError("Positional modifier requires a base mode")
     mode_char = mode_token[0]
     context_enabled = mode_char.islower()
     mode_key = mode_char.lower()
@@ -488,7 +498,13 @@ def _parse_segment_spec(text: str, connector: str | None) -> SegmentSpec:
     size_spec = CountSpec.parse(size_token or "1")
     if connector not in {None, "=", ">"}:
         raise LayoutParseError(f"Unsupported segment connector '{connector}'")
-    return SegmentSpec(size_spec, _MODE_ALIASES[mode_key], context_enabled, connector)
+    return SegmentSpec(
+        size_spec,
+        _MODE_ALIASES[mode_key],
+        context_enabled,
+        connector,
+        suppress_positional=suppress_positional,
+    )
 
 
 _ROW_COUNT_CHARS = set("0123456789+-*")
@@ -720,6 +736,7 @@ class BatchLayout:
                 allocation.value,
                 spec.context_enabled,
                 spec.connector,
+                suppress_positional=spec.suppress_positional,
             )
             for spec, allocation in zip(specs, allocations)
         ]
@@ -744,7 +761,10 @@ class BatchLayout:
                 letter = _MODE_LETTERS.get(segment.mode, segment.mode[0])
                 if not segment.context_enabled:
                     letter = letter.upper()
-                bit = f"{segment.columns}{letter}"
+                suffix = ""
+                if segment.suppress_positional:
+                    suffix = "P" if letter.isupper() else "p"
+                bit = f"{segment.columns}{letter}{suffix}"
                 if idx > 0:
                     connector = segment.connector or "="
                     bit = connector + bit
@@ -3934,7 +3954,11 @@ def _run_microbatch_pass(
             pos_offsets = None
             if position_shift:
                 pos_offsets = torch.full((row_count,), position_shift, dtype=torch.long, device=device)
-            embeddings = _sequence_embeddings_with_offsets(model, xb, pos_offsets)
+            token_components, pos_components = _embedding_components_with_offsets(
+                model,
+                xb,
+                pos_offsets,
+            )
             cursor = 0
             kv_chain: list[list[tuple[torch.Tensor, torch.Tensor]] | None] = []
             grce_state = None
@@ -3963,7 +3987,14 @@ def _run_microbatch_pass(
                 connector = getattr(segment, "connector", None)
                 if connector == ">":
                     kv_chain = []
-                chunk_input = embeddings[:, cursor : cursor + cols, :]
+                token_slice = token_components[:, cursor : cursor + cols, :]
+                pos_slice = pos_components[:, cursor : cursor + cols, :]
+                chunk_input = _compose_chunk_embeddings(
+                    model.core.drop,
+                    token_slice,
+                    pos_slice,
+                    include_positional=not segment.suppress_positional,
+                )
                 chunk_target = yb[:, cursor : cursor + cols]
                 kv_sources = None if mode == "noattn" else (kv_chain if kv_chain else None)
                 prev_grce_state = grce_state
@@ -4219,6 +4250,18 @@ def _loss_sum_token_count_internal(
     return loss_sum, token_count, row_loss_sums, row_token_counts
 
 
+def _embedding_components_with_offsets(
+    model: GRCEGPT,
+    token_batch: torch.Tensor,
+    position_offsets: torch.Tensor | None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    batch_size, seq_len = token_batch.shape
+    pos_idx = model._position_ids(seq_len, batch_size, token_batch.device, position_offsets)
+    token_emb = model.core.tok_emb(token_batch)
+    pos_emb = model.core.pos_emb(pos_idx)
+    return token_emb, pos_emb
+
+
 def _sequence_embeddings(model: GRCEGPT, token_batch: torch.Tensor) -> torch.Tensor:
     """Project token IDs into dropout'd embeddings for stack sequence calls."""
 
@@ -4230,11 +4273,19 @@ def _sequence_embeddings_with_offsets(
     token_batch: torch.Tensor,
     position_offsets: torch.Tensor | None,
 ) -> torch.Tensor:
-    batch_size, seq_len = token_batch.shape
-    pos_idx = model._position_ids(seq_len, batch_size, token_batch.device, position_offsets)
-    tok = model.core.tok_emb(token_batch)
-    pos = model.core.pos_emb(pos_idx)
+    tok, pos = _embedding_components_with_offsets(model, token_batch, position_offsets)
     return model.core.drop(tok + pos)
+
+
+def _compose_chunk_embeddings(
+    dropout_layer: nn.Dropout,
+    token_slice: torch.Tensor,
+    pos_slice: torch.Tensor,
+    *,
+    include_positional: bool,
+) -> torch.Tensor:
+    base = token_slice if not include_positional else token_slice + pos_slice
+    return dropout_layer(base)
 
 
 def _scale_gradients(module: nn.Module, scale: float) -> None:
@@ -4995,14 +5046,15 @@ def _evaluate_row_block(
     args: Args,
     model: GRCEGPT,
     row: BlockLayout,
-    embeddings: torch.Tensor,
+    token_components: torch.Tensor,
+    pos_components: torch.Tensor,
     targets: torch.Tensor,
     *,
     input_tokens: torch.Tensor,
     capture_columns: set[int] | None = None,
 ) -> RowEvalResult:
-    device = embeddings.device
-    eval_block_length = embeddings.size(1)
+    device = token_components.device
+    eval_block_length = token_components.size(1)
     column_modes: list[str] = [""] * eval_block_length
     supervision_mask = torch.ones(eval_block_length, dtype=torch.bool, device=device)
     mode_loss_sums = {mode: 0.0 for mode in BATCH_MODES}
@@ -5043,7 +5095,14 @@ def _evaluate_row_block(
         connector = getattr(segment, "connector", None)
         if connector == ">":
             kv_chain = []
-        chunk_input = embeddings[:, cursor : cursor + cols, :]
+        token_slice = token_components[:, cursor : cursor + cols, :]
+        pos_slice = pos_components[:, cursor : cursor + cols, :]
+        chunk_input = _compose_chunk_embeddings(
+            model.core.drop,
+            token_slice,
+            pos_slice,
+            include_positional=not segment.suppress_positional,
+        )
         chunk_target = targets[:, cursor : cursor + cols]
         chunk_capture = None
         if base_capture is not None:
@@ -5206,7 +5265,11 @@ def run_test_slice(
 
         xb = inputs.unsqueeze(0).to(model_device)
         yb = targets.unsqueeze(0).to(model_device)
-        embeddings = _sequence_embeddings(model, xb)
+        token_components, pos_components = _embedding_components_with_offsets(
+            model,
+            xb,
+            None,
+        )
         vocab_size = model.config.vocab_size
 
         column_tokens = inputs.clone()
@@ -5224,7 +5287,8 @@ def run_test_slice(
                     args,
                     model,
                     row,
-                    embeddings,
+                    token_components,
+                    pos_components,
                     yb,
                     input_tokens=column_tokens,
                     capture_columns=capture_columns,
