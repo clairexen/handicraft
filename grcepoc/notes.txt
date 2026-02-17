@@ -267,11 +267,13 @@ max_i(x_i=Q*K_i^T) value for the row/col/head specified in k. S_k is the
 sum_j(exp(x_j - M_k)).  And T_k is the H value for the external contribution
 only: sum_i(V_i*exp(x_i - M_k)) / S_k.
 
-With mode="decode" we perform masked causal self-attention. With mode="encode"
-each position can attend to any other position in the grid. And with
-mode="noattn" we only perform self-attention and no attention between
-positions of this grid ('kv_cache_list_in' and 'qh_query_callback' are
-always used regardless of 'mode' selection.)
+With mode="decode" we perform standard masked causal self-attention. With
+mode="reverse" we use the transpose of that mask (each token can attend to
+future positions but not the past). With mode="encode" each position can
+attend to any other position in the grid. And with mode="noattn" we only
+perform self-attention and no attention between positions of this grid
+('kv_cache_list_in' and 'qh_query_callback' are always used regardless of
+'mode' selection.)
 
 The output 's_out' is a list of size n_layers+1, containing tensors of size
 [rows, cols, n_embd], with the sampled inputs and outputs to all transformer
@@ -368,7 +370,7 @@ mode the recurrent channels are the only way of passing information forward
 within the sequence. (Note that we still apply self-attention and we still
 attend to 'kv_cache_list_in' and 'qh_query_callback'.)
 
-When mode is "encode" or "decode", then a single large internal stack grid
+When mode is "encode", "decode", or "reverse", then a single large internal stack grid
 is created that covers all the positions in the sequence. In this case we
 call .bias_forward() only once for the first position of the sequence, and
 only inject that bias into the first position. After running .forward()
@@ -443,10 +445,11 @@ These batch layouts are composed from the following sequence types:
 - "decode"
 - "forward"
 - "noattn"
+- "reverse"
 
-There's GRCE and XCTX paths going through the entire flow, but "encode"
-and "decode" generate the GRCE and XCTX signals "blindly", without means
-of "sensing" the GRCE or XCTX signals via bias injection.
+There's GRCE and XCTX paths going through the entire flow, but "encode",
+"decode", and "reverse" generate the GRCE and XCTX signals "blindly",
+without means of "sensing" the GRCE or XCTX signals via bias injection.
 
 Note that for the "encode" sequence we must only use the prediction from the
 very last position, that predicts the next token after the encode block
@@ -454,8 +457,8 @@ input.
 
 We report 4 loss numbers when evaluating the model: "target" = the actual
 optimization target, "encode" = loss only based on the last column of the
-encode block, "decode" = loss based on all columns of the decode block,
-and likewise for "forward" and "noattn".
+encode block, "decode" = loss based on all columns of the decode (and
+reverse) blocks, and likewise for "forward" and "noattn".
 
 
 ## Mini-language for batch layouts
@@ -549,12 +552,17 @@ into the transformer. 'ks3[*f]' on the other hand will backprop a few columns
 of the transformer, but it will not visit later positions via the attn mechanism,
 because of the detached kv-cache.
 
-Instead of e d f n one can also use E D F N as sequence type. In that case
+Instead of e d f n r one can also use E D F N R as sequence type. In that case
 the recurrent outputs of the block remain unused. The layout [*d=*d] generates
 XCTX and GRCE signals "blindly" in the first decode block, and then they are being
 passed to the first row of the second block, which receives biases from that
 recurrent context. (backprop for [*d=*d] takes about twice as long ans [*d].)
 The layout [*D=*d] on the other hand is functionally equivalent to [*d].
+
+Lowercase `r` defines a "reverse" sequence: it behaves like `d` (decode)
+but uses the transpose of the standard causal mask, so each position attends
+to future tokens instead of the past. Uppercase `R` works the same way but
+disables recurrent/context updates, mirroring how `E/D/F/N` behave.
 
 We also allow > instead of = for chaining sequences inside of a [...] block.
 The difference is that with > we drop the entire k/v-history at this point,
