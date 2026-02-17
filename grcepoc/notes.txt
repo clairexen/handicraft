@@ -759,37 +759,6 @@ Read AGENTS.md, README.md, and the comments at the top of grce.py. Then:
 
 Current experiments:
 
-grce_run="--name lrwarmup_big --n-xctx 0 --n-grce 0 --n-layer 12 --n-head 12 --n-embd 768 \
-	--cycles 1000 --layout '*[*d]' --batch-size 80 --time --learning-rate 3e-4 \
-	--lr-warmup 500 --lr-steady 75000 --lr-decay-style cosine --lr-decay-min 3e-5"
-eval "python grce.py $grce_run create && python grce.py $grce_run corpus --set cccclc-0000"
-eval "python grce.py $grce_run train"
-
-grce_run="--name baseline_wp --n-xctx 0 --n-grce 0 --n-layer 12 --n-head 12 --n-embd 768 \
-	--cycles 1000 --layout '*[*d],*[*d]' --batch-size 60 --time --learning-rate 3e-4 \
-	--lr-warmup 500 --lr-steady 95000 --lr-decay-style cosine --lr-decay-min 3e-5"
-eval "python grce.py $grce_run create && python grce.py $grce_run corpus --set wp-en-0000"
-eval "python grce.py $grce_run train"
-
-
-cp model/baseline_wp_model_v32000_bs256_emb768_layers12_heads12.pt model/baseline_wp_retrain_decay.pt
-python grce.py --pt model/baseline_wp_retrain_decay.pt reset
-python grce.py --pt model/baseline_wp_retrain_decay.pt --cycles 100 --layout '*[*d]' --batch-size 60 --time --lr-warmup 100 --lr-decay 10000 train --json
-
-----------------
-
-python grce.py --pt model/baseline_wikipedia.pt create
-python grce.py --pt model/baseline_wikipedia.pt corpus --add wikipedia-simple wikipedia-en-000{0,1}
-python grce.py --pt model/baseline_wikipedia.pt --cycles 100 --lr-warmup-steps 200 --lr-linear-steps 500 --lr-cosine-steps 200 \
-  --batch-size 100 --layout '50[4-16E=240D],5[16E=*D],100[16e=32f],100[16e>32n]' train --json
-
-python grce.py --pt model/baseline_wikipedia_nosimple.pt create
-python grce.py --pt model/baseline_wikipedia_nosimple.pt corpus --add wikipedia-en-000{0,1}
-python grce.py --pt model/baseline_wikipedia_nosimple.pt --cycles 100 --lr-warmup-steps 200 --lr-linear-steps 500 --lr-cosine-steps 200 \
-  --batch-size 100 --layout '50[4-16E=240D],5[16E=*D],100[16e=32f],100[16e>32n]' train --json
-
-----------------
-
 python grce.py --pt model/baseline_wikipedia_en.pt create
 python grce.py --pt model/baseline_wikipedia_en.pt corpus --add wikipedia-en-000{0,1}
 python grce.py --pt model/baseline_wikipedia_en.pt --cycles 100 --lr-warmup-steps 200 --lr-linear-steps 5000 \
