@@ -204,6 +204,7 @@ from typing import Iterator, List, Sequence
 _MODE_ALIASES: dict[str, str] = {
     "e": "encode",
     "d": "decode",
+    "r": "reverse",
     "f": "forward",
     "n": "noattn",
 }
@@ -2609,10 +2610,12 @@ class CausalSelfAttention(nn.Module):
         scores = (q @ all_k.transpose(-2, -1)) / math.sqrt(head_dim)
 
         block_mask: torch.Tensor | None = None
-        if attn_mode not in {"encode", "decode", "noattn"}:
+        if attn_mode not in {"encode", "decode", "reverse", "noattn"}:
             raise ValueError(f"Unknown attention mode: {attn_mode}")
         if attn_mode == "decode" and not full_attention:
             block_mask = self.tril[:T, :T] == 0
+        elif attn_mode == "reverse" and not full_attention:
+            block_mask = self.tril[:T, :T].transpose(0, 1) == 0
         elif attn_mode == "noattn":
             eye = torch.eye(T, dtype=torch.bool, device=x.device)
             block_mask = ~eye
@@ -3393,7 +3396,7 @@ class TransformerStackSequence(nn.Module):
         context_detach_enabled: bool | None = None,
         attention_capture: AttentionCapture | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None, list]:
-        if mode not in {"forward", "encode", "decode", "noattn"}:
+        if mode not in {"forward", "encode", "decode", "reverse", "noattn"}:
             raise ValueError(f"Unknown TransformerStackSequence mode: {mode}")
         rows, cols, _ = x.shape
         device = x.device
@@ -3401,7 +3404,7 @@ class TransformerStackSequence(nn.Module):
         outputs: list[torch.Tensor] = []
         grce_state = self._ensure_state(self.grce, grce_in, rows, device, dtype)
         xctx_state = self._ensure_state(self.xctx, xctx_in, rows, device, dtype)
-        if mode in {"encode", "decode"}:
+        if mode in {"encode", "decode", "reverse"}:
             return self._forward_grid_mode(
                 x,
                 grce_state,
@@ -3734,8 +3737,8 @@ class GRCEGPT(nn.Module):
                 context_info["xctx"] = xctx_out
             if not context_info:
                 context_info = None
-        elif mode == "decode":
-            decode_output, _, _ = self.stack_grid.forward(x, mode="decode")
+        elif mode in {"decode", "reverse"}:
+            decode_output, _, _ = self.stack_grid.forward(x, mode=mode)
             hidden = decode_output
         else:
             raise ValueError(f"Unknown forward_autoreg mode: {mode}")
@@ -3795,6 +3798,14 @@ LOSS_IGNORE_INDEX = -100
 
 
 BATCH_MODES: tuple[str, ...] = ("encode", "decode", "forward", "noattn")
+
+
+def _metric_mode_key(mode: str) -> str:
+    """Normalize layout modes for reporting/aggregation buckets."""
+
+    if mode == "reverse":
+        return "decode"
+    return mode
 
 ROW_METRIC_HIST_KEYS = list(BATCH_MODES)
 ROW_METRIC_LOG_KEYS = list(BATCH_MODES)
@@ -3981,12 +3992,13 @@ def _run_microbatch_pass(
                     chunk_target,
                     last_only=(mode == "encode"),
                 )
-                if token_count > 0:
-                    total_tokens += token_count
-                    total_loss_sum = loss_sum if total_loss_sum is None else total_loss_sum + loss_sum
-                    if collect_mode_metrics:
-                        mode_loss_sums[mode] += float(loss_sum.detach().item())
-                        mode_token_counts[mode] += token_count
+            if token_count > 0:
+                total_tokens += token_count
+                total_loss_sum = loss_sum if total_loss_sum is None else total_loss_sum + loss_sum
+                metric_key = _metric_mode_key(mode)
+                if collect_mode_metrics and metric_key in mode_loss_sums:
+                    mode_loss_sums[metric_key] += float(loss_sum.detach().item())
+                    mode_token_counts[metric_key] += token_count
                     if row_loss_sums is not None and row_token_counts is not None:
                         loss_values = row_loss_sums.detach().cpu().tolist()
                         token_values = row_token_counts.detach().cpu().tolist()
@@ -5062,8 +5074,10 @@ def _evaluate_row_block(
         )
         if token_count > 0:
             loss_value = float(loss_sum.detach().item())
-            mode_loss_sums[segment.mode] += loss_value
-            mode_token_counts[segment.mode] += token_count
+            metric_key = _metric_mode_key(segment.mode)
+            if metric_key in mode_loss_sums:
+                mode_loss_sums[metric_key] += loss_value
+                mode_token_counts[metric_key] += token_count
             total_loss += loss_value
             total_tokens += token_count
         if segment.mode != "noattn":
@@ -5073,7 +5087,7 @@ def _evaluate_row_block(
             column_modes[idx] = segment.mode
             if segment.mode == "encode" and local_idx < cols - 1:
                 supervision_mask[idx] = False
-        if chunk_capture is not None and segment.mode in {"decode", "encode"}:
+        if chunk_capture is not None and segment.mode in {"decode", "reverse", "encode"}:
             abs_col = chunk_capture.absolute_offset + (cols - 1)
             layer_weights: dict[int, torch.Tensor] = {}
             for layer_idx, store in attention_storage.items():
