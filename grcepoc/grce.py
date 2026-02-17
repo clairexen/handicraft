@@ -196,8 +196,9 @@ def apply_prompt_prefix(text: str, *, enabled: bool) -> str:
 # the concrete (fully deterministic) layout string.
 
 from dataclasses import dataclass
+from contextlib import contextmanager, nullcontext
 import random
-from typing import List, Sequence
+from typing import Iterator, List, Sequence
 
 
 _MODE_ALIASES: dict[str, str] = {
@@ -354,6 +355,8 @@ class RowModifiers:
     detach_kv_cache: bool = False
     detach_span: int | None = None
     no_detach_ctx: bool = False
+    train_transformer_only: bool = False
+    train_recurrent_only: bool = False
     raw: str = ""
 
     def render(self) -> str:
@@ -510,6 +513,8 @@ def _parse_row_modifiers(text: str) -> RowModifiers | None:
     detach_kv = False
     detach_span: int | None = None
     no_detach_ctx = False
+    train_transformer_only = False
+    train_recurrent_only = False
     raw_parts: list[str] = []
     while idx < len(text):
         ch = text[idx]
@@ -521,6 +526,18 @@ def _parse_row_modifiers(text: str) -> RowModifiers | None:
         if ch == "c":
             no_detach_ctx = True
             raw_parts.append("c")
+            idx += 1
+            continue
+        if ch in {"T", "R"}:
+            if ch == "T":
+                if train_recurrent_only:
+                    raise LayoutParseError("Row modifiers cannot include both 'T' and 'R'")
+                train_transformer_only = True
+            else:
+                if train_transformer_only:
+                    raise LayoutParseError("Row modifiers cannot include both 'T' and 'R'")
+                train_recurrent_only = True
+            raw_parts.append(ch)
             idx += 1
             continue
         if ch == "s":
@@ -541,6 +558,8 @@ def _parse_row_modifiers(text: str) -> RowModifiers | None:
         detach_kv_cache=detach_kv,
         detach_span=detach_span,
         no_detach_ctx=no_detach_ctx,
+        train_transformer_only=train_transformer_only,
+        train_recurrent_only=train_recurrent_only,
         raw=raw,
     )
 
@@ -1001,6 +1020,16 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         help="Skip overwriting the checkpoint at the end of each training cycle",
     )
     training_group.add_argument(
+        "--freeze-transformer",
+        action="store_true",
+        help="Freeze transformer stack parameters so only recurrent channels train",
+    )
+    training_group.add_argument(
+        "--freeze-recurrent",
+        action="store_true",
+        help="Freeze recurrent (GRCE/XCTX) parameters so only the transformer trains",
+    )
+    training_group.add_argument(
         "--restart-optimizer",
         action="store_true",
         help="Reinitialize the optimizer at the beginning of every cycle",
@@ -1427,6 +1456,8 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
     # Run the args parser
 
     args = parser.parse_args()
+    if getattr(args, "freeze_transformer", False) and getattr(args, "freeze_recurrent", False):
+        parser.error("--freeze-transformer and --freeze-recurrent cannot be used together")
     setattr(args, "_lr_steady_defined", flag_present("--lr-steady-steps"))
     if hasattr(args, "lr_linear_min") and args.lr_linear_min is None:
         args.lr_linear_min = args.lr_base * 0.1
@@ -3651,6 +3682,11 @@ class GRCEGPT(nn.Module):
         self.stack_grid = TransformerStackGrid(self.core)
         self.stack_sequence = TransformerStackSequence(args, self.core)
         self.context_channels = self.stack_sequence.context_modules
+        self._transformer_params = tuple(self.core.parameters())
+        recurrent_params: list[nn.Parameter] = []
+        for module in self.context_channels:
+            recurrent_params.extend(list(module.parameters()))
+        self._recurrent_params = tuple(recurrent_params)
 
     def _position_ids(
         self,
@@ -3705,6 +3741,35 @@ class GRCEGPT(nn.Module):
             raise ValueError(f"Unknown forward_autoreg mode: {mode}")
         logits = self.core.head(self.core.ln_f(hidden))
         return logits, None, context_info
+
+    @contextmanager
+    def grad_scope(
+        self,
+        *,
+        transformer: bool | None = None,
+        recurrent: bool | None = None,
+    ) -> Iterator[None]:
+        toggled: list[tuple[nn.Parameter, bool]] = []
+        try:
+            self._apply_grad_toggle(self._transformer_params, transformer, toggled)
+            self._apply_grad_toggle(self._recurrent_params, recurrent, toggled)
+            yield
+        finally:
+            for param, prev in reversed(toggled):
+                param.requires_grad_(prev)
+
+    @staticmethod
+    def _apply_grad_toggle(
+        params: Sequence[nn.Parameter],
+        enabled: bool | None,
+        toggled: list[tuple[nn.Parameter, bool]],
+    ) -> None:
+        if enabled is None or not params:
+            return
+        for param in params:
+            if param.requires_grad != enabled:
+                toggled.append((param, param.requires_grad))
+                param.requires_grad_(enabled)
 
 
 def build_model_tag(config: GeometryLike) -> str:
@@ -3813,26 +3878,6 @@ def _run_microbatch_pass(
         cols_total = group.total_columns()
         if cols_total <= 0:
             continue
-        try:
-            xb, yb, metadata = dataset.sample_row_batch(
-                split,
-                cols_total,
-                row_count,
-                device,
-                rng=rng,
-            )
-        except ValueError as exc:
-            raise ValueError(
-                f"Unable to sample {row_count} rows with {cols_total} columns from the corpus"
-            ) from exc
-        pos_offsets = None
-        if position_shift:
-            pos_offsets = torch.full((row_count,), position_shift, dtype=torch.long, device=device)
-        embeddings = _sequence_embeddings_with_offsets(model, xb, pos_offsets)
-        cursor = 0
-        kv_chain: list[list[tuple[torch.Tensor, torch.Tensor]] | None] = []
-        grce_state = None
-        xctx_state = None
         modifiers = group.modifiers
         detach_span_override = (
             modifiers.detach_span if modifiers and modifiers.detach_span is not None else None
@@ -3842,77 +3887,118 @@ def _run_microbatch_pass(
         )
         context_detach_override = False if (modifiers and modifiers.no_detach_ctx) else None
         layout_text = row_serializer([group]) if row_serializer else ""
-        row_entries: list[dict[str, object]] = []
-        for idx in range(row_count):
-            meta = metadata[idx] if idx < len(metadata) else {}
-            row_entries.append(
-                {
-                    "layout": layout_text,
-                    "row": int(meta.get("row", idx + 1)),
-                    "token_start": int(meta.get("token_start", 0)),
-                    "token_end": int(meta.get("token_end", 0)),
-                    "token_span": int(meta.get("token_span", 0)),
-                    "wrapped": bool(meta.get("wrapped", 0)),
-                    "total_tokens": int(meta.get("total_tokens", 0)),
-                    "loss_sum": 0.0,
-                    "token_count": 0,
-                }
-            )
-        for segment in group.segments:
-            cols = int(segment.columns)
-            if cols <= 0:
-                continue
-            mode = segment.mode
-            connector = getattr(segment, "connector", None)
-            if connector == ">":
-                kv_chain = []
-            chunk_input = embeddings[:, cursor : cursor + cols, :]
-            chunk_target = yb[:, cursor : cursor + cols]
-            kv_sources = None if mode == "noattn" else (kv_chain if kv_chain else None)
-            prev_grce_state = grce_state
-            prev_xctx_state = xctx_state
-            chunk_output, grce_state, xctx_state, kv_out = model.stack_sequence.forward(
-                chunk_input,
-                grce_in=grce_state,
-                xctx_in=xctx_state,
-                kv_cache_list_in=kv_sources,
-                mode=mode,
-                detach_internal_kv_cache=row_detach_kv_cache,
-                context_detach_span=detach_span_override,
-                context_detach_enabled=context_detach_override,
-            )
-            if not getattr(segment, "context_enabled", True):
-                grce_state = prev_grce_state
-                xctx_state = prev_xctx_state
-            logits = model.core.head(model.core.ln_f(chunk_output))
-            (
-                loss_sum,
-                token_count,
-                row_loss_sums,
-                row_token_counts,
-            ) = loss_sum_token_count_with_rows(
-                logits,
-                chunk_target,
-                last_only=(mode == "encode"),
-            )
-            if token_count > 0:
-                total_tokens += token_count
-                total_loss_sum = loss_sum if total_loss_sum is None else total_loss_sum + loss_sum
-                if collect_mode_metrics:
-                    mode_loss_sums[mode] += float(loss_sum.detach().item())
-                    mode_token_counts[mode] += token_count
-                if row_loss_sums is not None and row_token_counts is not None:
-                    loss_values = row_loss_sums.detach().cpu().tolist()
-                    token_values = row_token_counts.detach().cpu().tolist()
-                    for idx, entry in enumerate(row_entries):
-                        if idx >= len(loss_values):
-                            break
-                        entry["loss_sum"] = entry.get("loss_sum", 0.0) + float(loss_values[idx])
-                        entry["token_count"] = int(entry.get("token_count", 0)) + int(token_values[idx])
-            if mode != "noattn":
-                kv_chain.append(kv_out)
-            cursor += cols
-        row_details.extend(row_entries)
+        training_scope = nullcontext()
+        if torch.is_grad_enabled():
+            transformer_flag: bool | None = None
+            recurrent_flag: bool | None = None
+            if getattr(args, "freeze_transformer", False):
+                transformer_flag = False
+            if getattr(args, "freeze_recurrent", False):
+                recurrent_flag = False
+            if modifiers:
+                if modifiers.train_transformer_only:
+                    transformer_flag = True
+                    recurrent_flag = False
+                elif modifiers.train_recurrent_only:
+                    transformer_flag = False
+                    recurrent_flag = True
+            if transformer_flag is not None or recurrent_flag is not None:
+                training_scope = model.grad_scope(
+                    transformer=transformer_flag,
+                    recurrent=recurrent_flag,
+                )
+        with training_scope:
+            try:
+                xb, yb, metadata = dataset.sample_row_batch(
+                    split,
+                    cols_total,
+                    row_count,
+                    device,
+                    rng=rng,
+                )
+            except ValueError as exc:
+                raise ValueError(
+                    f"Unable to sample {row_count} rows with {cols_total} columns from the corpus"
+                ) from exc
+            pos_offsets = None
+            if position_shift:
+                pos_offsets = torch.full((row_count,), position_shift, dtype=torch.long, device=device)
+            embeddings = _sequence_embeddings_with_offsets(model, xb, pos_offsets)
+            cursor = 0
+            kv_chain: list[list[tuple[torch.Tensor, torch.Tensor]] | None] = []
+            grce_state = None
+            xctx_state = None
+            row_entries: list[dict[str, object]] = []
+            for idx in range(row_count):
+                meta = metadata[idx] if idx < len(metadata) else {}
+                row_entries.append(
+                    {
+                        "layout": layout_text,
+                        "row": int(meta.get("row", idx + 1)),
+                        "token_start": int(meta.get("token_start", 0)),
+                        "token_end": int(meta.get("token_end", 0)),
+                        "token_span": int(meta.get("token_span", 0)),
+                        "wrapped": bool(meta.get("wrapped", 0)),
+                        "total_tokens": int(meta.get("total_tokens", 0)),
+                        "loss_sum": 0.0,
+                        "token_count": 0,
+                    }
+                )
+            for segment in group.segments:
+                cols = int(segment.columns)
+                if cols <= 0:
+                    continue
+                mode = segment.mode
+                connector = getattr(segment, "connector", None)
+                if connector == ">":
+                    kv_chain = []
+                chunk_input = embeddings[:, cursor : cursor + cols, :]
+                chunk_target = yb[:, cursor : cursor + cols]
+                kv_sources = None if mode == "noattn" else (kv_chain if kv_chain else None)
+                prev_grce_state = grce_state
+                prev_xctx_state = xctx_state
+                chunk_output, grce_state, xctx_state, kv_out = model.stack_sequence.forward(
+                    chunk_input,
+                    grce_in=grce_state,
+                    xctx_in=xctx_state,
+                    kv_cache_list_in=kv_sources,
+                    mode=mode,
+                    detach_internal_kv_cache=row_detach_kv_cache,
+                    context_detach_span=detach_span_override,
+                    context_detach_enabled=context_detach_override,
+                )
+                if not getattr(segment, "context_enabled", True):
+                    grce_state = prev_grce_state
+                    xctx_state = prev_xctx_state
+                logits = model.core.head(model.core.ln_f(chunk_output))
+                (
+                    loss_sum,
+                    token_count,
+                    row_loss_sums,
+                    row_token_counts,
+                ) = loss_sum_token_count_with_rows(
+                    logits,
+                    chunk_target,
+                    last_only=(mode == "encode"),
+                )
+                if token_count > 0:
+                    total_tokens += token_count
+                    total_loss_sum = loss_sum if total_loss_sum is None else total_loss_sum + loss_sum
+                    if collect_mode_metrics:
+                        mode_loss_sums[mode] += float(loss_sum.detach().item())
+                        mode_token_counts[mode] += token_count
+                    if row_loss_sums is not None and row_token_counts is not None:
+                        loss_values = row_loss_sums.detach().cpu().tolist()
+                        token_values = row_token_counts.detach().cpu().tolist()
+                        for idx, entry in enumerate(row_entries):
+                            if idx >= len(loss_values):
+                                break
+                            entry["loss_sum"] = entry.get("loss_sum", 0.0) + float(loss_values[idx])
+                            entry["token_count"] = int(entry.get("token_count", 0)) + int(token_values[idx])
+                if mode != "noattn":
+                    kv_chain.append(kv_out)
+                cursor += cols
+            row_details.extend(row_entries)
     result = LayoutPassResult(total_loss_sum, total_tokens, mode_loss_sums, mode_token_counts)
     return result, time.time() - start_time, row_details
 
