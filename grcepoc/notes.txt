@@ -799,3 +799,11 @@ python grce.py --pt model/decoder_wikipedia_en.pt create
 python grce.py --pt model/decoder_wikipedia_en.pt corpus --add wikipedia-en-000{0,1}
 python grce.py --pt model/decoder_wikipedia_en.pt --cycles 100 --lr-warmup-steps 200 --lr-linear-steps 5000 \
   --batch-size 100 --layout '50[4-8E=240D],5[16E=*D],100[16E=32D],100[16E=32D]' train --json
+
+cp model/decoder_wikipedia_en.pt model/unfrozen_retrain_test.pt
+python grce.py --pt model/unfrozen_retrain_test.pt reset
+python grce.py --pt model/unfrozen_retrain_test.pt --cycles 5 --batch-size 32 --layout '*[16E=32D]+*[16e=32f]+*[16e>32n]' train --json
+
+cp model/decoder_wikipedia_en.pt model/frozen_retrain_test.pt
+python grce.py --pt model/frozen_retrain_test.pt reset
+python grce.py --pt model/frozen_retrain_test.pt --cycles 5 --batch-size 32 --layout '*R[16e=32f]+*R[16e>32n]' train --json
