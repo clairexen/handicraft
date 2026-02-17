@@ -537,6 +537,12 @@ Modifiers for the [...] block can be inserted directly before the [ char:
 	k   enable --detach-kv-cache for the [...] block
 	sN  enable --detach-span N for the [...] block ('s' is short for 's1')
 	c   enable --no-detach-ctx for the [...] block
+	T   freeze recurrent parameters so only the transformer stack learns
+	R   freeze transformer parameters so only the recurrent channels learn
+
+In this context "transformer parameters" include everything that shapes the
+encode/decode (E/D) stack, while "recurrent parameters" cover the GRCE/XCTX
+channels, their samplers, mixers, and bias injectors.
 
 This means 'sc[*f]' has a deep path along the context, but we never backprop
 into the transformer. 'ks3[*f]' on the other hand will backprop a few columns
