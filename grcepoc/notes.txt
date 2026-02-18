@@ -658,9 +658,13 @@ Depending on the task we can dedicate half the rotary frequencies to θ₀ and h
 separability, or linearly mix both angles per frequency to capture interactions between text
 position and branch depth.
 
-This torus inductive bias is well-suited to “text plus lateral reasoning” structures. If future
-workloads become deeply tree-like or graph-shaped we may need higher-dimensional or more general
-rotary schemes, but the 2-D construction gives us a concrete path toward branch-aware RoPE today.
+This torus inductive bias is well-suited to “text plus lateral reasoning” structures. Extending to an
+N-torus is straightforward: we add N orthogonal rotary axes, rotate the shared Q/K subspace along
+each angle, and supply N direction embeddings `[|rope:i|]` to encode the active trajectory. For
+example, a 4-torus lets us dedicate two axes to downstream chains of thought while keeping two axes
+available for upstream annotations. If future workloads become deeply tree-like or graph-shaped we may
+need higher-dimensional or more general rotary schemes, but the 2-D construction (and its obvious N-D
+generalization) gives us a concrete path toward branch-aware RoPE today.
 
 
 ## Non-token embeddings -- (updated; implementation not up-to-date)
