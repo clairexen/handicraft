@@ -657,6 +657,14 @@ embedding names that correspond to special tokens below.
   And we add [|predict-next|] to only the last position in an
   "encode" sequence, because the other positions are unconstrained.
 
+[|rope:0|] [|rope:1]
+  the current direction on the 2D RoPE Torus is encoded as linear
+  combination of these two learned embeddings. (the direction is
+  always in the positive quadrant but otherwise can be arbitrary)
+  during training this is added to all tokens except the <|----|>
+  article seperator and the direction is kept constant within an
+  article, and changed at the article boundary.
+
 [|pos:0|] [|pos:1|] ... [|pos:BS*PAGES-1|]
   position embeddings for the max BS*PAGES positions in a sequence
 
@@ -798,6 +806,11 @@ learned embeddings.
 
 First, suggest updates to notes.txt as needed, to make sure, "reverse" is spec'ed
 as intended.
+
+
+Let's fill in the section "2-D RoPE on a Torus (furture work)" in notes.txt.
+The idea is to create a version or RoPE that lives on a torus instead of a circle.
+
 
 ---------------------------------------------------------------------------
 

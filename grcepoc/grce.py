@@ -3022,6 +3022,7 @@ class TransformerStackCore(nn.Module):
         self.config = config
         self.tok_emb = nn.Embedding(config.vocab_size, config.n_embd)
         self.pos_emb = nn.Embedding(config.block_size, config.n_embd)
+        self.control_emb = nn.Embedding(3, config.n_embd, padding_idx=0)
         self.drop = nn.Dropout(config.dropout)
         self.blocks = nn.ModuleList([Block(config) for _ in range(config.n_layer)])
         self.ln_f = nn.LayerNorm(config.n_embd)
@@ -3820,11 +3821,6 @@ LOSS_IGNORE_INDEX = -100
 BATCH_MODES: tuple[str, ...] = ("reverse", "encode", "decode", "forward", "noattn")
 
 
-def _metric_mode_key(mode: str) -> str:
-    """Normalize layout modes for reporting/aggregation buckets."""
-
-    return mode
-
 ROW_METRIC_HIST_KEYS = list(BATCH_MODES)
 ROW_METRIC_LOG_KEYS = list(BATCH_MODES)
 ROW_METRIC_LOG_GROUP = {"reverse", "forward"}
@@ -3957,6 +3953,12 @@ def _run_microbatch_pass(
                 xb,
                 pos_offsets,
             )
+            future_token_components, _ = _embedding_components_with_offsets(
+                model,
+                yb,
+                pos_offsets,
+            )
+            control_ids = torch.zeros((row_count, cols_total), dtype=torch.long, device=device)
             cursor = 0
             kv_chain: list[list[tuple[torch.Tensor, torch.Tensor]] | None] = []
             grce_state = None
@@ -3985,15 +3987,32 @@ def _run_microbatch_pass(
                 connector = getattr(segment, "connector", None)
                 if connector == ">":
                     kv_chain = []
-                token_slice = token_components[:, cursor : cursor + cols, :]
-                pos_slice = pos_components[:, cursor : cursor + cols, :]
+                start = cursor
+                end = cursor + cols
+                if mode == "reverse":
+                    control_ids[:, start:end] = CONTROL_PREDICT_PREV
+                elif mode in {"decode", "forward", "noattn"}:
+                    control_ids[:, start:end] = CONTROL_PREDICT_NEXT
+                elif mode == "encode" and end > start:
+                    control_ids[:, start:end] = CONTROL_NONE
+                    control_ids[:, end - 1 : end] = CONTROL_PREDICT_NEXT
+                control_slice = control_ids[:, start:end]
+                control_embed = model.core.control_emb(control_slice)
+                if mode == "reverse":
+                    token_source = future_token_components
+                    chunk_target = xb[:, start:end]
+                else:
+                    token_source = token_components
+                    chunk_target = yb[:, start:end]
+                token_slice = token_source[:, start:end, :]
+                pos_slice = pos_components[:, start:end, :]
                 chunk_input = _compose_chunk_embeddings(
                     model.core.drop,
                     token_slice,
                     pos_slice,
                     include_positional=not segment.suppress_positional,
+                    control_slice=control_embed,
                 )
-                chunk_target = yb[:, cursor : cursor + cols]
                 kv_sources = None if mode == "noattn" else (kv_chain if kv_chain else None)
                 prev_grce_state = grce_state
                 prev_xctx_state = xctx_state
@@ -4024,7 +4043,7 @@ def _run_microbatch_pass(
             if token_count > 0:
                 total_tokens += token_count
                 total_loss_sum = loss_sum if total_loss_sum is None else total_loss_sum + loss_sum
-                metric_key = _metric_mode_key(mode)
+                metric_key = mode
                 if collect_mode_metrics and metric_key in mode_loss_sums:
                     mode_loss_sums[metric_key] += float(loss_sum.detach().item())
                     mode_token_counts[metric_key] += token_count
@@ -4248,6 +4267,11 @@ def _loss_sum_token_count_internal(
     return loss_sum, token_count, row_loss_sums, row_token_counts
 
 
+CONTROL_NONE = 0
+CONTROL_PREDICT_NEXT = 1
+CONTROL_PREDICT_PREV = 2
+
+
 def _embedding_components_with_offsets(
     model: GRCEGPT,
     token_batch: torch.Tensor,
@@ -4281,8 +4305,13 @@ def _compose_chunk_embeddings(
     pos_slice: torch.Tensor,
     *,
     include_positional: bool,
+    control_slice: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    base = token_slice if not include_positional else token_slice + pos_slice
+    base = token_slice
+    if include_positional:
+        base = base + pos_slice
+    if control_slice is not None:
+        base = base + control_slice
     return dropout_layer(base)
 
 
@@ -5028,6 +5057,7 @@ class RowEvalResult:
     mode_token_counts: dict[str, int]
     total_loss_sum: float
     total_tokens: int
+    target_ids: torch.Tensor
     attention_maps: dict[int, dict[int, torch.Tensor]] | None = None
     block_attentions: list["BlockAttention"] | None = None
 
@@ -5046,6 +5076,8 @@ def _evaluate_row_block(
     row: BlockLayout,
     token_components: torch.Tensor,
     pos_components: torch.Tensor,
+    future_token_components: torch.Tensor,
+    source_ids: torch.Tensor,
     targets: torch.Tensor,
     *,
     input_tokens: torch.Tensor,
@@ -5081,6 +5113,8 @@ def _evaluate_row_block(
         modifiers.detach_kv_cache if modifiers else False
     )
     context_detach_override = False if (modifiers and modifiers.no_detach_ctx) else None
+    control_ids = torch.zeros((1, eval_block_length), dtype=torch.long, device=device)
+    target_ids = torch.zeros_like(targets)
     for segment in row.segments:
         segment_start = cursor
         cols = int(segment.columns)
@@ -5093,15 +5127,32 @@ def _evaluate_row_block(
         connector = getattr(segment, "connector", None)
         if connector == ">":
             kv_chain = []
-        token_slice = token_components[:, cursor : cursor + cols, :]
-        pos_slice = pos_components[:, cursor : cursor + cols, :]
+        start = cursor
+        end = cursor + cols
+        if segment.mode == "reverse":
+            control_ids[:, start:end] = CONTROL_PREDICT_PREV
+        elif segment.mode in {"decode", "forward", "noattn"}:
+            control_ids[:, start:end] = CONTROL_PREDICT_NEXT
+        elif segment.mode == "encode" and end > start:
+            control_ids[:, start:end] = CONTROL_NONE
+            control_ids[:, end - 1 : end] = CONTROL_PREDICT_NEXT
+        control_slice = control_ids[:, start:end]
+        control_embed = model.core.control_emb(control_slice)
+        if segment.mode == "reverse":
+            token_source = future_token_components
+            chunk_target = source_ids[:, start:end]
+        else:
+            token_source = token_components
+            chunk_target = targets[:, start:end]
+        token_slice = token_source[:, start:end, :]
+        pos_slice = pos_components[:, start:end, :]
         chunk_input = _compose_chunk_embeddings(
             model.core.drop,
             token_slice,
             pos_slice,
             include_positional=not segment.suppress_positional,
+            control_slice=control_embed,
         )
-        chunk_target = targets[:, cursor : cursor + cols]
         chunk_capture = None
         if base_capture is not None:
             chunk_capture = base_capture.subset(cursor, cols)
@@ -5122,6 +5173,7 @@ def _evaluate_row_block(
         if not segment.context_enabled:
             grce_state = prev_grce_state
             xctx_state = prev_xctx_state
+        target_ids[:, start:end] = chunk_target
         logits = model.core.head(model.core.ln_f(chunk_output))
         logits_buffer.append(logits)
         loss_sum, token_count = loss_sum_and_token_count(
@@ -5131,7 +5183,7 @@ def _evaluate_row_block(
         )
         if token_count > 0:
             loss_value = float(loss_sum.detach().item())
-            metric_key = _metric_mode_key(segment.mode)
+            metric_key = segment.mode
             if metric_key in mode_loss_sums:
                 mode_loss_sums[metric_key] += loss_value
                 mode_token_counts[metric_key] += token_count
@@ -5154,7 +5206,8 @@ def _evaluate_row_block(
             if layer_weights:
                 token_slice = input_tokens[segment_start : segment_start + cols]
                 block_tokens = token_slice.view(-1).tolist()
-                target_token = int(targets[0, segment_start + cols - 1].item())
+                target_tensor = target_ids[0, segment_start + cols - 1]
+                target_token = int(target_tensor.item())
                 block_attentions.append(
                     BlockAttention(
                         mode=segment.mode,
@@ -5177,6 +5230,7 @@ def _evaluate_row_block(
         mode_token_counts=mode_token_counts,
         total_loss_sum=total_loss,
         total_tokens=total_tokens,
+        target_ids=target_ids,
         attention_maps=attention_storage if capture_columns else None,
         block_attentions=block_attentions,
     )
@@ -5268,10 +5322,14 @@ def run_test_slice(
             xb,
             None,
         )
+        future_token_components, _ = _embedding_components_with_offsets(
+            model,
+            yb,
+            None,
+        )
         vocab_size = model.config.vocab_size
 
         column_tokens = inputs.clone()
-        column_targets = targets.clone()
 
         for row_idx, row in enumerate(layout.rows, start=1):
             row_desc = _row_description(layout, row)
@@ -5287,6 +5345,8 @@ def run_test_slice(
                     row,
                     token_components,
                     pos_components,
+                    future_token_components,
+                    xb,
                     yb,
                     input_tokens=column_tokens,
                     capture_columns=capture_columns,
@@ -5297,10 +5357,11 @@ def run_test_slice(
 
             row_logits = row_result.logits
             log_probs = torch.log_softmax(row_logits, dim=-1)
+            target_ids = row_result.target_ids
             gathered = torch.gather(
                 log_probs,
                 dim=-1,
-                index=yb.unsqueeze(-1),
+                index=target_ids.unsqueeze(-1),
             ).squeeze(-1)
             per_token_loss = (-gathered).squeeze(0)
 
@@ -5311,7 +5372,7 @@ def run_test_slice(
             losses_cpu = per_token_loss.cpu().tolist()
             mask_cpu = row_result.supervision_mask.cpu().tolist()
             inputs_cpu = column_tokens.tolist()
-            targets_cpu = column_targets.tolist()
+            targets_cpu = row_result.target_ids.squeeze(0).cpu().tolist()
             modes_cpu = row_result.column_modes
             top_indices_cpu = top_indices.squeeze(0).cpu().tolist()
             top_probs_cpu = top_probs.squeeze(0).cpu().tolist()
