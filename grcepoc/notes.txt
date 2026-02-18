@@ -637,9 +637,30 @@ during earlier thinking steps, rather than having to reconstruct it again
 through attention alone.
 
 
-## 2-D RoPE on a Torus (furture work)
+## 2-D RoPE on a Torus (future work)
 
-TBD
+We extend RoPE from a single circular phase to two orthogonal angles (θ₀, θ₁) on S¹×S¹. Each
+attention head splits its Q/K subspace into rotary pairs and applies both rotations, so
+dimensionality stays unchanged and relative phases still determine the attention weights. The
+primary axis θ₀ advances along the base text while θ₁ advances whenever we branch off into a
+lateral chain; holding θ₀ fixed at a branch point and walking along θ₁ lets us “step off” the text
+without forgetting where the branch started.
+
+During pretraining on ordinary 1-D text we can draw a random positive-quadrant direction vector
+(α, β) and treat each fragment as moving along αθ₀ + βθ₁. Because RoPE depends only on relative
+angles, this acts as positional augmentation without privileging a single axis. Isolation of
+segments still relies on standard attention masking; random phases alone do not fence them off.
+
+At runtime the learned direction embeddings [|rope:0|] / [|rope:1|] encode the current trajectory
+so downstream modules know whether we are moving along the text axis, a branch axis, or a mixture.
+Straight text sets α≈1, β≈0; a lateral chain sets α≈0, β≈1; diagonal walks are also possible.
+Depending on the task we can dedicate half the rotary frequencies to θ₀ and half to θ₁ for clean
+separability, or linearly mix both angles per frequency to capture interactions between text
+position and branch depth.
+
+This torus inductive bias is well-suited to “text plus lateral reasoning” structures. If future
+workloads become deeply tree-like or graph-shaped we may need higher-dimensional or more general
+rotary schemes, but the 2-D construction gives us a concrete path toward branch-aware RoPE today.
 
 
 ## Non-token embeddings -- (updated; implementation not up-to-date)
@@ -797,20 +818,27 @@ G.dot(embedding) < 1 for all GRCE state embeddings that are expected "OFF" (-1).
 Before we start, familiarize yourself with the project. Read notes.txt, AGENTS.md,
 and explore grce.py.
 
+----
 
-Oh. When creating reverse sequences we have to swap the tokens between 'y' and 'x'
-vectors ofc. Otherwise it's trivial. We also need to tell the model what to do. So
-we need to implement the learned embeddings [|predict-next|] as [|predict-prev|]
-outlined in notes.txt, which means we have to add infrastructure for these kind of
-learned embeddings.
-
-First, suggest updates to notes.txt as needed, to make sure, "reverse" is spec'ed
-as intended.
-
-
-Let's fill in the section "2-D RoPE on a Torus (furture work)" in notes.txt.
+Let's move on to filling in the section "2-D RoPE on a Torus (furture work)" in notes.txt.
 The idea is to create a version or RoPE that lives on a torus instead of a circle.
+Look at the description of [|rope:0|] and [|rope:1] in notes.txt. Can you extrapolate
+from that or are there any ambiguities? One final use-case is that I want to be able
+to have an input text going in 0-direction, and then be able to branch-off a chain
+of thought at any point, annotating the input, going in 1-direction.
 
+Propose a text for the "2-D RoPE on a Torus" section.
+
+----
+
+Summarize our most importand points in a few short paragraphs that I can easily
+review and then copy-and-paste to the other AI instance that maintains the
+original text.
+
+----
+
+This is feedback from another AI instance. What are your thoughts?
+Relate the feedback to the current state of notes.txt and suggest edits.
 
 ---------------------------------------------------------------------------
 
