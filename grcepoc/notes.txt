@@ -15,11 +15,13 @@ about the intended design behavior, mostly directed at AI agents (= OpenAI Codex
 
 ## GRCE and XCTX data path spec
 
-GRCE and XCTX both sample the n_layer input vectors to the transformer blocks in the
-stack at a position, mix with a recurrent GRCE or XCTX signal (G or X), remix, and
-update the recurrent signal (G' and X'), and then inject the context information into the
-transformer layers at later positions. Each has a per-layer sample stage, a shared mix and remix stage, and then a per-layer bias-injection stage in the next position. In the
-current implementation the bias injection point uses
+GRCE and XCTX both sample the n_layer input vectors to the transformer blocks
+in the stack at a position, mix with a recurrent GRCE or XCTX signal (G or X),
+remix, and update the recurrent signal (G' and X'), and then inject the context
+information into the transformer layers at later positions. Each has a
+per-layer sample stage, a shared mix and remix stage, and then a per-layer
+bias-injection stage in the next position. In the current implementation the
+bias injection point uses
 
 	LN(S_i + alpha .* XCTX_Bias_i) + LD(GRCE_Bias_i),
 
@@ -264,7 +266,7 @@ The output 's_out' is a list of size n_layers+1, containing tensors of size
 blocks in the grid.  Note that the first element in 's_out' is simply the input
 'x' and the last element is simply the "transformed" output 'y'.
 
-### Optimized tensor memory layout
+### Optimized tensor memory layout (not currently implemented that way)
 
 The tensor dimensions used in the API are all using 'rows' as first dimension
 and 'cols' as second dimension, because that is cleaner from an API
@@ -673,8 +675,8 @@ embedding names that correspond to special tokens below.
   article seperator and the direction is kept constant within an
   article, and changed at the article boundary.
 
-[|pos:0|] [|pos:1|] ... [|pos:BS*PAGES-1|]
-  position embeddings for the max BS*PAGES positions in a sequence
+[|pos:0|] [|pos:1|] ... [|pos:BS-1|]
+  position embeddings for the max BS positions in a sequence
 
 [|think:1/2|] [|think:2/2|]
   additional "think" embeddings for think2x mode, in think2x
@@ -789,13 +791,13 @@ We define the following learned GRCE embeddings and corresponding simple on-off 
   set by <|...:>, cleared by <:...|> and <|----|>.
 
 During training when --learn-grce-embeddings is present, we parse the
-BLOCK_SIZE (or PAGES_BLOCK_SIZE) sequence for each block and maintain a state
-variable for each of these GRCE embeddings. Initially they are all zero.
-Whenever we see a "set" token, we set the corresponding variable to +1,
-whenever we see a "clear" token, we set the corresponding variable to -1. For
-each step we look at the non-zero states and then either add the objective
-G.dot(embedding) > 1 for all GRCE state embeddings that are expected "ON" (+1), and
-G.dot(embedding) < 1 for all GRCE state embeddings that are expected "OFF" (-1).
+BLOCK_SIZE sequence for each block and maintain a state variable for each of
+these GRCE embeddings. Initially they are all zero.  Whenever we see a "set"
+token, we set the corresponding variable to +1, whenever we see a "clear"
+token, we set the corresponding variable to -1. For each step we look at the
+non-zero states and then either add the objective G.dot(embedding) > 1 for all
+GRCE state embeddings that are expected "ON" (+1), and G.dot(embedding) < 1 for
+all GRCE state embeddings that are expected "OFF" (-1).
 
 
 ---------------------------------------------------------------------------
