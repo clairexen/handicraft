@@ -30,9 +30,10 @@ the next slice before calling `optimizer.step()`. For example
 ```
 
 produces a 128×64 forward micro-batch, and with 25% probability appends a second
-micro-batch of size 1×1024 before the optimizer update. The default
-`2[*d]+2[*f]+*[*1-2e/*1-4d/*1-4f/*1-2n]` keeps two full decode and forward rows and
-fills the remainder with a randomized encode/decode/forward/no-attention pattern.
+micro-batch of size 1×1024 before the optimizer update. Another sample layout,
+`2[*d]+2[*f]+*[*1-2e/*1-4d/*1-4f/*1-2n]`, keeps two full decode and forward rows
+while filling the remainder with a randomized encode/decode/forward/no-attention
+pattern.
 
 ## How the context channel works
 

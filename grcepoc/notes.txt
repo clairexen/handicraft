@@ -18,7 +18,26 @@ about the intended design behavior, mostly directed at AI agents (= OpenAI Codex
 GRCE and XCTX both sample the n_layer input vectors to the transformer blocks in the
 stack at a position, mix with a recurrent GRCE or XCTX signal (G or X), remix, and
 update the recurrent signal (G' and X'), and then inject the context information into the
-transformer layers at later positions. Each has a per-layer sample stage, a shared mix and remix stage, and then a per-layer bias-injection stage in the next position.
+transformer layers at later positions. Each has a per-layer sample stage, a shared mix and remix stage, and then a per-layer bias-injection stage in the next position. In the
+current implementation the bias injection point uses
+
+	LN(S_i + alpha .* XCTX_Bias_i) + LD(GRCE_Bias_i),
+
+with per-feature learned gains in alpha, and where LD (Layer-Dampening) is a
+LayerNorm-like operation that removes the mean and applies per-feature (and
+per-layer and per-injection-point) learned gains, but replaces hard RMS
+normalization with soft radial dampening (see `LayerDampening` in ``grce.py``).
+Instead of forcing activations onto a unit-RMS shell, LD only attenuates large
+magnitudes using a learned sharpness parameter log_k:
+
+	k = torch.exp(self.log_k)
+	denom = 1.0 + F.softplus(k * (r - 1.0)) / k
+
+This softly constrains the signal to the interior of the unit ball, rather than
+projecting it onto the unit sphere. It reduces noise from small signals by
+preserving them as they are, prevents runaway growth, and allows the model to
+adapt the strength of injected bias differently for attention and MLP paths with
+minimal additional parameters.
 
 Let's call the recurrent GRCE signal G, the updated recurrent signal G'. Let the
 sampled signal from the input to transformer layer i be S_i, and let the per-layer bias
@@ -55,7 +74,7 @@ Let Dn4xG() be a learned linear from 4*n_grce to n_grce
   Then the shared mixing stage, combining the recurrent input signal G with the per-layer values:
     M := LN(dropout(G + Z_0 + Z_1 + ... + Z_{n_layers-1}))
   Then re-mixing M with an MLP into a new recurrent vector G'
-    G' := LN(M + dropout(Dn4xG(GELU(Up4xG(M)))))
+    G' := LD(G + dropout(Dn4xG(GELU(Up4xG(M)))), with_gain=False)
 
 The GRCE architecture is almost identical to a block of the transformer stack,
 except that it has the transformer stack itself in its first half, instead of
@@ -102,42 +121,6 @@ run the *full layer stack for a single token*, appending that token’s K/V to
 per-layer caches and attending only against cached past keys/values. (In
 `encode` blocks we run the transformer with simple un-masked attention, so
 we must not use a KV-cached architecture in the case of `encode` blocks.)
-
-(Also note the "Experiment with different bias-injection schemes" todo item
-near the end of this document.)
-
-### Experiment with different bias-injection schemes
-
-The actual current injection patterns is
-
-	LN(S_i + alpha .* XCTX_Bias_i) + LD(GRCE_Bias_i),
-
-with per-feature learned gains in alpha, and where LD (Layer-Dampening) is a
-LayerNorm-like operation that removes the mean and applies per-feature (and
-per-layer and per-injection-point) learned gains, but replaces hard RMS
-normalization with soft radial dampening. (See also the implementation in class
-LayerDampening(nn.Module) in grce.py.)
-
-Instead of forcing activations onto a unit-RMS shell, LD only attenuates
-large magnitudes using a learned sharpness parameter log_k:
-
-	k = torch.exp(self.log_k)
-	denom = 1.0 + F.softplus(k * (r - 1.0)) / k
-
-This softly constrains the signal to the interior of the unit ball, rather than
-projecting it onto the unit sphere.
-
-This reduces noise from small signals by preserving them as they are, prevents
-runaway growth, and allows the model to adapt the strength of injected bias
-differently for attention and MLP paths with minimal additional parameters.
-
-I'm also considering
-
-	G' := LD(G + ..., with_gain=False)
-
-instead of the current
-
-	G' := LN(M + ...).
 
 ### Future/Next Experiments
 
