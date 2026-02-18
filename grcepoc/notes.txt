@@ -819,19 +819,14 @@ G.dot(embedding) < 1 for all GRCE state embeddings that are expected "OFF" (-1).
 
 # TODOs / Prompt Scratchpad
 
-Before we start, familiarize yourself with the project. Read notes.txt, AGENTS.md,
-and explore grce.py.
+Before we start, familiarize yourself with the project. Read notes.txt,
+AGENTS.md, and explore grce.py. Then propose in a few lines a possible
+architectural improvement, both as inspiration for me, and as busy-work for
+you, so you have a meaningful goal to focus on while absorbing the information.
 
 ----
 
-Let's move on to filling in the section "2-D RoPE on a Torus (furture work)" in notes.txt.
-The idea is to create a version or RoPE that lives on a torus instead of a circle.
-Look at the description of [|rope:0|] and [|rope:1] in notes.txt. Can you extrapolate
-from that or are there any ambiguities? One final use-case is that I want to be able
-to have an input text going in 0-direction, and then be able to branch-off a chain
-of thought at any point, annotating the input, going in 1-direction.
-
-Propose a text for the "2-D RoPE on a Torus" section.
+...
 
 ----
 
