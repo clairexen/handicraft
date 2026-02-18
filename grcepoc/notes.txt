@@ -820,7 +820,8 @@ G.dot(embedding) < 1 for all GRCE state embeddings that are expected "OFF" (-1).
 # TODOs / Prompt Scratchpad
 
 Before we start, familiarize yourself with the project. Read notes.txt,
-AGENTS.md, and explore grce.py. Then propose in a few lines a possible
+AGENTS.md, and explore grce.py. Summarize any differences between notes.txt
+and the implementation in grce.py. Then propose in a few lines a possible
 architectural improvement, both as inspiration for me, and as busy-work for
 you, so you have a meaningful goal to focus on while absorbing the information.
 
