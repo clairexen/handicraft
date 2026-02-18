@@ -3817,19 +3817,17 @@ LOSS_IGNORE_INDEX = -100
 # -----------------------------------------------------------------------------
 
 
-BATCH_MODES: tuple[str, ...] = ("encode", "decode", "forward", "noattn")
+BATCH_MODES: tuple[str, ...] = ("reverse", "encode", "decode", "forward", "noattn")
 
 
 def _metric_mode_key(mode: str) -> str:
     """Normalize layout modes for reporting/aggregation buckets."""
 
-    if mode == "reverse":
-        return "decode"
     return mode
 
 ROW_METRIC_HIST_KEYS = list(BATCH_MODES)
 ROW_METRIC_LOG_KEYS = list(BATCH_MODES)
-ROW_METRIC_LOG_GROUP = {"encode", "forward"}
+ROW_METRIC_LOG_GROUP = {"reverse", "forward"}
 
 
 @dataclass

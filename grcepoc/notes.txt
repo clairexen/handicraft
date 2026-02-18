@@ -267,13 +267,14 @@ max_i(x_i=Q*K_i^T) value for the row/col/head specified in k. S_k is the
 sum_j(exp(x_j - M_k)).  And T_k is the H value for the external contribution
 only: sum_i(V_i*exp(x_i - M_k)) / S_k.
 
-With mode="decode" we perform standard masked causal self-attention. With
-mode="reverse" we use the transpose of that mask (each token can attend to
-future positions but not the past). With mode="encode" each position can
-attend to any other position in the grid. And with mode="noattn" we only
-perform self-attention and no attention between positions of this grid
-('kv_cache_list_in' and 'qh_query_callback' are always used regardless of
-'mode' selection.)
+With mode="decode" we perform standard masked causal self-attention and train
+the stack to predict the next token. With mode="reverse" we apply the
+transpose of that mask (each token attends to future positions but not the
+past), swap the x/y roles so the model predicts the *previous* token, and add
+the `[|predict-prev|]` embedding to every column instead of `[|predict-next|]`.
+Mode="encode" allows every position to attend to every other position (only
+the final column is supervised) and mode="noattn" uses purely self-attention.
+External KV caches and `qh_query_callback` are available in every mode.
 
 The output 's_out' is a list of size n_layers+1, containing tensors of size
 [rows, cols, n_embd], with the sampled inputs and outputs to all transformer
@@ -450,6 +451,12 @@ These batch layouts are composed from the following sequence types:
 There's GRCE and XCTX paths going through the entire flow, but "encode",
 "decode", and "reverse" generate the GRCE and XCTX signals "blindly",
 without means of "sensing" the GRCE or XCTX signals via bias injection.
+
+Reverse blocks automatically mirror the decode input/output streams: every
+column receives the `[|predict-prev|]` embedding, consumes the token that
+follows the target in the corpus, and learns to emit the previous token while
+the attention mask is flipped. Decode/forward/noattn continue to receive
+`[|predict-next|]` and predict the next token instead.
 
 Note that for the "encode" sequence we must only use the prediction from the
 very last position, that predicts the next token after the encode block
@@ -630,6 +637,11 @@ during earlier thinking steps, rather than having to reconstruct it again
 through attention alone.
 
 
+## 2-D RoPE on a Torus (furture work)
+
+TBD
+
+
 ## Non-token embeddings -- (updated; implementation not up-to-date)
 
 (the following names for non-token embeddings are used for
@@ -637,6 +649,13 @@ documentation, comments, and log messages. the syntax looks
 similar to the syntax we are going to use for our special
 token, but use [] instead of <> to distinguish them from the
 embedding names that correspond to special tokens below.
+
+[|predict-next|] [|predict-prev|]
+  this tells the model what to do. we add [|predict-next|] to all
+  positions in "decode", "forward", and "noattn" sequences. We
+  add [|predict-prev|] to all positions in "reverse" sequences.
+  And we add [|predict-next|] to only the last position in an
+  "encode" sequence, because the other positions are unconstrained.
 
 [|pos:0|] [|pos:1|] ... [|pos:BS*PAGES-1|]
   position embeddings for the max BS*PAGES positions in a sequence
@@ -765,9 +784,20 @@ G.dot(embedding) < 1 for all GRCE state embeddings that are expected "OFF" (-1).
 
 ---------------------------------------------------------------------------
 
-# TODOs
+# TODOs / Prompt Scratchpad
 
-Read AGENTS.md, README.md, and the comments at the top of grce.py. Then:
+Before we start, familiarize yourself with the project. Read notes.txt, AGENTS.md,
+and explore grce.py.
+
+
+Oh. When creating reverse sequences we have to swap the tokens between 'y' and 'x'
+vectors ofc. Otherwise it's trivial. We also need to tell the model what to do. So
+we need to implement the learned embeddings [|predict-next|] as [|predict-prev|]
+outlined in notes.txt, which means we have to add infrastructure for these kind of
+learned embeddings.
+
+First, suggest updates to notes.txt as needed, to make sure, "reverse" is spec'ed
+as intended.
 
 ---------------------------------------------------------------------------
 
