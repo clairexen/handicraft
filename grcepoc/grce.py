@@ -94,12 +94,13 @@ class ModelGeometry:
     """Holds the GPT+GRCE+XCTX model geometry."""
 
     vocab_size: int = 32000 # GPT-2 base supports ~50k merges.
-    block_size: int = 1024  # GPT-2 base uses 1024 tokens.
     n_layer: int = 12       # GPT-2 base uses 12 layers.
     n_head: int = 12        # GPT-2 base uses 12 attention heads.
     n_embd: int = 768       # GPT-2 base uses 768 embedding dims.
     n_grce: int = 64        # Narrow GRCE context dims.
     n_xctx: int = 1536      # Wide XCTX context dims.
+    n_rope_axis: int = 2    # Rotary axes per head (>=1 enables RoPE).
+    n_rope_head: int = 0    # Number of heads using RoPE (0 disables RoPE).
 
 MODEL_GEOMETRY_DEFAULTS = ModelGeometry()
 
@@ -109,12 +110,14 @@ class Defaults:
     """Default Settings (override with CLI args)"""
 
     vocab_size: int = MODEL_GEOMETRY_DEFAULTS.vocab_size
-    block_size: int = MODEL_GEOMETRY_DEFAULTS.block_size
+    block_size: int = 1024
     n_layer: int = MODEL_GEOMETRY_DEFAULTS.n_layer
     n_head: int = MODEL_GEOMETRY_DEFAULTS.n_head
     n_embd: int = MODEL_GEOMETRY_DEFAULTS.n_embd
     n_grce: int = MODEL_GEOMETRY_DEFAULTS.n_grce
     n_xctx: int = MODEL_GEOMETRY_DEFAULTS.n_xctx
+    n_rope_axis: int = MODEL_GEOMETRY_DEFAULTS.n_rope_axis
+    n_rope_head: int = MODEL_GEOMETRY_DEFAULTS.n_rope_head
     corpus: str | None = None
     steps: int = 100
     cycles: int = 100
@@ -876,13 +879,7 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         "--block-size",
         type=int,
         default=DEFAULTS.block_size,
-        help="Maximum sequence length supported by the model's positional embeddings",
-    )
-    model_group.add_argument(
-        "--block-length",
-        type=int,
-        default=None,
-        help="Actual tokens-per-sample used during train/eval (defaults to --block-size)",
+        help="Maximum sequence length consumed during train/eval",
     )
     model_group.add_argument(
         "--n-layer",
@@ -919,6 +916,22 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         default=DEFAULTS.n_xctx,
         help=(
             "Dimension of the wide (layer-partitioned) context channel; must be a multiple of n_layer"
+        ),
+    )
+    model_group.add_argument(
+        "--n-rope-axis",
+        type=int,
+        default=DEFAULTS.n_rope_axis,
+        help=(
+            "Number of rotary axes (per head) applied to Q/K; 0 disables RoPE"
+        ),
+    )
+    model_group.add_argument(
+        "--n-rope-head",
+        type=int,
+        default=DEFAULTS.n_rope_head,
+        help=(
+            "Limit rotary embeddings to the first N attention heads; 0 disables RoPE"
         ),
     )
     model_group.add_argument(
@@ -1540,13 +1553,11 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         if not flag_present("--eval-interval"):
             args.eval_interval = 1
 
-    args._block_length_defined = args.block_length is not None
-    if args.block_length is None:
-        args.block_length = args.block_size
-    if args.block_length <= 0:
-        parser.error("--block-length must be positive")
-    if args.block_length > args.block_size:
-        parser.error("--block-length must be <= --block-size")
+    if not flag_present("--n-rope-head"):
+        args.n_rope_head = args.n_head
+
+    if args.block_size <= 0:
+        parser.error("--block-size must be positive")
     if args.log_row_details:
         args.log_step_details = True
 
@@ -1601,12 +1612,13 @@ def args_to_model_geometry(args: Args):
 
     return ModelGeometry(
         vocab_size=args.vocab_size,
-        block_size=args.block_size,
         n_layer=args.n_layer,
         n_head=args.n_head,
         n_embd=args.n_embd,
         n_grce=args.n_grce,
         n_xctx=args.n_xctx,
+        n_rope_axis=args.n_rope_axis,
+        n_rope_head=args.n_rope_head,
     )
 
 
@@ -1845,6 +1857,8 @@ def _build_geometry(config: GeometryLike, block_size: int) -> list[tuple[str, st
         ("G", "grce width", config.n_grce),
         ("X", "xctx width", config.n_xctx),
         ("U", "inner xctx width", _get_inner_xctx_width(config)),
+        ("R", "rotary axes", getattr(config, "n_rope_axis", 0)),
+        ("RH", "rotary heads", getattr(config, "n_rope_head", 0)),
     ]
 
 def _expected_sections(config: GeometryLike, block_size: int) -> list[tuple[str, str, list[dict]]]:
@@ -1874,7 +1888,6 @@ def _expected_sections(config: GeometryLike, block_size: int) -> list[tuple[str,
 
     global_items = eval_items([
         {"label": "token embeddings", "formula": "V * E"},
-        {"label": "position embeddings", "formula": "B * E"},
         {"label": "special embeddings", "formula": "0 * E"},
         {"label": "grce embeddings", "formula": "0 * G"},
     ])
@@ -2022,7 +2035,6 @@ def _compute_actual_counts(config: GeometryLike) -> dict[tuple[str, str], int]:
     counts: dict[tuple[str, str], int] = {}
 
     counts[("embeddings", "token embeddings")] = _module_param_count(model.core.tok_emb)
-    counts[("embeddings", "position embeddings")] = _module_param_count(model.core.pos_emb)
 
     attn_qkv = 0
     attn_proj = 0
@@ -2214,6 +2226,30 @@ class LayerDampening(nn.Module):
         if self.gain is None:
             return y
         return y * self.gain
+
+
+def _rotate_half(tensor: torch.Tensor) -> torch.Tensor:
+    """Rotate pairs of features by 90 degrees (used by RoPE)."""
+
+    last_dim = tensor.size(-1)
+    tensor = tensor.view(*tensor.shape[:-1], last_dim // 2, 2)
+    first = tensor[..., 0]
+    second = tensor[..., 1]
+    rotated = torch.stack((-second, first), dim=-1)
+    return rotated.reshape(*rotated.shape[:-2], last_dim)
+
+
+def _apply_rotary_pos_emb(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    cos: torch.Tensor,
+    sin: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Apply rotary position embedding to query/key tensors."""
+
+    q_rot = (q * cos) + (_rotate_half(q) * sin)
+    k_rot = (k * cos) + (_rotate_half(k) * sin)
+    return q_rot, k_rot
 
 
 def default_prompt_entries() -> list[tuple[str, str]]:
@@ -2572,14 +2608,44 @@ class CausalSelfAttention(nn.Module):
         config = args
         assert config.n_embd % config.n_head == 0
         self.n_head = config.n_head
+        self.head_dim = config.n_embd // config.n_head
         self.key = nn.Linear(config.n_embd, config.n_embd)
         self.query = nn.Linear(config.n_embd, config.n_embd)
         self.value = nn.Linear(config.n_embd, config.n_embd)
         self.proj = nn.Linear(config.n_embd, config.n_embd)
         self.dropout = nn.Dropout(config.dropout)
-        self.register_buffer(
-            "tril", torch.tril(torch.ones(config.block_size, config.block_size))
-        )
+        rope_axes = max(0, int(getattr(config, "n_rope_axis", 0)))
+        rope_heads = max(0, int(getattr(config, "n_rope_head", 0)))
+        max_axes = max(0, self.head_dim // 2)
+        rope_axes = min(rope_axes, max_axes)
+        rope_heads = min(rope_heads, self.n_head)
+        self.rope_axes = rope_axes
+        self.rope_dim = rope_axes * 2
+        self.rope_heads = rope_heads
+        if self.rope_dim > 0 and rope_heads > 0:
+            axis_scales = torch.tensor(
+                [math.sqrt(idx + 1.0) for idx in range(rope_axes)],
+                dtype=torch.float32,
+            )
+            self.register_buffer("rope_axis_scales", axis_scales, persistent=False)
+            self.use_rope = True
+        else:
+            self.register_buffer("rope_axis_scales", None, persistent=False)
+            self.use_rope = False
+
+    def _rope_cache(
+        self,
+        position_ids: torch.Tensor,
+        dtype: torch.dtype,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if not self.use_rope or self.rope_axis_scales is None:
+            raise RuntimeError("RoPE cache requested but rotary embeddings are disabled")
+        axis_scales = self.rope_axis_scales.to(device=position_ids.device, dtype=position_ids.dtype)
+        axis_angles = position_ids.float().unsqueeze(-1) * axis_scales
+        angles = axis_angles.repeat_interleave(2, dim=-1).to(dtype)
+        cos = torch.cos(angles).unsqueeze(1)
+        sin = torch.sin(angles).unsqueeze(1)
+        return cos, sin
 
     def forward(
         self,
@@ -2593,14 +2659,24 @@ class CausalSelfAttention(nn.Module):
         attn_mode: str = "decode",
         layer_idx: int | None = None,
         attention_capture: AttentionCapture | None = None,
+        position_ids: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
         B, T, C = x.shape
-        head_dim = C // self.n_head
         k_full = self.key(x)
-        q = self.query(x).view(B, T, self.n_head, head_dim).transpose(1, 2)
+        q = self.query(x).view(B, T, self.n_head, self.head_dim).transpose(1, 2)
         v_full = self.value(x)
-        k_local = k_full.view(B, T, self.n_head, head_dim).transpose(1, 2)
-        v_local = v_full.view(B, T, self.n_head, head_dim).transpose(1, 2)
+        k_local = k_full.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
+        v_local = v_full.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
+
+        if self.use_rope:
+            if position_ids is None:
+                raise ValueError("position_ids are required when --n-rope-axis/--n-rope-head > 0")
+            cos, sin = self._rope_cache(position_ids, q.dtype)
+            q_slice = q[:, : self.rope_heads, :, : self.rope_dim]
+            k_slice = k_local[:, : self.rope_heads, :, : self.rope_dim]
+            q_rot, k_rot = _apply_rotary_pos_emb(q_slice, k_slice, cos, sin)
+            q[:, : self.rope_heads, :, : self.rope_dim] = q_rot
+            k_local[:, : self.rope_heads, :, : self.rope_dim] = k_rot
 
         cache_keys: list[torch.Tensor] = []
         cache_values: list[torch.Tensor] = []
@@ -2627,15 +2703,19 @@ class CausalSelfAttention(nn.Module):
             cache_len = 0
 
         total_len = all_k.size(2)
-        scores = (q @ all_k.transpose(-2, -1)) / math.sqrt(head_dim)
+        scores = (q @ all_k.transpose(-2, -1)) / math.sqrt(self.head_dim)
 
         block_mask: torch.Tensor | None = None
         if attn_mode not in {"encode", "decode", "reverse", "noattn"}:
             raise ValueError(f"Unknown attention mode: {attn_mode}")
         if attn_mode == "decode" and not full_attention:
-            block_mask = self.tril[:T, :T] == 0
+            block_mask = torch.triu(
+                torch.ones(T, T, dtype=torch.bool, device=x.device), diagonal=1
+            )
         elif attn_mode == "reverse" and not full_attention:
-            block_mask = self.tril[:T, :T].transpose(0, 1) == 0
+            block_mask = torch.tril(
+                torch.ones(T, T, dtype=torch.bool, device=x.device), diagonal=-1
+            )
         elif attn_mode == "noattn":
             eye = torch.eye(T, dtype=torch.bool, device=x.device)
             block_mask = ~eye
@@ -2660,8 +2740,8 @@ class CausalSelfAttention(nn.Module):
                 scores = scores.masked_fill(atten_block_mask[:, None, :, :], float("-inf"))
 
         kv_output = (
-            k_full.view(B, T, self.n_head, head_dim),
-            v_full.view(B, T, self.n_head, head_dim),
+            k_full.view(B, T, self.n_head, self.head_dim),
+            v_full.view(B, T, self.n_head, self.head_dim),
         )
 
         local_max = scores.max(dim=-1).values
@@ -2723,15 +2803,25 @@ class CausalSelfAttention(nn.Module):
         puncture_mask: torch.Tensor | None = None,
         disable_rows: torch.Tensor | None = None,
         write_cache: bool = True,
+        position_ids: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, "LayerCache"]:
         if x.size(1) != 1:
             raise ValueError("Incremental attention expects a single-token sequence")
         B, T, C = x.shape
         k_full = self.key(x)
-        q = self.query(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
+        q = self.query(x).view(B, T, self.n_head, self.head_dim).transpose(1, 2)
         v_full = self.value(x)
-        v = v_full.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
-        k_new = k_full.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
+        v = v_full.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
+        k_new = k_full.view(B, T, self.n_head, self.head_dim).transpose(1, 2)
+        if self.use_rope:
+            if position_ids is None:
+                raise ValueError("position_ids are required when --n-rope-axis/--n-rope-head > 0")
+            cos, sin = self._rope_cache(position_ids, q.dtype)
+            q_slice = q[:, : self.rope_heads, :, : self.rope_dim]
+            k_slice = k_new[:, : self.rope_heads, :, : self.rope_dim]
+            q_rot, k_rot = _apply_rotary_pos_emb(q_slice, k_slice, cos, sin)
+            q[:, : self.rope_heads, :, : self.rope_dim] = q_rot
+            k_new[:, : self.rope_heads, :, : self.rope_dim] = k_rot
         key_append = k_new.squeeze(2).unsqueeze(2)
         value_append = v.squeeze(2).unsqueeze(2)
         if write_cache:
@@ -2739,7 +2829,7 @@ class CausalSelfAttention(nn.Module):
             k, v = cache.tensors()
         else:
             k, v = key_append, value_append
-        att = (q @ k.transpose(-2, -1)) / math.sqrt(k.size(-1))
+        att = (q @ k.transpose(-2, -1)) / math.sqrt(self.head_dim)
         if puncture_mask is not None:
             att = att.masked_fill(puncture_mask[:, None, None, :], float("-inf"))
         att = F.softmax(att, dim=-1)
@@ -2822,6 +2912,7 @@ class Block(nn.Module):
         attention_dropout_positions: torch.Tensor | None = None,
         full_attention: bool = False,
         attention_capture: AttentionCapture | None = None,
+        position_ids: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor | None, tuple[torch.Tensor, torch.Tensor] | None]:
         attn_input = self._apply_xctx_bias(x, xctx_bias, self.xctx_attn_gain)
         attn_norm = self.ln1(attn_input)
@@ -2836,6 +2927,7 @@ class Block(nn.Module):
             attn_mode=attn_mode,
             layer_idx=layer_idx,
             attention_capture=attention_capture,
+            position_ids=position_ids,
         )
         if attention_disabled_rows is not None and attention_disabled_rows.any():
             mask = (~attention_disabled_rows).view(-1, 1, 1).to(attn_output.dtype)
@@ -2859,6 +2951,7 @@ class Block(nn.Module):
         attention_disabled_rows: torch.Tensor | None = None,
         puncture_mask: torch.Tensor | None = None,
         write_cache: bool = True,
+        position_ids: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, LayerCache, torch.Tensor | None]:
         attn_input = self._apply_xctx_bias(x, xctx_bias, self.xctx_attn_gain)
         attn_norm = self.ln1(attn_input)
@@ -2869,6 +2962,7 @@ class Block(nn.Module):
             puncture_mask=puncture_mask,
             disable_rows=attention_disabled_rows,
             write_cache=write_cache,
+            position_ids=position_ids,
         )
         if attention_disabled_rows is not None and attention_disabled_rows.any():
             mask = (~attention_disabled_rows).view(-1, 1, 1).to(attn_out.dtype)
@@ -3021,7 +3115,6 @@ class TransformerStackCore(nn.Module):
         config = args
         self.config = config
         self.tok_emb = nn.Embedding(config.vocab_size, config.n_embd)
-        self.pos_emb = nn.Embedding(config.block_size, config.n_embd)
         self.control_emb = nn.Embedding(3, config.n_embd, padding_idx=0)
         self.drop = nn.Dropout(config.dropout)
         self.blocks = nn.ModuleList([Block(config) for _ in range(config.n_layer)])
@@ -3039,8 +3132,12 @@ class TransformerStackCore(nn.Module):
         qh_query_callback=None,
         position_offsets: torch.Tensor | None = None,
         attention_capture: AttentionCapture | None = None,
+        position_ids: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, list[torch.Tensor], list[tuple[torch.Tensor, torch.Tensor]]]:
         rows, cols, _ = x.shape
+        if position_ids is None:
+            base = torch.arange(cols, device=x.device, dtype=torch.long)
+            position_ids = base.unsqueeze(0).expand(rows, cols)
         xctx_tensor = _merge_bias_list(
             xctx_bias_list_in or [],
             rows,
@@ -3092,6 +3189,7 @@ class TransformerStackCore(nn.Module):
                 layer_idx=layer_idx,
                 full_attention=(mode == "encode"),
                 attention_capture=attention_capture,
+                position_ids=position_ids,
             )
             samples.append(current)
             kv_outputs.append(kv_pair if kv_pair is not None else None)
@@ -3114,6 +3212,7 @@ class TransformerStackGrid(nn.Module):
         kv_cache_list_in: Sequence[Sequence[tuple[torch.Tensor, torch.Tensor]]] | None = None,
         qh_query_callback=None,
         mode: str = "decode",
+        position_ids: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, list[torch.Tensor], list]:
         output, samples, kv_out = self.core.forward_grid(
             x,
@@ -3122,6 +3221,7 @@ class TransformerStackGrid(nn.Module):
             kv_cache_list_in=kv_cache_list_in,
             mode=mode,
             qh_query_callback=qh_query_callback,
+            position_ids=position_ids,
         )
         return output, samples, kv_out
 
@@ -3384,6 +3484,7 @@ class TransformerStackColumn:
         qh_query_callback=None,
         detach_internal_kv_cache: bool = False,
         attention_capture: "AttentionCapture" | None = None,
+        position_ids: torch.Tensor | None = None,
     ) -> tuple[
         torch.Tensor,
         list[torch.Tensor],
@@ -3403,6 +3504,7 @@ class TransformerStackColumn:
             mode="decode",
             qh_query_callback=qh_query_callback,
             attention_capture=attention_capture,
+            position_ids=position_ids,
         )
         if detach_internal_kv_cache:
             column_output = column_output.detach()
@@ -3486,6 +3588,7 @@ class TransformerStackSequence(nn.Module):
         context_detach_span: int | None = None,
         context_detach_enabled: bool | None = None,
         attention_capture: AttentionCapture | None = None,
+        position_ids: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None, list]:
         if mode not in {"forward", "encode", "decode", "reverse", "noattn"}:
             raise ValueError(f"Unknown TransformerStackSequence mode: {mode}")
@@ -3495,6 +3598,9 @@ class TransformerStackSequence(nn.Module):
         outputs: list[torch.Tensor] = []
         grce_state = self._ensure_state(self.grce, grce_in, rows, device, dtype)
         xctx_state = self._ensure_state(self.xctx, xctx_in, rows, device, dtype)
+        if position_ids is None:
+            base = torch.arange(cols, device=device, dtype=torch.long)
+            position_ids = base.unsqueeze(0).expand(rows, cols)
         if mode in {"encode", "decode", "reverse"}:
             return self._forward_grid_mode(
                 x,
@@ -3512,6 +3618,7 @@ class TransformerStackSequence(nn.Module):
                 context_detach_span=context_detach_span,
                 context_detach_enabled=context_detach_enabled,
                 attention_capture=attention_capture,
+                position_ids=position_ids,
             )
         use_internal_cache = mode != "noattn"
         base_sources = list(kv_cache_list_in or [])
@@ -3543,6 +3650,7 @@ class TransformerStackSequence(nn.Module):
                 qh_query_callback=qh_query_callback,
                 detach_internal_kv_cache=detach_internal_kv_cache,
                 attention_capture=column_capture,
+                position_ids=position_ids[:, col : col + 1],
             )
             outputs.append(column_output)
             if detach_internal_kv_cache and kv_storage is not None:
@@ -3608,6 +3716,7 @@ class TransformerStackSequence(nn.Module):
         context_detach_span: int | None,
         context_detach_enabled: bool | None,
         attention_capture: AttentionCapture | None,
+        position_ids: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None, list[tuple[torch.Tensor, torch.Tensor]]]:
         rows, cols, _ = x.shape
         grid_grce_biases = list(grce_bias_list_in or [])
@@ -3624,6 +3733,7 @@ class TransformerStackSequence(nn.Module):
             mode=mode,
             qh_query_callback=qh_query_callback,
             attention_capture=attention_capture,
+            position_ids=position_ids,
         )
         kv_out = kv_pairs
         if detach_internal_kv_cache:
@@ -3767,7 +3877,9 @@ class GRCEGPT(nn.Module):
         device: torch.device,
         position_offsets: torch.Tensor | None,
     ) -> torch.Tensor:
-        base = torch.arange(length, device=device).unsqueeze(0).expand(batch_size, -1)
+        base = torch.arange(length, device=device, dtype=torch.long).unsqueeze(0).expand(
+            batch_size, -1
+        )
         if position_offsets is None:
             return base
         offsets = position_offsets.to(device=device, dtype=torch.long)
@@ -3787,16 +3899,14 @@ class GRCEGPT(nn.Module):
         B, T = idx.shape
         device = idx.device
         pos_idx = self._position_ids(T, B, device, position_offsets)
-        if torch.any(pos_idx >= self.config.block_size):
-            raise ValueError("position ids exceed configured --block-size")
         tok = self.core.tok_emb(idx)
-        pos = self.core.pos_emb(pos_idx)
-        x = self.core.drop(tok + pos)
+        x = self.core.drop(tok)
         context_info: dict[str, torch.Tensor] | None = None
         if mode in {"forward", "noattn", "encode"}:
             sequence_output, grce_out, xctx_out, _ = self.stack_sequence.forward(
                 x,
                 mode=mode,
+                position_ids=pos_idx,
             )
             hidden = sequence_output
             context_info = {}
@@ -3807,7 +3917,11 @@ class GRCEGPT(nn.Module):
             if not context_info:
                 context_info = None
         elif mode in {"decode", "reverse"}:
-            decode_output, _, _ = self.stack_grid.forward(x, mode=mode)
+            decode_output, _, _ = self.stack_grid.forward(
+                x,
+                mode=mode,
+                position_ids=pos_idx,
+            )
             hidden = decode_output
         else:
             raise ValueError(f"Unknown forward_autoreg mode: {mode}")
@@ -3848,7 +3962,7 @@ def build_model_tag(config: GeometryLike) -> str:
     """Build the filename tag used by ``train``/``create`` checkpoints."""
 
     tag = (
-        f"v{config.vocab_size}_bs{config.block_size}_emb{config.n_embd}_"
+        f"v{config.vocab_size}_emb{config.n_embd}_"
         f"layers{config.n_layer}_heads{config.n_head}"
     )
     if config.n_grce > 0:
@@ -3996,37 +4110,37 @@ def _run_microbatch_pass(
             pos_offsets = None
             if position_shift:
                 pos_offsets = torch.full((row_count,), position_shift, dtype=torch.long, device=device)
-            token_components, pos_components = _embedding_components_with_offsets(
-                model,
-                xb,
-                pos_offsets,
+        token_components, position_ids = _embedding_components_with_offsets(
+            model,
+            xb,
+            pos_offsets,
+        )
+        future_token_components, _ = _embedding_components_with_offsets(
+            model,
+            yb,
+            pos_offsets,
+        )
+        control_ids = torch.zeros((row_count, cols_total), dtype=torch.long, device=device)
+        row_entries: list[dict[str, object]] = []
+        for idx in range(row_count):
+            meta = metadata[idx] if idx < len(metadata) else {}
+            row_entries.append(
+                {
+                    "layout": layout_text,
+                    "row": int(meta.get("row", idx + 1)),
+                    "token_start": int(meta.get("token_start", 0)),
+                    "token_end": int(meta.get("token_end", 0)),
+                    "token_span": int(meta.get("token_span", 0)),
+                    "wrapped": bool(meta.get("wrapped", 0)),
+                    "total_tokens": int(meta.get("total_tokens", 0)),
+                    "loss_sum": 0.0,
+                    "token_count": 0,
+                }
             )
-            future_token_components, _ = _embedding_components_with_offsets(
-                model,
-                yb,
-                pos_offsets,
-            )
-            control_ids = torch.zeros((row_count, cols_total), dtype=torch.long, device=device)
             cursor = 0
             kv_chain: list[list[tuple[torch.Tensor, torch.Tensor]] | None] = []
             grce_state = None
             xctx_state = None
-            row_entries: list[dict[str, object]] = []
-            for idx in range(row_count):
-                meta = metadata[idx] if idx < len(metadata) else {}
-                row_entries.append(
-                    {
-                        "layout": layout_text,
-                        "row": int(meta.get("row", idx + 1)),
-                        "token_start": int(meta.get("token_start", 0)),
-                        "token_end": int(meta.get("token_end", 0)),
-                        "token_span": int(meta.get("token_span", 0)),
-                        "wrapped": bool(meta.get("wrapped", 0)),
-                        "total_tokens": int(meta.get("total_tokens", 0)),
-                        "loss_sum": 0.0,
-                        "token_count": 0,
-                    }
-                )
             for segment in group.segments:
                 cols = int(segment.columns)
                 if cols <= 0:
@@ -4053,12 +4167,12 @@ def _run_microbatch_pass(
                     token_source = token_components
                     chunk_target = yb[:, start:end]
                 token_slice = token_source[:, start:end, :]
-                pos_slice = pos_components[:, start:end, :]
+                pos_id_slice = position_ids[:, start:end]
+                if segment.suppress_positional:
+                    pos_id_slice = pos_id_slice.new_zeros(pos_id_slice.shape)
                 chunk_input = _compose_chunk_embeddings(
                     model.core.drop,
                     token_slice,
-                    pos_slice,
-                    include_positional=not segment.suppress_positional,
                     control_slice=control_embed,
                 )
                 kv_sources = None if mode == "noattn" else (kv_chain if kv_chain else None)
@@ -4070,6 +4184,7 @@ def _run_microbatch_pass(
                     xctx_in=xctx_state,
                     kv_cache_list_in=kv_sources,
                     mode=mode,
+                    position_ids=pos_id_slice,
                     detach_internal_kv_cache=row_detach_kv_cache,
                     context_detach_span=detach_span_override,
                     context_detach_enabled=context_detach_override,
@@ -4328,36 +4443,16 @@ def _embedding_components_with_offsets(
     batch_size, seq_len = token_batch.shape
     pos_idx = model._position_ids(seq_len, batch_size, token_batch.device, position_offsets)
     token_emb = model.core.tok_emb(token_batch)
-    pos_emb = model.core.pos_emb(pos_idx)
-    return token_emb, pos_emb
-
-
-def _sequence_embeddings(model: GRCEGPT, token_batch: torch.Tensor) -> torch.Tensor:
-    """Project token IDs into dropout'd embeddings for stack sequence calls."""
-
-    return _sequence_embeddings_with_offsets(model, token_batch, None)
-
-
-def _sequence_embeddings_with_offsets(
-    model: GRCEGPT,
-    token_batch: torch.Tensor,
-    position_offsets: torch.Tensor | None,
-) -> torch.Tensor:
-    tok, pos = _embedding_components_with_offsets(model, token_batch, position_offsets)
-    return model.core.drop(tok + pos)
+    return token_emb, pos_idx
 
 
 def _compose_chunk_embeddings(
     dropout_layer: nn.Dropout,
     token_slice: torch.Tensor,
-    pos_slice: torch.Tensor,
     *,
-    include_positional: bool,
     control_slice: torch.Tensor | None = None,
 ) -> torch.Tensor:
     base = token_slice
-    if include_positional:
-        base = base + pos_slice
     if control_slice is not None:
         base = base + control_slice
     return dropout_layer(base)
@@ -4485,7 +4580,6 @@ def train_model(
     dataset: TextDataset,
     device: torch.device,
     steps: int,
-    block_length: int,
     batch_size: int,
     eval_interval: int,
     start_step: int,
@@ -4562,7 +4656,7 @@ def train_model(
             layout = manual_layout_override
             manual_layout_override = None
         else:
-            layout = BatchLayout(args.layout, batch_size=batch_size, block_size=block_length)
+            layout = BatchLayout(args.layout, batch_size=batch_size, block_size=args.block_size)
         layout_serialized = layout.serialize()
         layout_span = layout.total_token_span()
         _log_layout_warnings(args, layout)
@@ -4592,10 +4686,6 @@ def train_model(
                 if args.grad_summary:
                     cycle_micro_norms.append(norm)
             position_shift = 0
-            if args.block_length < args.block_size:
-                headroom = max(0, args.block_size - args.block_length)
-                if headroom > 0:
-                    position_shift = random.randint(0, headroom)
             total_loss_sum, total_tokens, micro_logs, window_detail = train_layout_batch(
                 args,
                 model,
@@ -4658,7 +4748,7 @@ def train_model(
             replacement = layout
             attempts = 0
             while True:
-                candidate = BatchLayout(args.layout, batch_size=batch_size, block_size=block_length)
+                candidate = BatchLayout(args.layout, batch_size=batch_size, block_size=args.block_size)
                 candidate_span = candidate.total_token_span()
                 replacement = candidate
                 if max_span <= 0 or candidate_span <= max_span or attempts >= 8:
@@ -4920,10 +5010,8 @@ def run_profile_mode(
     model: GRCEGPT,
     optimizer: torch.optim.Optimizer,
     *,
-    block_length: int,
     batch_size: int,
     device: torch.device,
-    block_size: int,
     ) -> None:
     """Warm up once, profile a second training step, and report CUDA stats."""
 
@@ -4934,23 +5022,17 @@ def run_profile_mode(
             "torch.profiler is unavailable; upgrade to PyTorch 1.8+ to use 'profile'."
         ) from exc
 
-    profile_layout = BatchLayout(args.layout, batch_size=batch_size, block_size=block_length)
+    profile_layout = BatchLayout(args.layout, batch_size=batch_size, block_size=args.block_size)
     _log_layout_warnings(args, profile_layout)
 
     def train_step(tag: str, layout: BatchLayout) -> float:
         model.train()
-        position_shift = 0
-        if block_length < block_size:
-            headroom = max(0, block_size - block_length)
-            if headroom > 0:
-                position_shift = random.randint(0, headroom)
         total_loss_sum, total_tokens, _, _ = train_layout_batch(
             args,
             model,
             dataset,
             layout,
             device,
-            position_shift=position_shift,
         )
         if total_tokens <= 0:
             raise RuntimeError("No tokens processed during profiling step")
@@ -5123,10 +5205,10 @@ def _evaluate_row_block(
     model: GRCEGPT,
     row: BlockLayout,
     token_components: torch.Tensor,
-    pos_components: torch.Tensor,
     future_token_components: torch.Tensor,
     source_ids: torch.Tensor,
     targets: torch.Tensor,
+    position_ids: torch.Tensor,
     *,
     input_tokens: torch.Tensor,
     capture_columns: set[int] | None = None,
@@ -5193,12 +5275,12 @@ def _evaluate_row_block(
             token_source = token_components
             chunk_target = targets[:, start:end]
         token_slice = token_source[:, start:end, :]
-        pos_slice = pos_components[:, start:end, :]
+        pos_id_slice = position_ids[:, start:end]
+        if segment.suppress_positional:
+            pos_id_slice = pos_id_slice.new_zeros(pos_id_slice.shape)
         chunk_input = _compose_chunk_embeddings(
             model.core.drop,
             token_slice,
-            pos_slice,
-            include_positional=not segment.suppress_positional,
             control_slice=control_embed,
         )
         chunk_capture = None
@@ -5213,6 +5295,7 @@ def _evaluate_row_block(
             xctx_in=xctx_state,
             kv_cache_list_in=kv_sources,
             mode=segment.mode,
+            position_ids=pos_id_slice,
             detach_internal_kv_cache=row_detach_kv_cache,
             context_detach_span=detach_span_override,
             context_detach_enabled=context_detach_override,
@@ -5289,7 +5372,6 @@ def _prepare_eval_tokens(
     dataset: TextDataset,
     tokenizer: GPT2TokenizerWrapper,
     *,
-    block_length: int,
     start_pos: int,
     custom_text: str | None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, int, str, str]:
@@ -5304,9 +5386,9 @@ def _prepare_eval_tokens(
         context_tokens = provided
         source_label = "custom text"
     else:
-        span = block_length + 1
+        span = args.block_size + 1
         if span <= 1:
-            raise ValueError("--block-length must be >= 1 for evaluation")
+            raise ValueError("--block-size must be >= 1 for evaluation")
         context_tokens = dataset.looped_slice("test", start_pos, span)
         source_label = f"test split offset {start_pos}"
     if context_tokens.numel() < 2:
@@ -5323,15 +5405,11 @@ def run_test_slice(
     dataset: TextDataset,
     tokenizer: GPT2TokenizerWrapper,
     model: GRCEGPT,
-    block_length: int,
     start_pos: int,
     *,
     custom_text: str | None = None,
 ) -> None:
     """Run the layout on either a corpus slice or custom text and log per-token stats."""
-
-    if block_length <= 0 and not custom_text:
-        raise ValueError("--block-length must be positive for corpus-based test slices")
 
     model_device = next(model.parameters()).device
     was_training = model.training
@@ -5349,7 +5427,6 @@ def run_test_slice(
             args,
             dataset,
             tokenizer,
-            block_length=block_length,
             start_pos=start_pos,
             custom_text=custom_text,
         )
@@ -5365,7 +5442,7 @@ def run_test_slice(
 
         xb = inputs.unsqueeze(0).to(model_device)
         yb = targets.unsqueeze(0).to(model_device)
-        token_components, pos_components = _embedding_components_with_offsets(
+        token_components, position_ids = _embedding_components_with_offsets(
             model,
             xb,
             None,
@@ -5392,10 +5469,10 @@ def run_test_slice(
                     model,
                     row,
                     token_components,
-                    pos_components,
                     future_token_components,
                     xb,
                     yb,
+                    position_ids,
                     input_tokens=column_tokens,
                     capture_columns=capture_columns,
                 )
@@ -5514,15 +5591,11 @@ def run_eval_layout(
     dataset: TextDataset,
     tokenizer: GPT2TokenizerWrapper,
     model: GRCEGPT,
-    block_length: int,
     start_pos: int,
     *,
     custom_text: str | None = None,
 ) -> None:
     """Evaluate the layout on a deterministic slice and print per-row metrics."""
-
-    if block_length <= 0 and not custom_text:
-        raise ValueError("--block-length must be positive for corpus-based evaluation")
 
     model_device = next(model.parameters()).device
     was_training = model.training
@@ -5540,7 +5613,6 @@ def run_eval_layout(
             args,
             dataset,
             tokenizer,
-            block_length=block_length,
             start_pos=start_pos,
             custom_text=custom_text,
         )
@@ -5553,7 +5625,16 @@ def run_eval_layout(
 
         xb = inputs.unsqueeze(0).to(model_device)
         yb = targets.unsqueeze(0).to(model_device)
-        embeddings = _sequence_embeddings(model, xb)
+        token_components, position_ids = _embedding_components_with_offsets(
+            model,
+            xb,
+            None,
+        )
+        future_token_components, _ = _embedding_components_with_offsets(
+            model,
+            yb,
+            None,
+        )
 
         overall_loss_sums = {mode: 0.0 for mode in BATCH_MODES}
         overall_token_counts = {mode: 0 for mode in BATCH_MODES}
@@ -5575,8 +5656,11 @@ def run_eval_layout(
                     args,
                     model,
                     row,
-                    embeddings,
+                    token_components,
+                    future_token_components,
+                    xb,
                     yb,
+                    position_ids,
                     input_tokens=inputs,
                 )
             except ValueError as exc:
@@ -5648,6 +5732,9 @@ def preprocess_runtime_args(args: Args) -> None:
                 "Checkpoint lacks config metadata; re-save it with the latest format."
             )
         saved = dict(saved_config)
+        saved_block_size = int(
+            saved.pop("block_size", payload.get("block_size", args.block_size))
+        )
         legacy_xctx = bool(saved.pop("grce_xctx", False))
         if "n_xctx" not in saved:
             if legacy_xctx:
@@ -5658,16 +5745,14 @@ def preprocess_runtime_args(args: Args) -> None:
         config = ModelGeometry(**saved)
         args.checkpoint_payload_override = payload
         args.tokenizer_json_override = payload.get("tokenizer_json")
-        args.block_size = config.block_size
-        if not getattr(args, "_block_length_defined", False):
-            args.block_length = config.block_size
-        elif args.block_length > config.block_size:
-            raise ValueError("--block-length cannot exceed checkpoint block size")
+        args.block_size = saved_block_size
         args.n_layer = config.n_layer
         args.n_head = config.n_head
         args.n_embd = config.n_embd
         args.n_grce = config.n_grce
         args.n_xctx = config.n_xctx
+        args.n_rope_axis = getattr(config, "n_rope_axis", args.n_rope_axis)
+        args.n_rope_head = getattr(config, "n_rope_head", args.n_rope_head)
         args.vocab_size = config.vocab_size
         args.model_path_override = checkpoint_path
         args.log_path_override = checkpoint_path.with_suffix(".log")
@@ -5675,12 +5760,13 @@ def preprocess_runtime_args(args: Args) -> None:
 
     inferred = ModelGeometry(
         vocab_size=args.vocab_size,
-        block_size=args.block_size,
         n_layer=args.n_layer,
         n_head=args.n_head,
         n_embd=args.n_embd,
         n_grce=args.n_grce,
         n_xctx=args.n_xctx,
+        n_rope_axis=args.n_rope_axis,
+        n_rope_head=args.n_rope_head,
     )
     tag = build_model_tag(inferred)
     for extra_tag in args.tag:
@@ -6436,13 +6522,12 @@ class Runtime:
                 )
             )
             tok_vecs = config.vocab_size
-            pos_vecs = config.block_size
-            emb_vectors = tok_vecs + pos_vecs
+            emb_vectors = tok_vecs
             emb_params = embedding_params
             print(
                 color_text(
                     f"Learned embedding vectors: {emb_vectors} "
-                    f"(token={tok_vecs}, position={pos_vecs}); params={emb_params:,}",
+                    f"(token={tok_vecs}); params={emb_params:,}",
                     Colors.BLUE,
                 )
             )
@@ -6608,6 +6693,7 @@ class Runtime:
                         "total_steps": total_steps,
                         "loss_history": loss_history,
                         "config": asdict(args_to_model_geometry(self.args)),
+                        "block_size": self.args.block_size,
                         "train_wall_seconds": total_train_wall,
                         "total_train_tokens": total_train_tokens,
                         "prompts": prompt_registry.serialize() if prompt_registry else None,
@@ -6636,6 +6722,7 @@ class Runtime:
                     "total_steps": 0,
                     "loss_history": [],
                     "config": asdict(args_to_model_geometry(self.args)),
+                    "block_size": self.args.block_size,
                     "train_wall_seconds": 0.0,
                     "total_train_tokens": 0,
                     "prompts": prompt_registry.serialize(),
@@ -6679,7 +6766,6 @@ class Runtime:
                     dataset=dataset,
                     tokenizer=tokenizer,
                     model=model,
-                    block_length=self.args.block_length,
                     start_pos=self.args.test_start,
                     custom_text=custom_text,
                 )
@@ -6698,7 +6784,6 @@ class Runtime:
                         dataset=dataset,
                         tokenizer=tokenizer,
                         model=model,
-                        block_length=self.args.block_length,
                         start_pos=self.args.eval_start,
                         custom_text=custom_text,
                     )
@@ -6709,7 +6794,7 @@ class Runtime:
                     if total <= 0:
                         raise ValueError("Test corpus is empty; cannot run random evaluations")
                     rng = random.Random()
-                    window = max(1, total - (self.args.block_length + 1))
+                    window = max(1, total - (self.args.block_size + 1))
                     for run_idx in range(rand_runs):
                         start_pos = rng.randint(0, window - 1)
                         print(color_text(f"[eval random #{run_idx + 1}] offset {start_pos}", Colors.BLUE))
@@ -6718,7 +6803,6 @@ class Runtime:
                             dataset=dataset,
                             tokenizer=tokenizer,
                             model=model,
-                            block_length=self.args.block_length,
                             start_pos=start_pos,
                             custom_text=None,
                         )
@@ -6728,7 +6812,6 @@ class Runtime:
                     dataset=dataset,
                     tokenizer=tokenizer,
                     model=model,
-                    block_length=self.args.block_length,
                     start_pos=self.args.eval_start,
                     custom_text=None,
                 )
@@ -6756,10 +6839,8 @@ class Runtime:
                     dataset,
                     model,
                     optimizer,
-                    block_length=self.args.block_length,
                     batch_size=self.args.batch_size,
                     device=device,
-                    block_size=self.args.block_size,
                 )
                 return
 
@@ -6814,7 +6895,7 @@ class Runtime:
                     BatchLayout(
                         self.args.layout,
                         batch_size=self.args.batch_size,
-                        block_size=self.args.block_length,
+                        block_size=self.args.block_size,
                     )
                     for _ in range(self.args.steps)
                 ]
@@ -6870,7 +6951,6 @@ class Runtime:
                     dataset,
                     device,
                     self.args.steps,
-                    self.args.block_length,
                     self.args.batch_size,
                     self.args.eval_interval,
                     total_steps,
@@ -6914,6 +6994,7 @@ class Runtime:
                         "total_steps": total_steps,
                         "loss_history": loss_history,
                         "config": asdict(args_to_model_geometry(self.args)),
+                        "block_size": self.args.block_size,
                         "train_wall_seconds": total_train_wall,
                         "total_train_tokens": total_train_tokens,
                         "prompts": prompt_registry.serialize() if prompt_registry else None,
