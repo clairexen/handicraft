@@ -3341,6 +3341,75 @@ class TransformerXCTX(nn.Module):
         return {"samplers": sampler, "bias": bias, "mlp": mixer}
 
 
+class TransformerStackColumn:
+    """Evaluates a single column with optional GRCE/XCTX bias shims."""
+
+    def __init__(
+        self,
+        core: "TransformerStackCore",
+        grce_module: TransformerGRCE | None,
+        xctx_module: TransformerXCTX | None,
+    ) -> None:
+        self.core = core
+        self.grce = grce_module
+        self.xctx = xctx_module
+
+    @staticmethod
+    def _collect_biases(
+        bias_list: Sequence[torch.Tensor] | None,
+        column_index: int,
+    ) -> list[torch.Tensor]:
+        if not bias_list:
+            return []
+        collected: list[torch.Tensor] = []
+        for bias in bias_list:
+            if bias is None or bias.size(1) == 0:
+                continue
+            if bias.size(1) == 1:
+                collected.append(bias)
+            elif column_index < bias.size(1):
+                collected.append(bias[:, column_index : column_index + 1, :, :])
+        return collected
+
+    def forward(
+        self,
+        column_input: torch.Tensor,
+        *,
+        column_index: int,
+        grce_state: torch.Tensor | None,
+        xctx_state: torch.Tensor | None,
+        grce_bias_list_in: Sequence[torch.Tensor] | None,
+        xctx_bias_list_in: Sequence[torch.Tensor] | None,
+        kv_sources: Sequence[Sequence[tuple[torch.Tensor, torch.Tensor]] | None] | None,
+        qh_query_callback=None,
+        detach_internal_kv_cache: bool = False,
+        attention_capture: "AttentionCapture" | None = None,
+    ) -> tuple[
+        torch.Tensor,
+        list[torch.Tensor],
+        list[tuple[torch.Tensor, torch.Tensor]],
+    ]:
+        grce_biases = self._collect_biases(grce_bias_list_in, column_index)
+        xctx_biases = self._collect_biases(xctx_bias_list_in, column_index)
+        if self.grce is not None and grce_state is not None:
+            grce_biases.append(self.grce.bias_forward(grce_state))
+        if self.xctx is not None and xctx_state is not None:
+            xctx_biases.append(self.xctx.bias_forward(xctx_state))
+        column_output, samples, kv_pairs = self.core.forward_grid(
+            column_input,
+            xctx_bias_list_in=xctx_biases,
+            grce_bias_list_in=grce_biases,
+            kv_cache_list_in=kv_sources,
+            mode="decode",
+            qh_query_callback=qh_query_callback,
+            attention_capture=attention_capture,
+        )
+        if detach_internal_kv_cache:
+            column_output = column_output.detach()
+            samples = [sample.detach() for sample in samples]
+        return column_output, samples, kv_pairs
+
+
 class TransformerStackSequence(nn.Module):
     """Compose the core stack with GRCE/XCTX channels for sequential grids."""
 
@@ -3355,6 +3424,7 @@ class TransformerStackSequence(nn.Module):
         self.kv_rebalance = args.kv_rebalance
         modules = [m for m in (self.grce, self.xctx) if m is not None]
         self.context_modules = nn.ModuleList(modules)
+        self.column = TransformerStackColumn(self.core, self.grce, self.xctx)
 
     def _allocate_detached_kv_storage(
         self,
@@ -3450,28 +3520,6 @@ class TransformerStackSequence(nn.Module):
         if detach_internal_kv_cache:
             kv_storage = self._allocate_detached_kv_storage(rows, cols, device, dtype)
         for col in range(cols):
-            column_grce_biases: list[torch.Tensor] = []
-            column_xctx_biases: list[torch.Tensor] = []
-            if grce_bias_list_in:
-                for bias in grce_bias_list_in:
-                    if bias is None or bias.size(1) == 0:
-                        continue
-                    if bias.size(1) == 1:
-                        column_grce_biases.append(bias)
-                    elif col < bias.size(1):
-                        column_grce_biases.append(bias[:, col : col + 1, :, :])
-            if xctx_bias_list_in:
-                for bias in xctx_bias_list_in:
-                    if bias is None or bias.size(1) == 0:
-                        continue
-                    if bias.size(1) == 1:
-                        column_xctx_biases.append(bias)
-                    elif col < bias.size(1):
-                        column_xctx_biases.append(bias[:, col : col + 1, :, :])
-            if self.grce is not None and grce_state is not None:
-                column_grce_biases.append(self.grce.bias_forward(grce_state))
-            if self.xctx is not None and xctx_state is not None:
-                column_xctx_biases.append(self.xctx.bias_forward(xctx_state))
             column_input = x[:, col : col + 1, :]
             column_kv_sources: list[Sequence[tuple[torch.Tensor, torch.Tensor] | None]] = []
             if base_sources:
@@ -3484,18 +3532,18 @@ class TransformerStackSequence(nn.Module):
             column_capture = None
             if attention_capture is not None:
                 column_capture = attention_capture.subset(col, 1)
-            column_output, samples, kv_pairs = self.core.forward_grid(
+            column_output, samples, kv_pairs = self.column.forward(
                 column_input,
-                xctx_bias_list_in=column_xctx_biases,
-                grce_bias_list_in=column_grce_biases,
-                kv_cache_list_in=kv_sources_arg,
-                mode="decode",
+                column_index=col,
+                grce_state=grce_state,
+                xctx_state=xctx_state,
+                grce_bias_list_in=grce_bias_list_in,
+                xctx_bias_list_in=xctx_bias_list_in,
+                kv_sources=kv_sources_arg,
                 qh_query_callback=qh_query_callback,
+                detach_internal_kv_cache=detach_internal_kv_cache,
                 attention_capture=column_capture,
             )
-            if detach_internal_kv_cache:
-                column_output = column_output.detach()
-                samples = [sample.detach() for sample in samples]
             outputs.append(column_output)
             if detach_internal_kv_cache and kv_storage is not None:
                 for layer_idx, kv_pair in enumerate(kv_pairs):
@@ -3996,7 +4044,7 @@ def _run_microbatch_pass(
                 elif mode == "encode" and end > start:
                     control_ids[:, start:end] = CONTROL_NONE
                     control_ids[:, end - 1 : end] = CONTROL_PREDICT_NEXT
-                control_slice = control_ids[:, start:end]
+                control_slice = control_ids[:, start:end].clone()
                 control_embed = model.core.control_emb(control_slice)
                 if mode == "reverse":
                     token_source = future_token_components
