@@ -3203,7 +3203,7 @@ class TransformerGRCE(nn.Module):
         mixed = self.mix_norm(self.dropout(combined))
         mlp_hidden = F.gelu(self.mlp_up(mixed))
         mlp_out = self.dropout(self.mlp_down(mlp_hidden))
-        return self.output_norm(grce_state + fused + mlp_out)
+        return self.output_norm(grce_state + mlp_out)
 
     def parameter_breakdown(self) -> dict[str, int]:
         if self.disabled:
