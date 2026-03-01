@@ -566,7 +566,7 @@ The difference is that with > we drop the entire k/v-history at this point,
 so only the recurrent channels can pass information along that barrier.
 
 
-## Thinking Models -- (this is future work)
+## Thinking Models -- (this is work in progress)
 
 Standard transformers have a structural limitation: attention only connects
 tokens across time *within the same layer*. Information computed in higher
@@ -602,6 +602,9 @@ and let the model request more time by predicting the `<|think|>` token. In
 both cases, the crucial point is that the model knows *in advance* whether at
 least one more time slice is available, so it can safely postpone commitment.
 
+(However, at the moment only the explicit mode is supported. The adaptive
+allocation of think-time is still future work.)
+
 Because of GRCE and XCTX, multiple passes over the same input position are not
 redundant. Each additional stack runs with updated recurrent state, so later
 think steps do not simply repeat earlier computations. GRCE provides
@@ -619,6 +622,14 @@ consequence is that later positions — far downstream — may see reduced loss
 because they can rely on information that was explicitly stabilized and refined
 during earlier thinking steps, rather than having to reconstruct it again
 through attention alone.
+
+In addition to the GRCE and XCTX data paths we also adopt the idea of looping
+transformers: Within a think-span of N transformer instantiations for the
+same position we take the LayerNorm of the output of each transformer but the
+last in the span and add that to the input of the next transformer.
+
+Note that because of this think-spans are only possible in those modes that
+have a recurrent path, not "encode", "decode", or "reverse".
 
 
 ## 2-D RoPE on a Torus (future work)
