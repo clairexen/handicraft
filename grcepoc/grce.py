@@ -976,6 +976,13 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         ),
     )
     model_group.add_argument(
+        "--small",
+        action="store_true",
+        help=(
+            "Shortcut for --n-layer 8 --n-head 6 --n-embd 192 --n-grce 64 --n-xctx 512"
+        ),
+    )
+    model_group.add_argument(
         "--tiny",
         action="store_true",
         help=(
@@ -1577,6 +1584,18 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
 
     # --------------------------------------------------------
     # Normalize, tweak, and check global options
+
+    if args.small:
+        if not flag_present("--n-layer"):
+            args.n_layer = 6
+        if not flag_present("--n-head"):
+            args.n_head = 6
+        if not flag_present("--n-embd"):
+            args.n_embd = 256
+        if not flag_present("--n-grce"):
+            args.n_grce = 48
+        if not flag_present("--n-xctx"):
+            args.n_xctx = 512
 
     if args.tiny:
         if not flag_present("--vocab-size"):
