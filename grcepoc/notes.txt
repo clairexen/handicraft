@@ -629,7 +629,7 @@ same position we take the LayerNorm of the output of each transformer but the
 last in the span and add that to the input of the next transformer.
 
 Note that because of this think-spans are only possible in those modes that
-have a recurrent path, not "encode", "decode", or "reverse".
+have a recurrent path, i.e. "forward" and "noattn".
 
 
 ## 2-D RoPE on a Torus (future work)
