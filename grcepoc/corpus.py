@@ -30,6 +30,47 @@ SPECIAL_TOKENS = """
 DEFAULT_LIMIT: int | None = None  # Unlimited by default
 ENCODE_BATCH_SIZE = 64  # number of text chunks per encode_batch call
 
+TOKIPONA_WORDS = """
+a akesi ala alasa ale anpa ante anu apeja awen e en epiku esun ijo
+ike ilo insa jaki jan jasima jelo jo kala kalama kama kasi ken kepeken
+kijetesantakalu kili kipisi kiwen ko kokosila kon kule kulupu kute la
+lanpan lape laso lawa leko len lete li lili linja lipu loje lon luka
+lukin lupa ma majuna mama mani meli meso mi mije misikeke moku moli
+monsi monsuta mu mun musi mute nanpa nasa nasin nena ni nimi noka o oke
+olin ona open pakala pali palisa pan pana pi pilin pimeja pini pipi poka
+poki pona powe pu sama seli selo seme sewi sijelo sike sin sina sinpin
+sitelen soko sona soweli su suli suno supa suwi tan taso tawa telo tenpo
+toki tomo tonsi tu unpa uta utala walo wan waso wawa weka wile
+""".split()
+
+def ensure_tokipona_vocab(tokenizer_json: dict) -> None:
+    vocab = tokenizer_json.get("model", {}).get("vocab", {})
+    added_tokens = tokenizer_json.setdefault("added_tokens", [])
+    existing_added = {entry.get("content") for entry in added_tokens}
+    used_ids = set(vocab.values()) | {entry.get("id") for entry in added_tokens if isinstance(entry.get("id"), int)}
+    next_id = (max(used_ids) + 1) if used_ids else 0
+
+    def add_token(token: str) -> None:
+        nonlocal next_id
+        if token in vocab or token in existing_added:
+            return
+        added_tokens.append(
+            {
+                "id": next_id,
+                "content": token,
+                "single_word": False,
+                "lstrip": False,
+                "rstrip": False,
+                "special": False,
+                "normalized": False,
+            }
+        )
+        existing_added.add(token)
+        next_id += 1
+
+    for word in TOKIPONA_WORDS:
+        add_token(word)
+        add_token(f"Ġ{word}")
 
 def _open_text(path: pathlib.Path):
     """Yield a text-mode file handle for .txt or .txt.gz inputs."""
@@ -77,12 +118,15 @@ def write_json(path: pathlib.Path, data: dict) -> None:
 def build_tokenizer(args: argparse.Namespace) -> int:
     entries = [parse_limited_input(spec) for spec in args.inputs]
     limit = args.limit_bytes if args.limit_bytes is not None else DEFAULT_LIMIT
+    tokipona_reserve = max(0, args.tokipona or 0)
+    if tokipona_reserve >= args.vocab_size:
+        raise ValueError("--tokipona reserve must be smaller than --vocab-size")
     tokenizer = Tokenizer(BPE(unk_token=None))
     tokenizer.pre_tokenizer = ByteLevel(add_prefix_space=False)
     tokenizer.decoder = ByteLevelDecoder()
     byte_alphabet = ByteLevel.alphabet()
     trainer = BpeTrainer(
-        vocab_size=args.vocab_size,
+        vocab_size=args.vocab_size - tokipona_reserve,
         min_frequency=2,
         initial_alphabet=byte_alphabet,
         special_tokens=list(SPECIAL_TOKENS),
@@ -90,6 +134,18 @@ def build_tokenizer(args: argparse.Namespace) -> int:
     tokenizer.train_from_iterator(iter_training_text(entries, limit), trainer=trainer)
     tokenizer.post_processor = ByteLevelProcessor(trim_offsets=False)
     tokenizer_json = json.loads(tokenizer.to_str())
+    if tokipona_reserve > 0:
+        ensure_tokipona_vocab(tokenizer_json)
+    vocab = tokenizer_json.get("model", {}).get("vocab", {})
+    added_tokens = tokenizer_json.get("added_tokens", [])
+    vocab_count = len(vocab)
+    extra_added = sum(1 for entry in added_tokens if entry.get("content") not in vocab)
+    total_tokens = vocab_count + extra_added
+    if total_tokens != args.vocab_size:
+        print(
+            f"Warning: tokenizer produced {total_tokens} tokens (model={vocab_count}, unique added={extra_added})"
+            f" but --vocab-size requested {args.vocab_size}",
+        )
     write_json(args.output, tokenizer_json)
     print(f"Wrote tokenizer JSON to {args.output}")
     return 0
@@ -210,6 +266,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     tok.add_argument("--output", type=pathlib.Path, required=True)
     tok.add_argument("--vocab-size", type=int, required=True)
+    tok.add_argument(
+        "--tokipona",
+        type=int,
+        default=0,
+        metavar="RESERVE",
+        help=(
+            "Reserve RESERVE slots (must be < vocab size) to force every Toki Pona word "
+            "with and without a leading space into the vocabulary."
+        ),
+    )
     tok.add_argument(
         "--limit-bytes",
         type=parse_limit_bytes,
