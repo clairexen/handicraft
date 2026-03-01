@@ -285,6 +285,11 @@ def parse_args() -> argparse.Namespace:
         help="Plot raw values as scatter points instead of continuous lines",
     )
     parser.add_argument(
+        "--plot-fill-sign",
+        action="store_true",
+        help="Shade positive areas green and negative areas red relative to zero",
+    )
+    parser.add_argument(
         "--backtrace",
         type=int,
         default=0,
@@ -601,6 +606,7 @@ def plot_metric_traces(
     value_filter: int = 0,
     group_median: int = 0,
     stack_sources: bool = False,
+    fill_sign: bool = False,
 ) -> None:
     expression_cache: Dict[str, MetricExpression] = {}
     parsed_metric_groups: List[List[MetricExpression]] = []
@@ -680,6 +686,30 @@ def plot_metric_traces(
                             label=label_name,
                             linewidth=2,
                         )
+                        if fill_sign:
+                            y_array = np.array(y_plot)
+                            x_array = np.array(x_plot)
+                            if y_array.size:
+                                ax.fill_between(
+                                    x_array,
+                                    0,
+                                    y_array,
+                                    where=y_array >= 0,
+                                    facecolor="green",
+                                    alpha=0.15,
+                                    interpolate=True,
+                                    label="_nolegend_",
+                                )
+                                ax.fill_between(
+                                    x_array,
+                                    0,
+                                    y_array,
+                                    where=y_array < 0,
+                                    facecolor="red",
+                                    alpha=0.15,
+                                    interpolate=True,
+                                    label="_nolegend_",
+                                )
                     if allow_fit and (fit_line or fit_quad) and len(x_plot) >= 2:
                         pairs = [
                             (x_val, y_val)
@@ -838,6 +868,7 @@ def main() -> None:
             value_filter=args.filter,
             group_median=args.median,
             stack_sources=args.stack_sources,
+            fill_sign=args.plot_fill_sign,
         )
         performed = True
     if args.plot_time is not None:
@@ -857,6 +888,7 @@ def main() -> None:
             value_filter=args.filter,
             group_median=args.median,
             stack_sources=args.stack_sources,
+            fill_sign=args.plot_fill_sign,
         )
         performed = True
     if args.plot_timestamp is not None:
@@ -876,6 +908,7 @@ def main() -> None:
             value_filter=args.filter,
             group_median=args.median,
             stack_sources=args.stack_sources,
+            fill_sign=args.plot_fill_sign,
         )
         performed = True
     if not performed:
