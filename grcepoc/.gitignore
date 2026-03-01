@@ -1,8 +1,7 @@
 /data/*_tokens_test_*.pt
 /data/*_tokens_train_*.pt
-/data/wp-simple-*.txt.gz
-/data/wp-*-[0-9][0-9][0-9][0-9]-*.txt.gz
-/data/cccclc-[0-9][0-9][0-9][0-9]-*.txt.gz
+/data/*-test.txt.gz
+/data/*-train.txt.gz
 /data/dolma-cccc-filtered-[0-9][0-9][0-9][0-9].json.gz
 /.venv/
 /.backup/
