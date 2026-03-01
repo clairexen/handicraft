@@ -358,6 +358,7 @@ class SegmentSpec:
     suppress_positional: bool = False
     think_factor: int = 1
     metric_mode: str | None = None
+    hide_typed_metrics: bool = False
 
 
 @dataclass(frozen=True)
@@ -389,6 +390,7 @@ class SegmentLayout:
     suppress_positional: bool = False
     think_factor: int = 1
     metric_mode: str | None = None
+    hide_typed_metrics: bool = False
 
     def token_columns(self) -> int:
         if self.think_factor <= 1:
@@ -514,6 +516,12 @@ def _parse_segment_spec(text: str, connector: str | None) -> SegmentSpec:
             think_factor = int(suffix[0])
             mode_token = mode_token[: -len(suffix)]
             break
+    hide_typed_metrics = False
+    if mode_token and mode_token[-1] in {"h", "H"}:
+        hide_typed_metrics = True
+        mode_token = mode_token[:-1]
+        if not mode_token:
+            raise LayoutParseError("Hide-metric modifier requires a base mode")
     if not mode_token:
         raise LayoutParseError("Missing mode in segment")
     mode_char = mode_token[0]
@@ -543,6 +551,7 @@ def _parse_segment_spec(text: str, connector: str | None) -> SegmentSpec:
         suppress_positional=suppress_positional,
         think_factor=think_factor,
         metric_mode=metric_mode,
+        hide_typed_metrics=hide_typed_metrics,
     )
 
 
@@ -784,6 +793,7 @@ class BatchLayout:
                     suppress_positional=spec.suppress_positional,
                     think_factor=think_factor,
                     metric_mode=getattr(spec, "metric_mode", None),
+                    hide_typed_metrics=getattr(spec, "hide_typed_metrics", False),
                 )
             )
         max_cols = sum(segment.columns for segment in segments)
@@ -813,10 +823,13 @@ class BatchLayout:
                 suffix = ""
                 if segment.suppress_positional:
                     suffix = "P" if letter.isupper() else "p"
+                hide_suffix = ""
+                if getattr(segment, "hide_typed_metrics", False):
+                    hide_suffix = "H" if letter.isupper() else "h"
                 think_suffix = ""
                 if getattr(segment, "think_factor", 1) and segment.think_factor > 1:
                     think_suffix = f"{segment.think_factor}x"
-                bit = f"{segment.columns}{letter}{think_suffix}{suffix}"
+                bit = f"{segment.columns}{letter}{hide_suffix}{think_suffix}{suffix}"
                 if idx > 0:
                     connector = segment.connector or "="
                     bit = connector + bit
@@ -841,6 +854,7 @@ class BatchLayout:
                             suppress_positional=seg.suppress_positional,
                             think_factor=seg.think_factor,
                             metric_mode=seg.metric_mode,
+                            hide_typed_metrics=seg.hide_typed_metrics,
                         )
                         for seg in group.segments
                     ]
@@ -4263,7 +4277,11 @@ def _run_microbatch_pass(
                         loss_sum if total_loss_sum is None else total_loss_sum + loss_sum
                     )
                     metric_key = segment.metric_mode or mode
-                    if collect_mode_metrics and metric_key in mode_loss_sums:
+                    if (
+                        collect_mode_metrics
+                        and not getattr(segment, "hide_typed_metrics", False)
+                        and metric_key in mode_loss_sums
+                    ):
                         mode_loss_sums[metric_key] += float(loss_sum.detach().item())
                         mode_token_counts[metric_key] += token_count
                         if row_loss_sums is not None and row_token_counts is not None:
@@ -5516,7 +5534,7 @@ def _evaluate_row_block(
         column_modes[start:end] = [metric_key] * (end - start)
         if token_count > 0:
             loss_value = float(loss_sum.detach().item())
-            if metric_key in mode_loss_sums:
+            if not getattr(segment, "hide_typed_metrics", False) and metric_key in mode_loss_sums:
                 mode_loss_sums[metric_key] += loss_value
                 mode_token_counts[metric_key] += token_count
             total_loss += loss_value
