@@ -333,7 +333,8 @@ resembling a StackGrid, but with added GRCE and XCTX channels:
 	y, grce_out, xctx_out, kv_out = seq.forward(x, grce_in, xctx_in,
 			bias_list_in=[], kv_cache_list_in=[], qh_query_callback=None,
 			mode="forward", detach_internal_kv_cache=False,
-			detach_samples_span=0, detach_grce_span=0, detach_xctx_span=0)
+			detach_samples_span=0, detach_grce_span=0, detach_xctx_span=0,
+			think_step_index=None, think_step_count=None)
 
 With {grce,xctx}_{in,out} of size [rows, n_{grce,xctx}]. (So {grce,xctx}_out
 are the final recurrent states after the last column.)
@@ -341,7 +342,8 @@ are the final recurrent states after the last column.)
 Columns are evaluated strictly left-to-right, and GRCE/XCTX state updates from
 column t are visible only to column t+1. When the layout requests explicit
 thinking (e.g. `f2x`, `f3x`, `f4x`, or `t...`) we duplicate the input tokens so
-each think-step occupies its own column. Only the final column in the span is
+each think-step occupies its own column and pass `think_step_index` /`think_step_count`
+(shape [cols]) into `seq.forward`. Only the final column in the span is
 supervised; the intermediate think-columns run the full stack (including
 GRCE/XCTX sampling) but their targets are masked out. Additionally we loop the
 LayerNorm-normalized output of each intermediate column back into the next
