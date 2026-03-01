@@ -681,8 +681,17 @@ embedding names that correspond to special tokens below.
   [|think:1/2|] to the even and [|think:2/2|] to the odd
   positions.
 
+[|think:1/3|] [|think:2/3|] [|think:3/3|]
+  additional "think" embeddings for think3x mode
+
 [|think:1/4|] [|think:2/4|] [|think:3/4|] [|think:4/4|]
   additional "think" embeddings for think4x mode
+
+[|think-more|]
+  automatically added whenever we add [|think:N/M|] with N < M
+
+[|think-last|]
+  automatically added whenever we add [|think:N/M|] with N = M
 
 [|think-avail|]
   we add this learned embedding to all positions where we explicitly
