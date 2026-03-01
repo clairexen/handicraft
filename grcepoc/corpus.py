@@ -27,7 +27,7 @@ SPECIAL_TOKENS = """
 <|reserved4|> <|reserved5|> <|reserved6|> <|reserved7|>
 """.split()
 
-DEFAULT_LIMIT = 1 * 1024 * 1024  # 1 MiB
+DEFAULT_LIMIT: int | None = None  # Unlimited by default
 ENCODE_BATCH_SIZE = 64  # number of text chunks per encode_batch call
 
 
@@ -48,17 +48,24 @@ def read_limited_text(path: pathlib.Path, limit: int | None) -> str:
     """Load up to ``limit`` bytes from ``path`` (.txt or .txt.gz)."""
 
     with _open_text(path) as handle:
-        text = handle.read(limit)
+        size = -1 if limit is None else limit
+        text = handle.read(size)
     return text
 
 
-def iter_training_text(paths: list[pathlib.Path], limit: int) -> Iterable[str]:
+def iter_training_text(
+    entries: list[tuple[pathlib.Path, int | None, int]],
+    default_limit: int | None,
+) -> Iterable[str]:
     """Yield limited text snippets for tokenizer training."""
 
-    for path in paths:
+    for path, local_limit, weight in entries:
+        limit = local_limit if local_limit is not None else default_limit
         data = read_limited_text(path, limit)
         if data:
-            yield data
+            repeat = max(1, weight)
+            for _ in range(repeat):
+                yield data
 
 
 def write_json(path: pathlib.Path, data: dict) -> None:
@@ -68,7 +75,7 @@ def write_json(path: pathlib.Path, data: dict) -> None:
 
 
 def build_tokenizer(args: argparse.Namespace) -> int:
-    paths = [pathlib.Path(spec) for spec in args.inputs]
+    entries = [parse_limited_input(spec) for spec in args.inputs]
     limit = args.limit_bytes if args.limit_bytes is not None else DEFAULT_LIMIT
     tokenizer = Tokenizer(BPE(unk_token=None))
     tokenizer.pre_tokenizer = ByteLevel(add_prefix_space=False)
@@ -80,7 +87,7 @@ def build_tokenizer(args: argparse.Namespace) -> int:
         initial_alphabet=byte_alphabet,
         special_tokens=list(SPECIAL_TOKENS),
     )
-    tokenizer.train_from_iterator(iter_training_text(paths, limit), trainer=trainer)
+    tokenizer.train_from_iterator(iter_training_text(entries, limit), trainer=trainer)
     tokenizer.post_processor = ByteLevelProcessor(trim_offsets=False)
     tokenizer_json = json.loads(tokenizer.to_str())
     write_json(args.output, tokenizer_json)
@@ -151,6 +158,44 @@ def encode_corpus(args: argparse.Namespace) -> int:
     return 0
 
 
+def parse_limit_bytes(text: str) -> int:
+    text = text.strip()
+    if not text:
+        raise ValueError("Limit cannot be empty")
+    suffixes = {"k": 1024, "K": 1024, "m": 1024 * 1024, "M": 1024 * 1024}
+    suffix = text[-1]
+    if suffix in suffixes:
+        base = float(text[:-1])
+        return int(base * suffixes[suffix])
+    return int(text)
+
+
+def parse_limited_input(spec: str) -> tuple[pathlib.Path, int | None, int]:
+    path_text = spec
+    limit: int | None = None
+    weight = 1
+    while True:
+        idx = path_text.rfind(":")
+        if idx == -1:
+            break
+        candidate = path_text[idx + 1 :]
+        if not candidate:
+            break
+        if (candidate.endswith("x") or candidate.endswith("X")) and candidate[:-1].isdigit():
+            value = int(candidate[:-1])
+            if value > 0:
+                weight = value
+            path_text = path_text[:idx]
+            continue
+        try:
+            limit = parse_limit_bytes(candidate)
+            path_text = path_text[:idx]
+            continue
+        except ValueError:
+            break
+    return pathlib.Path(path_text), limit, weight
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=__doc__,
@@ -167,11 +212,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     tok.add_argument("--vocab-size", type=int, required=True)
     tok.add_argument(
         "--limit-bytes",
-        type=int,
+        type=parse_limit_bytes,
         default=DEFAULT_LIMIT,
-        help="Maximum bytes to consume from each input file",
+        help=(
+            "Maximum bytes to consume from each input file (supports k/M suffix). "
+            "Defaults to reading the entire file."
+        ),
     )
-    tok.add_argument("inputs", nargs="+", help="*.txt or *.txt.gz sources", type=str)
+    tok.add_argument(
+        "inputs",
+        nargs="+",
+        help=(
+            "*.txt or *.txt.gz sources. Append :<limit> and/or :<Nx> per file to override"
+            " defaults (e.g. book.txt:512k:3x or notes.txt:2x)."
+        ),
+        type=str,
+    )
     tok.set_defaults(func=build_tokenizer)
 
     enc = subparsers.add_parser(
