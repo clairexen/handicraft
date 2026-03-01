@@ -562,6 +562,8 @@ state for indexing rather than absolute positions; the uppercase/lowercase
 rules still apply in addition to the positional suppression.
 
 Appending `2x`, `3x`, or `4x` to a mode enables 2x/3x/4x "thinking" (see below).
+When the letter `t` is used instead of `f`, loss from thiking is recorded
+in the "think" category rather than "forward".
 
 We also allow > instead of = for chaining sequences inside of a [...] block.
 The difference is that with > we drop the entire k/v-history at this point,
