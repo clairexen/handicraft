@@ -93,7 +93,7 @@ from dataclasses import dataclass
 class ModelGeometry:
     """Holds the GPT+GRCE+XCTX model geometry."""
 
-    vocab_size: int = 32000 # GPT-2 base supports ~50k merges.
+    vocab_size: int = 30000 # GPT-2 base supports ~50k merges.
     n_pos: int = 1024       # GPT-2 base uses 1024 tokens.
     n_layer: int = 12       # GPT-2 base uses 12 layers.
     n_head: int = 12        # GPT-2 base uses 12 attention heads.
