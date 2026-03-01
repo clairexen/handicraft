@@ -94,12 +94,17 @@ class ModelGeometry:
     """Holds the GPT+GRCE+XCTX model geometry."""
 
     vocab_size: int = 32000 # GPT-2 base supports ~50k merges.
-    block_size: int = 1024  # GPT-2 base uses 1024 tokens.
+    n_pos: int = 1024       # GPT-2 base uses 1024 tokens.
     n_layer: int = 12       # GPT-2 base uses 12 layers.
     n_head: int = 12        # GPT-2 base uses 12 attention heads.
     n_embd: int = 768       # GPT-2 base uses 768 embedding dims.
     n_grce: int = 64        # Narrow GRCE context dims.
     n_xctx: int = 1536      # Wide XCTX context dims.
+
+    @property
+    def block_size(self) -> int:
+        return self.n_pos
+
 
 MODEL_GEOMETRY_DEFAULTS = ModelGeometry()
 
@@ -109,7 +114,8 @@ class Defaults:
     """Default Settings (override with CLI args)"""
 
     vocab_size: int = MODEL_GEOMETRY_DEFAULTS.vocab_size
-    block_size: int = MODEL_GEOMETRY_DEFAULTS.block_size
+    n_pos: int = MODEL_GEOMETRY_DEFAULTS.n_pos
+    block_size: int = MODEL_GEOMETRY_DEFAULTS.n_pos
     n_layer: int = MODEL_GEOMETRY_DEFAULTS.n_layer
     n_head: int = MODEL_GEOMETRY_DEFAULTS.n_head
     n_embd: int = MODEL_GEOMETRY_DEFAULTS.n_embd
@@ -928,9 +934,8 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
     )
     model_group.add_argument(
         "--n-pos",
-        dest="block_size",
         type=int,
-        default=DEFAULTS.block_size,
+        default=DEFAULTS.n_pos,
         help="Maximum sequence length supported by the model's positional embeddings",
     )
     model_group.add_argument(
@@ -989,7 +994,6 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
     )
     training_group.add_argument(
         "--block-size",
-        dest="block_length",
         type=int,
         default=None,
         help="Actual tokens-per-sample used during train/eval (defaults to --n-pos)",
@@ -1580,7 +1584,7 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         if not flag_present("--batch-size"):
             args.batch_size = 12
         if not flag_present("--n-pos"):
-            args.block_size = 6
+            args.n_pos = 6
         if not flag_present("--n-layer"):
             args.n_layer = 3
         if not flag_present("--n-head"):
@@ -1596,12 +1600,14 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         if not flag_present("--eval-interval"):
             args.eval_interval = 1
 
-    args._block_length_defined = args.block_length is not None
-    if args.block_length is None:
-        args.block_length = args.block_size
-    if args.block_length <= 0:
+    if args.n_pos <= 0:
+        parser.error("--n-pos must be positive")
+    args._block_size_defined = args.block_size is not None
+    if args.block_size is None:
+        args.block_size = args.n_pos
+    if args.block_size <= 0:
         parser.error("--block-size must be positive")
-    if args.block_length > args.block_size:
+    if args.block_size > args.n_pos:
         parser.error("--block-size must be <= --n-pos")
     if args.log_row_details:
         args.log_step_details = True
@@ -1657,7 +1663,7 @@ def args_to_model_geometry(args: Args):
 
     return ModelGeometry(
         vocab_size=args.vocab_size,
-        block_size=args.block_size,
+        n_pos=args.n_pos,
         n_layer=args.n_layer,
         n_head=args.n_head,
         n_embd=args.n_embd,
@@ -1889,12 +1895,12 @@ def _get_inner_xctx_width(config: GeometryLike) -> int:
     )
 
 
-def _build_geometry(config: GeometryLike, block_size: int) -> list[tuple[str, str, int]]:
+def _build_geometry(config: GeometryLike, n_pos: int) -> list[tuple[str, str, int]]:
     """Assemble the (label, description, value) tuples for ``size`` reports."""
 
     return [
         ("V", "vocab size", config.vocab_size),
-        ("B", "block size", block_size),
+        ("B", "block size", n_pos),
         ("L", "transform layers", config.n_layer),
         ("H", "attention heads", config.n_head),
         ("E", "embedding width", config.n_embd),
@@ -1903,11 +1909,11 @@ def _build_geometry(config: GeometryLike, block_size: int) -> list[tuple[str, st
         ("U", "inner xctx width", _get_inner_xctx_width(config)),
     ]
 
-def _expected_sections(config: GeometryLike, block_size: int) -> list[tuple[str, str, list[dict]]]:
+def _expected_sections(config: GeometryLike, n_pos: int) -> list[tuple[str, str, list[dict]]]:
     """Return analytic section breakdown consumed by :func:`grce_cmd_size`."""
 
     V = config.vocab_size
-    B = block_size
+    B = n_pos
     L = config.n_layer
     H = config.n_head
     E = config.n_embd
@@ -1917,15 +1923,18 @@ def _expected_sections(config: GeometryLike, block_size: int) -> list[tuple[str,
 
     def eval_items(items):
         for item in items:
-            item["count"] = eval(item["formula"], {
-                "V": config.vocab_size,
-                "B": block_size,
-                "L": config.n_layer,
-                "H": config.n_head,
-                "E": config.n_embd,
-                "G": config.n_grce,
-                "X": config.n_xctx
-            })
+            item["count"] = eval(
+                item["formula"],
+                {
+                    "V": config.vocab_size,
+                    "B": n_pos,
+                    "L": config.n_layer,
+                    "H": config.n_head,
+                    "E": config.n_embd,
+                    "G": config.n_grce,
+                    "X": config.n_xctx,
+                },
+            )
         return items
 
     global_items = eval_items([
@@ -2151,8 +2160,8 @@ def grce_cmd_size(
     Called exclusively from :func:`grce_main`.
     """
     print()
-    geometry = _build_geometry(args, args.block_size)
-    sections = _append_summary_section(_expected_sections(args, args.block_size))
+    geometry = _build_geometry(args, args.n_pos)
+    sections = _append_summary_section(_expected_sections(args, args.n_pos))
     _print_geometry(geometry)
     for idx, (key, title, items) in enumerate(sections):
         print()
@@ -2679,7 +2688,7 @@ class CausalSelfAttention(nn.Module):
         self.proj = nn.Linear(config.n_embd, config.n_embd)
         self.dropout = nn.Dropout(config.dropout)
         self.register_buffer(
-            "tril", torch.tril(torch.ones(config.block_size, config.block_size))
+            "tril", torch.tril(torch.ones(config.n_pos, config.n_pos))
         )
 
     def forward(
@@ -3122,7 +3131,7 @@ class TransformerStackCore(nn.Module):
         config = args
         self.config = config
         self.tok_emb = nn.Embedding(config.vocab_size, config.n_embd)
-        self.pos_emb = nn.Embedding(config.block_size, config.n_embd)
+        self.pos_emb = nn.Embedding(config.n_pos, config.n_embd)
         self.control_emb = nn.Embedding(3, config.n_embd, padding_idx=0)
         self.think_emb = ThinkEmbeddingLibrary(config.n_embd, think_spans=(2, 3, 4))
         self.drop = nn.Dropout(config.dropout)
@@ -3906,7 +3915,7 @@ class GRCEGPT(nn.Module):
         B, T = idx.shape
         device = idx.device
         pos_idx = self._position_ids(T, B, device, position_offsets)
-        if torch.any(pos_idx >= self.config.block_size):
+        if torch.any(pos_idx >= self.config.n_pos):
             raise ValueError("position ids exceed configured --n-pos")
         tok = self.core.tok_emb(idx)
         pos = self.core.pos_emb(pos_idx)
@@ -3967,7 +3976,7 @@ def build_model_tag(config: GeometryLike) -> str:
     """Build the filename tag used by ``train``/``create`` checkpoints."""
 
     tag = (
-        f"v{config.vocab_size}_bs{config.block_size}_emb{config.n_embd}_"
+        f"v{config.vocab_size}_bs{config.n_pos}_emb{config.n_embd}_"
         f"layers{config.n_layer}_heads{config.n_head}"
     )
     if config.n_grce > 0:
@@ -4699,7 +4708,7 @@ def train_model(
     dataset: TextDataset,
     device: torch.device,
     steps: int,
-    block_length: int,
+    block_size: int,
     batch_size: int,
     eval_interval: int,
     start_step: int,
@@ -4776,7 +4785,7 @@ def train_model(
             layout = manual_layout_override
             manual_layout_override = None
         else:
-            layout = BatchLayout(args.layout, batch_size=batch_size, block_size=block_length)
+            layout = BatchLayout(args.layout, batch_size=batch_size, block_size=block_size)
         layout_serialized = layout.serialize()
         layout_span = layout.total_token_span()
         _log_layout_warnings(args, layout)
@@ -4806,8 +4815,8 @@ def train_model(
                 if args.grad_summary:
                     cycle_micro_norms.append(norm)
             position_shift = 0
-            if args.block_length < args.block_size:
-                headroom = max(0, args.block_size - args.block_length)
+            if args.block_size < args.n_pos:
+                headroom = max(0, args.n_pos - args.block_size)
                 if headroom > 0:
                     position_shift = random.randint(0, headroom)
             total_loss_sum, total_tokens, micro_logs, window_detail = train_layout_batch(
@@ -4872,7 +4881,7 @@ def train_model(
             replacement = layout
             attempts = 0
             while True:
-                candidate = BatchLayout(args.layout, batch_size=batch_size, block_size=block_length)
+                candidate = BatchLayout(args.layout, batch_size=batch_size, block_size=block_size)
                 candidate_span = candidate.total_token_span()
                 replacement = candidate
                 if max_span <= 0 or candidate_span <= max_span or attempts >= 8:
@@ -5134,10 +5143,10 @@ def run_profile_mode(
     model: GRCEGPT,
     optimizer: torch.optim.Optimizer,
     *,
-    block_length: int,
+    block_size: int,
     batch_size: int,
     device: torch.device,
-    block_size: int,
+    n_pos: int,
     ) -> None:
     """Warm up once, profile a second training step, and report CUDA stats."""
 
@@ -5148,14 +5157,14 @@ def run_profile_mode(
             "torch.profiler is unavailable; upgrade to PyTorch 1.8+ to use 'profile'."
         ) from exc
 
-    profile_layout = BatchLayout(args.layout, batch_size=batch_size, block_size=block_length)
+    profile_layout = BatchLayout(args.layout, batch_size=batch_size, block_size=block_size)
     _log_layout_warnings(args, profile_layout)
 
     def train_step(tag: str, layout: BatchLayout) -> float:
         model.train()
         position_shift = 0
-        if block_length < block_size:
-            headroom = max(0, block_size - block_length)
+        if block_size < n_pos:
+            headroom = max(0, n_pos - block_size)
             if headroom > 0:
                 position_shift = random.randint(0, headroom)
         total_loss_sum, total_tokens, _, _ = train_layout_batch(
@@ -5208,7 +5217,7 @@ def generate(
     enforce_first_token_guard = bool(first_token_blocklist)
     blocklist = list(first_token_blocklist or [])
     for _ in range(steps):
-        idx_cond = idx[:, -model.config.block_size :]
+        idx_cond = idx[:, -model.config.n_pos :]
         logits, _, _ = model.forward_autoreg(idx_cond)
         logits_last = logits[:, -1, :]
         probs = F.softmax(logits_last, dim=-1)
@@ -5550,7 +5559,7 @@ def _prepare_eval_tokens(
         provided = tokenizer.encode(custom_text)
         if provided.numel() < 2:
             raise ValueError("Custom text must produce at least two tokens for evaluation")
-        if provided.numel() - 1 > args.block_size:
+        if provided.numel() - 1 > args.n_pos:
             raise ValueError(
                 "Custom text exceeds the configured --n-pos; shorten the text or increase --n-pos."
             )
@@ -5572,9 +5581,9 @@ def _prepare_eval_tokens(
         )
     inputs = inputs[:token_length]
     targets = targets[:token_length]
-    eval_block_length = inputs.numel()
+    eval_block_size = inputs.numel()
     pretty_text = tokenizer.decode_pretty(args, context_tokens)
-    return context_tokens, inputs, targets, eval_block_length, source_label, pretty_text
+    return context_tokens, inputs, targets, eval_block_size, source_label, pretty_text
 
 
 def run_test_slice(
@@ -5582,14 +5591,14 @@ def run_test_slice(
     dataset: TextDataset,
     tokenizer: GPT2TokenizerWrapper,
     model: GRCEGPT,
-    block_length: int,
+    block_size: int,
     start_pos: int,
     *,
     custom_text: str | None = None,
 ) -> None:
     """Run the layout on either a corpus slice or custom text and log per-token stats."""
 
-    if block_length <= 0 and not custom_text:
+    if block_size <= 0 and not custom_text:
         raise ValueError("--block-size must be positive for corpus-based test slices")
 
     model_device = next(model.parameters()).device
@@ -5597,7 +5606,7 @@ def run_test_slice(
     model.eval()
 
     with torch.no_grad():
-        layout = BatchLayout(args.layout, batch_size=args.batch_size, block_size=block_length)
+        layout = BatchLayout(args.layout, batch_size=args.batch_size, block_size=block_size)
         _log_layout_warnings(args, layout)
         max_positions = max((row.total_positions() for row in layout.rows), default=0)
         if max_positions <= 0:
@@ -5762,14 +5771,14 @@ def run_eval_layout(
     dataset: TextDataset,
     tokenizer: GPT2TokenizerWrapper,
     model: GRCEGPT,
-    block_length: int,
+    block_size: int,
     start_pos: int,
     *,
     custom_text: str | None = None,
 ) -> None:
     """Evaluate the layout on a deterministic slice and print per-row metrics."""
 
-    if block_length <= 0 and not custom_text:
+    if block_size <= 0 and not custom_text:
         raise ValueError("--block-size must be positive for corpus-based evaluation")
 
     model_device = next(model.parameters()).device
@@ -5777,7 +5786,7 @@ def run_eval_layout(
     model.eval()
 
     with torch.no_grad():
-        layout = BatchLayout(args.layout, batch_size=args.batch_size, block_size=block_length)
+        layout = BatchLayout(args.layout, batch_size=args.batch_size, block_size=block_size)
         _log_layout_warnings(args, layout)
         max_positions = max((row.total_positions() for row in layout.rows), default=0)
         if max_positions <= 0:
@@ -5786,7 +5795,7 @@ def run_eval_layout(
             context_tokens,
             inputs,
             targets,
-            eval_block_length,
+            eval_block_size,
             source_label,
             pretty_text,
         ) = _prepare_eval_tokens(
@@ -5896,6 +5905,11 @@ def preprocess_runtime_args(args: Args) -> None:
                 "Checkpoint lacks config metadata; re-save it with the latest format."
             )
         saved = dict(saved_config)
+        if "n_pos" not in saved:
+            if "block_size" in saved:
+                saved["n_pos"] = saved.pop("block_size")
+            else:
+                saved["n_pos"] = MODEL_GEOMETRY_DEFAULTS.n_pos
         legacy_xctx = bool(saved.pop("grce_xctx", False))
         if "n_xctx" not in saved:
             if legacy_xctx:
@@ -5906,10 +5920,10 @@ def preprocess_runtime_args(args: Args) -> None:
         config = ModelGeometry(**saved)
         args.checkpoint_payload_override = payload
         args.tokenizer_json_override = payload.get("tokenizer_json")
-        args.block_size = config.block_size
-        if not getattr(args, "_block_length_defined", False):
-            args.block_length = config.block_size
-        elif args.block_length > config.block_size:
+        args.n_pos = config.n_pos
+        if not getattr(args, "_block_size_defined", False):
+            args.block_size = config.n_pos
+        elif args.block_size > config.n_pos:
             raise ValueError("--block-size cannot exceed checkpoint --n-pos")
         args.n_layer = config.n_layer
         args.n_head = config.n_head
@@ -5923,7 +5937,7 @@ def preprocess_runtime_args(args: Args) -> None:
 
     inferred = ModelGeometry(
         vocab_size=args.vocab_size,
-        block_size=args.block_size,
+        n_pos=args.n_pos,
         n_layer=args.n_layer,
         n_head=args.n_head,
         n_embd=args.n_embd,
@@ -6663,7 +6677,7 @@ class Runtime:
             if self.args.command == "prompts":
                 return self.cli_prompts(tokenizer, model_path)
             sections = _append_summary_section(
-                _expected_sections(config, config.block_size)
+                _expected_sections(config, config.n_pos)
             )
             summary_items: list[dict] | None = None
             for key, _title, items in sections:
@@ -6684,7 +6698,7 @@ class Runtime:
                 )
             )
             tok_vecs = config.vocab_size
-            pos_vecs = config.block_size
+            pos_vecs = config.n_pos
             emb_vectors = tok_vecs + pos_vecs
             emb_params = embedding_params
             print(
@@ -6927,7 +6941,7 @@ class Runtime:
                     dataset=dataset,
                     tokenizer=tokenizer,
                     model=model,
-                    block_length=self.args.block_length,
+                    block_size=self.args.block_size,
                     start_pos=self.args.test_start,
                     custom_text=custom_text,
                 )
@@ -6946,7 +6960,7 @@ class Runtime:
                         dataset=dataset,
                         tokenizer=tokenizer,
                         model=model,
-                        block_length=self.args.block_length,
+                        block_size=self.args.block_size,
                         start_pos=self.args.eval_start,
                         custom_text=custom_text,
                     )
@@ -6957,7 +6971,7 @@ class Runtime:
                     if total <= 0:
                         raise ValueError("Test corpus is empty; cannot run random evaluations")
                     rng = random.Random()
-                    window = max(1, total - (self.args.block_length + 1))
+                    window = max(1, total - (self.args.block_size + 1))
                     for run_idx in range(rand_runs):
                         start_pos = rng.randint(0, window - 1)
                         print(color_text(f"[eval random #{run_idx + 1}] offset {start_pos}", Colors.BLUE))
@@ -6966,7 +6980,7 @@ class Runtime:
                             dataset=dataset,
                             tokenizer=tokenizer,
                             model=model,
-                            block_length=self.args.block_length,
+                            block_size=self.args.block_size,
                             start_pos=start_pos,
                             custom_text=None,
                         )
@@ -6976,7 +6990,7 @@ class Runtime:
                     dataset=dataset,
                     tokenizer=tokenizer,
                     model=model,
-                    block_length=self.args.block_length,
+                    block_size=self.args.block_size,
                     start_pos=self.args.eval_start,
                     custom_text=None,
                 )
@@ -7004,10 +7018,10 @@ class Runtime:
                     dataset,
                     model,
                     optimizer,
-                    block_length=self.args.block_length,
+                    block_size=self.args.block_size,
                     batch_size=self.args.batch_size,
                     device=device,
-                    block_size=self.args.block_size,
+                    n_pos=self.args.n_pos,
                 )
                 return
 
@@ -7062,7 +7076,7 @@ class Runtime:
                     BatchLayout(
                         self.args.layout,
                         batch_size=self.args.batch_size,
-                        block_size=self.args.block_length,
+                        block_size=self.args.block_size,
                     )
                     for _ in range(self.args.steps)
                 ]
@@ -7118,7 +7132,7 @@ class Runtime:
                     dataset,
                     device,
                     self.args.steps,
-                    self.args.block_length,
+                    self.args.block_size,
                     self.args.batch_size,
                     self.args.eval_interval,
                     total_steps,
