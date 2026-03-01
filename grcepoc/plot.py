@@ -51,6 +51,14 @@ class MetricExpression:
 
     _ALLOWED_BINOPS = (ast.Add, ast.Sub, ast.Mult, ast.Div)
     _ALLOWED_UNARYOPS = (ast.UAdd, ast.USub)
+    _ALLOWED_COMPARISONS = (
+        ast.Lt,
+        ast.LtE,
+        ast.Gt,
+        ast.GtE,
+        ast.Eq,
+        ast.NotEq,
+    )
 
     def __init__(self, expression: str) -> None:
         self.text = expression
@@ -78,6 +86,20 @@ class MetricExpression:
                     f"unsupported unary operator in expression '{self.text}'"
                 )
             self._validate(node.operand)
+            return node
+        if isinstance(node, ast.Compare):
+            if len(node.ops) != len(node.comparators):
+                raise ValueError(
+                    f"malformed comparison in expression '{self.text}'"
+                )
+            for op in node.ops:
+                if not isinstance(op, self._ALLOWED_COMPARISONS):
+                    raise ValueError(
+                        f"unsupported comparison in expression '{self.text}'"
+                    )
+            self._validate(node.left)
+            for comp in node.comparators:
+                self._validate(comp)
             return node
         if isinstance(node, ast.Name):
             if node.id not in ALLOWED_FIELDS:
@@ -128,6 +150,32 @@ class MetricExpression:
             if isinstance(node.op, ast.USub):
                 return -operand
             raise ValueError("unsupported unary operator")
+        if isinstance(node, ast.Compare):
+            left = self._eval_node(node.left, record)
+            result = True
+            current = left
+            for op, comp_node in zip(node.ops, node.comparators):
+                right = self._eval_node(comp_node, record)
+                if isinstance(op, ast.Lt):
+                    check = current < right
+                elif isinstance(op, ast.LtE):
+                    check = current <= right
+                elif isinstance(op, ast.Gt):
+                    check = current > right
+                elif isinstance(op, ast.GtE):
+                    check = current >= right
+                elif isinstance(op, ast.Eq):
+                    check = current == right
+                elif isinstance(op, ast.NotEq):
+                    check = current != right
+                else:
+                    raise ValueError("unsupported comparison operator")
+                if not check:
+                    result = False
+                    current = right
+                    break
+                current = right
+            return 1.0 if result else 0.0
         if isinstance(node, ast.Name):
             value = record.get(node.id)
             if value is None:
