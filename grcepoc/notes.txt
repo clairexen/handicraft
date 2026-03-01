@@ -559,7 +559,7 @@ Instead of e d f n r one can also use E D F N R as sequence type. In that case
 the recurrent outputs of the block remain unused. The layout [*d=*d] generates
 XCTX and GRCE signals "blindly" in the first decode block, and then they are being
 passed to the first row of the second block, which receives biases from that
-recurrent context. (backprop for [*d=*d] takes about twice as long ans [*d].)
+recurrent context. (backprop for [*d=*d] takes about twice as long as [*d].)
 The layout [*D=*d] on the other hand is functionally equivalent to [*d].
 
 Lowercase `r` defines a "reverse" sequence: it behaves like `d` (decode)
