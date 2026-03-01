@@ -1,9 +1,13 @@
-# A small toki pona <-> english corpus. Lines with '#' as first char are ignored.
-# Articles are separated by a '----' line. Within an article each sentence
-# is split in two lines. The first line is a toki pona sentence, and the second
-# line is its english translation. Sentences are seperated by a blank line.
-# English vocabulary can be used within the toki pona sentences by enclosing
-# them is square brakets, and vice versa. (this file is 7-bit ASCII only!)
+# A small toki pona <-> english corpus.  Articles are separated by a '----'
+# line. Articles containing only lines that start with '#' are ignored.
+# Otherwise the '#' prefix is used for the optional opening title line. Within
+# an article each sentence is split in two lines. The first line is a toki pona
+# sentence, and the second line is its english translation. Sentences are
+# seperated by a blank line.  English vocabulary can be used within the toki
+# pona sentences by enclosing them is square brakets, and vice versa. (this
+# file is 7-bit ASCII only!)
+
+----
 
 ni li nasin pona lili:
 This is a simple example:
@@ -357,220 +361,1961 @@ Basil awakens with no ship or Sona-Nyl in sight, only the shattered parapet of h
 
 ----
 
-# FIXME: Add a plot summary / retelling of "The Doom that Came to Sarnath" (1919) by H. P. Lovecraft.
+# Plot summary / retelling of "The Doom that Came to Sarnath" (1919) by H. P. Lovecraft.
+
+tenpo pini la jan anpa tan ma lete li kama lon ma lete pi nimi [Mnar] li lukin e ma lete [Ib], ma pi jan len laso sin, pi len telo suli.
+In ancient times desert wanderers reached the cold plain of Mnar and saw the swamp city Ib, whose jelly-folk glistened green under wet robes.
+
+jan anpa ni li pilin e ni: ma ni li wawa kin taso li nasa lukin, la ona li pali e tomo suli pi nimi [Sarnath] lon poka telo suli.
+They resented that such eerie beings possessed the shore, so they built Sarnath beside the lake to show human splendor.
+
+tenpo kama la jan utala pi [Sarnath] li moli e jan [Ib], li tawa ma len, li pakala e tomo, li lanpan e kiwen pi ijo sewi nimi [Bokrug] tan tomo suli pi jan len.
+Later Sarnath’s warriors massacred the Ibians, sacked their wet streets, and stole the stone idol of their lizard god Bokrug.
+
+kiwen ni li lon tomo lawa lon noka telo, ona li kama sitelen pi wawa suli pi jan lawa pi [Sarnath], taso jan sona pi lipu laso li wile e ni: jan mute li o pilin ala.
+The idol was set in the great hall as a trophy, yet priests muttered that its glare would bring misfortune.
+
+tenpo mute la ma [Sarnath] li kama suli: tomo sin pi kiwen walo li tawa sewi, mani mute li kama tan kulupu ante, en jan lawa li pali musi pi tenpo [Thraa], [Ilarnak], en [Kadatheron].
+Across centuries Sarnath prospered with marble towers, tribute from allied cities, and festivals honoring kings like Thraa, Ilarnak, and Kadatheron.
+
+lon sike pi nanpa mute la jan lawa [Sarnath] li kama kulupu lon tomo suli tawa musi pi tenpo sike nanpa [1000], li wile sewi e utala pi moli seme pi jan len.
+At the thousandth anniversary the nobles gathered to celebrate the old victory over the Ibians.
+
+lon tenpo sama la telo suli li kama loje pimeja, waso ike lon kon li kalama seme sin, en kiwen [Bokrug] li weka tan supa.
+That night the lake turned blackish-red, strange birds screamed, and the idol vanished from its pedestal.
+
+jan mute li pilin seli wawa li tawa lawa, taso suli pi tomo ni li pakala lon anpa walo: sina ken lukin taso e anpa telo, sijelo ala li lon.
+The celebrants panicked, but at dawn the palace lay in ruins besides the lake with no bodies left to find.
+
+jan ante lon ma [Mnar] li kute e kalama sin tan kin pi telo, li lukin e ma ni: tomo ale pi [Sarnath] li lon telo, soweli telo suli li awen lon sewi taso.
+Travelers later seen only a glassy lake covering the site, as if Sarnath had been melted beneath the water while reptilian ripples laughed overhead.
+
+tenpo pini la toki tan ma ona li awen taso tan lipu pi jan pi ma len lon noka li toki e ni: jan [Ib] li kama sin lon tenpo mun lon ma lete ante.
+The only remembrance came from desert legends claiming the jelly folk revived each moonrise within distant marshes.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "The Statement of Randolph Carter" (1919) by H. P. Lovecraft.
+# Plot summary / retelling of "The Statement of Randolph Carter" (1919) by H. P. Lovecraft.
+
+jan [Randolph Carter] li kama wile e ni: o sona e moli pi jan [Harley Warren], la ona li toki e ni lon poka lawa pi jan utala.
+Randolph Carter testifies before officials about the disappearance of his occult companion Harley Warren.
+
+tenpo pimeja wan la ona tu li tawa tomo moli pi seli ala lon ma [Big Cypress] lon ma [Florida] la ona li jo e lipu pi toki sin.
+One midnight they journeyed to an unwholesome graveyard in Florida’s Big Cypress Swamp armed with forbidden texts.
+
+jan [Warren] li pona e ilo kalama, li pana e ilo toki tawa jan [Carter], li tawa anpa kepeken lupa kiwen sin tan ni: ona li wile lukin e tomo moli pi tenpo pini mute.
+Warren tested their radio equipment, handed Carter the receiver, and descended a newly opened stone shaft seeking ancient catacombs.
+
+lon anpa la ona li kute e kalama wawa pi jan anpa kepeken ilo, la [Warren] li toki sin tawa ona kepeken nasin pimeja pi nena sijelo.
+Below, Carter heard his friend’s strained voice cracking through the wires amid heavy breathing.
+
+jan anpa li toki e ni: tomo anpa li jo e lupa mute, li pilin e kon sin e nimi pi jan ike, la ona li toki e ni: ona li kama lukin e lipu sin pi sitelen ike.
+Warren described endless corridors filled with unknown inscriptions and an atmosphere of malignant presence.
+
+tenpo lili la kalama sin li kama: soweli anu jan seme li tawa poka ona; [Warren] li open alasa lon insa poka la li kute e kalama monsi pimeja kepeken wawa.
+Moments later a new sound emerged—something shuffling near him—and Warren gasped at approaching footsteps or wings.
+
+ona li toki tawa [Carter]: "o pini! o weka!" taso jan lon sewi li ken ala tawa tan ni: ona li seli wawa tan monsi, la jan [Carter] li awen kepeken ilo taso.
+He ordered Carter to flee, yet the man above could not abandon the line and stood frozen with the receiver.
+
+kalama pini la kalama ike mute li kama lon ilo: kalama wawa pi kalama open mute, la kalama wawa li toki e ni: "jan ma pi sinpin mun, sina ken ala tawa anpa mi."
+After Warren’s scream a hideous chorus took over the circuit, mocking Carter as a mortal forbidden from entering their realm.
+
+jan [Carter] li anpa tan pilin weka, li awen anpa lon lupa, taso ona li lon sewi la jan lawa li open sona tan ona: jan [Warren] li weka ala, taso ona li moli lon anpa ala lon sewi.
+The witness fainted from terror and later found no trace of Warren besides the disturbed crypt.
+
+lon tenpo ni la jan lawa li wile e sona tan ona: kepeken kulupu ni la jan suli li sona ala e ni: jan [Warren] li moli tan soweli anu tan man, taso kalama pi kon ike li awen lon lawa pi jan [Carter].
+Now he insists that nothing human slew Warren, for the mocking voice still rings through his mind.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "The Street" (1919) by H. P. Lovecraft.
+# Plot summary / retelling of "The Street" (1919) by H. P. Lovecraft.
+
+ma pi tomo lili lon ma [New England] li open tan tomo kiwen pi jan pi lawa pona, li kama sin kepeken kulupu pi jan wawa sewi pi tenpo pini.
+A quaint New England street begins as a row of Puritan stone houses built by devout colonists.
+
+tenpo mute la nena ni li lukin e pakala ala: tenpo [Revolution] la jan pi sitelen pi wawa lawa li lon ona, tenpo suli la sama soweli kon sin li lon tomo.
+Through many eras the neighborhood hears speeches before the Revolution, witnesses calm prosperity, and remains home to steady families.
+
+taso tenpo pini la kulupu pi ijo mani li kama, li pali e tomo kiwen sin kepeken kiwen wawa, li kipisi e ma, li pana e tomo lili pi pali ike tawa jan sin pi ma ante.
+Eventually financiers arrive, erecting brick blocks and subdividing apartments for foreign newcomers.
+
+jan sin ni li kama tan ma pi wawa anpa; ona li kute e toki sin, li awen kepeken nasin sin, la kulupu lili pi wawa ike li lon lila pona pi tomo.
+The immigrants bring unfamiliar tongues and customs, and a secretive radical cell hides in one tenement’s cellar.
+
+jan pi kulupu sin li toki wawa lon anpa pi tomo pi kon ike, li wile pakala e jan pi pona mute kepeken ilo pi seli wawa.
+These zealots conspire nightly to strike a blow against decent citizens with stolen explosives.
+
+taso jan ala li sona e ni: pi lon tomo lawa ni taso la kasi walo en waso ala li kama; ma ni kin li pilin sama jan.
+Yet no one realizes that the street itself, with guardian elms and silent facades, possesses a spirit.
+
+tenpo pi suno sin la kalama kon li kama, en tomo suli mute li anpa lon pakala seli, li kama ko pi loje walo; jan anpa li lukin e ni: pi kulupu sin li weka lon selo seli.
+On the conspirators’ chosen day thunder erupts, their building collapses into dust, and the men vanish in the blast.
+
+jan ma li toki ni taso: kon pi ma lili li tokipona ala e jan ike; jan sin pi pona ala li lon ala tenpo pini.
+Neighbors conclude that Providence destroyed the evil men, for no fragments are found.
+
+tenpo kama la tomo kiwen sin li kama tan pi tenpo pini, en ma ni li awen lon lawa pi jan kulupu wawa, la ma pi nimi [Street] li kama lon pilin pona sin.
+Years later the restored houses welcome new but honorable residents, and the street regains its old dignity.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "The Terrible Old Man" (1920) by H. P. Lovecraft.
+# Plot summary / retelling of "The Terrible Old Man" (1920) by H. P. Lovecraft.
+
+ma [Kingsport] la jan suli sin pi nimi [Angelo Ricci], [Joe Czanek], en [Manuel Silva] li kama sona e jan mute pi muti mani.
+In Kingsport three foreign criminals—Angelo Ricci, Joe Czanek, and Manuel Silva—hear about an eccentric recluse rumored to hoard treasure.
+
+jan pi nimi [Terrible Old Man] li lili, li sama kiwen walo, taso kulupu ni li kute e ni: ona li jo e mani kule en kiwen kama tan tenpo mun pi utala waso.
+The so-called Terrible Old Man is frail and silver-haired, yet tales insist he keeps gold from his pirate career.
+
+jan ike li pali e wile: [Ricci] en [Silva] li wile kama insa tomo lon tenpo pimeja, la [Czanek] li awen lon anpa sinpin e nasin tawa.
+They plan a robbery with Ricci and Silva entering during night while Czanek waits outside by the gate.
+
+tenpo pimeja la ona tu li kama tomo; ona li lukin e ilo pi sinpin pi kiwen mun lili lon supa kon, li kute e kalama lili sama kalama pi jan lili lon sinpin kiwen.
+Inside they notice bottles hanging from strings and hear faint murmurs as though miniature captains speak inside the glass.
+
+tenpo lili la jan lon anpa tawa, [Czanek], li kute e kalama utala kepeken wawa lon insa tomo, la sijelo ona li awen pakala tan pilin.
+Soon the lookout hears a burst of guttural voices and cries within, and he trembles by the door.
+
+tenpo ni la soweli ala li kama, taso jan ala li kama sin, taso jan kiwen lili wawa lon len telo sin li kama lon nasin, li lon e len pi telo loje lon kiwen.
+No rescue arrives, but eventually the old man himself strolls out with his coat oddly spattered as if with rust-red liquid.
+
+tenpo suno kama la jan alasa li lukin e anpa tan ni: kon sama telo walo li lon anpa supa, la kon ona li tawa jan ala.
+Next morning the police find the thieves’ bodies butchered among the rocks, as if torn apart by invisible blades.
+
+kulupu ma li pilin e ni: jan lili ni li ken ala pali e utala wawa ni; taso jan sin la kalama pi anpa telo li lon anpa luka ona en jan pali pi kulupu li tawa weka.
+Residents cannot believe the frail elder could perform such slaughter, and rumors of whispering bottle-spirits spread anew.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "The Cats of Ulthar" (1920) by H. P. Lovecraft.
+# Plot summary / retelling of "The Cats of Ulthar" (1920) by H. P. Lovecraft.
+
+ma [Ulthar] la soweli suprs pi noka luka li lon tomo mute, la jan ale li alasa e kili tawa ona, tan ni: kulupu soweli ni li suli tan nasin kon pi seme.
+In Ulthar cats roam freely and are beloved, for townsfolk believe they bear supernatural secrets.
+
+taso jan lili en mije sin li awen lon tomo anpa lon pini ma, li kama pakala e soweli tan ni: ona li olin ala e soweli.
+Yet an old peasant couple living beyond the village hates cats and kills any that wander near their hut.
+
+tenpo wan la kulupu pi jan tawa lon supa lili li kama lon [Ulthar]; ona li tawa tan soweli pimeja, la jan lili pi nimi [Meni] li kama jo e soweli lili pimeja pi olin suli.
+One day a caravan of dark wanderers camps outside Ulthar, and a boy named Menes cares deeply for his small black kitten.
+
+jan lili li len e ona tan suno, taso lon tenpo pimeja la soweli ona li weka lon ni: jan utala ike li moku e ona.
+While Menes sleeps, the kitten disappears because the cruel couple has slain it.
+
+jan lili li wile wile tan pilin ike la ona li tawa poka pi jan kon pi mun pimeja, li alasa e wawa tan sewi, en kulupu pi jan kalama li pali e musi kon mani.
+Despairing, he implores the caravan’s priests, who gather in a circle and chant beneath the storm clouds.
+
+tenpo kama la kulupu tawa li weka tan ma, li pana ala e soweli sin, taso tenpo poki la soweli mute lon [Ulthar] li weka lon tenpo suno anpa sama.
+After the travelers leave, all cats vanish from Ulthar simultaneously.
+
+jan mute li pilin jelo, taso tenpo poki wan la soweli li kama sin; jaki walo li lon monsi ona sama, en jan ale li wile ala sona e ni: lon seme la ona li moku.
+The villagers worry until the cats return the following dawn well-fed, with traces of grease on their whiskers, refusing to reveal the source of their feast.
+
+lon tomo pi jan pakala, jan li lukin e anpa anpa: tomo li lon taso ko pi noka soweli, la mije sin en meli lili li pini tan moli pi soweli mute.
+When people investigate the farmhouse they find only bones arranged like house posts; the couple has been devoured.
+
+jan lawa pi ma [Ulthar] li pana lawa sin: jan ala li ken moli e soweli.
+Ulthar’s magistrates immediately decree that no person may kill a cat ever again.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "The Tree" (1920) by H. P. Lovecraft.
+# Plot summary / retelling of "The Tree" (1920) by H. P. Lovecraft.
+
+lon ma lili [Arcadia] la jan sitelen suli [Kalos] en jan pi ilo wawa [Musides] li lon sinpin sama, li pali e ijo musi pona lon tomo suli sama.
+In ancient Arcadia the sculptor Kalos and the musician Musides are inseparable friends, creating masterworks together.
+
+jan lawa ali li wile e pali tan ona kepeken mani mute, la [Musides] li olin pona e ilo pi jan sitelen, la jan [Kalos] li olin e kalama musi pi jan ali.
+Kings offer commissions, and Musides adores his friend’s artistry while Kalos reveres the musician’s melodies.
+
+tenpo wan la jan lawa pi ma [Syracuse] li wile e sitelen sewi tan tomo suli pi ma ona; ona li toki tawa ona tu: o pali e sitelen pi kon sewi lon tenpo lili.
+One day the tyrant of Syracuse orders them to craft a divine statue swiftly.
+
+jan [Kalos] li kama pakala tan pilin ike pi sijelo, li lape lili, la [Musides] li alasa e kili, e telo, e kalama musi tawa pona e ona.
+Soon Kalos grows ill, and Musides tends him with fruits, water, and soothing music.
+
+jan kama pi lape mun la jan pakala li toki e wile sin tawa jan [Musides]: o kili e kasi lon sinpin tomo pi pali lon anpa tomo, la kasi ni li pali.
+In his final hours Kalos begs Musides to plant an olive tree beside the workshop so that it may thrive.
+
+jan [Kalos] li moli; ma pi tomo tawa li len e poki, la jan [Musides] li tawa pini e sitelen pi lawa pi ma [Syracuse] kepeken pilin ala kon.
+After Kalos dies and is buried, Musides focuses on finishing the statue without his companion’s guidance.
+
+tenpo mun la kasi olivo li kama suli lon anpa supa, li lawa e ilo pali pi [Musides], li ken ala e anpa ona.
+Meanwhile the olive tree grows unnaturally fast, leaning over the scaffolding so heavily that Musides must reinforce his tools.
+
+jan lawa li kama lukin e pali; tenpo pimeja la seli mute li kama tan sewi, la kasi suli li anpa lon tomo, li pakala e tomo kin e sitelen sin.
+The ruler travels to inspect the statue, but during the night a fierce storm drives the great tree through the studio, smashing the nearly completed work and Musides himself.
+
+tenpo suno kama la jan mute li weka e ko kin li lukin e ni: kasi olivo li moli, tomo li pakala, en sinpin pi sewi pi ma [Syracuse] li kama ala.
+At dawn people find the tree withered and the commission ruined, so no statue ever reaches Syracuse.
+
+kulupu anpa la jan sona li toki e ni: jan [Kalos] li len e ale lon kon kasi en kalama kon pi tenpo pimeja li pilin e ni: olin mute li ken anpa e pali pi jan ike.
+Legends conclude that perhaps Kalos’s spirit steered the tree, proving that the bonds of devotion can topple even tyrants’ demands.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "Celephais" (1920) by H. P. Lovecraft.
+# Plot summary / retelling of "Celephais" (1920) by H. P. Lovecraft.
+
+jan pi nimi [Kuranes] li suli lon ma pi tomo wawa soweli, taso ona li pilin ala, tan ni: ona li pilin e tenpo lili pi musi lili pi mi lili lon ma selo anpa.
+Kuranes, a weary aristocrat of the waking world, despises his modern city and longs for boyhood fantasies.
+
+tenpo pimeja kili la ona li lape lon poki pi telo telo, la supa walo li kama len walo, la ona li lukin e nasin telo ma pi kon sewi kepeken ni: ona li lon ma pi nimi [Celephais].
+Sleeping in drugged stupor he dreams of gliding from cliffs into a sky-borne sea and reaching a radiant city named Celephais.
+
+ma ni li lon ma lili anpa pi nimi [Oriab], lon poka pi telo loje [Cerenerian Sea], la ma kule sin en kulupu soweli lili li kama awen tan anpa telo.
+Celephais rests on the slopes of Mount Oriab beside the Cerenerian Sea, where rainbow sails and bright markets keep perpetual festival.
+
+jan [Kuranes] li kama jan lawa, la jan kule sin li musi e ona, la jan pi kasi kon [Mount Ngranek] li toki tawa ona e sona pi seme pi ma lete ante.
+When he arrives the people hail him as their returning monarch, and messengers describe wonders under Mount Ngranek.
+
+tenpo suno la ona li lape sin, li awen lon kulupu pi jan kon pi tomo pimeja, li utala tawa kon taso la ilo awen li poka e ona tawa ma [Serannian], ma pi linja kon suli kepeken waso kon suli.
+Each day he reclines on carved terraces, traveling by dream-barge through the upper air to Serannian, a floating city of coral and mist.
+
+taso tenpo la jan pi ma selo li kama lon anpa kon pi jan [Kuranes], li pali e wile sama: ona li len e telo lon monsi ona lon tenpo lon la jan kama tawa lukin e ijo musi.
+Meanwhile in the mundane world servants find his body inert as he spends all hours in trance, ignoring estates that crumble into debt.
+
+jan mani li lanpan e tomo, li pana e ona tawa jan anpa; la jan [Kuranes] li kama ala mute kepeken ma kon la soweli li lanpan e ma ona.
+Creditors seize his manor, dismiss the staff, and auctions strip away his heritage without waking him.
+
+tenpo wan la ona li kama tawa nasin telo pi ma pini, li lukin e waso walo lon noka, la ona li sewi tan ni: jan pi sijelo ala li ken ala moli ala lon ma ni.
+Eventually he envisions a final leap into the azure gulf, drifting upward as though death has no dominion in this dreamland.
+
+lon anpa la jan lon ma pi telo li lukin e sijelo ona lon len telo, li wile e ni: jan sijelo ni li moli lon ma.
+In reality fishermen discover his drowned body, believing the penniless noble committed suicide at the shore.
+
+taso lon kon lape la ona li kama lon ma [Celephais] kepeken ale: ona li lon sinpin ma, li lawa e jan li wile ala tawa ma pi pilin ike.
+Yet within the dreamlands he awakens permanently in Celephais, ruling contentedly and never returning to the dismal world.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "From Beyond" (1920) by H. P. Lovecraft.
+# Plot summary / retelling of "From Beyond" (1920) by H. P. Lovecraft.
+
+jan sona [Crawford Tillinghast] li pali e ilo pi wawa mun lon tomo ona lon ma [Providence], la jan pona ona [narrator] li kama lukin tan wile sona.
+Scientist Crawford Tillinghast builds a resonator that stimulates dormant senses in his Providence attic, and his skeptical friend comes to observe.
+
+lon tenpo pini la jan ni tu li olin ken taso tan sona; taso jan sona li kama ike lon pilin, li weka tan kulupu, li wan tan nasin sona wawa.
+Once close companions, they grew estranged when the inventor became erratic under obsessive study.
+
+lon tenpo pimeja la jan sona li lon e ilo, li toki e ni: ilo ni li pana e sona pi ma ante lon poka ma ni.
+During a stormy night he activates the machine, boasting it will unveil a universe overlapping their own.
+
+ilo ni li kalama e wawa kon, la kon pi tomo lili li ante, la kon sin li lon lupa soweli, la jan [narrator] li ken lukin e mun sike sin lon poka ona.
+The resonator hums, the air thickens, and the narrator perceives strange globes and translucent shapes floating around them.
+
+jan [Tillinghast] li toki e ni: ma pi waso kon li sinpin lon tomo ni, en soweli li ken moku e jan la jan o awen ala tawa ilo kala a.
+Tillinghast warns that intangible predators inhabit the space and that they must remain still to avoid being eaten.
+
+taso ilo ni li kalama lon tenpo suli anu la jan [narrator] li pilin e jaki sin lon monsi, la ona li pilin pili e ni: soweli kon li awen tan ona.
+But as the minutes stretch, the visitor senses unseen creatures brushing past and realizes they are being stalked.
+
+lon tenpo sama la jan sona li toki e ni: ona li lanpan e suli pi jan lawa wawa la, jan ni li weka.
+Tillinghast proudly reveals he eliminated the house servants by letting the creatures devour them.
+
+pilin ike mute la jan [narrator] li lanpan e ilo pi noka wawa, li pakala e ilo pi jan sona, la kalama suli li pini, la kon sin li weka.
+Horrified, the narrator shoots the generator with a revolver; the resonance stops and the phantoms fade.
+
+jan pi wile sona li moli lon anpa supa, la jan lawa li wile sona e ni: jan ni li moli tan pilin sona pi jan sona.
+Authorities later discover Tillinghast dead near the broken apparatus, concluding that his mania killed him.
+
+jan [narrator] taso li sona e ni: kon kepeken ilo ni li lon la jan ala li wile e ni: soweli kon ala li o moku e jan.
+Only the narrator knows creatures from beyond truly exist and might return if anyone rebuilds the dreadful machine.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "The Temple" (1920) by H. P. Lovecraft.
+# Plot summary / retelling of "The Temple" (1920) by H. P. Lovecraft.
+
+jan utala Tosi pi nimi [Karl Heinrich] li sitelen e lipu lon tomo telo tan tenpo utala pi telo suli wan.
+German U-boat commander Karl Heinrich writes a diary while adrift during World War I.
+
+ona en kulupu ona li moli e ilo telo pi [Allied], la ona li kama jo e jan anpa pi ma [America] pi nimi [Grätton], li lukin e kiwen suli pi sitelen jan lon noka ona.
+After sinking an Allied ship he finds a curious ivory idol depicting a bearded face clutched by a dead American, Gräfenton.
+
+jan utala ona li utala mute la jan pi kulupu li kama sona e ni: selo telo li pana e kalama monsuta, soweli lili li tawa ma wawa.
+Soon crewmen begin experiencing nightmares and hearing siren songs emanating from the idol.
+
+jan lawa li kute ala e ona; jan utala tu li kama sona ala e wile lawa ni la ona li weka tan tomo pi telo suli.
+The proud commander refuses to believe them, so two officers mutiny and attempt to abandon ship in the submarine’s boat.
+
+jan lawa li weka e ona kepeken ilo utala; tenpo lili la soweli sin li kute e kalama e ni: soweli lili pi telo suli li olin e jan [Karl].
+He executes them, but soon the remaining sailors report seeing strange fish-like men outside the hull calling to the idol.
+
+lon tenpo ni la ilo lili li pakala; jan mute li tawa, li lukin e ni: ma telo li kalama pi kon wawa la soweli li weka tan ilo.
+Equipment fails, crewmen disappear into the sea, and the commander feels the vessel irresistibly descending.
+
+jan wan taso li awen: jan [Karl] li awen kepeken kiwen ni, la ilo toki pi telo li toki e ni: ona li kama lon anpa pi ma pi jan pi telo.
+Ultimately he remains alone, still clutching the idol as the craft sinks toward ruins.
+
+ona li lukin e tomo suli pi kiwen sin, pi pali pi jan pi ma sin; ona li lon e ilo tawa tomo suli, li len e supa.
+Peering through the viewport he sees colossal underwater temples suggesting an ancient civilization.
+
+ona li weka tan ilo la li kalama e ilo sitelen pi jan Moluk; la pilin ona li seli e ni: ona li tawa ma lon anpa, li wile lukin e kulupu ni lon sinpin.
+He abandons the submarine in a diving suit, writing a final entry describing how he walks into the submerged sanctuary.
+
+lipu ni li pini kepeken kute wawa, la jan [Karl] li toki e ni: ona li lon e noka anpa nena suli en kalama lili pi telo li lon noka ona, li lon e olin pi kiwen pi jan pi telo.
+His diary ends with the confession that sea pressure presses upon him while the idol’s pull guides him deeper.
+
+jan lawa pi kulupu ante li kama sona ala e pini ona, taso lipu ni li kama lon noka ma, li pana e ni taso: jan lawa ni li lon tomo pi telo ante en li wile sona e ma ike ni.
+Although he is never seen again, the recovered manuscript reveals that the temple still lures men to its abyss.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "Nyarlathotep" (1920) by H. P. Lovecraft.
+# Plot summary / retelling of "Nyarlathotep" (1920) by H. P. Lovecraft.
+
+tenpo suno ike la jan pi ma ale li kute e nimi sin: jan pi nimi [Nyarlathotep] li kama tan ma lete pi suno pimeja la ona li ken toki e ijo pi tenpo kama.
+In an age of creeping despair, whispers spread that a mysterious figure named Nyarlathotep has arrived from Egypt harboring unspeakable knowledge.
+
+ona li jan mute pi moku ala, li kama lon ma ale kepeken ilo pi musi wawa, li kama jo e mije, meli, jan sona.
+He is tall, swarthy, and alluring, touring cities with displays of uncanny scientific wonders that enthrall men and women alike.
+
+jan ante taso li kute e kalama ona li wile tawa lon tomo suli ona la ona li pilin e ni: kalama ni li suli sama kon pi seli ala.
+Those who listen to his speeches feel an electric rhythm more potent than thunderstorms.
+
+jan suli pi lipu ni li awen lon kulupu li kute e wawa; ona li lukin e ilo pi sitelen mun, pi ijo kon pi kasi kon, pi soweli kon, la pilin ona li pakala tan kalama pi soweli kon.
+The narrator attends one of his exhibitions and watches projections of planets, monstrous silhouettes, and mathematical abstractions blending into madness.
+
+tenpo pini la jan pi lipu li awen lon nasin pimeja kepeken kulupu pi jan mute; ona li kute e ni: kalama mute li weka, suno li awen ala.
+Afterward he wanders the night streets with other dazed spectators, noticing that all lights seem dimmed.
+
+kulupu ni li kama lukin e ilo pi kon sin lon sewi, li pilin e ni: suno li sijelo ala tawa lon poka.
+They see unnatural auroras twisting overhead and feel stars drifting out of alignment.
+
+jan [Nyarlathotep] li lon poka ona la ona li pilin e ni: ma ali li anpa, kulupu pi jan mute li weka tan kon.
+Nyarlathotep himself moves among them, and the narrator senses that society is collapsing.
+
+tenpo wan la kulupu ni li weka lon nasin ante la jan [narrator] li lon tenpo pilin: ona li kama lon ma lete lon anpa; sinpin kasi pi tomo ona li kama lon sijelo pi soweli.
+Eventually the crowd splits; the narrator’s group finds itself stumbling across blasted landscapes where geometry fails.
+
+kulupu ni li kute e kalama sama lili lon anpa, la jan mute li kama anpa lon tenpo sama; jan [narrator] li lukin e soweli wawa lon sewi kepeken wawa lili pi suno ala.
+Tiny chirps from beneath their feet precede people falling into abyssal fissures while monstrous beasts stride overhead against a starless sky.
+
+jan ante li lukin e tenpo pi moli ale, la jan [Nyarlathotep] li musi e ni: ona li lawa e kulupu lon sewi pi kulupu pi kalama ike.
+Finally Nyarlathotep reveals his supremacy, rejoicing as the cosmos collapses and humanity is led, chained, through infinite darkness.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "The Picture in the House" (1920) by H. P. Lovecraft.
+# Plot summary / retelling of "The Picture in the House" (1920) by H. P. Lovecraft.
+
+jan tawa pi lipu sona li awen lon noka tomo lili pi ma pimeja lon ma [New England] tan ni: seli li kama lon sewi en telo li wawa, taso ona li wile awen lon kule kiwen sin.
+A traveling antiquarian seeks shelter from a rainstorm in a decrepit Massachusetts farmhouse.
+
+lon insa ona li lukin e tomo pi anpa sin, sinpin kiwen pi pali ala lon tenpo mute, la seli pini li lon, la kon ona li tawa anpa.
+Inside he notices sagging beams and a musty smell, proof the house has stood unchanged for centuries.
+
+tenpo lili la jan suli pi palisa lili, pi palisa sijelo wawa ala li kama, li toki e toki pi tenpo mute kepeken kalama pi jan pi ma pini.
+Soon an ancient man with watery eyes enters, speaking in an archaic dialect.
+
+jan sin li kute sona kama tan jan lili; ona li toki e ni: ona li len ala e nimi ona, taso ona li lape ala, li musi ala kepeken kulupu.
+The narrator senses that the host rarely leaves and delights in idle conversation about old books.
+
+ona li kama lukin e lipu pi musi lon supa; lipu ona li kepeken sitelen pi kulupu pi ma [Africa], li jo e sitelen pi jan moku jan tan telo, li sitelen namako e moli ike ni.
+The host proudly shows a folio depicting the cannibal tribe Anzique in Africa dismembering victims for food.
+
+jan tawa li lukin e sitelen ni, la jan sin li pilin e pilin nasa; ona li toki e ni: ona li pilin e ni: sitelen ni li pona lawa tawa ona.
+Admiring the picture, the old man confesses an obsessive fascination with its gruesome feast.
+
+kalama pi waso ike li kama tan sewi; selo ma li kalama e wawa; la jan tawa li lukin e sinpin pi jan sin, la ona li sona e ni: jan ni li pilin wile pakala sama lipu.
+Thunder shakes the roof as the visitor realizes his host longs to emulate the scene.
+
+jan sin li toki e ni: mama ona lon tenpo pini li kama jo e lipu ni tan wawa, la ona li pali e wile e ni.
+The elder hints that his ancestor obtained the book during voyages and kept certain culinary secrets.
+
+tenpo ni la telo tomo li kama lon insa kepeken len kili, la kili loje li tan anpa sinpin, la jan anpa li wile e ni: jan tawa li awen ala lon tomo ni.
+Suddenly blood drips from the ceiling, and the visitor realizes a fresh corpse lies above.
+
+lon tenpo sama la seli kon li pakala e tomo, la sinpin pi tomo li pakala, la jan ante li kama weka tan kulupu, la jan tawa li awen lon anpa tomo en weka kepeken noka wawa.
+Before he can flee the wind tears the house apart, allowing him to escape while lightning obliterates the cannibal’s lair.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "Facts Concerning the Late Arthur Jermyn and His Family" (1920) by H. P. Lovecraft.
+# Plot summary / retelling of "Facts Concerning the Late Arthur Jermyn and His Family" (1920) by H. P. Lovecraft.
+
+lipu sona ni li open kepeken sona wawa: jan pi nimi [Arthur Jermyn] li seli e sina e ona la ona li moli kepeken anpa ni: ona li seli e sijelo ona kepeken seli wawa.
+This account begins with the sensational death of Arthur Jermyn, who doused himself in oil and burned alive.
+
+kulupu ona pi mama mute li tan ma pi jan lawa [Sir Wade Jermyn], jan kama sona pi ma [Congo], li toki e ni: ma ni li jo e kulupu pi jan sin kepeken tomo kiwen suli.
+His lineage traces back to explorer Sir Wade Jermyn, who claimed to discover a civilization of pale apes in the Congo.
+
+jan [Wade] li kama lon ma tomo kepeken meli sin pi jan pi ma ni, li moku tawa ma [England] la jan mute li kama sona ala e meli sin ni.
+Wade returned to England with a mysterious wife rumored to be native royalty, though no one understood her origins.
+
+tenpo mute la jan pi kulupu [Jermyn] li pona ala lon lawa; jan wan pi nimi [Philip] li pali e musi lon anpa la ona li pilin pi ma len sin.
+Subsequent generations grew eccentric; Philip Jermyn abandoned the family to do stage performances overseas.
+
+lon tenpo kama la jan [Arthur] li kama jan sona pi lipu pi mama mute, li wile sona e nasin [Congo], li pali e alasa kepeken sona.
+Arthur, a scholar of family history, resolved to investigate the Congo tales himself.
+
+ona li lanpan e lipu pi mama ona pi nimi [Sir Alfred]; lipu ni li toki e ni: jan pi kulupu pi tomo kiwen li olin e ijo wawa li pali e wawa tan ijo ni la ona li moli pi pilin ike.
+He found notes by his grandfather Sir Alfred describing a love affair between Wade and a peculiar white ape goddess, ending in tragedy.
+
+jan [Arthur] li tawa [Congo]; ona li kama e poki walo pi kiwen pi sitelen kon tan jan pi kulupu pi jan sin.
+Arthur journeyed to the Congo and obtained a carved ivory casket from the tribe.
+
+lon ma [England] la ona li open e poki; insa ona li jo e sinpin anpa pi meli pi luka suli, pi noka suli, pi palisa kiwen sama soweli, li pana e ni: mama ona pi meli ante li soweli pi lukin jan.
+Back home he opened it to reveal a perfectly preserved mummified female humanoid with both human and ape features, suggesting she was his ancestor.
+
+jan [Arthur] li oki e ni: meli ni li mama pi mama mute ona, la tan ni la ona li kama jo e palisa kiwen lili pi soweli kon.
+He realized his great-great-grandmother was not human but a white ape goddess, explaining his own simian traits.
+
+tan pilin kipisi ni la jan [Arthur] li seli e sijelo ona lon tomo suli pi kasi walo; jan ante li kama alasa e ijo lon open anpa la ona li lukin e ko loje taso.
+Unable to endure the revelation, Arthur immolated himself at his estate, leaving behind only charred remains.
+
+lipu sona ni li pini kepeken toki wawa: jan pi kulupu [Jermyn] li kama sona e ni: wile sona ala e lipu sinsin kepeken lukin sona.
+The document concludes by cautioning that curiosity can expose monstrous bloodlines better left forgotten.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "The Nameless City" (1921) by H. P. Lovecraft.
+# Plot summary / retelling of "The Nameless City" (1921) by H. P. Lovecraft.
+
+jan alasa pi nimi ala li tawa ma lete pi ko anpa lon ma lete [Arabia], la ona li lukin e kiwen anpa, e supa sinpin, taso jan ala li lon.
+An explorer ventures into a forsaken Arabian desert and finds vast ruins carved into the earth devoid of inhabitants.
+
+sinpin kiwen li ante sama jelo tan waso, la lupa li lili mute, la jan li sona e ni: jan pi sijelo anpa li lon tomo ni tan ni: lupa li lili tawa jan suli.
+The architecture is low and horizontally stretched, implying the builders were reptilian or crawling beings.
+
+jan alasa li lon e moli: lon anpa tomo pi lona li lukin e sitelen pi waso soweli seme, pi soweli anpa kepeken noka mute.
+Bas-reliefs depict squat creatures with snouts and clawed feet worshipping in underground chambers.
+
+tenpo pimeja la ona li tawa anpa lon nasin pi weka ala; ona li awen lon anpa tomo pi piu kiwen lon weka telo suli; la kon sewi li kama anpa lon anpa.
+One night he descends through a narrow tunnel as a cool wind pushes upward like a sigh from deep earth.
+
+ona li kute e kalama sama sitelen kon, la kalama ni li kama lon nasin lili; ona li awen tawa, li weka e selo mani.
+He hears faint chants resembling words, urging him deeper while he abandons fear.
+
+lon pini nasin la ona li kama lon tomo suli sin; sinpin li jo e sitelen pi jan pi sijelo anpa li awen lon kiwen.
+At the tunnel’s end he enters a huge vaulted hall lined with carvings of the ancient race.
+
+ona li lukin e tomo sin kepeken sinpin pi kili ala; insa li jo e supa sewi pi linja kiwen, la supa li jo e noka pi jan moli li kama kama lon walo lon sinpin.
+There he finds an altar and sees mummified figures of the reptilian people preserved upright in white cerements.
+
+tenpo ni la wawa li kama; lupa pi anpa sin li kama lon sinpin, en jan sin li kama sewi tan anpa, li kepeken noka mute kepeken kon wawa.
+Suddenly another portal opens and living creatures identical to the mummies crawl upward propelled by rushing winds.
+
+jan alasa li anpa tan pilin ike, taso jan pi ma sin li lon e noka ona, li wile e ni: sina o awen tan ni: ma kon sin li awen lon linja.
+He faints from fright as one being grasps him yet gestures as if inviting him to witness their subterranean paradise.
+
+tenpo open la ona li lukin e suno suli lon sewi; la ona li sona e ni: ona li lon ma ante, taso ona li tawa weka, li awen lon sewi tan pilin monsuta.
+When he wakes under the desert sun he realizes he fled, unable to share the regained secret world of the nameless city.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "The Quest of Iranon" (1921) by H. P. Lovecraft.
+# Plot summary / retelling of "The Quest of Iranon" (1921) by H. P. Lovecraft.
+
+jan musi [Iranon] li tawa ma [Teloth] lon len kili loje, li awen lon supa lawa la ona li kalama e musi olin pi ma mama ona [Aira].
+The golden-haired minstrel Iranon arrives in Teloth and sings wistful ballads of his lost city Aira.
+
+jan lawa pi [Teloth] li wile e ni: ona o pali ike lon ma ona kepeken ilo pi kiwen lili, taso [Iranon] li weka tan ni: ona li wile toki e ma pona kepeken kalama taso.
+Its magistrates demand he work as a stonecutter, but he refuses, vowing to continue searching for his homeland through song.
+
+ona li kama pona tawa jan lili pi nimi [Romnod], jan pi ma [Teloth] li wile tawa musi kepeken ona; ona tu li tawa ma [Oonai] wana lon suno.
+He befriends a youth named Romnod, who chooses to travel with him toward the merry city Oonai.
+
+lon ma musi ni la jan toki li wile e sona pi [Aira], taso tenpo kama la jan [Iranon] li pilin e ni: kalama wan taso li ken ala pali e wile pilin mute.
+In Oonai revelers indulge in decadence and coax Iranon to describe Aira, but eventually the singer laments that mere performances cannot satisfy him.
+
+ona tu li tawa ma anpa sin; jan pi ma [Salerion] li wile wile e kalama ona, taso tenpo mute li kama, la [Romnod] li moli tan lili suli.
+They journey onward to the scholarly Salerion where Iranon gains admirers, yet Romnod ages and dies, leaving him lonely.
+
+tenpo mute la ona li pilin utala: tan seme la ona li sona ala e nasin tawa ma ona? taso pilin pi tenpo lili la ona li awen tawa.
+For years he wanders, losing hope but pressing forward.
+
+lon pini la ona li kama lon ma ko pi nimi [Aira], taso ona li lukin e ni: ma ni li jo ala e tomo sin, taso li jo e jan pakala pi ma suli pi jan pi luka ala.
+Finally he reaches the countryside where Aira should be, only to find a bleak desert inhabited by simple shepherds.
+
+jan sin li toki e ni: ma ni li [Aira], taso lon tenpo mute la tenpo li weka e tomo, tan ni: jan sin pi nimi [Iranon] la ona li jan kiwen ala; ona li jan lili pi ma [Aira] taso li weka lon tenpo lili pi pilin musi.
+A shepherd explains that no splendid city ever stood there; Iranon was once a poor boy dreaming of grandeur who left long ago.
+
+jan musi li lukin e len kili laso ona pi kasi lon noka, li sona e ni: olin pi tenpo lili taso li lon, li anpa tan pilin weka.
+The revelation shatters him, and he sees his clothes have become rags.
+
+ona li tawa poka pi telo walo lon sewi en li anpa tan kiwen pi mun pimeja, li weka lon telo sama waso walo.
+He walks into a marshy river and disappears beneath the moonlit surface, dissolving into myth like the dream he chased.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "The Moon-Bog" (1921) by H. P. Lovecraft.
+# Plot summary / retelling of "The Moon-Bog" (1921) by H. P. Lovecraft.
+
+jan lawa [Denys Barry] li kama sin lon ma mama ona lon ma [Ireland], li wile tawa seli e ma lili pi waso kon kepeken mani pi ma lete.
+Denys Barry returns to his ancestral Irish estate and plans to drain the vast moonlit bog for farmland.
+
+jan kulupu lili lon ma ni li wile ala e ni tan ni: kon mun li lon anpa telo, soweli mun li awen lon poka, la ma ni li kulupu pi jan suli pi tenpo pini.
+Local peasants object, claiming moon spirits dwell in the mire and guard ancient ruins beneath the peat.
+
+jan lawa li kute ala e ona, li kama tawa tomo suli lon [Dublin], li kama jo e ilo, jan ilo, en jan sona tawa pakala.
+Barry ignores them, hires engineers from Dublin, and begins draining with pumps and machinery.
+
+tenpo mun la kalama ike li kama lon pimeja; kalama kili sin li kama tan weka, la jan pali li kute e kalama pi jan kon lon telo.
+At night eerie piping sounds echo, and workers hear voices on the water.
+
+jan lawa li pilin ala, taso jan lili li awen weka tan wawa, li pali lon ma sin, la ona li lukin e ni: telo li pini lili.
+Denys remains confident even as many employees flee, watching the bog recede.
+
+tenpo wan la mun pimeja li sewi suli lon telo sin li weka la kalama kon li kama suli, la waso laso li tawa sewi, la kon loje li weka tan anpa.
+One full-moon night brings an overwhelming reek; luminous vapor rises while ghostly marsh lights dance.
+
+jan pi lipu sona li lon tomo lawa en [Denys] li lon poka; ona li lukin e ni: jan lawa li tawa ma telo kepeken ilo lili kepeken pilin nasa.
+The narrator stands with Barry in the manor and sees him compelled to march toward the bog in a trance.
+
+jan lawa li kama lon noka telo; waso kon suli li awen lon sewi; jan ni li weka tawa insa telo; la jan ni li sona ala e ni: ona li li weka tan ma.
+Barry strides directly into the mire as spectral shapes surround him, and he vanishes beneath the muck.
+
+tenpo suno pi pini la jan alasa li lukin e moli ala; taso jan tawa lipu li lukin e ni: ma pi telo loje li lon sin, kiwen pi tenpo pini li kama lon poka sin.
+Searchers never find him, yet the bog restores itself overnight as if nothing was drained.
+
+jan kulupu li toki e ni: jan pi ma mun li kama tawa lon telo pi mun, la soweli tan mun li wile ala ni: jan pi lawa sona li utala e ona.
+The villagers insist moon spirits reclaimed their land because Barry defied them.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "Ex Oblivione" (1921) by H. P. Lovecraft.
+# Plot summary / retelling of "Ex Oblivione" (1921) by H. P. Lovecraft.
+
+jan li lon supa pi lape lili taso; ona li toki e ni: lon tenpo ale la ona li olin e lape tan ni: lape taso li pana e pona.
+The narrator loves sleep because only in dreams does he find joy.
+
+tenpo pimeja ona la ona li lukin e sinpin walo pi monsi kiwen, la anpa ona li jo e lupa suli pi telo; taso jan pi tomo lape li wile ala e ni: ona li o pali e ijo lon sewi.
+In his visions he reaches a shining valley beyond a wall, but cannot pass through the locked gate guarding the valley’s secrets.
+
+jan pi ma lape ante li toki tawa ona: lon anpa sinpin la lipu pi sitelen sin li lon, la lipu ni li toki e ni: jan moli li ken sona e ijo ale.
+Dream sages inform him that a hidden papyrus explains the gate’s nature, promising knowledge through death.
+
+jan li alasa e lipu ni; ona li lukin e lipu pi nimi [Papis], la ona li sona e ni: lon insa anpa li jo e ilo pi telo walo sin tan ma pi jan pi lon ala.
+He eventually acquires the scroll and learns of a drug growing in the kingdom of Leng capable of opening the gate.
+
+tenpo lili la jan pali li alasa e ko ni, li pana e ona tawa jan sona; jan ni li kama weka e ona tan sijelo.
+Apothecaries harvest the rare herb and distill the potion he ingests.
+
+jan [narrator] li moku e wawa lili la ona li pilin ala e sijelo; ona li awen lon anpa sinpin kepeken nanpa anpa, la lupa pi sinpin li lon anpa ona.
+After drinking he feels his body fade as he stands before the gate with new clarity.
+
+ona li lawa e lupa, la suno walo li kama lon ona, la kalama lon seli ken ala, la ma sin li awen lon sinpin.
+He pushes the door open, witnessing dazzling light and unimaginable spaces.
+
+tenpo pini la ona li toki e ni: lon anpa sin, jan li ken ala sona e ijo ni: ijo pi ma ni li sona ala e wile, tan ni: ma ni li ala.
+His final revelation states that the gate leads not to knowledge but to oblivion itself.
+
+ona li oki e ni: sona pi tenpo li ken ala pona ilo, taso lon weka ale la pilin ike li pini, la lape mute li lon ala.
+Yet he embraces this truth because entering nothingness frees him from longing forever.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "The Other Gods" (1921) by H. P. Lovecraft.
+# Plot summary / retelling of "The Other Gods" (1921) by H. P. Lovecraft.
+
+jan sona [Barzai the Wise] en jan lili [Atal] li wile lukin e sewi pi jan sewi lon nena [Hatheg-Kla].
+The sage Barzai the Wise and his apprentice Atal decide to witness the gods dancing atop Mount Hatheg-Kla.
+
+kalama pi jan pi ma [Ulthar] li toki e ni: jan ala o pali e ni tan ni: sewi ante li kute e ni la ona li pakala.
+Priests warn them that mortals must not intrude because higher, unknown gods guard the summit.
+
+tasom [Barzai] li wawa lon sona, li kute ala e toki ike, li tawa sewi kepeken tenpo pimeja la waso sin walo li lon sewi.
+Barzai pridefully ignores the warnings and climbs through the night, chasing a weird light.
+
+[Atal] li pilin monsuta taso li awen lon noka ona, la ona li kute e kalama pi soweli lon kon, la jan lawa li toki e ni: ona li lukin e sewi.
+Atal trembles yet follows, listening to chorus-like whispers.
+
+lon sewi la [Barzai] li kalama e pilin pona tawa jan sewi li lukin e ijo kon pi mun suli lon sewi, la ona li toki e ni: ona li lon poka jan sewi.
+When Barzai reaches the peak he exults, claiming he sees the gods swirling like aurorae.
+
+taso tenpo pimeja li lon sewi la kon anpa li kama, la kalama kon suli li wawa, la [Atal] li kute e ni: jan lawa li toki e ni: "jan ante li kama!"
+But winds roar and Barzai screams that the Other Gods have arrived.
+
+jan lili li lukin e sewi, taso ona li ken ala lukin e jan lawa; ona li kute taso e kalama pakala, la ona li lukin e ni: jan lawa li weka lon sewi e noka ona.
+Atal cannot see them; he only hears Barzai’s terror and sees him lifted into the night.
+
+tenpo suno kama la jan lili taso li sage ala e jan sona, taso jan ma li weka lon sewi la nena pi palisa wawa li kama alasa e ni: jan sewi li pakala e jan sona pi wile sona.
+By dawn Barzai has vanished, leaving Atal alive to report that the Other Gods punish hubris.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "The Outsider" (1921) by H. P. Lovecraft.
+# Plot summary / retelling of "The Outsider" (1921) by H. P. Lovecraft.
+
+jan li awen lon tomo pimeja, lon anpa kiwen walo, li sona ala e tenpo en kulupu, li pilin e ni: ona li lon jan ala.
+An unnamed recluse lives in a gloomy castle, never having seen sunlight or other people, believing himself utterly alone.
+
+ona li awen kepeken lipu pi sitelen kala pi ma ante, la ona li wile lukin e suno, taso suno li ala kama tawa ona tan ni: sinpin pi kiwen suli li len e kon.
+He spends his days reading decaying books about the outside world and yearns for daylight, yet thick walls and trees block the sky.
+
+tenpo wan la ona li wile ala awen; taso ona li awen tawa sewi kepeken pi noka pi nena, la ona li kama lon sinpin pi poki pi ma kasi.
+Eventually he cannot bear it and climbs a crumbling tower to escape.
+
+ona li lukin e lupa sike lon sinpin tomo sewi; ona li kama lon anpa la ona li lon tomo pi kasi sin en suno laso.
+He emerges through a door in the ceiling and finds himself outside under a moonlit sky for the first time.
+
+ona li lukin e sinpin pi kasi lili li wile sona e jan lili; ona li tawa tomo suli lon weka la ona li kute e kalama musi en pilin pona.
+He wanders along the forest, sees a cheerful mansion, and hears merriment within.
+
+ona li kama lon insa la jan mute li pilin monsuta, li weka lon kalama utala.
+Upon entering the party the guests panic, screaming and fleeing.
+
+ona li wile sona e tan, la ona li lukin e sinpin kiwen lon poka; ona li lukin e nasin seli li lukin e ni: jan monsuta pi sijelo pakala li lon poka.
+Seeking the cause, he looks into a mirror and sees a monstrous cadaver staring back.
+
+ona li pilin monsuta la ona li alasa e ni: jan monsuta ni li ante e ijo e sinpin? taso lon sina la ona li sona e ni: ona kin li jan ni.
+Horrified, he realizes the creature is his own reflection: he is a decayed, corpse-like being.
+
+tenpo pini la jan sin li sona e ni: jan lili ni li lon ala kulupu; ona li pilin e ni: ona li ken ala lon kulupu tan lukin ona.
+He understands he can never live among humans.
+
+sona sin la ona li tawa tomo pi lipu pini, li tawa sewi pi kiwen pimeja, li awen lon tomo pi kili ko.
+He returns to his castle and accepts a timeless existence among bats and memories.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "The Music of Erich Zann" (1921) by H. P. Lovecraft.
+# Plot summary / retelling of "The Music of Erich Zann" (1921) by H. P. Lovecraft.
+
+jan pi sona nanpa li awen lon tomo anpa lon nasin pi nimi [Rue d'Auseil], nasin suli kepeken nena kiwen lon ma [Paris].
+A student lodges along the steep Rue d’Auseil in Paris.
+
+lon supa sewi la jan pi nimi [Erich Zann], jan mute ala pi ilo [viol], li tawa musi pimeja lon sewi, li kalama e kalama seme pi pilin ike.
+Above him lives Erich Zann, a mute viol-player who performs eerie nocturnal music.
+
+jan pi lipu ni li pilin wile sona e kalama ni, la ona li kute e kalama lon suno pimeja, la kalama ni li pi wawa pakala.
+Curious, the student listens nightly to the uncanny melodies shaking the garret.
+
+tenpo wan la ona li wana e wile: ona li tawa tomo sinpin la [Zann] li awen kepeken kalama nasa, la ona li toki e ni: sina o awen ala tan ni.
+Eventually he befriends Zann, who reluctantly allows him inside but warns him not to ask about the music.
+
+jan pi lipu ni li lukin e ni: lupa sinpin la len pi kasi pimeja li lon; sinpin li lon poka la waso li ken lukin e mun.
+He notices the attic’s lone window is sealed by heavy hangings despite offering a high view over the city.
+
+tenpo pimeja la kalama li kama wawa kin, la jan pi lipu li lukin e ni: [Zann] li kalama tan pilin ike la palisa ona li kama e kalama lili pi musi suli.
+One night the music grows frantic while Zann battles unseen forces with wild bow strokes.
+
+jan pi lipu ni li open e len e window; taso lon anpa la ona li lukin e ni: ma [Paris] li weka ala, taso kon pimeja pi mun ala taso li lon mun.
+The student rips aside the curtain but sees no Paris beyond—only yawning black void with whirling sparks.
+
+jan sona li kalama e seme pi weka, la kulupu kan li pilin e ni: soweli kon sin li kama tan ma pi weka.
+Outside the void, cosmic winds howl as invisible presences push inward.
+
+jan [Zann] li kalama kepeken wawa mute; taso awen ala li lon; palisa li pakala, la kalama li weka; ona li moli lon supa kepeken monsi kepeken kalama.
+Zann bows violently but eventually his strings snap, the music ceases, and he dies collapsed beside his instrument.
+
+jan pi lipu ni li awen weka tan tomo wawa; tenpo suno kama la ona li alasa e nasin, taso nasin [Rue d'Auseil] la ona li sona ala lon ma pi jan ante.
+The narrator flees and later cannot locate Rue d’Auseil on any map, as if it never existed.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "Sweet Ermengarde" (1921) by H. P. Lovecraft.
+# Plot summary / retelling of "Sweet Ermengarde" (1921) by H. P. Lovecraft.
+
+lipu musi ni li lon nasin pi toki nasa: jan [Ermengarde Stubbs] li jan pona olin pi jan wawa pi ma [Potts Corners].
+This satire follows Sweet Ermengarde Stubbs, beloved belle of Potts Corners.
+
+jan [Jack Manly] li jan utala pi pona mute li olin e ona, taso jan wawa ike [Sidney Stiles] li wile e ona tan mani pi ma suli [Squire Hardman].
+She loves the rustic hero Jack Manly, but villainous Sidney Stiles seeks her for her father Squire Hardman’s wealth.
+
+jan ike li wile pana e moli tawa [Jack]; taso jan suli sin pi nimi [Captain Hackett] li kama tan ni: ona li wile alasa e mani pi ma ni.
+Sidney frames Jack as a thief, yet the scheming Captain Hackett arrives to locate hidden land deeds.
+
+jan [Hardman] li lon pakala mije lon ni: ona li pali e wile nasa la ona li pilin rama e ni: jan pi open lili li ken ala e nasin.
+Squire Hardman, comically incompetent, cannot decide whom Ermengarde should marry.
+
+jan [Ermengarde] li awen tawa ma telo kepeken utala, taso ona li ken ala pana e kule pona ona tan ni: jan mute li wile e ona.
+Ermengarde flees to a mountain cabin but cannot escape the suitors’ pursuit.
+
+tenpo wan la lipu li pakala e ijo mute: jan suli li kama sin, lipu sona li lon insa poki ko, en nasin mute li weka tan pali ala.
+The narrative spirals with new coincidences, lost documents, and last-minute arrivals.
+
+lon pini la jan ale li kama lon tomo pi jan lawa; jan [Jack] li kama sona e ni: ona li sinpin pi kulupu pi kiwen suli.
+Eventually everyone congregates at the Hardman home where Jack’s true nobility is revealed.
+
+jan ike li lon tenpo ni: [Sidney] li pakala kepeken wile ona, [Hackett] li kama kulupu e ona, la jan ale li kalama musi.
+Sidney’s schemes collapse, Hackett is exposed as a fraud, and the crowd laughs at their defeat.
+
+jan [Ermengarde] li kama pali e musi suli pi olin kepeken [Jack]; tomo suli li pona sin; soweli wawa pi ma li kalama musi pi olin sin ni.
+Ermengarde marries Jack, Potts Corners rejoices, and the author mocks melodramatic tropes by making every twist absurdly convenient.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "Hypnos" (1922) by H. P. Lovecraft.
+# Plot summary / retelling of "Hypnos" (1922) by H. P. Lovecraft.
+
+jan sitelen li kama pona lon tenpo pimeja lon kulupu pi ona li lon ma [London]; ona li kama weka tan kalama pi jan suli pi sijelo loje.
+An artist meets a mysterious pale stranger in a London train station during a trance-like moment.
+
+jan sin ni li nimi ala taso ona li pana e wawa pi pilin sin e sona sin tawa jan sitelen, la ona tu li awen lon tomo pimeja lon ma.
+The stranger, nameless yet mesmerizing, shares his knowledge of dreams with the artist as they dwell in a secluded studio.
+
+ona tu li kepeken wawa pi piun pi jan [Eastern], li wile tawa ma lape, li ken lukin e tomo suli pi ma mun, li utala tawa soweli pi ma nin.
+Together they use narcotics to explore dreams, glimpsing cosmic cathedrals and battling horrors from far planets.
+
+tenpo suli la ona li awen lon lape la jan sin li kalama e toki lili tawa jan ante.
+Time blurs, and the stranger hints they are outrunning some cosmic order.
+
+jan sitelen li lukin e ni: sijelo jan sin li kama pakala: palisa ona li kama ala laso, lukin ona li kama kon.
+The artist observes his companion’s body growing statuesque and immobile.
+
+jan sin li toki e ni: jan pi nimi [Hypnos] li lon sewi, li wile e ni: sona pi lape li kama tawa jan mute, taso ona tu li awen weka.
+The stranger warns that the god Hypnos will punish mortals who trespass too far into sleep.
+
+tenpo wan la ona tu li weka lon lape tawa ma sin pi mun sin; la jan sin li pilin e ni: soweli wawa li alasa e ona; ona li toki e ni: o awen lon ni.
+During one journey they approach a dazzling void when the stranger panicly urges retreat.
+
+jan sitelen li tawa lon kama pi awen la ona li lukin e ni: jan sin li linja ala lon tomo; ona li lon ala lon supa.
+When the narrator awakes, the stranger is absent.
+
+jan lawa li kama, li wile e sona ni: jan sin ni li lon seme.
+Officials arrive to question him about his missing partner.
+
+kulupu la li toki e ni: jan sin ni li lon ala tenpo ni: ona li sitelen taso e sitelen pi jan sin lon supa, taso lipu lon tomo li toki e ni: nasin li kama la jan sin li kiwen taso.
+They explain that there never was any living companion—only a statue the narrator sculpted.
+
+jan sitelen li sona e ni: ona li toki e jan pi ma ante taso lon pilin lawa, la jan ale li pilin e ni: ona li kepeken kon pi jan ni taso lon pilin ala.
+The artist realizes he conversed with an imagined Hypnos persona all along, leaving him alone on the brink of madness.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "What the Moon Brings" (1922) by H. P. Lovecraft.
+# Plot summary / retelling of "What the Moon Brings" (1922) by H. P. Lovecraft.
+
+jan li awen lon len tenpo pimeja lon poka telo, la mun walo li kama lon e suno pimeja lon linja telo.
+A narrator gazes at a garden under full moonlight.
+
+kon mun li ante e kasi suli, e kili, e telo, la ona li lukin e ni: kasi li kama soweli monsuta, en telo li pali e kalama pi kalama lili.
+The moon transforms flowers into grotesque shapes and turns the fountain water oily black.
+
+ona li lukin e telo [Brahma] lon weka la ona li kute e kalama pi sitelen lili tan anpa.
+He peers toward the distant Brahma river and hears faint chanting.
+
+kon pimeja li kama tan telo, la soweli pimeja li awen lon noka; soweli li kama sama jan, la jan li kama sama soweli.
+Shadows from the water seem to grow into strange beings exchanging forms.
+
+tenpo ni la mun li kama sin lon sewi, la jan pi lipu ni li lukin e ni: telo li kama loje, la soweli pi telo li lon e wawa sin.
+As the moon climbs higher, he sees the tide recede and reveal monstrous objects.
+
+ona li lukin e telo wawa pi len loje li kama tawa anpa; ma lili pi kiwen sin li kama lain.
+The waves expose ancient masonry and statues.
+
+jan li pilin e ni: telo ni li lon ma pi jan pi tenpo pini, li pali e kulupu pi anpa.
+He imagines they belong to a submerged civilization.
+
+tenpo ni la jan li lukin e ijo pi lili teloli lon anpa; ona li lukin e ni: soweli pi telo pimeja li kama lon telo, li wile moku e jan lon sewi.
+Then he spots black shapes crawling up from the depths, as if hungry sea-creatures are scaling toward him.
+
+pilin monsuta li kama suli, la ona li lukin e telo lin lon ijo lon tawa.
+Paralyzed by dread, he watches the flood of darkness approach.
+
+lon pini la ona li pilin e ni: tan ni: ona li lukin e ante pi mun, la ona li wile e ni: ona li musi e tenpo lili pi pilin sin.
+Realizing he cannot bear the horror, he leaps into the river to escape what the moon reveals.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "Azathoth" (1922) by H. P. Lovecraft.
+# Plot summary / retelling of "Azathoth" (1922) by H. P. Lovecraft.
+
+lipu lili ni li toki e jan lili sewi li pilin ike tawa ma pi sijelo li wile tawa kon ni: jan li kama weka tan ma wawa pi tomo suli.
+This fragment tells of a dreamer who detests industrial civilization and yearns to escape.
+
+jan ni li pilin anpa lon tomo walo pi kulupu pi kiwen wawa, lon tenpo kamason la sito lawa li moku e mun.
+He feels trapped among towering cities under smoky skies.
+
+lon tenpo lape la jan musi li kama lon ona, li pali e kalama ni: "o o, o weka!" la jan ni li tawa nasin suno, li weka tan ma ona.
+In dreams a visionary summons him with music, urging him to flee along a path of light.
+
+jan ni li pali e ilo pi mun walo la ona li tawa kepeken ilo pi telo mun kiwen, la ona li lukin e tomo sin pi suno suli.
+He crafts wings and travels by comet trail to far-flung palaces of the cosmos.
+
+lon noka mun li kama sona e ni: lon ma pini la kon pi ma ali li lon e ijo pi nimi [Azathoth], wawa pi mun ale.
+Beyond the stars he learns of Azathoth, the blind idiot god at the universe’s center whom all chaos surrounds.
+
+lipu li wile tawa e ni: jan ni li lon e ni: ona li lon tawa ma wawa pi kalama pali pi mun li wile sona e nimi ona.
+The fragment implies he seeks to reach that center and witness the primeval flutes around Azathoth.
+
+lipu li pini lon tenpo la jan li anpa taso lon ma pi supa kasi lili, la ona li pilin e ni: tawa pi musi pi kalama kon li open taso.
+It ends abruptly as the dreamer sets forth, eager to leave Earthly burdens behind.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "Herbert West-Reanimator" (1922) by H. P. Lovecraft.
+# Plot summary / retelling of "Herbert West-Reanimator" (1922) by H. P. Lovecraft.
+
+lipu ni li wile e pali pi jan sona [Herbert West] en jan kole tawa ona [narrator]; ona tu li kama sona lon tomo sona [Miskatonic], li wile alasa e moli.
+This tale follows medical student Herbert West and his comrade the narrator, who meet at Miskatonic University determined to conquer death.
+
+jan [West] li pali e ko wawa lon tomo pimeja; ona li kepeken ko ni lon insa sijelo seme la jan li ken sin ala.
+West concocts serums in hidden labs and injects them into corpses hoping to restore life.
+
+tenpo open la ona li kama jo e mije moli tan tomo pi pilin, li alasa e moli, taso jan moli li sewi e soweli, li moli kin li kalama pi soweli kon.
+Their earliest trials on a dead man end in failure when the reanimated body howls and dies violently.
+
+lon ma pi utala suli la ona li tawa supa pi jan moli mute, li lanpan anpa ijo, li pilin wile e ni: jan pi selo suli li pona.
+During wartime they harvest fresh corpses from battlefields, believing recently dead subjects yield better results.
+
+jan [West] li awen lon supa pi jan anpa pi nimi [Major Sir Eric Moreland Clapham-Lee], la jan ni li sin e sijelo, taso ona li kama soweli pi utala wawa, li weka e tomo.
+West even reanimates a famous major whose resurrected husk smashes the lab.
+
+tenpo kama la ona li awen lon tomo lon ma [Arkham], li pali e supa poka pi sinpin pi soweli pi nimi [Dr. Allen], taso jan ni li weka lon tenpo pimeja.
+Later they practice in Arkham while West keeps a mysterious assistant “Dr. Allen,” whose face remains bandaged.
+
+kulupu la li sona e ni: jan moli lon tomo pi pali West li kama ala tawa sina kepeken nasin pona; jan moli li lon sinpin mute.
+Rumors spread about missing bodies and unnatural screams from West’s basement.
+
+lon tenpo pini la jan [West] li moli e jan ike [Dean Halsey] kepeken ko sona en moli tan ni: jan suli li pali e utala e jan pona ona.
+He even reanimates Dean Halsey, causing the beloved educator to become a violent lunatic locked in an asylum.
+
+lon pini pi lipu la jan pi nimi [Chapman] li lon poki tan moli, la jan [West] li wile e ni: ona li moli tan moku pi jan sin; taso lon tenpo pini la sona lon: jan sin pi kon ala li kama tan anpa, li lawa e jan moli, li kipisi e tomo pi jan sona kepeken waso pi noka mute.
+In the climax the corpse of criminal Chapman returns at the head of a mob of failed experiments; they storm West’s home, tear him apart, and vanish with the remains.
+
+jan [narrator] li awen e lipu ni lon tenpo pini, la ona li toki ala tawa jan ante tan ni: jan pi moli ala li awen lon kon lon tomo pimeja.
+The narrator survives amid the rubble, insisting West’s research was real though authorities doubt him.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "The Hound" (1922) by H. P. Lovecraft.
+# Plot summary / retelling of "The Hound" (1922) by H. P. Lovecraft.
+
+jan utala pi suli ala en jan olin ona [St. John] li olin e pali pi jan moli; ona li lanpan e kiwen sin tan tomo moli lon ma [Holland].
+Two decadent grave robbers, the narrator and his companion St. John, steal a jade amulet from a burial vault in Holland.
+
+kiwen ni li jo e sitelen pi soweli kon kepeken noka mute, la kulupu pi jan lili li toki e ni: jan awen pi pona ala li awen e ona.
+The talisman depicts a winged hound, and legends warn it is guarded by a ghoul.
+
+tenpo kama la kalama utala kepeken wawa li kama lon tomo pi jan, la jan ni li kute e kon pi soweli musi lon kon, la noka li kute e kalama noka pi soweli suli.
+After the theft a baying noise haunts them, as if an immense beast pursues.
+
+jan li lukin e seli pi tomo lon ma [London]; jan li kute e kalama lon tomo suli; soweli lape li moli ala la kon li awen sin.
+They witness spectral apparitions, and the hound massacres a guard dog in London.
+
+jan [St. John] li kama moli lon tomo poki; sina li lukin e ona: sijelo li awen lili tan monsi, palisa noka pi soweli li kepeken kin.
+Eventually St. John is mutilated with marks resembling enormous talons.
+
+jan pi lipu ni li pilin e ni: ona li wile weka e kiwen tan ni: ona li lukin e wawa; la ona li weka tawa ma pi tomo pi kiwen.
+The narrator resolves to return the amulet to the grave to appease the creature.
+
+lon nasin tawa la soweli kon li awen lon kon; la ma li kalama wawa lon tenpo mun.
+During the journey the howling intensifies.
+
+jan li weka e kiwen tawa anpa; taso lon tenpo sama la ma li anpa, la kon li wile moku e anu li moku e jan.
+When he places the amulet back into the tomb, the cemetery collapses as the unseen hound tears at him.
+
+jan pi lipu ni li sona e ni: ona li ken ala sona e ni: soweli ni li pali e seme; taso ona li tawa nasin sin la ona li ken ala lon selo.
+He narrates the events while planning to kill himself because he cannot escape the hound’s pursuit.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "The Lurking Fear" (1922) by H. P. Lovecraft.
+# Plot summary / retelling of "The Lurking Fear" (1922) by H. P. Lovecraft.
+
+lon ma nena [Catskills] la mun lon tenpo seli li pana e utala pi seli wawa tawa kulupu lili; jan mute li moli lon tenpo pimeja kepeken palisa jan ala.
+In the Catskill Mountains a mysterious lightning storm coincides with brutal killings of entire families.
+
+jan lipu li kama lon tomo, la ona en jan utala li tawa tomo pi jan pi ma suli [Martense] tawa alasa e soweli.
+The narrator joins State troopers to investigate the Martense mansion.
+
+lon tenpo pimeja la kalama ike li kama lon kon; jan utala li awen lon tomo; la tenpo suno kama la jan sute pi ilo utala li moli tan anpa.
+Strange growls echo at night, and by dawn their comrades are mutilated.
+
+jan pi lipu ni li awen lon ma pimeja sin; ona li pali e ilo, li kepeken seli wawa tawa anpa, li open e lupa lon anpa pi kiwen.
+The narrator persists alone, digging tunnels and setting traps.
+
+ona li kama sona e ni: kulupu pi jan [Martense] li lon lon ma anpa la lon tenpo mute kepeken seme: ona li weka tan ma pi jan ante la li tawa anpa tan pilin awen.
+He discovers the Martense family retreated underground generations ago.
+
+tan lon anpa la ona li kama jan soweli, li ante e sijelo, li kama sama soweli pi noka mute en nasin anpa; kulupu ni li moku e jan ante.
+Isolation turned them into degenerate, mole-like cannibals.
+
+tenpo anpa la kalama pi telo wawa li kama; jan pi lipu ni li kepeken ilo seli e ni: soweli ni li kama lon nasin lili lon poka, la ona li pakala e ijo lipu.
+During storms they surface to feed, and the narrator kills several with explosives.
+
+tas o lon pini la ona li lukin e jan suli pi lukin wawa la ona li sona e ni: jan ni li jan ma tan tenpo pini; kulupu Martense ale li weka tan anpa.
+Finally he faces the monstrous patriarch whose features still vaguely resemble human ancestors, ending the Martense line.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "The Rats in the Walls" (1923) by H. P. Lovecraft.
+# Plot summary / retelling of "The Rats in the Walls" (1923) by H. P. Lovecraft.
+
+jan [Delapore] li tawa tomo mama ona pi nimi [Exham Priory] lon ma [England] tawa lon sin.
+Delapore restores his ancestral home Exham Priory in England.
+
+tenpo pimeja la ona li kute e kalama pi kili lili lon lon kiwen, la soweli ona li moli tan pilin ike.
+At night he hears scurrying in the walls, and his cat reacts with fear.
+
+jan ante li toki e ni: kulupu ona li jo e lipu ike tan tenpo pini—jan pi kulupu li moku e jan, li olin e jan pakala.
+Locals whisper that the Delapores engaged in cannibalism centuries ago.
+
+jan [Delapore] li tawa anpa pi pi tomo lon poka jan sona pi ilo pi ma, la ona li lukin e tomo lili pi anpa suli la anpa la li jo e supa pi utala pi jan pi sijelo ala.
+He and scholars explore sub-cellars, unearthing a subterranean city with altars and cages.
+
+lon insa ma ni la ona li lukin e kalama pi soweli lili, la soweli pi noka mute li lon e palisa li moku e seli pi jan moli.
+There they find swarms of pale rats and the skeletal remains of human cattle.
+
+jan pi kulupu li kama sona e ni: kulupu pi jan [Delapore] li awen lon anpa lon tenpo mute la li moku e jan tan kulupu ante.
+They conclude the Delapore dynasty bred humans like livestock underground.
+
+jan [Delapore] li kute e kalama kon li awen lon anpa la ona li pilin seli ala, la kalama pi soweli li kama wawa.
+Hearing phantom squeals, Delapore loses control.
+
+ona li lon e kalama pi jan pi ma sin tan uta ona la jan kin li moli tan ni: ona li moku e jan pona kepeken luka.
+He attacks a companion, gibbering in ancient dialect, and apparently eats him.
+
+tenpo pini la jan sona li lon pi kulupu; jan [Delapore] li lon tomo sona pi jan pilin ala.
+Subsequently he is committed to an asylum while the priory is destroyed.
+
+ona li sitelen e lipu ni tan supa pi seme: kalama pi soweli ni li lon lawa ona la ona li ken ala awen.
+He writes this from confinement, still hearing the rats scratching through his mind.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "The Unnamable" (1923) by H. P. Lovecraft.
+# Plot summary / retelling of "The Unnamable" (1923) by H. P. Lovecraft.
+
+jan sitelen pi nimi [Carter] en jan sona lili [Manton] li lon ma lete pi [Arkham], li toki e ni: lon ma ni la soweli kon li lon ala?
+Randolph Carter debates skepticism with his friend Joel Manton in an Arkham graveyard.
+
+jan [Carter] li toki e ijo pi ma pimeja, pi ike wawa, pi jan ala li sona, taso [Manton] li wile e ni: jan o toki taso e ijo ken.
+Carter insists certain horrors defy description, while Manton demands everything have a rational explanation.
+
+ona tu li awen sitelen lon ni: supa ni li lon poka tomo wawa pi jan pi nimi pi moli ike; tenpo pimeja la kon pi kasi anpa li kalama.
+They sit near a reputedly haunted house as night deepens.
+
+kalama pi kon li kama sin la palate li ale e ona, la jan tu li lukin e waso kon li tawa sewi.
+The wind rises and shapes flutter through the trees.
+
+tenpo lili la soweli ala li lon taso; jan ni li kute e kalama ike, la kiwen li pakala, la nimi pi [Carter] li lape tan wawa.
+Suddenly a formless entity strikes them; Carter is knocked unconscious.
+
+tenpo suno kama la jan tu li lon tomo ali, la lawa pi utala li lukin e selo ona la, palisa mute li lon sina; kasi li anpa tan musika.
+They wake in a hospital covered in scratches and bruises while weeds at the site are crushed outward.
+
+jan [Manton], jan pi sona sina, li pilin ala kili; ona li wile e ni: jan [Carter] li lon e ijo sin; ona sina li lukin ala.
+Skeptic Manton confesses that whatever attacked them defied description.
+
+jan [Carter] li open sin e lipu ni la ona li lon e nimi: soweli ni li ike lon, tan ni: jan pi anpa li sona ala e ona.
+Carter now feels vindicated, believing the unnamable truly exists beyond human words.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "The Festival" (1923) by H. P. Lovecraft.
+# Plot summary / retelling of "The Festival" (1923) by H. P. Lovecraft.
+
+tenpo sike wan la jan [Carter] (jan sama pi ni?) li kama lon ma [Kingsport] tawa pali e nasin pi mama mute lon tenpo mun.
+During Yuletide a man visits Kingsport to participate in ancestral rites.
+
+jan ma li kama weka tan ni: kon lete li lon, taso jan pi len pimeja li alasa e ona, li wile e ni: ona li awen lon tomo pi anpa suli.
+He is greeted by cloaked townsfolk who guide him to an ancient house.
+
+lon tomo ni la lipu pi sitelen kiwen li lon supa, la jan ante li kute e kalama pi len lili; ona li wile e ni: o tawa anpa.
+The house contains a grimoire urging him to descend into catacombs.
+
+ona li tawa kepeken kulupu pi jan len; ona li awen lon poka ona, la ona li lukin e ma anpa pi sinpin kiwen la kalama pi sitelen li lon.
+Following the robed procession, he travels through tunnels illuminated by phosphorescence.
+
+kulupu ni li kama lon poka telo; telo ni li walo sama mun; soweli li lon sewi; jan mute li awen.
+They gather beside a subterranean river whose waters glow like moonlight.
+
+jan len li pana e lipu pi nimi lili tawa jan tawa; ona li tawa sin tawa pona.
+The leader hands the narrator an ancient book to chant from.
+
+tenpo la jan li kute e kalama kama tan anpa; soweli wawa li kama lon telo; soweli ni li awen lon sewi pi suno ala.
+As he reads, a monstrous entity rises from the river.
+
+jan ale li tawa anpa lon supa walo; ona li lukin e monsi [Nar], li o tawa sewi kepeken kon.
+The congregation leaps onto the creature’s back or into the waters, vanishing into the depths.
+
+jan [narrator] li pilin monsuta la ona li awen weka; ona li tawa kon, li kama sin lon supa tomo lon tenpo suno la ale li lon normal sin.
+Terrified, he flees and later awakens in a hospital where authorities claim Kingsport’s church is empty and ancient.
+
+ona li wile sona e ni: seme li lon? taso lipu pi mama mute li toki e ni: jan sewi sin li wile e jan lon tenpo.
+He wonders whether the ceremony was real or a hereditary trance, yet the family book proves the dark tradition endures.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "The Shunned House" (1924) by H. P. Lovecraft.
+# Plot summary / retelling of "The Shunned House" (1924) by H. P. Lovecraft.
+
+jan pi lipu ni en jan mama ona [Dr. Elihu Whipple] li len e tomo one lon ma [Providence] tan ni: jan mute li moli lon insa.
+The narrator and his uncle Dr. Elihu Whipple examine an old Providence house notorious for deaths.
+
+jan pi tomo ni li moli kepeken ma ante: pilin ike lon uta la jan li moli la kili li pini.
+Residents succumb to anemia and weird fungus grows everywhere.
+
+lon anpa pi tomo ni la seli li jo e pi waso pi pali ala; jan mute li toki e ni: kon pi ma pi ma pi jan anpa li lon anpa.
+Rumors speak of some subterranean entity draining lifeforce.
+
+jan tu li alasa lon lipu pi tenpo mute; li lukin e lipu pi jan anpa pi nimi [Etienne Roulet], jan pi ma [France] pi lawa ike tan wawa pi jan moli.
+They research archives and connect the house to Etienne Roulet, a suspected necromancer from France.
+
+jan [Whipple] li ken ala kute e kalama; ona li wile pali e sona; taso ona tu li weka sin la li tawa tomo pi anpa lili kepeken ilo sona.
+Armed with scientific instruments, they spend a night in the cellar.
+
+tenpo pimeja la kalama wawa li kama; kili loje li lon poka; jan tu li lukin e kon pi waso li kama tan anpa la ona li pali e kalama li moku e kon.
+At midnight phosphorescence seeps through the floor, forming a shape that tries to envelop them.
+
+jan li pana e moli wawa tan ilo [Crookes tube] tawa kon; taso ona li pilin e ni: wawa ni li ala.
+They blast it with radiation from Crookes tubes but fail to stop it.
+
+jan [Whipple] li moli kepeken tan pi pilin ko, taso jan pi lipu ni li awen lon kepeken wile sin.
+Whipple dies from the attack, and the narrator barely escapes.
+
+tenpo kama la ona li kama lon tomo sin, li kepeken moli pi seli wawa pi kiwen pi jan mute lon poka pi lupa suli.
+He returns with acid and dynamite to obliterate the cellar.
+
+tomo ni li pakala la jan li lukin e ko pi seli lon anpa la la kon wawa li sona e ni: jan pi lon ala li pini.
+After the explosion, nothing supernatural remains, finally ending the curse.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "The Horror at Red Hook" (1925) by H. P. Lovecraft.
+# Plot summary / retelling of "The Horror at Red Hook" (1925) by H. P. Lovecraft.
+
+jan lawa pi tomo utala [Thomas Malone] li alasa e pali ike lon kulupu pi jan sin lon ma [Brooklyn].
+Detective Thomas Malone probes sinister cult activity in Red Hook, Brooklyn.
+
+jan pi nimi [Robert Suydam], jan suli pi mani mute taso pilin lon pi jan lili sin, li kama lon; ona li pali e tomo suli pi lipu sin.
+He suspects eccentric scholar Robert Suydam, who associates with suspicious immigrants and buys warehouses.
+
+jan pi anpa telo li weka tan kulupu la jan ale li kilin e ni: tomo pi [Suydam] li kama wawa lon tenpo pimeja.
+Children disappear, and his properties pulse with strange lights at night.
+
+jan [Malone] li weka e weka e tomo la ona li lukin e nasin len tawa tomo anpa, la kalama pi jan pi kalama wawa li kama tan anpa.
+Malone surveils the area and glimpses subterranean corridors hosting chants in unknown tongues.
+
+jan [Suydam] li kama lon tomo suli; ona li olin e meli sin, la tenpo lili la ona li moli kepeken telo.
+Suydam suddenly marries a young woman but dies mysteriously on his yacht.
+
+lon tenpo sama la jan [Malone] li kama wile tawa tomo pi jan sin la ona li lukin e ni: tomo pi noka mute li anpa; kalama pi mije pi kalama ike li kute e jan pi sijelo ala.
+Malone later raids one hideout and finds labyrinth-like chambers, slime, and half-human creatures.
+
+jan pi lipu ni li tawa anpa la ona li lukin e kiwen pi sitelen kulupu, la ona li awen e ni: jan pi kule pimeja li awen lon poka lon supa pi linja nanpa.
+He witnesses idols and robed celebrants performing sacrifices.
+
+tenpo suno la jan utala li kama lon tomo [Malone], la ona li weka tan ni: taso ona li awen e pilin pimeja.
+After the case he collapses into a breakdown.
+
+jan ante li alasa e sona tan lipu ona; ona li toki e ni: soweli pi ma sin li lon e ilo pi jan pi mun pimeja.
+His testimony hints that Suydam’s followers attempted to summon a demonic entity, causing him lasting trauma.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "He" (1925) by H. P. Lovecraft.
+# Plot summary / retelling of "He" (1925) by H. P. Lovecraft.
+
+jan lipu ni li tawa ma [New York], li pilin ike tan kalama la; taso lon tenpo pimeja la ona li kama son e jan walo sin lon nasin wawa.
+The narrator wanders New York at night and encounters a pale gentleman who promises to reveal hidden wonders.
+
+jan sin ni li toki e ni: ona li jo e sona pi tenpo mute lon ma ni, la ona li lon ala li kama ijo tan ni: sewi li pana e sona tawa ona.
+The stranger claims mastery over the city’s entire history due to mysterious forces.
+
+ona li tawa tomo wawa, la jan sin li oki e sinpin lon sewi la ona li toki e ken pi lukin e ma pi tenpo mute kepeken ilo sin.
+He leads the narrator through a mansion filled with devices for seeing the past.
+
+ona li lukin e nasin pi jan pi tenpo pini: ma pi jan [Lenape], pi jan pi ma [Dutch], pi jan pi utala pi [Revolution]; kalama li lawa e ona.
+Visions display Lenape Indians, Dutch settlers, and Revolutionary battles.
+
+jan sin li toki e ni: ona li ken lukin e tenpo kama kin, la ona li toki e ni: jan pi ma mun li kama; ona li wile e ni: jan [narrator] o kama lukin.
+He boasts of glimpsing the future and invites the narrator to witness what is to come.
+
+tenpo pimeja la ona li weka e sinpin tomo; la jan tu li lon anpa sinpin pi waso; la jan sin li open e lipu pi nimi ali, la jan pi lipu ni li lukin e soweli monsuta tan lete.
+As midnight falls he opens a rooftop portal and monstrous shapes from the sky descend.
+
+jan pi lipu ni li pilin monsuta e ni: jan sin ni li jan ala; ona li sewi e luka tawa jan, la jan pi lipu li tawa ma pi jan pi luka.
+The narrator realizes his host is no human but a sorcerer allied with otherworldly entities.
+
+jan sin li kalama e kalama pi lipu; kalama ni li kalama wawa, la jan tu li lape ala, taso jan pi lipu ni li weka tan nasin kepeken pilin mute.
+Fleeing in terror, he leaps through dark alleys as ghostly voices pursue him.
+
+jan ni li kama lon tomo lili la ona li lukin e nena, la ona li wile sona e ni: jan sin ni li lon ala? taso jan ante li lukin e ona la, jan sin li weka.
+He ultimately collapses and later learns no trace of the gentleman exists, leaving him uncertain whether the encounter was real.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "In the Vault" (1925) by H. P. Lovecraft.
+# Plot summary / retelling of "In the Vault" (1925) by H. P. Lovecraft.
+
+jan moli [George Birch] li pali e pali pi supa moli lon tomo moli lili.
+George Birch, an undertaker, works for a small-town mortuary.
+
+tenpo lili la lupa kiwen pi anpa tomo li pakala la ona li ken ala tawa, la ona li awen lon anpa tomo pi selo moli kepeken tenpo pimeja.
+One day he gets locked in the seven-foot-thick vault overnight.
+
+ona li alasa e nasin tawa weka kepeken lipu seli; ona li jo e supa pi moku sin, la ona li open e poki pi jan moli.
+He tries to escape by stacking coffins to reach a vent.
+
+lupa li kiko ala kepeken palisa; la ona li tawa sewi la ona li pilin e palisa lukin pi jan moli pi nimi [Matthew Fenner].
+While climbing he damages the coffin of Matthew Fenner, a disliked man.
+
+jan [Birch] li lukin e luka ona la ona li pilin e ni: palisa lili li kipisi e noka ona lon tenpo ni la ona li kama lon sewi.
+Birch cuts his ankles badly as a coffin corner slides.
+
+luka li moli la ona li kama lon sewi, la ona li anpa, la jan ante li alasa e ona lon suno kama.
+Bleeding, he eventually escapes and is found the next day.
+
+jan [Birch] li kute e kalama e ni: palisa pi ijo pakala li lukin sama luka pi jan li pakala la ona li kama sona e ni: jan moli li pali e ni.
+Examining his wounds, he suspects the scratches resemble human fingernails rather than wood grain.
+
+ona li lukin e poki pi [Fenner], la ona li lukin e ni: palisa luka pi jan moli li pakala la; jan ni li pilin ike tawa [Birch] lon tenpo lili.
+He later sees that Fenner’s corpse has broken fingernails as if it clawed him, fulfilling the dead man’s grudge.
+
+lipu ni li toki e ni: jan pi pali ike li awen pilin ike tan ni: palisa li lon anpa mute, tan ni: o awen pona e jan moli.
+The story moralizes that undertakers must respect corpses, for the dead may retaliate.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "Cool Air" (1926) by H. P. Lovecraft.
+# Plot summary / retelling of "Cool Air" (1926) by H. P. Lovecraft.
+
+jan tawa li awen lon tomo kepeken suli ala lon ma [New York]; selo lon noka li pakala tan ni: nasin pi tomo ni li ike.
+The narrator rents a New York apartment whose upstairs neighbor is Dr. Muñoz.
+
+jan sona ni li jan pi sona mute lon moli, li kepeken ilo pi kon lete lon tomo ona lon tenpo ale, la tomo ni li selo anpa tan lete.
+The doctor keeps powerful refrigeration equipment running at all times to maintain icy air.
+
+jan [Muñoz] li sitelen e sona pi sona pi jan pi anpa; ona li pana e pona tawa jan sona tan pilin, la ona li pona e pilin pi jan pi lili.
+He impresses the narrator with his medical skill and cures him of a heart attack.
+
+taso jan ni li toki e ni: ona li pana e pilin ike tan ni: sijelo ona li wile e lete mute.
+Yet Muñoz hints he must remain chilled for his survival.
+
+lupa pi ilo lete li pakala tenpo wan la jan [Muñoz] li pilin monsuta mute, la ona li wile e ni: jan tawa o kama e ilo kon seli ala sin tan ma sin.
+When his refrigerating pump breaks, he frantically sends the narrator to fetch ice.
+
+jan tawa li alasa e ijo tan tomo pi telo seli, li kama jo e ko, taso tan tenpo mun la ko li lili mute, la kalama li weka.
+Ice is scarce, forcing repeated trips as the heat rises.
+
+jan [Muñoz] li melt tan seli; kalama lon tomo li kama ike; ona li lape ala tan ni: telo lete li weka.
+Without cold, Muñoz deteriorates rapidly.
+
+lon lape pini la jan li kama sin; ona li lukin e ni: jan [Muñoz] li ante e sijelo e walo sama ko la tenpo suno li anpa; ona li sitelen e kalama sin tan ni: ona li moli tan tenpo mute.
+In a final note he reveals he died eighteen years ago and kept his corpse animated via refrigeration.
+
+jan pi lipu ni li lukin e ko pimeja pi namako wawa tan supa, la kasi li pilin ike tan kon pimeja; kulupu la li kute e kalama pi pilin.
+When the narrator returns, Muñoz has liquefied into a foul slime, proving that his unnatural methods failed.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "The Call of Cthulhu" (1926) by H. P. Lovecraft.
+# Plot summary / retelling of "The Call of Cthulhu" (1926) by H. P. Lovecraft.
+
+lipu ni li kepeken sitelen pi jan [Francis Wayland Thurston], li kepeken lipu pi jan lawa pi nimi [George Angell].
+Francis Wayland Thurston compiles notes from his great-uncle Professor George Angell.
+
+jan [Angell] li kama jo e sitelen kiwen pi jan [Henry Wilcox], sitelen pi tomo la sitelen pi soweli pi nimi [Cthulhu].
+Angell examined a bas-relief sculpted by artist Henry Wilcox depicting a monstrous octopoid figure labeled Cthulhu.
+
+lon tenpo sama la jan pi ma ante li pana e lipu sona pi utala pi ma [Louisiana] la jan utala li toki e kulupu pi nimi [Cthulhu] lon ma lili pi telo lete.
+At the same time an inspector in Louisiana reports a swamp cult worshipping Cthulhu.
+
+jan pi ma lete li toki e ni: kulupu ni li musi lon anpa pimeja, li kalama ante, li pali e moku e jan.
+The cultists hold midnight rites amid carved idols and commit murders.
+
+jan [Angell] li open alasa e lipu tan ma pi ma wawa; taso ona li moli mun wan la lipu li kama tawa jan [Thurston].
+Angell dies mysteriously, leaving his findings to Thurston.
+
+jan [Thurston] li kama sona tawa ni: jan utala [Gustaf Johansen] tan ma [Norway] li pali e lipu e ni: ona li lukin e tomo pi ma [R'lyeh].
+Thurston discovers the testimony of Norwegian sailor Gustaf Johansen, who encountered the risen city of R’lyeh.
+
+jan utala pi lipu ni li wile sona e ni: ilo lawa pi kulupu pi ilo [Alert] li kama lon tomo pi pi sinpin; ona li lukin e ma pi kiwen sin, pi sinpin pi ilo sin.
+Johansen’s crew found cyclopean architecture jutting from the Pacific, built with non-Euclidean angles.
+
+jan utala ante li pali e ni: ona li open e lupa suli, la jan pi lipu ni li lukin e soweli suli pi nasin pi selo telo—jan [Cthulhu] li toki e nimi pi kalama pimeja.
+Opening a gargantuan portal, they awakened the titan Cthulhu, whose gelatinous form defied comprehension.
+
+jan utala li weka kepeken ilo; taso soweli suli li tawa sin; jan [Johansen] li lawa e ilo pi utala li kama lon telo kepeken kiwen tawa nena pi soweli and wawa pi ijo pi jan.
+Johansen rammed Cthulhu with his ship, briefly dispersing the gas-like body so he and a few men could flee.
+
+jan pi lipu ni li toki e ni: tenpo ni la soweli li lon lape la ma [R'lyeh] li weka sin tawa anpa telo, taso mun li kama, la soweli li ken sin kama.
+He concludes Cthulhu returned to slumber beneath the sea, but the stars will someday align again.
+
+jan [Thurston] li toki e ni: lipu ni li pona ala tan ni: jan utala pi nimi pi soweli li ken weka e ona; taso sina li ken ala awen e ona.
+Thurston worries that by piecing together the truth he may soon be targeted by cultists, yet he records it for posterity.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "Pickman's Model" (1926) by H. P. Lovecraft.
+# Plot summary / retelling of "Pickman's Model" (1926) by H. P. Lovecraft.
+
+jan sitelen [Richard Upton Pickman] li lon ma [Boston], li sitelen e poki pi soweli monsuta lon kiwen pi lipu ona.
+Painter Richard Upton Pickman creates grotesque artworks of ghouls in Boston.
+
+kulupu pi jan sitelen li wile ala e ona tan ni: sitelen ona li ike wawa li kama pi sona ala.
+Art clubs shun him for his disturbing realism.
+
+jan [Thurber], jan pi lipu ni, li olin e pali ona la ona li tawa tomo anpa pi jan sitelen lon ma [North End].
+His friend Thurber visits Pickman’s underground studio.
+
+ona li lukin e sitelen pi walo pimeja, pi waso kepeken noka lili, pi moku pi jan lon supa.
+He sees paintings of subterranean monsters devouring humans with terrifying detail.
+
+jan sitelen li toki e ni: ona li ken sitelen e ona taso tan ni: ona li lukin e jan ni lon ma anpa.
+Pickman explains that he bases his art on real models.
+
+tenpo pimeja la kalama pilin li kama tan sinpin; luka pi jan sitelen li awen lon pi linja, la ona li pana e lipu pona tawa jan [Thurber].
+During the tour, noises echo and Pickman hands Thurber a photograph as a study reference.
+
+kalama utala li kama la jan [Thurber] li weka, la ona li pilin e ni: jan sin li lon lupa pi tomo anpa.
+Gunshots erupt; Thurber flees believing something emerged from a tunnel.
+
+tenpo suno la ona li lukin e lipu tan poki: ona li lukin e ni: sitelen ni li sitelen soweli kon la lipu li pana e sona ni: lipu ni li sitelen ala e sitelen, taso e jan tawa.
+Later he examines the dropped photograph and realizes it is not of a painting but an actual ghoul posing beside a victim.
+
+tan ni la ona li sona e ni: jan [Pickman] li kama jan pi kulupu soweli; taso ona li weka lon ma.
+Thurber concludes Pickman lived among ghouls, using them as subjects, and vows never to speak of him again.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "The Strange High House in the Mist" (1926) by H. P. Lovecraft.
+# Plot summary / retelling of "The Strange High House in the Mist" (1926) by H. P. Lovecraft.
+
+ma [Kingsport] la sina ken lukin e tomo walo lon sewi nena pi pi telo; jan ala li ken kama lon ona tan nasin.
+In Kingsport a house perches atop a cliff, seemingly unreachable through ordinary paths.
+
+jan sona [Thomas Olney] li wile alasa e sona ni; ona li kama tan ma [Boston], li tawa sewi kepeken nasin anpa pi kasi kulupu.
+Philosopher Thomas Olney arrives from Boston determined to reach it.
+
+jan ma li toki e ni: tenpo lili wawa la jan pi len pimeja li lon tomo ni, li toki e jan seme tan mun.
+Locals warn him of a mysterious occupant rumored to converse with cosmic beings.
+
+jan [Olney] li tawa nasin lon anpa kiwen, li tawa sewi kepeken lupa sina; ona li lon kon lon tenpo pimeja la ona li kama lon supa tomo.
+He hikes treacherous paths and eventually finds a hidden stair carved into the rock, ascending through fog.
+
+lon sewi la ona li lukin e jan pi len pi lipu ala; jan ni li musi pona en olin ala tan mani; ona li open e lupa tawa ona.
+At the top he meets an ageless host who welcomes him warmly.
+
+jan linla pi kon li pana e kili, e moku, e kalama e musi pi ma pi kon; ona li toki e jan pi nimi [Captain Norrys], [Seven-Headed Dragon], en jan pi nimi [Hermes Trismegistus].
+They share food and tales of legendary figures such as Captain Norrys, the Seven-Headed Dragon, and Hermes Trismegistus.
+
+lon nis la kalama pi telo suli li kalama; soweli kon li kalama lili lon sewi, la jan sin li kama.
+Waves pound below as mythic visitors appear.
+
+jan [Olney] li awen lon tomo lon tenpo pimeja la ona li pilin e ni: ona li ken lukin e tenpo mute lon sinpono wan.
+Olney spends the night and experiences visions of vast cosmic panoramas.
+
+tenpo suno la ona li kama sin lon ma [Kingsport]; jan ma li lukin e ona, taso ona li ante: ona li pilin musi, taso luka li lili wawa, sinpin li linja sama kon.
+When he returns he seems changed—peaceful yet distant—as if part of his spirit remains in the high house.
+
+jan ma li toki e ni: jan lon tomo sewi li awen lon sewi; taso tenpo ni la jan ante li ken tawa kepeken nasin ni.
+People conclude that the house truly hosts otherworldly guests and only the chosen may visit.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "The Silver Key" (1926) by H. P. Lovecraft.
+# Plot summary / retelling of "The Silver Key" (1926) by H. P. Lovecraft.
+
+jan [Randolph Carter] li kama kulupu suli; ona li pini kute e wawa pi ma lape, li pilin e ni: ma ni taso li jo ala e musi.
+Randolph Carter grows older and loses access to his childhood dreamlands.
+
+ona li alasa e lipu pi mama ona la ona li lukin e poki walo pi kiwen pi olin pi jan [Katurah].
+Searching through ancestral relics, he finds a curious silver key.
+
+lipu ni li jo e sitelen pi nimi tan tenpo pini, li toki e ni: lipu pi ma pi jan pi nimi [Carter] la jan pi kala walo li ken lukin e tomo mama kepeken nasin pimeja.
+An accompanying parchment hints that the key unlocks the “Gate of Gold” leading back to his youth.
+
+jan [Carter] li tawa ma pi mi lili lon ma [Massachusetts]; ona li lukin e nena noka pi tomo mama, la tenpo pimeja la ona li open e wile.
+Carter travels to the hills of his childhood and visits an ancient cave.
+
+ona li lon anpa la ona li lawa e kiwen, la ona li kute e kalama pi jan lili la jan lili lon pini la.
+Within he uses the key and hears the voices of his boyhood friends.
+
+tenpo pimeja la ona li weka tan sijelo sin la ona li kama lon lon e jan sin la; ona li oki e ni: sijelo ona li wile tawa ma sin pi waso.
+He feels his adult body dissolve, replaced by the youthful form he once possessed.
+
+jan ante la li lukin e ni: jan suli li awen ala; jan lili sin la li lon lon tawa anpa.
+Observers believe the grown Carter vanished forever.
+
+lipu ni li pali e ni: jan [Carter] li toki tan ma pi ma lape: o kute e pilin pi jan pi lape; la kiwen sin li ken tawa e sina tawa tenpo.
+The tale concludes by implying that Carter succeeded in regaining the dreamlands, leaving the mundane world behind.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "The Dream-Quest of Unknown Kadath" (1927) by H. P. Lovecraft.
+# Plot summary / retelling of "The Dream-Quest of Unknown Kadath" (1927) by H. P. Lovecraft.
+
+jan [Randolph Carter] li lukin e tomo sewi pi suno kepeken lape taso; tenpo mun lili la tomo ni li weka, la ona li awen alasa e ona lon ma lape.
+Randolph Carter repeatedly dreams of a sunset city, but when it vanishes he embarks on a dream-quest to find Unknown Kadath.
+
+ona li kama toki tawa kulupu [Zoogs] lon ma kasi pimeja, li kama sona e ni: sewi pi nimi [Nyarlathotep] taso li sona e tomo ni.
+He consults Zoogs in enchanted forests and learns only the crawling chaos Nyarlathotep knows Kadath’s location.
+
+ona li tawa ma lape mute: ma [Ulthar], ma pi tomo sin, ma pi ma tan soweli, la ona li kama tawa ma nena pi soweli [Gugs].
+His travels include Ulthar, the enchanted moon-beast lands, and the subterranean realms of the monstrous Gugs.
+
+jan pi ma tawa la ona li tawa ma anpa, li ken ala tan ni: soweli kon li kama moku e jan.
+Carter encounters friendly cats who ferry him to the moon, as well as perilous ghouls who become allies.
+
+jan suli [King Kuranes] la li toki e ni: o tawa ala la; taso jan [Carter] li wile alasa.
+King Kuranes urges him to stop, but Carter persists.
+
+ona li kama lon tomo pi nimi [Celephais], li tawa weka lon ilo waso pi soweli pi nimi [night-gaunts], li lon e ni: jan sona pi ma lape li wile alasa e jan.
+He endures kidnapping by night-gaunts, bargains with ghouls, and rides a Shantak bird toward the forbidden Plateau of Leng.
+
+lon sewi la jan lawa pi ma [Leng] li ken ala awen e ona; ona li pakala e jan ike pi nimi [moon-beasts], la ona li tawa anpa lon tomo pi ijo pi jan lon ma pi seli ala.
+On Leng he infiltrates the monastery of the moon-beasts and steals crucial information.
+
+lon lape pini la ona li weka tan ma pimeja la [Nyarlathotep] li kama sin, li toki e ni: ma pi suno pona li lon ma pi jan tut, li nimi pi [Boston].
+Eventually Nyarlathotep appears and reveals Carter’s desired city is actually his childhood Boston idealized.
+
+sewi ni li wile e ni: o awen lon ma lape li awen lawa e jan; taso [Carter] li sona e ni la ona li kepeken kon pi soweli wawa tawa tawa e soweli pi nimi [zoog].
+The deity tempts him to abandon Earth entirely, but Carter realizes he can command the cats to help him escape.
+
+ona li weka kepeken soweli mun lili, li tawa ma pi suno pona, la ona li lon e ni: o awen kute e pilin pi tenpo lili la.
+He rallies the cats, breaks free of Nyarlathotep, and returns to the waking world with renewed appreciation for the city he once knew.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "The Case of Charles Dexter Ward" (1927) by H. P. Lovecraft.
+# Plot summary / retelling of "The Case of Charles Dexter Ward" (1927) by H. P. Lovecraft.
+
+jan lili pi ma [Providence] [Charles Dexter Ward] li olin e lipu pi tenpo pini, li alasa e sona pi jan mama mute [Joseph Curwen].
+Providence antiquarian Charles Dexter Ward becomes obsessed with his ancestor Joseph Curwen, an 18th-century sorcerer.
+
+jan [Curwen] li kama sona e lipu pi jan moli; ona li pali e wawa tan ijo moli, li toki e jan ike pi nimi [Yog-Sothoth].
+Curwen once trafficked with Yog-Sothoth and performed grotesque experiments on kidnapped victims.
+
+jan [Ward] li alasa e lipu pi mama; ona li kama lukin sama jan pi tenpo pini; ona li open e utala lon ma pi tomo pi mama pi tomo moli.
+Ward recovers Curwen’s notes and begins imitating him, even acquiring a secluded farm laboratory.
+
+jan pi ma la li sona e ni: jan lili li wile lawa e ijo pi wawa pimeja; jan ante li pilin monsuta tan ni: kalama ike li kama lon tenpo pimeja.
+Neighbors notice strange lights and voices at night.
+
+jan pona pi [Ward], [Dr. Willett], li alasa e tan; ona li ken ala pilin sina tan ni: jan lili ni li olin pi nasin ike.
+Family friend Dr. Willett tries to help but sees Ward slipping away.
+
+tenpo kama la jan lili li linja e sijelo ona; tenpo lili la jan li weka la jan sin pi nimi [Charles] li kama.
+Eventually Ward disappears and a strange double claiming to be him returns.
+
+jan [Willett] li alasa tawa tomo lon ma pi kasi [Pawtuxet]; ona li lukin e tomo anpa kiwen pi lipu sin la ona li kute e kalama pi jan pi nimi ala.
+Willett explores the Pawtuxet farm and discovers catacombs containing vats and resurrected horrors.
+
+ona li lukin e lipu pi jan pi tenpo pini, li kama sona e ni: jan sin pi nimi [Charles] li jan ala; ona li tan anpa sin.
+He realizes the fake Charles is actually Curwen resurrected using sorcerous formulas.
+
+jan [Willett] li kepeken nimi pi sewi [Yog-Sothoth] tawa pakala e jan sona; ona li toki e nimi ni lon kalama kon la jan ike li kama ko pimeja.
+Willett speaks Curwen’s own incantations in reverse, reducing the sorcerer to dust.
+
+lipu ni li pini kepeken pilin ike: jan [Ward] pi pona mute li moli, taso jan pona pi kulupu li weka e ike ni.
+Though Charles is dead, Willett’s actions end the menace and conceal the true horror from society.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "The Colour Out of Space" (1927) by H. P. Lovecraft.
+# Plot summary / retelling of "The Colour Out of Space" (1927) by H. P. Lovecraft.
+
+jan pi ma [Arkham] li toki e ni: lon ma [Gardner] la mun lili li kama lon noka, li pana e wawa sin tawa ma.
+An Arkham surveyor learns that a meteor fell on the Gardner farm, bringing a strange color.
+
+kiwen mun li kama lili la jan [Nahum Gardner] li lukin e ni: ijo ni li sijelo ala pi suno ala; taso ona li lon supa tenpo mute.
+The meteor shrinks yet leaves behind an indescribable hue not part of the spectrum.
+
+tan ni la kili li kama suli la, kaso la soweli li kama suli li jo e walo sin; jan pi ma la li pilin wawa e ni: ma ni li pona mute.
+Afterward crops grow enormous but taste bitter, hinting at corruption.
+
+tenpo kama la telo li kama loje, soweli li moli tan wile lape, la jan pi ma ni li open pakala.
+Livestock sicken and the family begins to deteriorate.
+
+jan meli [Nabby] li kama nasa, la ona li lukin e sinpin pi ijo sin lon sinpin ona, la jan lili li weka tan wawa.
+Mother Nabby goes mad, seeing spectral lights, and is locked in an attic.
+
+jan lili li awen weka; jan [Merwin] en [Zenas] li anpa lon anpa tomo la, soweli pi mun li moku e ona.
+Two sons disappear while drawing water from the well.
+
+jan [Nahum] li moli kepeken wawa pi suno sin; jan [Thaddeus] li lape e ni: kon walo li lon tomo.
+Father Nahum and his remaining son waste away, observing luminous globules in the house.
+
+jan pi ma li kama tawa tomo la ona li lukin e ni: sinpin kiwen li moli, ma ale li len e tenpo pimeja la, sin pin li moli kepeken e ona.
+When neighbors arrive they find the entire farmhouse glowing with the color.
+
+lon tenpo sama la kon walo li kama sewi tan anpa lon supa; sinpin walo li kama e soweli lili li kama waso walo.
+The color shoots skyward, releasing bursts of light that drain life from everything nearby.
+
+ma pi ma ni li kama pimeja, la telo lon len li lon e wile seme; jan pi sitelen la li pini e lipu ni kepeken ni: ma ni li pakala pi tenpo mute tan wawa pi mun sin.
+The land turns blasted and sterile, leaving behind a grey “blasted heath,” and the narrator warns the contamination may still spread underground.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "The Descendant" (1927) by H. P. Lovecraft.
+# Plot summary / retelling of "The Descendant" (1927) by H. P. Lovecraft.
+
+jan [Count Magnus] li lon tomo pi ma [London], li jo e lipu pi jan mama pi nimi [Great Alchemist].
+Lord Northam resides in London guarding secrets from his ancestors the alchemists.
+
+jan lili [Williams] li kama alasa e sona tan lipu; ona li alasa e lipu pi nimi [Necronomicon] lon tomo pi jan suli.
+An inquisitive man named Williams seeks occult knowledge and befriends the noble.
+
+jan lawa li toki e ni: jan mama ona li pilin pakala tan ni: ona li tawa ma pimeja pi nimi [Leng] lon tenpo pimeja la ona li lukin e soweli sin.
+Northam recounts that his ancestor visited the Plateau of Leng and glimpsed monstrous beings.
+
+jan lili ni li pilin e ni: tomo pi jan suli li jo e lipu ike; taso jan lawa li wile ala e ni: jan sin o lukin.
+Williams believes the lord hides grimoires but is warned not to pry.
+
+tenpo lili la jan lawa li toki e ni: lipu pi nimi [Necronomicon] li lon supa; taso jan lili li pali ala.
+Eventually Northam reluctantly reveals that the Necronomicon remains in his possession.
+
+jan [Williams] li pilin pakala tan wile sona; taso ona li ken ala lukin e lipu.
+Williams is consumed by desire yet forbidden to read it.
+
+jan lawa li toki e ni: jan mama ona li kama sona e tan ni: jan pi ma mun li kama lon kon la jan wawa li moli.
+Northam confesses his bloodline has been cursed by cosmic horrors since that expedition.
+
+lipu ni li pini kepeken palisa la: jan lili li tawa weka tan tomo la; jan lawa li awen e lipu la lon tenpo sama la soweli kon li kama sin lon tomo pi jan lawa.
+The fragment ends with Williams leaving while the lord keeps his vigil, aware that ancestral specters still haunt his library.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "The Very Old Folk" (1927) by H. P. Lovecraft.
+# Plot summary / retelling of "The Very Old Folk" (1927) by H. P. Lovecraft.
+
+lipu ni li lon sitelen pi jan suli Roma pi ma [Hispania].
+This letter recounts a Roman military tale in Spain.
+
+jan suli li kute e toki pi kulupu pi nimi "jan mute pi tenpo pini" li lon anpa ma.
+Officers hear rumors of “very old folk” living beneath the mountains.
+
+jan Roma li wile pana e utala tawa kulupu ni; kulupu utala mute li tawa lon tenpo pimeja kepeken ma kasi lon len.
+They send legions into caves to wipe them out.
+
+jan pi lipu ni li lon tomo pi anpa, la ona li kute tan nasin lili e kalama pi ijo mute, la soweli wawa li awen.
+The narrator remains at base but hears disturbing sounds from the hills.
+
+kulupu utala li tawa anpa tomo, la seli pimeja li kama; la kalama suli li tawa tan sina.
+Deep within the caverns torches fail and drums echo.
+
+tenpo ni la jan pi kulupu li kute e kalama ike li weka lon pimeja la; lipu ni li toki e ni: jan li lukin e soweli luka mute e utala sin.
+Soldiers describe glimpsing innumerable hunched beings with strange limbs.
+
+tenpo lili la utala li kama: jan Roma li moli ale tan kalama pi soweli.
+The Romans are slaughtered by unseen forces.
+
+jan pi lipu ni li kute e wile pi jan li weka; kalama ike li kute lon sewi la kasi li tawa kepeken pilin monsuta.
+The survivor hears wails and feels the earth tremble as the caves collapse.
+
+lipu ni li pini kepeken ni: jan Roma li awen sona e ni: ma ni li jo e jan pi tenpo pini mute, li ken ala pakala e ona.
+The letter concludes that the ancient dwellers remain undefeated and should never be disturbed.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "History of the Necronomicon" (1927) by H. P. Lovecraft.
+# Plot summary / retelling of "History of the Necronomicon" (1927) by H. P. Lovecraft.
+
+lipu ni li lon nasin sona; ona li toki e nasin pi lipu pi nimi [Al Azif], lipu pi wawa pi jan pi nimi [Abdul Alhazred].
+This pseudo-document outlines the chronology of the Necronomicon, originally titled Al Azif by Abdul Alhazred.
+
+jan wile sona li pana e sitelen ni: jan [Alhazred] li pali e lipu lon ma [Damascus] lon sike [730].
+It states Alhazred wrote the book in Damascus around 730 AD.
+
+lipu ni li kama ante tawa toki [Greek] pi nimi [Necronomicon], la lipu pi kalama pi ma [Latin] li lon tenpo [1228].
+It was translated into Greek as Necronomicon, later into Latin in 1228.
+
+jan lawa pi kulupu pi jan pi [Byzantine] en pi [Pope] li weka e lipu tan luka pi kulupu tan pakala.
+Authorities repeatedly banned the text for its blasphemous contents.
+
+lipu ni li toki e sitelen pi tomo pi jan pi ma [Salem], pi [Olaus Wormius], en pi tomo sona [Miskatonic] lon ma [Arkham].
+It mentions copies owned by Salem occultists, scholar Olaus Wormius, and the Miskatonic University library.
+
+tenpo mute la jan li wile pakala e lipu ni taso lipu ni li awen; jan pi nimi [Frederick of Prussia] li sama jan li jo e lipu sin.
+Though many attempted to destroy it, certain collectors like Frederick of Prussia retained copies.
+
+lipu ni li pana e ni: jan toki ala li ken wile lukin e lipu la; lipu ni li toki e soweli pi nimi [Old Ones], la jan ali li ken sama ala sona e ni.
+The document concludes by warning that reading the Necronomicon reveals the Great Old Ones and may doom the reader.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "The Dunwich Horror" (1928) by H. P. Lovecraft.
+# Plot summary / retelling of "The Dunwich Horror" (1928) by H. P. Lovecraft.
+
+jan pi nimi [Wilbur Whateley] li kama lon tomo pakala lon ma [Dunwich]; siya li wile e nasin pi sewi [Yog-Sothoth].
+Wilbur Whateley is born in rural Dunwich to Lavinia Whateley and an unseen father believed to be Yog-Sothoth.
+
+jan lili ni li kama suli lon tenpo lili; jan mute li pilin monsuta tan lukin ona; ona li kama pona tawa jan sewi pi tomo sona [Miskatonic] tan lipu pi nimi [Necronomicon].
+He ages unnaturally fast and seeks the Necronomicon at Miskatonic University.
+
+kulupu pi ma ni li kute e kalama ike lon tomo pi jan [Whateley]; tomo ona li kama suli; jan alasa li mike e ni: jan sin li lon anpa.
+Villagers hear weird noises from the Whateley farm as a second invisible entity grows in the sealed house.
+
+jan [Wilbur] li utala e soweli tomo pi ma [Miskatonic] la ona li moli tan soweli pi nimi [guard dog].
+Wilbur dies at the university when a guard dog mauls him, revealing his body is partly monstrous.
+
+tenpo kama la ijo pi tomo [Whateley] li pakala, la soweli ni li kama weka tan anpa, li tawa lon tenpo mun la jan mute li lukin ala e ona.
+Soon after, the invisible twin escapes and rampages through Dunwich, leaving crushed houses.
+
+jan sona [Dr. Armitage], [Prof. Rice], en [Dr. Morgan] li lanpan e lipu ni kepeken lipu pi jan [Whateley].
+Dr. Armitage and colleagues study Wilbur’s diary, learning the creature is meant to open the gate for Yog-Sothoth.
+
+ona li tawa nena [Round Mountain], li kute e kalama wawa pi jan lili ni, la sina li ken lukin e sewi pi ken moku e ma.
+They track the entity to Round Mountain, where its dimensions defy physics.
+
+jan [Armitage] li kalama e nimi pi sewi lili, li toki e ni: soweli ni li jan pi nimi pi ma, la soweli li kama sin.
+Armitage chants a banishing spell revealing the creature as Wilbur’s twin, who recognizes Armitage briefly before disintegrating.
+
+ma [Dunwich] li moli ala, taso jan li pilin ike tan kama pi sewi pi nimi [Yog-Sothoth].
+Dunwich survives, but the villagers remain shaken by the brush with cosmic forces.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "Ibid" (1928) by H. P. Lovecraft.
+# Plot summary / retelling of "Ibid" (1928) by H. P. Lovecraft.
+
+lipu ni li musi lon nasin pi lipu sona la; jan [Ibidus], jan sona pi ma [Rome], li awen lon lipu pi jan sona [Parkus].
+This parody biography traces the fictional Roman scholar Ibidus.
+
+jan [Parkus] li sitelen e lipu wawa pi nimi [Ibid], la ona li lon e jan ni tan ma mute: ma [France], [England], [America].
+Professor Parkus writes an exaggerated monograph, attributing Ibid’s skull to various museums across Europe and America.
+
+lipu ni li toki e ni: jan pi nimi [Ibidus] li jo e soweli, li lon lon ma ante, li olin e kulupu pi ma ante mute.
+It humorously catalogues supposed adventures, such as Ibidus debating Gauls and tutoring kings.
+
+lon pini la lipu li toki e ni: ko sin li lon ma [Milwaukee] en ma ante tan ni: kon pi jan pi nimi [Ibid] li awen ala lon ma.
+Ultimately the skull ends up in Milwaukee, mocking scholarly obsession with citations.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "The Whisperer in Darkness" (1930) by H. P. Lovecraft.
+# Plot summary / retelling of "The Whisperer in Darkness" (1930) by H. P. Lovecraft.
+
+jan sona [Albert N. Wilmarth] li sitelen e lipu pi soweli ni: ma [Vermont] la ma seli li awen e soweli pi noka mute tan anpa ma.
+Folklorist Albert N. Wilmarth studies reports of strange beings in Vermont after a flood.
+
+jan [Henry Akeley] tan ma lete li tawa e lipu tawa ona: ona li jo e sitelen jan walo pi nena noka la, li toki e ni: soweli mun li lon ma ni.
+Farmer Henry Akeley writes letters claiming extraterrestrial Mi-Go inhabit the hills.
+
+kulupu pi soweli mun li wile e ni: jan pi ma la o lawa ala ni; taso jan pi ma li kute e kalama e ni: soweli ni li pali e ilo pi kalama kon.
+Akeley says the Mi-Go use advanced technology and demand that humans cease interfering with their mining.
+
+jan [Wilmarth] li kute e sitelen wawa la; ona li jo e stela, e sitelen wawa pi kalama pi soweli, li wile e ni: ona li lukin e wawa.
+Wilmarth receives photographs and recordings of buzzing voices.
+
+tenpo wan la jan [Akeley] li wile e ni: jan sona o kama lon tomo ona tawa kama sona e ale; ona li toki e ni: ona li pilin ike tan jan pi kulupu sin.
+Later Akeley requests Wilmarth visit, claiming to have made peace with the Mi-Go.
+
+jan [Wilmarth] li tawa ma [Vermont]; ona li kama lon tomo pi jan sona, taso ona li lukin e ni: jan ni li lon ala wawa kepeken sijelo; ona li tawa lon nasin lili lon anpa kon.
+Upon arrival Wilmarth finds Akeley strangely weak and hidden in a darkened room, speaking faintly.
+
+jan sin li toki e ni: soweli mun li wile tawa pona; ona li wile pana e sijelo pi jan tawa soweli la jan wawa o awen lon kon.
+Akeley explains the aliens plan to transport human minds across space by removing their brains.
+
+jan [Wilmarth] li tawa supa la ona li lukin e poki pi ilo pi waso pi nimi [brain cylinder]; ona li pilin e ni: jan sin ni li jan ala; la mino li kute e kalama sin tan tomo anpa.
+Wilmarth notices metallic cylinders and hears suspicious voices below.
+
+lon tenpo pimeja la ona li lukin e ijo lon noka pi supa—ijo lili pi sinpin pi kili lili; ona li tan e supa, li lukin e ni: palisa jan li lon ala.
+At night he glimpses the “Akeley” figure and realizes it is merely gloves and a waxen mask arranged around a hollow body.
+
+ona li weka lon nasin, li tawa sewi la ona li awen kepeken wile; tomosin la soweli mun li kalama e ni: ona li weka.
+He flees through the woods as the Mi-Go pursue.
+
+jan [Wilmarth] li tawa ma [Arkham] la ona li open e lipu ni; ona li pini kepeken toki ni: soweli mun li lon, la jan sona li o kute e kalama lili.
+Back in Arkham he publishes the account, warning that the whisperer in darkness still listens from Vermont’s mountains.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "At the Mountains of Madness" (1931) by H. P. Lovecraft.
+# Plot summary / retelling of "At the Mountains of Madness" (1931) by H. P. Lovecraft.
+
+jan sona [William Dyer] tan tomo sona [Miskatonic] li sitelen e lipu ni tawa weka e alasa sin tawa ma anpa [Antarctica].
+Professor William Dyer of Miskatonic University writes to discourage future Antarctic expeditions.
+
+kulupu son ona li luka e seli pi ma anpa lon nena suli, li alasa e kiwen pi sitelen pi jan pi nimi [Elder Things].
+His party discovered fossilized tracks and ancient star-headed creatures.
+
+jan [Lake] li alasa e kulupu sin la ona li tawa ma ante; taso tenpo pimeja la kon li seli mute, la kulupu li weka tan tomo.
+Colleague Lake found living specimens but his camp was destroyed by a sudden storm—or something else.
+
+jan [Dyer] en jan lili [Danforth] li lukin e tomo pakala, li kute e ni: jan ale li moli la sinpin pi jan pi nimi li anpa lon anpa.
+Dyer and Danforth discovered the camp in ruins, men dissected, and the strange fossils missing.
+
+kulupu ni li tawa ma nena pi lipu "Mountains of Madness"; nena ni li len sewi tawa mun, li suli suli.
+They flew beyond enormous mountains higher than Everest.
+
+ma anpa la ona li lukin e tomo pi sinpin kiwen pi sitelen pi jan pi ma mun.
+Beyond lay a sprawling alien city with bas-reliefs chronicling the Elder Things’ history.
+
+lipu sin li toki e ni: jan sewi ni li pali e jan sin [shoggoths] tawa pali, taso wawa sin ni li kama moli e jan lawa.
+Carvings revealed that these beings created shapeshifting shoggoths as slaves, but the shoggoths rebelled.
+
+jan ni li tawa anpa pi tomo la ona li lukin e tomo lili sin, la ona li awen kepeken monsuta, taso soweli lili li kama sin.
+Dyer and Danforth ventured underground, encountering tunnels carved by shoggoths.
+
+ona li kute e kalama "Tekeli-li" la la soweli wawa lili li awen lon monsi.
+They heard the shoggoth cry “Tekeli-li” and fled as a protoplasmic mass pursued them.
+
+lon tenpo weka la jan [Danforth] li lukin e sinpin pi ma ante—kulupu pi suno pi waso pi noka mute; ona li pilin e ni: jan pi ma pi nanpa walo li lon li wile e ni: jan li awen lon poka.
+Danforth glimpsed a hint of far worse horrors in the distance, possibly the plateau of Leng.
+
+jan [Dyer] li toki e ni: sitelen ni li jo e wawa mute; jan o awen lon ma ni kon.
+Dyer begs future explorers to stay away from the polar wastes lest they awaken the shoggoths or other ancient powers.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "The Shadow over Innsmouth" (1931) by H. P. Lovecraft.
+# Plot summary / retelling of "The Shadow over Innsmouth" (1931) by H. P. Lovecraft.
+
+jan lili li tawa ma [Innsmouth] lon ma [Massachusetts] tawa lukin e tomo pi sitelen suli.
+A young traveler visits the decaying seaport Innsmouth.
+
+jan ma ante li toki e ni: ma ni li ike tan kulupu pi jan anpa pi nimi [Deep Ones]; taso jan li wile luka e ilo sin wawa.
+Locals warn of fish-god worshippers called Deep Ones.
+
+jan tawa li kute e jan pakala [Zadok Allen], li kute e lipu pi ni: sinpin pi jan [Marsh] li kama tawa ma anpa la li kama jo e kili mute.
+He interviews drunk Zadok Allen, who recounts how the Marsh family bargained with sea creatures for fish and gold.
+
+kulupu pi jan anpa li wile e ni: jan ma la o tawa ma telo; la jan pi ma ni li wile e ni: jan o kama jan anpa la o awen lon ma pi telo.
+The Deep Ones demand human sacrifices and intermarriage, producing hybrids.
+
+tenpo pimeja la jan alasa pi tomo sin li lukin e ni: jan ma li lon ala; jan pi nimi [Marsh] li lawa ala.
+At night the protagonist realizes the town’s hotel is a trap as guards converge.
+
+ona li awen lon tomo la kalama pi noka tawa li kama tan kon; ona li weka e sinpin, li tawa ma; taso jan pi seli lili li awen awen lon poka.
+He escapes through decrepit streets pursued by scaly, gilled residents.
+
+ona li lon e ni: kulupu ni li kala pi nimi [Deep Ones]; ona li tawa, tawa, tawa tawa tawa.
+He glimpses huge Deep Ones marching from the sea.
+
+jan li weka kepeken ilo pi nasin [Newburyport]; ona li pana e lipu tawa jan utala pi ma [Federal].
+He escapes to Newburyport and reports the cult to the government.
+
+jan lawa li utala e ma [Innsmouth], li pakala e tomo, li pana e wawa tawa noka anpa.
+Federal agents raid Innsmouth, dynamiting the reef.
+
+tenpo kama la jan [narrator] li lukin e ni: sijelo ona li ante sin; ona li lukin e ijo pi monsi pi luka sin, li lukin e ni: ona li mi sin pi kulupu pi jan anpa.
+Later the narrator discovers he has Innsmouth ancestry and begins transforming.
+
+ona li ken ala e ni: ona li wile tawa ma anpa la li lon e ni: ona li kama tawa ma telo tawa awen lon poka pi jan pi nimi.
+Instead of resisting, he plans to join his undersea kin in the timeless city of Y’ha-nthlei.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "The Dreams in the Witch House" (1932) by H. P. Lovecraft.
+# Plot summary / retelling of "The Dreams in the Witch House" (1932) by H. P. Lovecraft.
+
+jan sona [Walter Gilman] li awen lon tomo pi nimi [Witch House] lon ma [Arkham], la ona li kama sona e lipu pi nasin kon.
+Student Walter Gilman lodges in Arkham’s Witch House to study non-Euclidean math and occult lore.
+
+sinpin tomo ni li pakala, li jo e kiwen nanpa lili, la jan pi ma li toki e ni: jan pi nimi [Keziah Mason] li lon anpa.
+The room’s warped angles supposedly connect to the witch Keziah Mason.
+
+jan [Gilman] li kama jo e lape nasa: ona li lukin e jan kijetesantakalu [Brown Jenkin], soweli lili pi noka mute.
+Gilman dreams of the rat-like familiar Brown Jenkin and Keziah dragging him through cosmic gulfs.
+
+jan sewi ni li wile e ni: ona li sitelen e suli pi jan pi nimi [Nyarlathotep], li la ona li toki e ni: o pana e o tenpo sin.
+They force him to sign a book of Azathoth and participate in rituals.
+
+jan pi lipu ni li lukin e ijo pi mun pi noka ala la ona li kama sona e ni: nasin pi kalama pi seli pi jan ni li lon ala pi waso kepeken wawa.
+His nightmares bleed into waking life; he hears chanting behind the walls.
+
+tenpo lili la jan lili pi nimi [Frank Elwood] li kama lape lon poka; ona li toki e ni: ona kin li kute e kalama sama.
+Roommate Frank Elwood confirms similar experiences.
+
+jan [Gilman] li lape la soweli pi noka pi [Brown Jenkin] li moku e sijelo; ona li lukin e ni: jan pi nasin pi wawa li wile pana e bebe tawa sewi pi nimi [Azathoth].
+Gilman witnesses Brown Jenkin sacrificing a human child to Azathoth during a dream flight.
+
+lon tenpo suno pi [Walpurgis Night] la Keziah li wile moli e bebe sin; taso jan [Gilman] li awen e moli la, ona li utala e Keziah, li moli e ona kepeken ilo kiwen.
+On Walpurgis Night Keziah demands he slay another infant, but he breaks free and bludgeons her to death.
+
+taso soweli [Brown Jenkin] li weka la ona li lon sin; ona li luka e lawa pi [Gilman] lon lape lili la li moli e ona kepeken kalama.
+Yet Brown Jenkin bursts from Gilman’s chest in reality, killing him.
+
+tenpo kama la ma li anpa e sinpin pi tomo pi nasin kepeken palisa wawa; kon li toki e ni: seno li moli kepeken waso.
+City workers later demolish the garret, discovering hidden tunnels containing bones and confirming the Witch House’s evil.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "The Thing on the Doorstep" (1933) by H. P. Lovecraft.
+# Plot summary / retelling of "The Thing on the Doorstep" (1933) by H. P. Lovecraft.
+
+jan [Daniel Upton] li sitelen e lipu ni tan ni: ona li moli e jan pona ona [Edward Derby].
+Daniel Upton confesses to killing his friend Edward Derby.
+
+jan [Derby] li pilin e sitelen pi [Arkham], li olin e meli pi nimi [Asenath Waite], la ona li kama lon kulupu pi nasin kon.
+Derby, a poet from Arkham, marries the enigmatic Asenath Waite and enters strange occult circles.
+
+jan [Asenath] li jo e lukin pi jan pi ma [Innsmouth]; kulupu li toki e ni: jan mama ona [Ephraim] li jan pi wawa ike.
+Asenath descends from the Innsmouth cult, and rumors say her father Ephraim practiced body-swapping sorcery.
+
+tenpo kama la jan [Derby] li ante pilin: kala ona li weka, lawa ona li kama e toki pi wile ala.
+Derby soon behaves erratically, speaking in voices unlike his own.
+
+jan [Upton] li lukin e nimi pi jan [Asenath] lon wawa jan [Derby]; ona li kute e nimi ike: "mi li taso, mi wile lon kon," sama jan pi nimi [Ephraim].
+Upton suspects Asenath (or Ephraim through her) is possessing Derby’s body.
+
+jan sin li awen lon tomo pimeja la jan lili pi sona li lukin e ni: jan pi nimi [Asenath] li moli.
+Later Asenath disappears under mysterious circumstances.
+
+jan [Derby] li kama tawa jan [Upton] la ona li toki e ni: ona li lon anpa tomo pi anpa sin; jan li tawa e sijelo ona.
+Derby arrives in terror claiming his own body has been stolen and he inhabits Asenath’s corpse.
+
+jan [Upton] li weka tawa tomo pi ma [Innsmouth], li lukin e ni: lon supa pi sinpin la jan pi nave walo li sike e ona.
+They retrieve Asenath’s body, confirming it’s been dead for days.
+
+lipu ni li pini kepeken mani: jan [Ephraim] li ken wile awen lon sijelo jan pi tenpo pini kepeken nasin pi jan sin.
+They realize Ephraim’s mind has hopped bodies to pursue immortality.
+
+jan [Upton] li pilin e ni: jan pi sijelo [Derby] li lon ala; tan ni la ona li utala e jan pi lon sijelo [Derby] lon lupa tomo.
+To stop him, Upton shoots Derby—actually Ephraim inhabiting his friend—on the doorstep.
+
+lipu ni li toki e ni: wile ala e ni: jan pi ma pi tomo pimeja la o pali e sona pi wile la o sona e ni: jan pi sijelo li ken ante.
+He warns others against delving into Innsmouth sorcery and body exchange.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "The Book" (1933) by H. P. Lovecraft.
+# Plot summary / retelling of "The Book" (1933) by H. P. Lovecraft.
+
+lipu lili ni li toki e jan alasa pi lipu pimeja.
+This fragment features a seeker discovering a forbidden grimoire.
+
+jan li kama jo e lipu lon tomo sin li lon ma [Providence]; ona li lukin e sitelen kon lon sinpin.
+He finds the book in a crumbling Providence building adorned with occult symbols.
+
+jan li open e lipu la kalama pi wawa ante li kama lon kon; kasi lon lupa li moli; suno li weka tan sewi.
+Upon opening the tome, eerie forces stir: plants wither, and light fades.
+
+jan li kute e kalama pi wawa mun la ona li sona e ni: sitelen ni li kalama e waso li wile kama lon sewi pi kulupu pi jan pi nimi.
+He hears cosmic voices chanting and realizes the book bridges to an alien assembly.
+
+lipu ni li pini tan ni: jan li lon kiwen pi wawa ni en li weka tawa anpa la lipu li kama lon anpa la lon.
+The account ends abruptly as the narrator is engulfed by the summoned darkness.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "The Evil Clergyman" (1933) by H. P. Lovecraft.
+# Plot summary / retelling of "The Evil Clergyman" (1933) by H. P. Lovecraft.
+
+jan li tawa tomo sewi pi pali pi ma [England], li awen kepeken jan sin; jan ni li pana e lipu pi sitelen pi kulupu pi nimi [evil clergyman].
+The narrator visits an English rectory where a friend shows him a box of artifacts belonging to a sinister priest.
+
+jan sin li toki e ni: o awen ala e ilo loje la; taso jan pi lipu ni li wile sona e ijo, la ona li kepeken ilo.
+He warns the narrator not to manipulate a peculiar crystalline prism, yet curiosity wins.
+
+jan li kalama e ilo; kon pimeja li kama sin, la jan li lukin e jan lili pi len lili lon poka supa.
+When activated, the room darkens and phantasmal clergy appear.
+
+jan pi len loje lon anpa supa li toki e ni: jan ante pi len pimeja li wile moli e jan ale.
+A spectral priest in crimson orders his fellows to murder intruders.
+
+jan pi lipu ni li pilin ike; ona li wile pakala e ilo, taso kalama pi sewi li awen; jan lon pimeja li open e pali e ni: kute wawa pi ijo sin li kama.
+The narrator panics and tries to break the device, but the apparitions intensify.
+
+tenpo lili la jan sin pi kon li toki e ni: "mi lon sijelo sina" la waso li kama lon sinpin.
+One entity proclaims it will possess the narrator’s body.
+
+jan li weka tan tomo; tenpo suno la ona li lukin e sinpin ona la ona li lukin sama jan pi len loje.
+He flees, and next morning glimpses his reflection transformed, implying the evil clergyman’s essence now inhabits him.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "The Shadow Out of Time" (1935) by H. P. Lovecraft.
+# Plot summary / retelling of "The Shadow Out of Time" (1935) by H. P. Lovecraft.
+
+jan sona [Nathaniel Wingate Peaslee] lon tomo sona [Miskatonic] li kama jaki lon tenpo [1908]; ona li lon pimeja mute en tenpo mute la ona li weka.
+Professor Nathaniel Peaslee suffers a five-year amnesia beginning in 1908.
+
+lon tenpo ni la jan sin li kepeken sijelo ona la jan sin li pali e sina kepeken pilin ala; ona li toki e toki pi wawa ante.
+During that period his body acts strangely, speaking in an alien tone and studying obscure topics.
+
+tenpo pini la ona li tawa sin lon pilin la ona li oki e ni: anpa la ona li lape lon ma pi jan [Yith].
+When he recovers, he experiences dreams revealing that his consciousness was swapped with a member of the Great Race of Yith.
+
+jan pi ma [Yith] li lon tenpo sin la, la ona li ken tawa tenpo ante, li lanpan e pilin pi jan ante la li awen e sona.
+The Yithians project minds through time to gather knowledge.
+
+jan [Peaslee] li lukin e tomo suli pi lipu lon ma pi kon anpa; ona li sona e jan pi ma sin kepeken pilin.
+Peaslee remembers exploring their enormous libraries and conversing with diverse beings captured from distant eras.
+
+jan sin li toki e ni: tenpo kama la soweli pi nimi [Flying Polyps] li kama moli e kulupu pi jan [Yith], taso jan li weka lon tenpo kala.
+The Yith plan to flee impending destruction by transferring to other bodies.
+
+jan [Peaslee] li wile alasa e pali lon ma lon seme; ona li tawa ma [Australia], li alasa lon ma lete pi kiwen suli pi tomo pi jan sin.
+Years later he travels to Australia searching for ruins described in his dreams.
+
+ona li kama lon lupa anpa la ona li lukin e tomo pi ma sin; sinpin li jo e sitelen sama lipu ona.
+He discovers subterranean caverns matching the Yithian city.
+
+tenpo ni la ona li kute e kalama pi waso pi nimi [Flying Polyps], la ona li awen lon monsi; taso ona li lon e lipu sin pi jan pi nimi [Yith] lon ma temu; lipu ni li toki e ni: jan pi nimi [Yith] li wile lon sin.
+There he finds cylindrical record-cases proving his visions, but also awakens an imprisoned Flying Polyp, forcing him to flee.
+
+jan [Peaslee] li tawa ma tomo la ona li awen pilin ike wawa, taso ona li jo e sona ni: jan [Yith] li lon wawa la ona li weka lon tenpo sin.
+He escapes with evidence and realizes the Yith continue to monitor him across time.
 
 ----
 
-# FIXME: Add a plot summary / retelling of "The Haunter of the Dark" (1935) by H. P. Lovecraft.
+# Plot summary / retelling of "The Haunter of the Dark" (1935) by H. P. Lovecraft.
+
+jan sitelen [Robert Blake] li tawa ma [Providence], li wile alasa e sona pi kulupu pi nimi [Stella Sapiente].
+Writer Robert Blake relocates to Providence to study the Stella Sapiente cult.
+
+ona li tawa tomo pi lete lon nena pi [Federal Hill], tomo pi nimi [Starry Wisdom Church], la ona li lukin e kiwen walo pi nimi [Shining Trapezohedron].
+He explores the abandoned Starry Wisdom Church on Federal Hill and discovers the Shining Trapezohedron.
+
+jan li lanpan e kiwen ni tawa tomo ona, li kepeken ona tawa lukin e mun sin kepeken wawa.
+He brings the crystal home, using it to glimpse alien vistas.
+
+taso kiwen ni li open e sinpin pi soweli pimeja pi nimi [Haunter of the Dark], soweli lon sewi tomo pi kulupu ni.
+But the gem also awakens the Haunter of the Dark, a winged entity imprisoned in the church steeple.
+
+jan [Blake] li sitelen e lipu e ni: suno taso li ken awen e soweli ni; tenpo pimeja la ona o lon ala tomo ona.
+Blake’s diary pleads to keep lights burning so the Haunter remains trapped.
+
+tenpo pimeja la lili seli li pakala e ilo; ma [Providence] li weka tan suno; la tenpo pimeja suli li open lon kulupu.
+A lightning storm knocks out city power, plunging Providence into darkness.
+
+jan [Blake] li pilin e ni: soweli ni li kama; ona li alasa tawa tu e kiwen tawa sewi, taso tenpo li pini.
+Knowing the creature can now roam, he tries to return the crystal but too late.
+
+tenpo kama la ona li kama moli lon supa, lukin ona li pakala, en jan lawa li kute e kalama pi weka, la taso lipu li awen.
+He is soon found dead at his desk with charred eyes while his last notes remain.
+
+lipu ni li pini kepeken toki ni: jan o awen weka tan kiwen [Shining Trapezohedron] tan ni: soweli pimeja li ken kama sin lon tenpo pimeja.
+The diary warns others to shun the Trapezohedron lest the Haunter return whenever darkness falls.
+
+----
+
+# FIXME: Add a plot summary / retelling of "Beowulf" (c. 1000) by Anonymous.
+
+----
+
+# FIXME: Add a plot summary / retelling of "The Epic of Gilgamesh" (c. 1800 BCE) by Anonymous.
+
+----
+
+# FIXME: Add a plot summary / retelling of "The Iliad" (c. 750 BCE) by Homer.
+
+----
+
+# FIXME: Add a plot summary / retelling of "The Odyssey" (c. 725 BCE) by Homer.
+
+----
+
+# FIXME: Add a plot summary / retelling of "The Aeneid" (19 BCE) by Virgil.
+
+----
+
+# FIXME: Add a plot summary / retelling of "The Divine Comedy" (1320) by Dante Alighieri.
+
+----
+
+# FIXME: Add a plot summary / retelling of "Le Morte d'Arthur" (1485) by Thomas Malory.
+
+----
+
+# FIXME: Add a plot summary / retelling of "Don Quixote" (1605) by Miguel de Cervantes.
+
+----
+
+# FIXME: Add a plot summary / retelling of "Paradise Lost" (1667) by John Milton.
+
+----
+
+# FIXME: Add a plot summary / retelling of "Gulliver's Travels" (1726) by Jonathan Swift.
+
+----
+
+# FIXME: Add a plot summary / retelling of "Faust" (1808) by Johann Wolfgang von Goethe.
+
+----
+
+# FIXME: Add a plot summary / retelling of "Pride and Prejudice" (1813) by Jane Austen.
+
+----
+
+# FIXME: Add a plot summary / retelling of "Frankenstein" (1818) by Mary Shelley.
+
+----
+
+# FIXME: Add a plot summary / retelling of "Jane Eyre" (1847) by Charlotte Brontë.
+
+----
+
+# FIXME: Add a plot summary / retelling of "Wuthering Heights" (1847) by Emily Brontë.
+
+----
+
+# FIXME: Add a plot summary / retelling of "Moby-Dick" (1851) by Herman Melville.
+
+----
+
+# FIXME: Add a plot summary / retelling of "Les Misérables" (1862) by Victor Hugo.
+
+----
+
+# FIXME: Add a plot summary / retelling of "Crime and Punishment" (1866) by Fyodor Dostoevsky.
+
+----
+
+# FIXME: Add a plot summary / retelling of "War and Peace" (1869) by Leo Tolstoy.
+
+----
+
+# FIXME: Add a plot summary / retelling of "Around the World in Eighty Days" (1873) by Jules Verne.
+
+----
+
+# FIXME: Add a plot summary / retelling of "Treasure Island" (1883) by Robert Louis Stevenson.
+
+----
+
+# FIXME: Add a plot summary / retelling of "Dracula" (1897) by Bram Stoker.
+
+----
+
+# FIXME: Add a plot summary / retelling of "The Wonderful Wizard of Oz" (1900) by L. Frank Baum.
+
+----
+
+# FIXME: Add a plot summary / retelling of "The Call of the Wild" (1903) by Jack London.
+
+----
+
+# FIXME: Add a plot summary / retelling of "Anne of Green Gables" (1908) by L. M. Montgomery.
+
+----
+
+# FIXME: Add a plot summary / retelling of "The Secret Garden" (1911) by Frances Hodgson Burnett.
+
+----
+
+# FIXME: Add a plot summary / retelling of "Metropolis" (1927 film) by Fritz Lang.
+
+----
+
+# FIXME: Add a plot summary / retelling of "The Chronicles of Narnia: The Lion, the Witch and the Wardrobe" (1950) by C. S. Lewis.
+
+----
+
+# FIXME: Add a plot summary / retelling of "The Lord of the Rings" (1954) by J. R. R. Tolkien.
+
+----
+
+# FIXME: Add a plot summary / retelling of "The Catcher in the Rye" (1951) by J. D. Salinger.
+
+----
+
+# FIXME: Add a plot summary / retelling of "To Kill a Mockingbird" (1960) by Harper Lee.
+
+----
+
+# FIXME: Add a plot summary / retelling of "Dune" (1965) by Frank Herbert.
+
+----
+
+# FIXME: Add a plot summary / retelling of "One Hundred Years of Solitude" (1967) by Gabriel García Márquez.
+
+----
+
+# FIXME: Add a plot summary / retelling of "The Left Hand of Darkness" (1969) by Ursula K. Le Guin.
+
+----
+
+# FIXME: Add a plot summary / retelling of "Watership Down" (1972) by Richard Adams.
+
+----
+
+# FIXME: Add a plot summary / retelling of "The Princess Bride" (1973) by William Goldman.
+
+----
+
+# FIXME: Add a plot summary / retelling of "Alien" (1979 film) by Ridley Scott.
+
+----
+
+# FIXME: Add a plot summary / retelling of "Neuromancer" (1984) by William Gibson.
+
+----
+
+# FIXME: Add a plot summary / retelling of "The Handmaid's Tale" (1985) by Margaret Atwood.
+
+----
+
+# FIXME: Add a plot summary / retelling of "The Sandman, Vol. 1" (1989) by Neil Gaiman.
+
+----
+
+# FIXME: Add a plot summary / retelling of "The Matrix" (1999 film) by The Wachowskis.
+
+----
+
+# FIXME: Add a plot summary / retelling of "Persepolis" (2000) by Marjane Satrapi.
+
+----
+
+# FIXME: Add a plot summary / retelling of "Spirited Away" (2001 film) by Hayao Miyazaki.
+
+----
+
+# FIXME: Add a plot summary / retelling of "The Legend of Zelda: Ocarina of Time" (1998 video game) by Nintendo.
+
+----
+
+# FIXME: Add a plot summary / retelling of "Avatar: The Last Airbender" (2005 TV series) by Michael Dante DiMartino and Bryan Konietzko.
+
+----
+
+# FIXME: Add a plot summary / retelling of "The Hunger Games" (2008) by Suzanne Collins.
+
+----
+
+# FIXME: Add a plot summary / retelling of "A Game of Thrones" (1996) by George R. R. Martin.
+
+----
+
+# FIXME: Add a plot summary / retelling of "Black Panther" (2018 film) by Ryan Coogler.
+
+----
+
+# FIXME: Add a plot summary / retelling of "Coco" (2017 film) by Lee Unkrich and Adrian Molina.
+
+----
+
+# FIXME: Add a plot summary / retelling of "The Witcher 3: Wild Hunt" (2015 video game) by CD Projekt Red.
+
+----
