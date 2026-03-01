@@ -880,6 +880,6 @@ python grce.py --pt model/wp_simple_think2x_small_retrain.pt --cycles 15 \
 
 cp model/wp_simple_think2x_small_retrain.pt model/wp_simple_think2x_small_retrain_t4x.pt
 python grce.py --pt model/wp_simple_think2x_small_retrain_t4x.pt reset
-python grce.py --pt model/wp_simple_think2x_small_retrain_t4x.pt --cycles 15 \
-  --lr-cosine-steps 500 --block-size 1024 --batch-size 128 \
+python grce.py --pt model/wp_simple_think2x_small_retrain_t4x.pt --cycles 25 \
+  --lr-cosine-steps 500 --block-size 1024 --batch-size 50 \
   --layout '*[16e=16d=4th2x=16f=64t4x=16f=64t4x](,1[8-16E=*D]||||)' train --json
