@@ -7,7 +7,7 @@ This adds the following benefits:
 - The high-bandwith "XCTX" channel is meant to be functionally equivalent to the multi-head attention mechanism. It's a (simplistic and thus probably worse ;) recurrent re-implementation of the same functinality, that we can only learn because we use the transformer stack and its multi-head attention as "scaffolding". Instead of sending queries into the past we are shuting the things worth remembering for a little while into the future. We use a dropout-like mechanism during learning to encourage the network to learn that functionality, that is redundant within a token block. And then we use that learned functionality to both pass messages forward in time from one block to the next in inference, and prevent the network from doing weird things at the same time. The attention mechanism is great, when you know what you want to know from the past. Context is a way for the past to let the future know what to query.
 
 Training and sampling logic all lives in `grce.py`. The CLI separates the model's
-maximum positional range (`--block-size`) from the runtime window (`--block-length`),
+maximum positional range (`--n-pos`) from the runtime window (`--block-size`),
 so you can keep the checkpoint's full set of positional embeddings while training on
 shorter slices that randomly slide across the corpus.
 

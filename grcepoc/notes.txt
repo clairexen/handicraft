@@ -482,10 +482,10 @@ single-row sequence with 8 columns of "forward", followed by 8 columns of
 We remove all --rows-*, --cols-*, --split-* CLI options, and --batch-layout,
 and replace it all by a single --layout STR option, that accepts the above
 syntax. A warning is generated when the number of rows exceeds --batch-size
-or the number of cols in any row exceeds --block-size/--block-length.
+or the number of cols in any row exceeds --n-pos/--block-size.
 
 There's more syntax to introduce randomness and dynamically adjust a layout
-to a given --batch-size and --block-size/--block-length. Consider this layout:
+to a given --batch-size and --n-pos/--block-size. Consider this layout:
 
 	2[*d]+2[*f]+*[*1-2e=*1-4d=*1-4f=*1-2n]
 
@@ -495,7 +495,7 @@ assigned as follows: first a random number in the range of 1-2 is allocated for
 "encode"; then numbers in the range 1-4 for the "decode" and "forward" sequences;
 and finally a number in the range 1-2 for "noattn".
 
-If the available --block-size/--block-length is smaller than the resulting total
+If the available --n-pos/--block-size is smaller than the resulting total
 sequence length, we randomly select sub-blocks that are still over their lower
 bound, and decrement them, until block_size is reached, or each segment is at its
 lower bound.
@@ -515,7 +515,7 @@ current size. These prefixes work exactly the same way for rows (outside of
 [...]) and cols (inside of [...]).
 
 Instead of an integer one can also use a fraction A/B. In this case this
-represents (A * (batch-size or block-length)) // B.
+represents (A * (batch-size or block-size)) // B.
 
 In addition to that we define a simple pre-processing language, using '(', '|',
 and ')' to express alternatives for random choices. This is a pure text-based

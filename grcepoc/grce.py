@@ -927,16 +927,11 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         help="Total vocabulary size for the tokenizer (including special tokens)",
     )
     model_group.add_argument(
-        "--block-size",
+        "--n-pos",
+        dest="block_size",
         type=int,
         default=DEFAULTS.block_size,
         help="Maximum sequence length supported by the model's positional embeddings",
-    )
-    model_group.add_argument(
-        "--block-length",
-        type=int,
-        default=None,
-        help="Actual tokens-per-sample used during train/eval (defaults to --block-size)",
     )
     model_group.add_argument(
         "--n-layer",
@@ -979,7 +974,7 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         "--tiny",
         action="store_true",
         help=(
-            "Shortcut for --vocab-size 600 --batch-size 12 --block-size 6 --n-layer 3 --n-head 2 "
+            "Shortcut for --vocab-size 600 --batch-size 12 --n-pos 6 --block-size 6 --n-layer 3 --n-head 2 "
             "--n-embd 8 --n-grce 4 --n-xctx 9 --steps 2 --eval-interval 1"
         ),
     )
@@ -991,6 +986,13 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         type=str,
         default="+1",
         help="Repeat the full training/eval/update cycle N times (supports +N to extend).",
+    )
+    training_group.add_argument(
+        "--block-size",
+        dest="block_length",
+        type=int,
+        default=None,
+        help="Actual tokens-per-sample used during train/eval (defaults to --n-pos)",
     )
     training_group.add_argument(
         "--batch-size",
@@ -1577,7 +1579,7 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
             args.vocab_size = 600
         if not flag_present("--batch-size"):
             args.batch_size = 12
-        if not flag_present("--block-size"):
+        if not flag_present("--n-pos"):
             args.block_size = 6
         if not flag_present("--n-layer"):
             args.n_layer = 3
@@ -1598,9 +1600,9 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
     if args.block_length is None:
         args.block_length = args.block_size
     if args.block_length <= 0:
-        parser.error("--block-length must be positive")
+        parser.error("--block-size must be positive")
     if args.block_length > args.block_size:
-        parser.error("--block-length must be <= --block-size")
+        parser.error("--block-size must be <= --n-pos")
     if args.log_row_details:
         args.log_step_details = True
 
@@ -3905,7 +3907,7 @@ class GRCEGPT(nn.Module):
         device = idx.device
         pos_idx = self._position_ids(T, B, device, position_offsets)
         if torch.any(pos_idx >= self.config.block_size):
-            raise ValueError("position ids exceed configured --block-size")
+            raise ValueError("position ids exceed configured --n-pos")
         tok = self.core.tok_emb(idx)
         pos = self.core.pos_emb(pos_idx)
         x = self.core.drop(tok + pos)
@@ -5550,14 +5552,14 @@ def _prepare_eval_tokens(
             raise ValueError("Custom text must produce at least two tokens for evaluation")
         if provided.numel() - 1 > args.block_size:
             raise ValueError(
-                "Custom text exceeds the configured --block-size; shorten the text or increase --block-size."
+                "Custom text exceeds the configured --n-pos; shorten the text or increase --n-pos."
             )
         context_tokens = provided
         source_label = "custom text"
     else:
         span = token_length + 1
         if span <= 1:
-            raise ValueError("--block-length must be >= 1 for evaluation")
+            raise ValueError("--block-size must be >= 1 for evaluation")
         context_tokens = dataset.looped_slice("test", start_pos, span)
         source_label = f"test split offset {start_pos}"
     if context_tokens.numel() < 2:
@@ -5588,7 +5590,7 @@ def run_test_slice(
     """Run the layout on either a corpus slice or custom text and log per-token stats."""
 
     if block_length <= 0 and not custom_text:
-        raise ValueError("--block-length must be positive for corpus-based test slices")
+        raise ValueError("--block-size must be positive for corpus-based test slices")
 
     model_device = next(model.parameters()).device
     was_training = model.training
@@ -5768,7 +5770,7 @@ def run_eval_layout(
     """Evaluate the layout on a deterministic slice and print per-row metrics."""
 
     if block_length <= 0 and not custom_text:
-        raise ValueError("--block-length must be positive for corpus-based evaluation")
+        raise ValueError("--block-size must be positive for corpus-based evaluation")
 
     model_device = next(model.parameters()).device
     was_training = model.training
@@ -5908,7 +5910,7 @@ def preprocess_runtime_args(args: Args) -> None:
         if not getattr(args, "_block_length_defined", False):
             args.block_length = config.block_size
         elif args.block_length > config.block_size:
-            raise ValueError("--block-length cannot exceed checkpoint block size")
+            raise ValueError("--block-size cannot exceed checkpoint --n-pos")
         args.n_layer = config.n_layer
         args.n_head = config.n_head
         args.n_embd = config.n_embd
