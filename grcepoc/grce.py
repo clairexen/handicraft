@@ -6269,7 +6269,9 @@ class Runtime:
         self.dataset = dataset
         self.args.corpus = entry["corpus"]
         if recycled:
-            ratio = used_tokens // max(1, max_tokens)
+            used_tokens = int(entry.get("used_train_tokens", 0) or 0)
+            max_tokens = max(1, int(entry.get("max_train_tokens", 0) or 0))
+            ratio = used_tokens // max_tokens
             warning = (
                 f"All corpora exhausted; reusing {entry['corpus']} (reuse cycle {ratio + 1})."
             )
