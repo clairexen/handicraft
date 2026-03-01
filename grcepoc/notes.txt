@@ -860,24 +860,8 @@ Relate the feedback to the current state of notes.txt and suggest edits.
 
 Current experiments:
 
-python grce.py --pt model/baseline_wikipedia_en.pt create
-python grce.py --pt model/baseline_wikipedia_en.pt corpus --add wikipedia-en-000{0,1}
-python grce.py --pt model/baseline_wikipedia_en.pt --cycles 100 --lr-warmup-steps 200 --lr-linear-steps 5000 \
-  --batch-size 100 --layout '50[4-16E=240D],5[16E=*D],100[16e=32f],100[16e>32n]' train --json
-
-python grce.py --pt model/decoder_wikipedia_en.pt create
-python grce.py --pt model/decoder_wikipedia_en.pt corpus --add wikipedia-en-000{0,1}
-python grce.py --pt model/decoder_wikipedia_en.pt --cycles 100 --lr-warmup-steps 200 --lr-linear-steps 5000 \
-  --batch-size 100 --layout '50[4-8E=240D],5[16E=*D],100[16E=32D],100[16E=32D]' train --json
-
-cp model/decoder_wikipedia_en.pt model/unfrozen_retrain_test.pt
-python grce.py --pt model/unfrozen_retrain_test.pt reset
-python grce.py --pt model/unfrozen_retrain_test.pt --cycles 5 --batch-size 32 --layout '*[16E=32D]+*[16e=32f]+*[16e>32n]' train --json
-
-cp model/decoder_wikipedia_en.pt model/frozen_retrain_test.pt
-python grce.py --pt model/frozen_retrain_test.pt reset
-python grce.py --pt model/frozen_retrain_test.pt --cycles 5 --batch-size 32 --layout '*C[16e=32f]+*C[16e>32n]' train --json
-
-cp model/decoder_wikipedia_en.pt model/reverse_retrain_test.pt
-python grce.py --pt model/reverse_retrain_test.pt reset
-python grce.py --pt model/reverse_retrain_test.pt --cycles 5 --batch-size 32 --layout '*[64R],*[64D]' train --json
+python grce.py --pt model/wp_simple_think2x_small.pt --small create
+python grce.py --pt model/wp_simple_think2x_small.pt corpus --add wikipedia-simple
+python grce.py --pt model/wp_simple_think2x_small.pt --cycles 25 \
+  --lr-warmup-steps 200 --lr-cosine-steps 500 --block-size 1024 --batch-size 300 \
+  --layout '20[8-16E=*D],*[16-32e=32f=32t2x=32f=32t2x]' train --json
