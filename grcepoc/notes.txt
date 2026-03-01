@@ -630,8 +630,9 @@ transformers: Within a think-span of N transformer instantiations for the
 same position we take the LayerNorm of the output of each transformer but the
 last in the span and add that to the input of the next transformer.
 
-Note that because of this think-spans are only possible in those modes that
-have a recurrent path, i.e. "forward" and "noattn".
+As thinking requires a recurrent data path, it is only available in "forward"
+mode. If "t" is used instead of "f" in the layout string then the losses are
+recorded under the "think" metric instead of "forward".
 
 
 ## 2-D RoPE on a Torus (future work)
