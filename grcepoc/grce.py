@@ -6120,7 +6120,7 @@ class Runtime:
             used_tokens = 0
         num_tokens = max(0, num_tokens)
         max_tokens = max(num_tokens, max_tokens)
-        used_tokens = max(0, min(used_tokens, max_tokens))
+        used_tokens = max(0, used_tokens)
         return {
             "corpus": str(name),
             "num_train_tokens": num_tokens,
