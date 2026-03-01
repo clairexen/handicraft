@@ -2216,6 +2216,43 @@ class LayerDampening(nn.Module):
         return y * self.gain
 
 
+class ThinkEmbeddingLibrary(nn.Module):
+    """Holds learnable embeddings for explicit think-step annotations."""
+
+    def __init__(self, dim: int, think_spans: Sequence[int] | None = None) -> None:
+        super().__init__()
+        spans = tuple(sorted({span for span in (think_spans or (2, 3, 4)) if span >= 2}))
+        if not spans:
+            raise ValueError("ThinkEmbeddingLibrary requires at least one think span >= 2")
+        self.spans = spans
+        entries: dict[str, nn.Parameter] = {}
+        for total in self.spans:
+            for index in range(1, total + 1):
+                key = self._key(index, total)
+                entries[key] = nn.Parameter(torch.zeros(dim))
+        self.embeddings = nn.ParameterDict(entries)
+        self.more_embedding = nn.Parameter(torch.zeros(dim))
+        self.last_embedding = nn.Parameter(torch.zeros(dim))
+
+    @staticmethod
+    def _key(index: int, total: int) -> str:
+        return f"{index}/{total}"
+
+    def get(self, index: int, total: int) -> torch.Tensor:
+        if total not in self.spans:
+            raise ValueError(f"ThinkEmbeddingLibrary does not support think{total}x mode")
+        if index < 1 or index > total:
+            raise ValueError(f"Think embedding index {index} out of range for think{total}x")
+        key = self._key(index, total)
+        try:
+            return self.embeddings[key]
+        except KeyError as exc:
+            raise ValueError(f"Missing think embedding for slot {key}") from exc
+
+    def status(self, is_last: bool) -> torch.Tensor:
+        return self.last_embedding if is_last else self.more_embedding
+
+
 def default_prompt_entries() -> list[tuple[str, str]]:
     """Return the built-in prompt catalog."""
 
@@ -3023,6 +3060,7 @@ class TransformerStackCore(nn.Module):
         self.tok_emb = nn.Embedding(config.vocab_size, config.n_embd)
         self.pos_emb = nn.Embedding(config.block_size, config.n_embd)
         self.control_emb = nn.Embedding(3, config.n_embd, padding_idx=0)
+        self.think_emb = ThinkEmbeddingLibrary(config.n_embd, think_spans=(2, 3, 4))
         self.drop = nn.Dropout(config.dropout)
         self.blocks = nn.ModuleList([Block(config) for _ in range(config.n_layer)])
         self.ln_f = nn.LayerNorm(config.n_embd)
@@ -4060,6 +4098,7 @@ def _run_microbatch_pass(
                     pos_slice,
                     include_positional=not segment.suppress_positional,
                     control_slice=control_embed,
+                    think_slice=None,
                 )
                 kv_sources = None if mode == "noattn" else (kv_chain if kv_chain else None)
                 prev_grce_state = grce_state
@@ -4354,12 +4393,15 @@ def _compose_chunk_embeddings(
     *,
     include_positional: bool,
     control_slice: torch.Tensor | None = None,
+    think_slice: torch.Tensor | None = None,
 ) -> torch.Tensor:
     base = token_slice
     if include_positional:
         base = base + pos_slice
     if control_slice is not None:
         base = base + control_slice
+    if think_slice is not None:
+        base = base + think_slice
     return dropout_layer(base)
 
 
@@ -5200,6 +5242,7 @@ def _evaluate_row_block(
             pos_slice,
             include_positional=not segment.suppress_positional,
             control_slice=control_embed,
+            think_slice=None,
         )
         chunk_capture = None
         if base_capture is not None:
