@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import math
 import pathlib
@@ -31,6 +32,8 @@ ALLOWED_FIELDS = {
     "test_loss_encode",
     "test_loss_decode",
     "test_loss_forward",
+    "train_loss_think",
+    "test_loss_think",
     "test_loss_noattn",
     "train_wall_seconds",
     "unix_time",
@@ -41,6 +44,101 @@ ALLOWED_FIELDS = {
     "test_cycle",
     "learning_rate"
 }
+
+
+class MetricExpression:
+    """Safely parses and evaluates simple arithmetic expressions over metrics."""
+
+    _ALLOWED_BINOPS = (ast.Add, ast.Sub, ast.Mult, ast.Div)
+    _ALLOWED_UNARYOPS = (ast.UAdd, ast.USub)
+
+    def __init__(self, expression: str) -> None:
+        self.text = expression
+        try:
+            tree = ast.parse(expression, mode="eval")
+        except SyntaxError as exc:
+            raise ValueError(
+                f"invalid metric expression '{expression}': {exc.msg}"
+            ) from exc
+        self._fields: set[str] = set()
+        self._root = self._validate(tree.body)
+
+    def _validate(self, node: ast.AST) -> ast.AST:
+        if isinstance(node, ast.BinOp):
+            if not isinstance(node.op, self._ALLOWED_BINOPS):
+                raise ValueError(
+                    f"unsupported operator '{ast.dump(node.op)}' in expression '{self.text}'"
+                )
+            self._validate(node.left)
+            self._validate(node.right)
+            return node
+        if isinstance(node, ast.UnaryOp):
+            if not isinstance(node.op, self._ALLOWED_UNARYOPS):
+                raise ValueError(
+                    f"unsupported unary operator in expression '{self.text}'"
+                )
+            self._validate(node.operand)
+            return node
+        if isinstance(node, ast.Name):
+            if node.id not in ALLOWED_FIELDS:
+                raise ValueError(
+                    f"unknown metric '{node.id}' in expression '{self.text}'"
+                )
+            self._fields.add(node.id)
+            return node
+        if isinstance(node, ast.Constant):
+            if not isinstance(node.value, (int, float)):
+                raise ValueError(
+                    f"unsupported constant '{node.value}' in expression '{self.text}'"
+                )
+            return node
+        raise ValueError(
+            f"unsupported syntax '{ast.dump(node)}' in expression '{self.text}'"
+        )
+
+    def evaluate(self, record: Dict[str, float]) -> float:
+        try:
+            value = self._eval_node(self._root, record)
+        except ZeroDivisionError:
+            return float("nan")
+        except (TypeError, ValueError):
+            return float("nan")
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return float("nan")
+
+    def _eval_node(self, node: ast.AST, record: Dict[str, float]) -> float:
+        if isinstance(node, ast.BinOp):
+            left = self._eval_node(node.left, record)
+            right = self._eval_node(node.right, record)
+            if isinstance(node.op, ast.Add):
+                return left + right
+            if isinstance(node.op, ast.Sub):
+                return left - right
+            if isinstance(node.op, ast.Mult):
+                return left * right
+            if isinstance(node.op, ast.Div):
+                return left / right
+            raise ValueError("unsupported binary operator")
+        if isinstance(node, ast.UnaryOp):
+            operand = self._eval_node(node.operand, record)
+            if isinstance(node.op, ast.UAdd):
+                return +operand
+            if isinstance(node.op, ast.USub):
+                return -operand
+            raise ValueError("unsupported unary operator")
+        if isinstance(node, ast.Name):
+            value = record.get(node.id)
+            if value is None:
+                return float("nan")
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return float("nan")
+        if isinstance(node, ast.Constant):
+            return float(node.value)
+        raise ValueError("unsupported expression node")
 
 
 def parse_args() -> argparse.Namespace:
@@ -253,6 +351,12 @@ def _series_from_field(history: List[Dict[str, float]], field: str, default_sequ
     return values
 
 
+def _series_from_expression(
+    history: List[Dict[str, float]], expression: MetricExpression
+) -> List[float]:
+    return [expression.evaluate(record) for record in history]
+
+
 def _split_segments(values: List[float], period: int) -> List[List[float]]:
     if period <= 1 or period > len(values):
         return [values]
@@ -414,7 +518,18 @@ def plot_metric_traces(
     group_median: int = 0,
     stack_sources: bool = False,
 ) -> None:
-    num_groups = max(1, len(metric_groups))
+    expression_cache: Dict[str, MetricExpression] = {}
+    parsed_metric_groups: List[List[MetricExpression]] = []
+    for group in metric_groups:
+        parsed_group: List[MetricExpression] = []
+        for metric in group:
+            expr = expression_cache.get(metric)
+            if expr is None:
+                expr = MetricExpression(metric)
+                expression_cache[metric] = expr
+            parsed_group.append(expr)
+        parsed_metric_groups.append(parsed_group)
+    num_groups = max(1, len(parsed_metric_groups))
     fig, axes = plt.subplots(
         num_groups,
         1,
@@ -423,7 +538,7 @@ def plot_metric_traces(
     )
     if num_groups == 1:
         axes = [axes]
-    for idx_ax, (ax, metrics) in enumerate(zip(axes, metric_groups)):
+    for idx_ax, (ax, metrics) in enumerate(zip(axes, parsed_metric_groups)):
         stack_offset = 0.0
         allow_fit = not fit_only_first_plot or idx_ax == 0
         for label, history in sources:
@@ -439,7 +554,7 @@ def plot_metric_traces(
                 x_values = [val + stack_offset if not math.isnan(val) else val for val in x_values]
             plotted_label = False
             for metric in metrics:
-                y_values = _series_from_field(history, metric)
+                y_values = _series_from_expression(history, metric)
                 if not any(not math.isnan(val) for val in y_values):
                     continue
                 x_series = x_values
@@ -465,7 +580,7 @@ def plot_metric_traces(
                     if not y_plot:
                         continue
                     plotted_label = True
-                    label_name = f"{label} – {metric}"
+                    label_name = f"{label} – {metric.text}"
                     if scatter:
                         ax.scatter(
                             x_plot,
@@ -510,7 +625,7 @@ def plot_metric_traces(
                                             linestyle="--",
                                             alpha=0.7,
                                             linewidth=2,
-                                            label=f"{label} – {metric} fit",
+                                            label=f"{label} – {metric.text} fit",
                                         )
                                         x_extra = x_end + (x_end - x_start)
                                         y_extra = slope * x_extra + intercept
@@ -520,7 +635,7 @@ def plot_metric_traces(
                                             linestyle="--",
                                             alpha=0.5,
                                             linewidth=2,
-                                            label=f"{label} – {metric} fit extrap",
+                                            label=f"{label} – {metric.text} fit extrap",
                                         )
                             if fit_quad:
                                 quad_tail = tail[-min(fit_quad, len(tail)) :]
@@ -541,7 +656,7 @@ def plot_metric_traces(
                                         linestyle=":",
                                         alpha=0.7,
                                         linewidth=2,
-                                        label=f"{label} – {metric} quad",
+                                        label=f"{label} – {metric.text} quad",
                                     )
                                     x_extra = x_end + (x_end - x_start)
                                     sample_extra = np.linspace(x_end, x_extra, 20)
@@ -552,11 +667,11 @@ def plot_metric_traces(
                                         linestyle=":",
                                         alpha=0.4,
                                         linewidth=2,
-                                        label=f"{label} – {metric} quad extrap",
+                                        label=f"{label} – {metric.text} quad extrap",
                                     )
             if stack_sources and last_valid_x is not None and plotted_label:
                 stack_offset += last_valid_x
-        ylabel = ", ".join(metrics) if metrics else "metric"
+        ylabel = ", ".join(expr.text for expr in metrics) if metrics else "metric"
         ax.set_ylabel(ylabel)
         if idx_ax == num_groups - 1:
             ax.set_xlabel(x_label)
