@@ -4257,23 +4257,27 @@ def _run_microbatch_pass(
                     chunk_target,
                     last_only=(mode == "encode"),
                 )
-            if token_count > 0:
-                total_tokens += token_count
-                total_loss_sum = loss_sum if total_loss_sum is None else total_loss_sum + loss_sum
-                metric_key = segment.metric_mode or mode
-                if collect_mode_metrics and metric_key in mode_loss_sums:
-                    mode_loss_sums[metric_key] += float(loss_sum.detach().item())
-                    mode_token_counts[metric_key] += token_count
-                    if row_loss_sums is not None and row_token_counts is not None:
-                        loss_values = row_loss_sums.detach().cpu().tolist()
-                        token_values = row_token_counts.detach().cpu().tolist()
-                        for idx, entry in enumerate(row_entries):
-                            if idx >= len(loss_values):
-                                break
-                            entry["loss_sum"] = entry.get("loss_sum", 0.0) + float(loss_values[idx])
-                            entry["token_count"] = int(entry.get("token_count", 0)) + int(token_values[idx])
-                if mode != "noattn":
-                    kv_chain.append(kv_out)
+                if token_count > 0:
+                    total_tokens += token_count
+                    total_loss_sum = (
+                        loss_sum if total_loss_sum is None else total_loss_sum + loss_sum
+                    )
+                    metric_key = segment.metric_mode or mode
+                    if collect_mode_metrics and metric_key in mode_loss_sums:
+                        mode_loss_sums[metric_key] += float(loss_sum.detach().item())
+                        mode_token_counts[metric_key] += token_count
+                        if row_loss_sums is not None and row_token_counts is not None:
+                            loss_values = row_loss_sums.detach().cpu().tolist()
+                            token_values = row_token_counts.detach().cpu().tolist()
+                            for idx, entry in enumerate(row_entries):
+                                if idx >= len(loss_values):
+                                    break
+                                entry["loss_sum"] = entry.get("loss_sum", 0.0) + float(loss_values[idx])
+                                entry["token_count"] = (
+                                    int(entry.get("token_count", 0)) + int(token_values[idx])
+                                )
+                    if mode != "noattn":
+                        kv_chain.append(kv_out)
                 cursor += cols
             row_details.extend(row_entries)
     result = LayoutPassResult(total_loss_sum, total_tokens, mode_loss_sums, mode_token_counts)

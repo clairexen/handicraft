@@ -863,5 +863,5 @@ Current experiments:
 python grce.py --pt model/wp_simple_think2x_small.pt --small create
 python grce.py --pt model/wp_simple_think2x_small.pt corpus --add wikipedia-simple
 python grce.py --pt model/wp_simple_think2x_small.pt --cycles 25 \
-  --lr-warmup-steps 200 --lr-cosine-steps 500 --block-size 1024 --batch-size 300 \
-  --layout '20[8-16E=*D],*[16-32e=32f=32t2x=32f=32t2x]' train --json
+  --lr-warmup-steps 200 --lr-cosine-steps 500 --block-size 1024 --batch-size 150 \
+  --layout '20[8-16E=*D],*[16-32e=16f=32t2x=16f=32t2x]' train --json
