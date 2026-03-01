@@ -350,6 +350,8 @@ class SegmentSpec:
     context_enabled: bool = True
     connector: str | None = None
     suppress_positional: bool = False
+    think_factor: int = 1
+    metric_mode: str | None = None
 
 
 @dataclass(frozen=True)
@@ -379,6 +381,13 @@ class SegmentLayout:
     context_enabled: bool = True
     connector: str | None = None
     suppress_positional: bool = False
+    think_factor: int = 1
+    metric_mode: str | None = None
+
+    def token_columns(self) -> int:
+        if self.think_factor <= 1:
+            return self.columns
+        return (self.columns // self.think_factor)
 
 
 @dataclass
@@ -391,10 +400,13 @@ class BlockLayout:
         return sum(segment.columns for segment in self.segments)
 
     def token_span(self) -> int:
-        columns = self.total_columns()
+        columns = sum(segment.token_columns() for segment in self.segments)
         if columns <= 0 or self.rows <= 0:
             return 0
         return self.rows * (columns + 1)
+
+    def total_positions(self) -> int:
+        return sum(segment.token_columns() for segment in self.segments)
 
 
 def _split_top_level(text: str, sep: str) -> list[str]:
@@ -490,11 +502,30 @@ def _parse_segment_spec(text: str, connector: str | None) -> SegmentSpec:
         mode_token = mode_token[:-1]
         if not mode_token:
             raise LayoutParseError("Positional modifier requires a base mode")
+    think_factor = 1
+    for suffix in ("2x", "3x", "4x"):
+        if mode_token.lower().endswith(suffix):
+            think_factor = int(suffix[0])
+            mode_token = mode_token[: -len(suffix)]
+            break
+    if not mode_token:
+        raise LayoutParseError("Missing mode in segment")
     mode_char = mode_token[0]
     context_enabled = mode_char.islower()
+    metric_mode: str | None = None
     mode_key = mode_char.lower()
+    if mode_key == "t":
+        if not context_enabled:
+            raise LayoutParseError("Think segments must keep context enabled (use lowercase 't')")
+        metric_mode = "think"
+        mode_key = "f"
     if mode_key not in _MODE_ALIASES:
         raise LayoutParseError(f"Unsupported mode '{mode_token}'")
+    if think_factor > 1:
+        if mode_key != "f":
+            raise LayoutParseError("Think multipliers are only valid for forward segments")
+        if not context_enabled:
+            raise LayoutParseError("Think multipliers require context-enabled segments")
     size_spec = CountSpec.parse(size_token or "1")
     if connector not in {None, "=", ">"}:
         raise LayoutParseError(f"Unsupported segment connector '{connector}'")
@@ -504,6 +535,8 @@ def _parse_segment_spec(text: str, connector: str | None) -> SegmentSpec:
         context_enabled,
         connector,
         suppress_positional=suppress_positional,
+        think_factor=think_factor,
+        metric_mode=metric_mode,
     )
 
 
@@ -730,16 +763,23 @@ class BatchLayout:
             )
         else:
             _expand_until(self.block_size, allocations, self.rng)
-        segments = [
-            SegmentLayout(
-                spec.mode,
-                allocation.value,
-                spec.context_enabled,
-                spec.connector,
-                suppress_positional=spec.suppress_positional,
+        segments: list[SegmentLayout] = []
+        for spec, allocation in zip(specs, allocations):
+            columns = allocation.value
+            think_factor = max(1, int(getattr(spec, "think_factor", 1) or 1))
+            if think_factor > 1:
+                columns = (columns // think_factor) * think_factor
+            segments.append(
+                SegmentLayout(
+                    spec.mode,
+                    columns,
+                    spec.context_enabled,
+                    spec.connector,
+                    suppress_positional=spec.suppress_positional,
+                    think_factor=think_factor,
+                    metric_mode=getattr(spec, "metric_mode", None),
+                )
             )
-            for spec, allocation in zip(specs, allocations)
-        ]
         max_cols = sum(segment.columns for segment in segments)
         if max_cols > self.block_size:
             self.warnings.append(
@@ -758,13 +798,19 @@ class BatchLayout:
         for row in rows:
             segment_bits = []
             for idx, segment in enumerate(row.segments):
-                letter = _MODE_LETTERS.get(segment.mode, segment.mode[0])
-                if not segment.context_enabled:
-                    letter = letter.upper()
+                if segment.metric_mode == "think":
+                    letter = "t" if segment.context_enabled else "T"
+                else:
+                    letter = _MODE_LETTERS.get(segment.mode, segment.mode[0])
+                    if not segment.context_enabled:
+                        letter = letter.upper()
                 suffix = ""
                 if segment.suppress_positional:
                     suffix = "P" if letter.isupper() else "p"
-                bit = f"{segment.columns}{letter}{suffix}"
+                think_suffix = ""
+                if getattr(segment, "think_factor", 1) and segment.think_factor > 1:
+                    think_suffix = f"{segment.think_factor}x"
+                bit = f"{segment.columns}{letter}{think_suffix}{suffix}"
                 if idx > 0:
                     connector = segment.connector or "="
                     bit = connector + bit
@@ -781,7 +827,15 @@ class BatchLayout:
             for _ in range(group.rows):
                 rows.append(
                     [
-                        SegmentLayout(seg.mode, seg.columns, seg.context_enabled, seg.connector)
+                        SegmentLayout(
+                            seg.mode,
+                            seg.columns,
+                            seg.context_enabled,
+                            seg.connector,
+                            suppress_positional=seg.suppress_positional,
+                            think_factor=seg.think_factor,
+                            metric_mode=seg.metric_mode,
+                        )
                         for seg in group.segments
                     ]
                 )
@@ -2251,6 +2305,14 @@ class ThinkEmbeddingLibrary(nn.Module):
 
     def status(self, is_last: bool) -> torch.Tensor:
         return self.last_embedding if is_last else self.more_embedding
+
+    def sequence(self, total: int) -> torch.Tensor:
+        if total not in self.spans:
+            raise ValueError(f"ThinkEmbeddingLibrary does not support think{total}x mode")
+        slots: list[torch.Tensor] = []
+        for index in range(1, total + 1):
+            slots.append(self.get(index, total) + self.status(index == total))
+        return torch.stack(slots, dim=0)
 
 
 def default_prompt_entries() -> list[tuple[str, str]]:
@@ -3904,12 +3966,12 @@ LOSS_IGNORE_INDEX = -100
 # -----------------------------------------------------------------------------
 
 
-BATCH_MODES: tuple[str, ...] = ("reverse", "encode", "decode", "forward", "noattn")
+BATCH_MODES: tuple[str, ...] = ("reverse", "encode", "decode", "forward", "think", "noattn")
 
 
 ROW_METRIC_HIST_KEYS = list(BATCH_MODES)
 ROW_METRIC_LOG_KEYS = list(BATCH_MODES)
-ROW_METRIC_LOG_GROUP = {"reverse", "forward"}
+ROW_METRIC_LOG_GROUP = {"reverse", "forward", "noattn"}
 
 
 @dataclass
@@ -3987,7 +4049,10 @@ def _run_microbatch_pass(
         if row_count <= 0:
             continue
         cols_total = group.total_columns()
+        pos_total = group.total_positions()
         if cols_total <= 0:
+            continue
+        if pos_total <= 0:
             continue
         modifiers = group.modifiers
         detach_span_override = (
@@ -4020,17 +4085,19 @@ def _run_microbatch_pass(
                 )
         with training_scope:
             try:
-                xb, yb, metadata = dataset.sample_row_batch(
+                xb_base, yb_base, metadata = dataset.sample_row_batch(
                     split,
-                    cols_total,
+                    pos_total,
                     row_count,
                     device,
                     rng=rng,
                 )
             except ValueError as exc:
                 raise ValueError(
-                    f"Unable to sample {row_count} rows with {cols_total} columns from the corpus"
+                    f"Unable to sample {row_count} rows with {pos_total} tokens from the corpus"
                 ) from exc
+            xb = _expand_think_sequences(xb_base, group.segments)
+            yb = _expand_think_sequences(yb_base, group.segments)
             pos_offsets = None
             if position_shift:
                 pos_offsets = torch.full((row_count,), position_shift, dtype=torch.long, device=device)
@@ -4092,13 +4159,19 @@ def _run_microbatch_pass(
                     chunk_target = yb[:, start:end]
                 token_slice = token_source[:, start:end, :]
                 pos_slice = pos_components[:, start:end, :]
+                think_slice = _segment_think_slice(
+                    model.core,
+                    segment,
+                    row_count,
+                    token_slice.device,
+                )
                 chunk_input = _compose_chunk_embeddings(
                     model.core.drop,
                     token_slice,
                     pos_slice,
                     include_positional=not segment.suppress_positional,
                     control_slice=control_embed,
-                    think_slice=None,
+                    think_slice=think_slice,
                 )
                 kv_sources = None if mode == "noattn" else (kv_chain if kv_chain else None)
                 prev_grce_state = grce_state
@@ -4130,7 +4203,7 @@ def _run_microbatch_pass(
             if token_count > 0:
                 total_tokens += token_count
                 total_loss_sum = loss_sum if total_loss_sum is None else total_loss_sum + loss_sum
-                metric_key = mode
+                metric_key = segment.metric_mode or mode
                 if collect_mode_metrics and metric_key in mode_loss_sums:
                     mode_loss_sums[metric_key] += float(loss_sum.detach().item())
                     mode_token_counts[metric_key] += token_count
@@ -4403,6 +4476,61 @@ def _compose_chunk_embeddings(
     if think_slice is not None:
         base = base + think_slice
     return dropout_layer(base)
+
+
+def _expand_think_sequences(
+    tokens: torch.Tensor,
+    segments: Sequence[SegmentLayout],
+) -> torch.Tensor:
+    rows, base_cols = tokens.shape
+    expected_positions = sum(segment.token_columns() for segment in segments)
+    if base_cols != expected_positions:
+        raise ValueError(
+            f"Think expansion mismatch: got {base_cols} positions but layout expects {expected_positions}"
+        )
+    total_steps = sum(segment.columns for segment in segments)
+    expanded = tokens.new_empty(rows, total_steps)
+    base_cursor = 0
+    step_cursor = 0
+    for segment in segments:
+        steps = int(segment.columns)
+        if steps <= 0:
+            continue
+        factor = max(1, int(getattr(segment, "think_factor", 1) or 1))
+        if factor <= 1:
+            expanded[:, step_cursor : step_cursor + steps] = tokens[:, base_cursor : base_cursor + steps]
+            base_cursor += steps
+            step_cursor += steps
+            continue
+        token_cols = steps // factor
+        if token_cols <= 0:
+            continue
+        base_slice = tokens[:, base_cursor : base_cursor + token_cols]
+        repeated = base_slice.repeat_interleave(factor, dim=1)
+        expanded[:, step_cursor : step_cursor + steps] = repeated
+        base_cursor += token_cols
+        step_cursor += steps
+    if step_cursor != total_steps or base_cursor != base_cols:
+        raise ValueError("Think expansion bookkeeping error")
+    return expanded
+
+
+def _segment_think_slice(
+    core: TransformerStackCore,
+    segment: SegmentLayout,
+    row_count: int,
+    device: torch.device,
+) -> torch.Tensor | None:
+    factor = max(1, int(getattr(segment, "think_factor", 1) or 1))
+    if factor <= 1 or segment.columns <= 0:
+        return None
+    tokens = segment.columns // factor
+    if tokens <= 0:
+        return None
+    slot_sequence = core.think_emb.sequence(factor)
+    template = slot_sequence.unsqueeze(0).repeat(tokens, 1, 1)
+    chunk = template.view(tokens * factor, -1)
+    return chunk.unsqueeze(0).expand(row_count, -1, -1).to(device)
 
 
 def _scale_gradients(module: nn.Module, scale: float) -> None:
@@ -5148,6 +5276,7 @@ class RowEvalResult:
     total_loss_sum: float
     total_tokens: int
     target_ids: torch.Tensor
+    source_ids: torch.Tensor
     attention_maps: dict[int, dict[int, torch.Tensor]] | None = None
     block_attentions: list["BlockAttention"] | None = None
 
@@ -5164,19 +5293,39 @@ def _evaluate_row_block(
     args: Args,
     model: GRCEGPT,
     row: BlockLayout,
-    token_components: torch.Tensor,
-    pos_components: torch.Tensor,
-    future_token_components: torch.Tensor,
-    source_ids: torch.Tensor,
-    targets: torch.Tensor,
+    base_inputs: torch.Tensor,
+    base_targets: torch.Tensor,
     *,
-    input_tokens: torch.Tensor,
     capture_columns: set[int] | None = None,
 ) -> RowEvalResult:
+    rows, available_tokens = base_inputs.shape
+    if rows != 1:
+        raise ValueError("Evaluation currently expects a single row batch")
+    cols_total = row.total_columns()
+    pos_total = row.total_positions()
+    if cols_total <= 0 or pos_total <= 0:
+        raise ValueError("Row block does not contain any tokens to evaluate")
+    if available_tokens < pos_total:
+        raise ValueError(
+            f"Row requires {pos_total} base tokens but only {available_tokens} were provided"
+        )
+    base_inputs = base_inputs[:, :pos_total]
+    base_targets = base_targets[:, :pos_total]
+    expanded_inputs = _expand_think_sequences(base_inputs, row.segments)
+    expanded_targets = _expand_think_sequences(base_targets, row.segments)
+    token_components, pos_components = _embedding_components_with_offsets(
+        model,
+        expanded_inputs,
+        None,
+    )
+    future_token_components, _ = _embedding_components_with_offsets(
+        model,
+        expanded_targets,
+        None,
+    )
     device = token_components.device
-    eval_block_length = token_components.size(1)
-    column_modes: list[str] = [""] * eval_block_length
-    supervision_mask = torch.ones(eval_block_length, dtype=torch.bool, device=device)
+    column_modes: list[str] = [""] * cols_total
+    supervision_mask = torch.ones(cols_total, dtype=torch.bool, device=device)
     mode_loss_sums = {mode: 0.0 for mode in BATCH_MODES}
     mode_token_counts = {mode: 0 for mode in BATCH_MODES}
     total_loss = 0.0
@@ -5203,17 +5352,15 @@ def _evaluate_row_block(
         modifiers.detach_kv_cache if modifiers else False
     )
     context_detach_override = False if (modifiers and modifiers.no_detach_ctx) else None
-    control_ids = torch.zeros((1, eval_block_length), dtype=torch.long, device=device)
-    target_ids = torch.zeros_like(targets)
+    control_ids = torch.zeros((1, cols_total), dtype=torch.long, device=device)
+    target_ids = torch.zeros_like(expanded_targets)
     for segment in row.segments:
         segment_start = cursor
         cols = int(segment.columns)
         if cols <= 0:
             continue
-        if cursor + cols > eval_block_length:
-            raise ValueError(
-                "Layout segment exceeds available token columns during evaluation"
-            )
+        if cursor + cols > cols_total:
+            raise ValueError("Layout segment exceeds available token columns during evaluation")
         connector = getattr(segment, "connector", None)
         if connector == ">":
             kv_chain = []
@@ -5230,19 +5377,25 @@ def _evaluate_row_block(
         control_embed = model.core.control_emb(control_slice)
         if segment.mode == "reverse":
             token_source = future_token_components
-            chunk_target = source_ids[:, start:end]
+            chunk_target = expanded_inputs[:, start:end]
         else:
             token_source = token_components
-            chunk_target = targets[:, start:end]
+            chunk_target = expanded_targets[:, start:end]
         token_slice = token_source[:, start:end, :]
         pos_slice = pos_components[:, start:end, :]
+        think_slice = _segment_think_slice(
+            model.core,
+            segment,
+            1,
+            token_slice.device,
+        )
         chunk_input = _compose_chunk_embeddings(
             model.core.drop,
             token_slice,
             pos_slice,
             include_positional=not segment.suppress_positional,
             control_slice=control_embed,
-            think_slice=None,
+            think_slice=think_slice,
         )
         chunk_capture = None
         if base_capture is not None:
@@ -5272,9 +5425,10 @@ def _evaluate_row_block(
             chunk_target,
             last_only=(segment.mode == "encode"),
         )
+        metric_key = segment.metric_mode or segment.mode
+        column_modes[start:end] = [metric_key] * (end - start)
         if token_count > 0:
             loss_value = float(loss_sum.detach().item())
-            metric_key = segment.mode
             if metric_key in mode_loss_sums:
                 mode_loss_sums[metric_key] += loss_value
                 mode_token_counts[metric_key] += token_count
@@ -5284,7 +5438,6 @@ def _evaluate_row_block(
             kv_chain.append(kv_out)
         for local_idx in range(cols):
             idx = cursor + local_idx
-            column_modes[idx] = segment.mode
             if segment.mode == "encode" and local_idx < cols - 1:
                 supervision_mask[idx] = False
         if chunk_capture is not None and segment.mode in {"decode", "reverse", "encode"}:
@@ -5295,20 +5448,19 @@ def _evaluate_row_block(
                 if weights is not None:
                     layer_weights[layer_idx] = weights[:, -cols:].contiguous()
             if layer_weights:
-                token_slice = input_tokens[segment_start : segment_start + cols]
-                block_tokens = token_slice.view(-1).tolist()
+                block_tokens = expanded_inputs[0, segment_start : segment_start + cols].tolist()
                 target_tensor = target_ids[0, segment_start + cols - 1]
                 target_token = int(target_tensor.item())
                 block_attentions.append(
                     BlockAttention(
-                        mode=segment.mode,
+                        mode=metric_key,
                         tokens=block_tokens,
                         target_token=target_token,
                         layer_weights=layer_weights,
                     )
                 )
         cursor += cols
-    if cursor != eval_block_length:
+    if cursor != cols_total:
         raise ValueError("Layout columns do not match the evaluated token span")
     if not logits_buffer:
         raise ValueError("Row block produced no segments during evaluation")
@@ -5322,6 +5474,7 @@ def _evaluate_row_block(
         total_loss_sum=total_loss,
         total_tokens=total_tokens,
         target_ids=target_ids,
+        source_ids=expanded_inputs,
         attention_maps=attention_storage if capture_columns else None,
         block_attentions=block_attentions,
     )
@@ -5332,7 +5485,7 @@ def _prepare_eval_tokens(
     dataset: TextDataset,
     tokenizer: GPT2TokenizerWrapper,
     *,
-    block_length: int,
+    token_length: int,
     start_pos: int,
     custom_text: str | None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, int, str, str]:
@@ -5347,7 +5500,7 @@ def _prepare_eval_tokens(
         context_tokens = provided
         source_label = "custom text"
     else:
-        span = block_length + 1
+        span = token_length + 1
         if span <= 1:
             raise ValueError("--block-length must be >= 1 for evaluation")
         context_tokens = dataset.looped_slice("test", start_pos, span)
@@ -5356,6 +5509,12 @@ def _prepare_eval_tokens(
         raise ValueError("Not enough tokens collected for evaluation")
     inputs = context_tokens[:-1]
     targets = context_tokens[1:]
+    if inputs.numel() < token_length:
+        raise ValueError(
+            f"Requested {token_length} evaluation tokens but only {inputs.numel()} available"
+        )
+    inputs = inputs[:token_length]
+    targets = targets[:token_length]
     eval_block_length = inputs.numel()
     pretty_text = tokenizer.decode_pretty(args, context_tokens)
     return context_tokens, inputs, targets, eval_block_length, source_label, pretty_text
@@ -5381,46 +5540,36 @@ def run_test_slice(
     model.eval()
 
     with torch.no_grad():
+        layout = BatchLayout(args.layout, batch_size=args.batch_size, block_size=block_length)
+        _log_layout_warnings(args, layout)
+        max_positions = max((row.total_positions() for row in layout.rows), default=0)
+        if max_positions <= 0:
+            raise ValueError("Layout does not contain any token positions to evaluate")
         (
             context_tokens,
             inputs,
             targets,
-            eval_block_length,
+            eval_token_length,
             source_label,
             pretty_text,
         ) = _prepare_eval_tokens(
             args,
             dataset,
             tokenizer,
-            block_length=block_length,
+            token_length=max_positions,
             start_pos=start_pos,
             custom_text=custom_text,
         )
 
-        layout = BatchLayout(args.layout, batch_size=args.batch_size, block_size=eval_block_length)
-        _log_layout_warnings(args, layout)
-
         print(color_text(f"Evaluating layout '{args.layout}' on {source_label}:", Colors.CYAN))
         print(pretty_text)
         print(color_text(
-            f"Sequence tokens: {eval_block_length} inputs (context) + 1 target tail", Colors.CYAN
+            f"Sequence tokens: {eval_token_length} inputs (context) + 1 target tail", Colors.CYAN
         ))
 
-        xb = inputs.unsqueeze(0).to(model_device)
-        yb = targets.unsqueeze(0).to(model_device)
-        token_components, pos_components = _embedding_components_with_offsets(
-            model,
-            xb,
-            None,
-        )
-        future_token_components, _ = _embedding_components_with_offsets(
-            model,
-            yb,
-            None,
-        )
+        xb_base = inputs.unsqueeze(0).to(model_device)
+        yb_base = targets.unsqueeze(0).to(model_device)
         vocab_size = model.config.vocab_size
-
-        column_tokens = inputs.clone()
 
         for row_idx, row in enumerate(layout.rows, start=1):
             row_desc = _row_description(layout, row)
@@ -5428,18 +5577,16 @@ def run_test_slice(
 
             capture_columns = None
             if getattr(args, "attn_map", False):
-                capture_columns = {eval_block_length - 1}
+                row_steps = row.total_columns()
+                if row_steps > 0:
+                    capture_columns = {row_steps - 1}
             try:
                 row_result = _evaluate_row_block(
                     args,
                     model,
                     row,
-                    token_components,
-                    pos_components,
-                    future_token_components,
-                    xb,
-                    yb,
-                    input_tokens=column_tokens,
+                    xb_base,
+                    yb_base,
                     capture_columns=capture_columns,
                 )
             except ValueError as exc:
@@ -5462,7 +5609,7 @@ def run_test_slice(
 
             losses_cpu = per_token_loss.cpu().tolist()
             mask_cpu = row_result.supervision_mask.cpu().tolist()
-            inputs_cpu = column_tokens.tolist()
+            inputs_cpu = row_result.source_ids.squeeze(0).cpu().tolist()
             targets_cpu = row_result.target_ids.squeeze(0).cpu().tolist()
             modes_cpu = row_result.column_modes
             top_indices_cpu = top_indices.squeeze(0).cpu().tolist()
@@ -5473,7 +5620,8 @@ def run_test_slice(
                 len(_format_token_fragment(tokenizer, tok)) for tok in inputs_cpu + targets_cpu
             )
             pad = " " * 4
-            for col in range(eval_block_length):
+            seq_len = len(inputs_cpu)
+            for col in range(seq_len):
                 token_text = _format_token_fragment(tokenizer, inputs_cpu[col])
                 loss_value = losses_cpu[col] if mask_cpu[col] else None
                 ranking: list[str] = []
@@ -5572,6 +5720,11 @@ def run_eval_layout(
     model.eval()
 
     with torch.no_grad():
+        layout = BatchLayout(args.layout, batch_size=args.batch_size, block_size=block_length)
+        _log_layout_warnings(args, layout)
+        max_positions = max((row.total_positions() for row in layout.rows), default=0)
+        if max_positions <= 0:
+            raise ValueError("Layout does not contain any token positions to evaluate")
         (
             context_tokens,
             inputs,
@@ -5583,20 +5736,16 @@ def run_eval_layout(
             args,
             dataset,
             tokenizer,
-            block_length=block_length,
+            token_length=max_positions,
             start_pos=start_pos,
             custom_text=custom_text,
         )
 
-        layout = BatchLayout(args.layout, batch_size=args.batch_size, block_size=eval_block_length)
-        _log_layout_warnings(args, layout)
-
         print(color_text(f"Evaluating layout '{args.layout}' on {source_label}:", Colors.CYAN))
         print(pretty_text)
 
-        xb = inputs.unsqueeze(0).to(model_device)
-        yb = targets.unsqueeze(0).to(model_device)
-        embeddings = _sequence_embeddings(model, xb)
+        xb_base = inputs.unsqueeze(0).to(model_device)
+        yb_base = targets.unsqueeze(0).to(model_device)
 
         overall_loss_sums = {mode: 0.0 for mode in BATCH_MODES}
         overall_token_counts = {mode: 0 for mode in BATCH_MODES}
@@ -5618,9 +5767,8 @@ def run_eval_layout(
                     args,
                     model,
                     row,
-                    embeddings,
-                    yb,
-                    input_tokens=inputs,
+                    xb_base,
+                    yb_base,
                 )
             except ValueError as exc:
                 print(color_text(f"Row block #{row_idx}: {row_desc} -> error: {exc}", Colors.RED))
