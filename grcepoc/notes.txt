@@ -474,8 +474,7 @@ syntax. A warning is generated when the number of rows exceeds --batch-size
 or the number of cols in any row exceeds --block-size/--block-length.
 
 There's more syntax to introduce randomness and dynamically adjust a layout
-to a given --batch-size and --block-size/--block-length. The default --layout
-is:
+to a given --batch-size and --block-size/--block-length. Consider this layout:
 
 	2[*d]+2[*f]+*[*1-2e=*1-4d=*1-4f=*1-2n]
 
@@ -786,7 +785,7 @@ We define the following learned GRCE embeddings and corresponding simple on-off 
 {hq}, {!}, {?}, {*}, {-}, {=}, {/}, {@}
   set by <|...:>, cleared by <:...|> and <|----|>.
 
-During training when --learn-grce-embeddings is present, we parse the
+Future work: During training when --learn-grce-embeddings is present, we parse th
 BLOCK_SIZE sequence for each block and maintain a state variable for each of
 these GRCE embeddings. Initially they are all zero.  Whenever we see a "set"
 token, we set the corresponding variable to +1, whenever we see a "clear"
