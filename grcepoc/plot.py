@@ -293,9 +293,33 @@ def _skip_split_eval(record: Dict[str, float]) -> bool:
         return False
 
 
-def summarize_source(label: str, records: List[Dict[str, float]], filters: List[str] | None = None) -> None:
+def summarize_source(
+    label: str,
+    records: List[Dict[str, float]],
+    *,
+    filters: List[str] | None = None,
+    expressions: List[MetricExpression] | None = None,
+) -> None:
     print(f"\nSource: {label} ({len(records)} records)")
     if not records:
+        return
+    if expressions:
+        for expr in expressions:
+            values = [expr.evaluate(rec) for rec in records]
+            clean = [val for val in values if not math.isnan(val)]
+            if clean:
+                count = len(clean)
+                min_val = min(clean)
+                max_val = max(clean)
+                mean = sum(clean) / count
+                variance = sum((val - mean) ** 2 for val in clean) / count
+                stddev = math.sqrt(variance)
+                print(
+                    f"  {expr.text}: count={count} min={min_val:.4f} max={max_val:.4f} "
+                    f"mean={mean:.4f} std={stddev:.4f}"
+                )
+            else:
+                print(f"  {expr.text}: no numeric samples")
         return
     fields = sorted({key for rec in records for key in rec if key in ALLOWED_FIELDS})
     if filters:
@@ -355,6 +379,18 @@ def _series_from_expression(
     history: List[Dict[str, float]], expression: MetricExpression
 ) -> List[float]:
     return [expression.evaluate(record) for record in history]
+
+
+def _parse_metric_expression_list(tokens: List[str]) -> List[MetricExpression]:
+    cache: Dict[str, MetricExpression] = {}
+    expressions: List[MetricExpression] = []
+    for token in tokens:
+        expr = cache.get(token)
+        if expr is None:
+            expr = MetricExpression(token)
+            cache[token] = expr
+        expressions.append(expr)
+    return expressions
 
 
 def _split_segments(values: List[float], period: int) -> List[List[float]]:
@@ -717,9 +753,24 @@ def main() -> None:
         print("no data sources provided")
         return
     performed = False
-    list_filters = args.list if (args.list is not None and args.list) else None
+    list_filters: List[str] | None = None
+    list_expressions: List[MetricExpression] | None = None
+    if args.list is not None and args.list:
+        if all(token in ALLOWED_FIELDS for token in args.list):
+            list_filters = list(args.list)
+        else:
+            try:
+                list_expressions = _parse_metric_expression_list(args.list)
+            except ValueError as exc:
+                print(f"error: {exc}")
+                return
     for label, history in sources:
-        summarize_source(label, history, filters=list_filters)
+        summarize_source(
+            label,
+            history,
+            filters=list_filters,
+            expressions=list_expressions,
+        )
     performed = True
     if args.plot_steps is not None:
         metric_groups = _build_metric_groups(args.plot_steps, ["test_loss"])
