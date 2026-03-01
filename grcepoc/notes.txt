@@ -545,6 +545,7 @@ Modifiers for the [...] block can be inserted directly before the [ char:
 	T   freeze recurrent parameters so only the transformer stack learns
 	C   freeze transformer parameters so only the context/recurrent channels learn
 	P   suppress positional encodings within this block
+	H   don't add the loss values from this block to the typed metrics, only {test,train}_loss
 
 In this context "transformer parameters" include everything that shapes the
 encode/decode (E/D) stack, while "recurrent parameters" cover the GRCE/XCTX
@@ -572,8 +573,13 @@ embeddings inside that block. This trains the model to rely on contextual
 state for indexing rather than absolute positions; the uppercase/lowercase
 rules still apply in addition to the positional suppression.
 
+Likewise `h`/`H` (hide typed losses) can be appended to a mode to suppress
+adding those losses to the typed metrics. For example *[16e=*th2x=*t4x]
+will train for 2x and 4x thinking, but only the 4x thinking losses are
+reported in the "think" metric.
+
 Appending `2x`, `3x`, or `4x` to a mode enables 2x/3x/4x "thinking" (see below).
-When the letter `t` is used instead of `f`, loss from thiking is recorded
+When the letter `t` is used instead of `f`, loss from thinking is recorded
 in the "think" category rather than "forward".
 
 We also allow > instead of = for chaining sequences inside of a [...] block.
@@ -871,3 +877,9 @@ python grce.py --pt model/wp_simple_think2x_small_retrain.pt reset
 python grce.py --pt model/wp_simple_think2x_small_retrain.pt --cycles 15 \
   --lr-cosine-steps 500 --block-size 1024 --batch-size 128 \
   --layout '*[16e=16d=16f=32t2x=16f=32t2x](,1[8-16E=*D]||||)' train --json
+
+cp model/wp_simple_think2x_small_retrain.pt model/wp_simple_think2x_small_retrain_t4x.pt
+python grce.py --pt model/wp_simple_think2x_small_retrain_t4x.pt reset
+python grce.py --pt model/wp_simple_think2x_small_retrain_t4x.pt --cycles 15 \
+  --lr-cosine-steps 500 --block-size 1024 --batch-size 128 \
+  --layout '*[16e=16d=4t2x=16f=64t4x=16f=64t4x](,1[8-16E=*D]||||)' train --json
