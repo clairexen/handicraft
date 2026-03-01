@@ -124,8 +124,7 @@ rsync_pull() {
 rsync_peek() {
     mkdir -p "$LOCAL_MODEL_DIR"
     rsync "${RSYNC_COMMON[@]}" \
-        --include='*/' --include='*.json' --exclude='*' \
-        -e "$(join_cmd "${RSYNC_SSH[@]}")" \
+        --exclude='*.pt' -e "$(join_cmd "${RSYNC_SSH[@]}")" \
         "${REMOTE_HOST}:${REMOTE_DIR}/model/" "$LOCAL_MODEL_DIR/"
 }
 
