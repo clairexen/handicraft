@@ -3586,6 +3586,8 @@ class TransformerStackSequence(nn.Module):
         context_detach_span: int | None = None,
         context_detach_enabled: bool | None = None,
         attention_capture: AttentionCapture | None = None,
+        think_step_index: torch.Tensor | None = None,
+        think_step_count: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None, list]:
         if mode not in {"forward", "encode", "decode", "reverse", "noattn"}:
             raise ValueError(f"Unknown TransformerStackSequence mode: {mode}")
@@ -3619,8 +3621,19 @@ class TransformerStackSequence(nn.Module):
         kv_storage: list[tuple[torch.Tensor, torch.Tensor]] | None = None
         if detach_internal_kv_cache:
             kv_storage = self._allocate_detached_kv_storage(rows, cols, device, dtype)
+        loop_residual: torch.Tensor | None = None
         for col in range(cols):
             column_input = x[:, col : col + 1, :]
+            if think_step_index is not None and think_step_count is not None:
+                step_index = int(think_step_index[col].item())
+                step_count = int(think_step_count[col].item())
+            else:
+                step_index = 1
+                step_count = 1
+            if step_index <= 1:
+                loop_residual = None
+            if loop_residual is not None:
+                column_input = column_input + loop_residual
             column_kv_sources: list[Sequence[tuple[torch.Tensor, torch.Tensor] | None]] = []
             if base_sources:
                 column_kv_sources.extend(base_sources)
@@ -3645,6 +3658,10 @@ class TransformerStackSequence(nn.Module):
                 attention_capture=column_capture,
             )
             outputs.append(column_output)
+            if step_count > 1 and step_index < step_count:
+                loop_residual = self.core.ln_f(column_output)
+            else:
+                loop_residual = None
             if detach_internal_kv_cache and kv_storage is not None:
                 for layer_idx, kv_pair in enumerate(kv_pairs):
                     if kv_pair is None:
@@ -4159,6 +4176,14 @@ def _run_microbatch_pass(
                     chunk_target = yb[:, start:end]
                 token_slice = token_source[:, start:end, :]
                 pos_slice = pos_components[:, start:end, :]
+                think_index, think_count, think_mask = _segment_think_metadata(
+                    segment,
+                    cols,
+                    token_slice.device,
+                )
+                if think_mask is not None:
+                    chunk_target = chunk_target.clone()
+                    chunk_target[:, think_mask] = LOSS_IGNORE_INDEX
                 think_slice = _segment_think_slice(
                     model.core,
                     segment,
@@ -4185,6 +4210,8 @@ def _run_microbatch_pass(
                     detach_internal_kv_cache=row_detach_kv_cache,
                     context_detach_span=detach_span_override,
                     context_detach_enabled=context_detach_override,
+                    think_step_index=think_index,
+                    think_step_count=think_count,
                 )
                 if not getattr(segment, "context_enabled", True):
                     grce_state = prev_grce_state
@@ -4531,6 +4558,21 @@ def _segment_think_slice(
     template = slot_sequence.unsqueeze(0).repeat(tokens, 1, 1)
     chunk = template.view(tokens * factor, -1)
     return chunk.unsqueeze(0).expand(row_count, -1, -1).to(device)
+
+
+def _segment_think_metadata(
+    segment: SegmentLayout,
+    cols: int,
+    device: torch.device,
+) -> tuple[torch.Tensor | None, torch.Tensor | None, torch.Tensor | None]:
+    factor = max(1, int(getattr(segment, "think_factor", 1) or 1))
+    if factor <= 1 or cols <= 0:
+        return None, None, None
+    idx = torch.arange(cols, device=device, dtype=torch.long)
+    step_count = torch.full((cols,), factor, device=device, dtype=torch.long)
+    step_index = (idx % factor) + 1
+    mask = step_index != step_count
+    return step_index, step_count, mask
 
 
 def _scale_gradients(module: nn.Module, scale: float) -> None:
@@ -5383,6 +5425,15 @@ def _evaluate_row_block(
             chunk_target = expanded_targets[:, start:end]
         token_slice = token_source[:, start:end, :]
         pos_slice = pos_components[:, start:end, :]
+        think_index, think_count, think_mask = _segment_think_metadata(
+            segment,
+            cols,
+            token_slice.device,
+        )
+        eval_targets = chunk_target
+        if think_mask is not None:
+            eval_targets = chunk_target.clone()
+            eval_targets[:, think_mask] = LOSS_IGNORE_INDEX
         think_slice = _segment_think_slice(
             model.core,
             segment,
@@ -5413,6 +5464,8 @@ def _evaluate_row_block(
             context_detach_span=detach_span_override,
             context_detach_enabled=context_detach_override,
             attention_capture=chunk_capture,
+            think_step_index=think_index,
+            think_step_count=think_count,
         )
         if not segment.context_enabled:
             grce_state = prev_grce_state
@@ -5422,7 +5475,7 @@ def _evaluate_row_block(
         logits_buffer.append(logits)
         loss_sum, token_count = loss_sum_and_token_count(
             logits,
-            chunk_target,
+            eval_targets,
             last_only=(segment.mode == "encode"),
         )
         metric_key = segment.metric_mode or segment.mode
@@ -5439,6 +5492,8 @@ def _evaluate_row_block(
         for local_idx in range(cols):
             idx = cursor + local_idx
             if segment.mode == "encode" and local_idx < cols - 1:
+                supervision_mask[idx] = False
+            elif think_mask is not None and bool(think_mask[local_idx]):
                 supervision_mask[idx] = False
         if chunk_capture is not None and segment.mode in {"decode", "reverse", "encode"}:
             abs_col = chunk_capture.absolute_offset + (cols - 1)
