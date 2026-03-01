@@ -865,3 +865,9 @@ python grce.py --pt model/wp_simple_think2x_small.pt corpus --add wikipedia-simp
 python grce.py --pt model/wp_simple_think2x_small.pt --cycles 25 \
   --lr-warmup-steps 200 --lr-cosine-steps 500 --block-size 1024 --batch-size 150 \
   --layout '20[8-16E=*D],*[16-32e=16f=32t2x=16f=32t2x]' train --json
+
+cp model/wp_simple_think2x_small.pt model/wp_simple_think2x_small_retrain.pt
+python grce.py --pt model/wp_simple_think2x_small_retrain.pt reset
+python grce.py --pt model/wp_simple_think2x_small_retrain.pt --cycles 15 \
+  --lr-cosine-steps 500 --block-size 1024 --batch-size 128 \
+  --layout '*[16e=16d=16f=32t2x=16f=32t2x](,1[8-16E=*D]||||)' train --json
