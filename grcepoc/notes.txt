@@ -636,20 +636,16 @@ During pretraining on ordinary 1-D text we can draw a random positive-quadrant d
 angles, this acts as positional augmentation without privileging a single axis. Isolation of
 segments still relies on standard attention masking; random phases alone do not fence them off.
 
-At runtime the learned direction embeddings [|rope:0|] / [|rope:1|] encode the current trajectory
+The learned direction embeddings [|rope:0|] / [|rope:1|] encode the current trajectory
 so downstream modules know whether we are moving along the text axis, a branch axis, or a mixture.
 Straight text sets α≈1, β≈0; a lateral chain sets α≈0, β≈1; diagonal walks are also possible.
 Depending on the task we can dedicate half the rotary frequencies to θ₀ and half to θ₁ for clean
 separability, or linearly mix both angles per frequency to capture interactions between text
 position and branch depth.
 
-This torus inductive bias is well-suited to “text plus lateral reasoning” structures. Extending to an
-N-torus is straightforward: we add N orthogonal rotary axes, rotate the shared Q/K subspace along
-each angle, and supply N direction embeddings `[|rope:i|]` to encode the active trajectory. For
-example, a 4-torus lets us dedicate two axes to downstream chains of thought while keeping two axes
-available for upstream annotations. If future workloads become deeply tree-like or graph-shaped we may
-need higher-dimensional or more general rotary schemes, but the 2-D construction (and its obvious N-D
-generalization) gives us a concrete path toward branch-aware RoPE today.
+This torus inductive bias is well-suited to “text plus lateral reasoning” structures. Extending
+and generalizing to an N-torus would be straightforward, but we only need a 2-torus in our
+application, with θ₀ for the "external" text and θ₁ for the "internal" chain of thought.
 
 
 ## Non-token embeddings -- (updated; implementation not up-to-date)
