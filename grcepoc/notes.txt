@@ -339,7 +339,16 @@ With {grce,xctx}_{in,out} of size [rows, n_{grce,xctx}]. (So {grce,xctx}_out
 are the final recurrent states after the last column.)
 
 Columns are evaluated strictly left-to-right, and GRCE/XCTX state updates from
-column t are visible only to column t+1.
+column t are visible only to column t+1. When the layout requests explicit
+thinking (e.g. `f2x`, `f3x`, `f4x`, or `t...`) we duplicate the input tokens so
+each think-step occupies its own column. Only the final column in the span is
+supervised; the intermediate think-columns run the full stack (including
+GRCE/XCTX sampling) but their targets are masked out. Additionally we loop the
+LayerNorm-normalized output of each intermediate column back into the next
+column’s input within the same span, so later think steps see both the original
+embedding and the refined residual from previous stacks. Thinking is available
+only in forward mode; using `t` instead of `f` simply records its losses under
+the dedicated `think` metric while sharing the same forward compute path.
 
 With GRCE and XCTX disabled (n_grce=0 and n_xctx=0), TransformerStackSequence
 is functionally equivalent to evaluating a TransformerStackGrid with the same
