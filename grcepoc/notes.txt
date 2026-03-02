@@ -879,7 +879,11 @@ existing Star Wars and “The White Ship” articles for tone and length (roughl
 2. When no FIXMEs remain, append 200 more FIXME articles using this syntax:
      `# FIXME: Add a plot summary / retelling of "TITLE" (YEAR) by AUTHOR.`
 With blank lines between the FIXME comments and separators. Articles may span a wide range of
-torytelling works from literature, film, games, and more—each with author/director and year.
+storytelling works from literature, film, games, and more—each with author/director and year.
+
+But first run `sed '1,/^$/ d; /^#/ p; d;' data/tokipona_english.txt` and double-check the output
+for duplicates. (Simply ignore and remove any FIXMEs that are duplicates of existing articles or
+other FIXMEs, and let me know if you find duplicate articles.)
 
 ---------------------------------------------------------------------------
 
