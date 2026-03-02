@@ -876,7 +876,7 @@ Work in data/tokipona_english.txt, a toki pona ↔︎ English corpus. Articles f
 summary matching the above format until you finish all current FIXMEs or I stop you. Follow the
 existing Star Wars and “The White Ship” articles for tone and length (roughly that verbose).
 
-2. When no FIXMEs remain, append 50 more FIXME articles using this syntax:
+2. When no FIXMEs remain, append 200 more FIXME articles using this syntax:
      `# FIXME: Add a plot summary / retelling of "TITLE" (YEAR) by AUTHOR.`
 With blank lines between the FIXME comments and separators. Articles may span a wide range of
 torytelling works from literature, film, games, and more—each with author/director and year.
