@@ -862,6 +862,25 @@ original text.
 This is feedback from another AI instance. What are your thoughts?
 Relate the feedback to the current state of notes.txt and suggest edits.
 
+----
+
+Work in data/tokipona_english.txt, a toki pona ↔︎ English corpus. Articles follow this pattern:
+
+- `----` separator between articles, with blank lines before and after
+- Header: `# Plot summary / retelling of "TITLE" (YEAR) by AUTHOR.`, followed by a blank line
+- Toki pona line (one long sentence or 2-3 short sentences), followed by English translation line
+- Blank lines between such pairs of a toki pona line and its English translation
+- Only 7-bit ASCII chars are allowed in data/tokipona_english.txt
+
+1. Starting from the first `# FIXME` block, replace each in order with a full bilingual
+summary matching the above format until you finish all current FIXMEs or I stop you. Follow the
+existing Star Wars and “The White Ship” articles for tone and length (roughly that verbose).
+
+2. When no FIXMEs remain, append 50 more FIXME articles using this syntax:
+     `# FIXME: Add a plot summary / retelling of "TITLE" (YEAR) by AUTHOR.`
+With blank lines between the FIXME comments and separators. Articles may span a wide range of
+torytelling works from literature, film, games, and more—each with author/director and year.
+
 ---------------------------------------------------------------------------
 
 Current experiments:
