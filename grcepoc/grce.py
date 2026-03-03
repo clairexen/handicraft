@@ -357,7 +357,6 @@ class SegmentSpec:
     mode: str
     context_enabled: bool = True
     connector: str | None = None
-    suppress_positional: bool = False
     think_factor: int = 1
     metric_mode: str | None = None
     hide_typed_metrics: bool = False
@@ -389,7 +388,6 @@ class SegmentLayout:
     columns: int
     context_enabled: bool = True
     connector: str | None = None
-    suppress_positional: bool = False
     think_factor: int = 1
     metric_mode: str | None = None
     hide_typed_metrics: bool = False
@@ -506,12 +504,6 @@ def _parse_segment_spec(text: str, connector: str | None) -> SegmentSpec:
     mode_token = text[index:]
     if not mode_token:
         raise LayoutParseError("Missing mode in segment")
-    suppress_positional = False
-    if mode_token[-1] in {"p", "P"}:
-        suppress_positional = True
-        mode_token = mode_token[:-1]
-        if not mode_token:
-            raise LayoutParseError("Positional modifier requires a base mode")
     think_factor = 1
     for suffix in ("2x", "3x", "4x"):
         if mode_token.lower().endswith(suffix):
@@ -550,7 +542,6 @@ def _parse_segment_spec(text: str, connector: str | None) -> SegmentSpec:
         _MODE_ALIASES[mode_key],
         context_enabled,
         connector,
-        suppress_positional=suppress_positional,
         think_factor=think_factor,
         metric_mode=metric_mode,
         hide_typed_metrics=hide_typed_metrics,
@@ -792,7 +783,6 @@ class BatchLayout:
                     columns,
                     spec.context_enabled,
                     spec.connector,
-                    suppress_positional=spec.suppress_positional,
                     think_factor=think_factor,
                     metric_mode=getattr(spec, "metric_mode", None),
                     hide_typed_metrics=getattr(spec, "hide_typed_metrics", False),
@@ -822,16 +812,13 @@ class BatchLayout:
                     letter = _MODE_LETTERS.get(segment.mode, segment.mode[0])
                     if not segment.context_enabled:
                         letter = letter.upper()
-                suffix = ""
-                if segment.suppress_positional:
-                    suffix = "P" if letter.isupper() else "p"
                 hide_suffix = ""
                 if getattr(segment, "hide_typed_metrics", False):
                     hide_suffix = "H" if letter.isupper() else "h"
                 think_suffix = ""
                 if getattr(segment, "think_factor", 1) and segment.think_factor > 1:
                     think_suffix = f"{segment.think_factor}x"
-                bit = f"{segment.columns}{letter}{hide_suffix}{think_suffix}{suffix}"
+                bit = f"{segment.columns}{letter}{hide_suffix}{think_suffix}"
                 if idx > 0:
                     connector = segment.connector or "="
                     bit = connector + bit
@@ -853,7 +840,6 @@ class BatchLayout:
                             seg.columns,
                             seg.context_enabled,
                             seg.connector,
-                            suppress_positional=seg.suppress_positional,
                             think_factor=seg.think_factor,
                             metric_mode=seg.metric_mode,
                             hide_typed_metrics=seg.hide_typed_metrics,
@@ -955,7 +941,7 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         "--n-pos",
         type=int,
         default=DEFAULTS.n_pos,
-        help="Maximum sequence length supported by the model's positional embeddings",
+        help="Maximum supported sequence length (context window)",
     )
     model_group.add_argument(
         "--n-layer",
@@ -2002,7 +1988,6 @@ def _expected_sections(config: GeometryLike, n_pos: int) -> list[tuple[str, str,
 
     global_items = eval_items([
         {"label": "token embeddings", "formula": "V * E"},
-        {"label": "position embeddings", "formula": "B * E"},
         {"label": "special embeddings", "formula": "0 * E"},
         {"label": "grce embeddings", "formula": "0 * G"},
     ])
@@ -2150,7 +2135,6 @@ def _compute_actual_counts(config: GeometryLike) -> dict[tuple[str, str], int]:
     counts: dict[tuple[str, str], int] = {}
 
     counts[("embeddings", "token embeddings")] = _module_param_count(model.core.tok_emb)
-    counts[("embeddings", "position embeddings")] = _module_param_count(model.core.pos_emb)
 
     attn_qkv = 0
     attn_proj = 0
@@ -3466,7 +3450,6 @@ class TransformerStackCore(nn.Module):
             raise ValueError("n_width must be even so embeddings can occupy even/odd slots")
         self.embedding_dim = config.n_width // 2
         self.tok_emb = nn.Embedding(config.vocab_size, self.embedding_dim)
-        self.pos_emb = nn.Embedding(config.n_pos, self.embedding_dim)
         self.control_emb = nn.Embedding(3, self.embedding_dim, padding_idx=0)
         self.think_emb = ThinkEmbeddingLibrary(self.embedding_dim, think_spans=(2, 3, 4))
         self.drop = nn.Dropout(config.dropout)
@@ -4263,8 +4246,7 @@ class GRCEGPT(nn.Module):
         if torch.any(pos_idx >= self.config.n_pos):
             raise ValueError("position ids exceed configured --n-pos")
         tok = self.core.expand_to_even(self.core.tok_emb(idx))
-        pos = self.core.expand_to_even(self.core.pos_emb(pos_idx))
-        x = self.core.drop(tok + pos)
+        x = self.core.drop(tok)
         context_info: dict[str, torch.Tensor] | None = None
         if mode in {"forward", "noattn", "encode"}:
             sequence_output, grce_out, xctx_out, _ = self.stack_sequence.forward(
@@ -4474,12 +4456,12 @@ def _run_microbatch_pass(
             pos_offsets = None
             if position_shift:
                 pos_offsets = torch.full((row_count,), position_shift, dtype=torch.long, device=device)
-            token_components, pos_components = _embedding_components_with_offsets(
+            token_components = _token_embeddings_with_offsets(
                 model,
                 xb,
                 pos_offsets,
             )
-            future_token_components, _ = _embedding_components_with_offsets(
+            future_token_components = _token_embeddings_with_offsets(
                 model,
                 yb,
                 pos_offsets,
@@ -4533,7 +4515,6 @@ def _run_microbatch_pass(
                     token_source = token_components
                     chunk_target = yb[:, start:end]
                 token_slice = token_source[:, start:end, :]
-                pos_slice = pos_components[:, start:end, :]
                 think_index, think_count, think_mask = _segment_think_metadata(
                     segment,
                     cols,
@@ -4551,8 +4532,6 @@ def _run_microbatch_pass(
                 chunk_input = _compose_chunk_embeddings(
                     model.core.drop,
                     token_slice,
-                    pos_slice,
-                    include_positional=not segment.suppress_positional,
                     control_slice=control_embed,
                     think_slice=think_slice,
                 )
@@ -4827,16 +4806,14 @@ CONTROL_PREDICT_NEXT = 1
 CONTROL_PREDICT_PREV = 2
 
 
-def _embedding_components_with_offsets(
+def _token_embeddings_with_offsets(
     model: GRCEGPT,
     token_batch: torch.Tensor,
     position_offsets: torch.Tensor | None,
-) -> tuple[torch.Tensor, torch.Tensor]:
+) -> torch.Tensor:
     batch_size, seq_len = token_batch.shape
-    pos_idx = model._position_ids(seq_len, batch_size, token_batch.device, position_offsets)
-    token_emb = model.core.expand_to_even(model.core.tok_emb(token_batch))
-    pos_emb = model.core.expand_to_even(model.core.pos_emb(pos_idx))
-    return token_emb, pos_emb
+    _ = model._position_ids(seq_len, batch_size, token_batch.device, position_offsets)
+    return model.core.expand_to_even(model.core.tok_emb(token_batch))
 
 
 def _sequence_embeddings(model: GRCEGPT, token_batch: torch.Tensor) -> torch.Tensor:
@@ -4850,22 +4827,18 @@ def _sequence_embeddings_with_offsets(
     token_batch: torch.Tensor,
     position_offsets: torch.Tensor | None,
 ) -> torch.Tensor:
-    tok, pos = _embedding_components_with_offsets(model, token_batch, position_offsets)
-    return model.core.drop(tok + pos)
+    tok = _token_embeddings_with_offsets(model, token_batch, position_offsets)
+    return model.core.drop(tok)
 
 
 def _compose_chunk_embeddings(
     dropout_layer: nn.Dropout,
     token_slice: torch.Tensor,
-    pos_slice: torch.Tensor,
     *,
-    include_positional: bool,
     control_slice: torch.Tensor | None = None,
     think_slice: torch.Tensor | None = None,
 ) -> torch.Tensor:
     base = token_slice
-    if include_positional:
-        base = base + pos_slice
     if control_slice is not None:
         base = base + control_slice
     if think_slice is not None:
@@ -5724,12 +5697,12 @@ def _evaluate_row_block(
     base_targets = base_targets[:, :pos_total]
     expanded_inputs = _expand_think_sequences(base_inputs, row.segments)
     expanded_targets = _expand_think_sequences(base_targets, row.segments)
-    token_components, pos_components = _embedding_components_with_offsets(
+    token_components = _token_embeddings_with_offsets(
         model,
         expanded_inputs,
         None,
     )
-    future_token_components, _ = _embedding_components_with_offsets(
+    future_token_components = _token_embeddings_with_offsets(
         model,
         expanded_targets,
         None,
@@ -5793,7 +5766,6 @@ def _evaluate_row_block(
             token_source = token_components
             chunk_target = expanded_targets[:, start:end]
         token_slice = token_source[:, start:end, :]
-        pos_slice = pos_components[:, start:end, :]
         think_index, think_count, think_mask = _segment_think_metadata(
             segment,
             cols,
@@ -5812,8 +5784,6 @@ def _evaluate_row_block(
         chunk_input = _compose_chunk_embeddings(
             model.core.drop,
             token_slice,
-            pos_slice,
-            include_positional=not segment.suppress_positional,
             control_slice=control_embed,
             think_slice=think_slice,
         )
@@ -7062,13 +7032,10 @@ class Runtime:
                 )
             )
             tok_vecs = config.vocab_size
-            pos_vecs = config.n_pos
-            emb_vectors = tok_vecs + pos_vecs
             emb_params = embedding_params
             print(
                 color_text(
-                    f"Learned embedding vectors: {emb_vectors} "
-                    f"(token={tok_vecs}, position={pos_vecs}); params={emb_params:,}",
+                    f"Learned token embeddings: {tok_vecs}; params={emb_params:,}",
                     Colors.BLUE,
                 )
             )
