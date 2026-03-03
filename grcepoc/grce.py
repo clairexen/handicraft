@@ -4567,6 +4567,9 @@ def _run_microbatch_pass(
                     cols,
                     token_slice.device,
                 )
+                if think_index is not None:
+                    keep = (think_index == 1).to(token_slice.dtype).view(1, -1, 1)
+                    token_slice = token_slice * keep
                 if think_mask is not None:
                     chunk_target = chunk_target.clone()
                     chunk_target[:, think_mask] = LOSS_IGNORE_INDEX
@@ -5853,12 +5856,14 @@ def _evaluate_row_block(
         else:
             token_source = token_components
             chunk_target = expanded_targets[:, start:end]
-        token_slice = token_source[:, start:end, :]
         think_index, think_count, think_mask = _segment_think_metadata(
             segment,
             cols,
             token_slice.device,
         )
+        if think_index is not None:
+            keep = (think_index == 1).to(token_slice.dtype).view(1, -1, 1)
+            token_slice = token_slice * keep
         eval_targets = chunk_target
         if think_mask is not None:
             eval_targets = chunk_target.clone()
