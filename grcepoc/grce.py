@@ -2960,20 +2960,22 @@ class CausalSelfAttention(nn.Module):
             return
         self._build_rope_cache(needed)
 
-    def _rope_cos_sin(
+    def _rope_cos_sin_positions(
         self,
-        seq_len: int,
+        positions: torch.Tensor,
         device: torch.device,
         dtype: torch.dtype,
-        *,
-        start_index: int = 0,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         if self.rope_dim <= 0:
-            raise RuntimeError("RoPE cache requested but n_rope is zero")
-        end = start_index + seq_len
-        self._ensure_rope_cache(end)
-        cos = self.rope_cos_cached[start_index:end].to(device=device, dtype=dtype)
-        sin = self.rope_sin_cached[start_index:end].to(device=device, dtype=dtype)
+            raise RuntimeError("RoPE cache requested but rope_dim is zero")
+        if positions.numel() == 0:
+            empty = torch.empty(0, self.rope_dim // 2, device=device, dtype=dtype)
+            return empty, empty
+        max_pos = int(positions.max().item()) + 1
+        self._ensure_rope_cache(max_pos)
+        index = positions.to(device=self.rope_cos_cached.device, dtype=torch.long)
+        cos = self.rope_cos_cached.index_select(0, index).to(device=device, dtype=dtype)
+        sin = self.rope_sin_cached.index_select(0, index).to(device=device, dtype=dtype)
         return cos, sin
 
     def _apply_rope(self, tensor: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
@@ -3005,6 +3007,7 @@ class CausalSelfAttention(nn.Module):
         attn_mode: str = "decode",
         layer_idx: int | None = None,
         attention_capture: AttentionCapture | None = None,
+        rope_positions: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
         B, T, C = x.shape
         head_dim = self.head_dim
@@ -3012,7 +3015,13 @@ class CausalSelfAttention(nn.Module):
         query_states = self.query(x).view(B, T, self.n_head, head_dim)
         value_states = self.value(x).view(B, T, self.n_head, head_dim)
         if self.rope_dim:
-            cos, sin = self._rope_cos_sin(T, x.device, query_states.dtype, start_index=0)
+            if rope_positions is None:
+                positions = torch.arange(T, device=x.device, dtype=torch.long)
+            else:
+                positions = rope_positions.to(device=x.device, dtype=torch.long)
+                if positions.dim() != 1 or positions.size(0) != T:
+                    raise ValueError("rope_positions must match sequence length")
+            cos, sin = self._rope_cos_sin_positions(positions, x.device, query_states.dtype)
             query_states = self._apply_rope(query_states, cos, sin)
             key_states = self._apply_rope(key_states, cos, sin)
         q = query_states.transpose(1, 2)
@@ -3140,6 +3149,7 @@ class CausalSelfAttention(nn.Module):
         puncture_mask: torch.Tensor | None = None,
         disable_rows: torch.Tensor | None = None,
         write_cache: bool = True,
+        position_index: int | None = None,
     ) -> tuple[torch.Tensor, "LayerCache"]:
         if x.size(1) != 1:
             raise ValueError("Incremental attention expects a single-token sequence")
@@ -3149,8 +3159,9 @@ class CausalSelfAttention(nn.Module):
         query_states = self.query(x).view(B, T, self.n_head, head_dim)
         value_states = self.value(x).view(B, T, self.n_head, head_dim)
         if self.rope_dim:
-            start_index = cache.length
-            cos, sin = self._rope_cos_sin(T, x.device, query_states.dtype, start_index=start_index)
+            pos_value = cache.length if position_index is None else position_index
+            positions = torch.tensor([pos_value], device=x.device, dtype=torch.long)
+            cos, sin = self._rope_cos_sin_positions(positions, x.device, query_states.dtype)
             query_states = self._apply_rope(query_states, cos, sin)
             key_states = self._apply_rope(key_states, cos, sin)
         q = query_states.transpose(1, 2)
@@ -3246,6 +3257,7 @@ class Block(nn.Module):
         attention_dropout_positions: torch.Tensor | None = None,
         full_attention: bool = False,
         attention_capture: AttentionCapture | None = None,
+        rope_positions: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor | None, tuple[torch.Tensor, torch.Tensor] | None]:
         attn_input = self._apply_xctx_bias(x, xctx_bias, self.xctx_attn_gain)
         attn_norm = self.ln1(attn_input)
@@ -3259,6 +3271,7 @@ class Block(nn.Module):
             qh_query_callback=qh_query_callback,
             attn_mode=attn_mode,
             layer_idx=layer_idx,
+            rope_positions=rope_positions,
             attention_capture=attention_capture,
         )
         if attention_disabled_rows is not None and attention_disabled_rows.any():
@@ -3283,6 +3296,7 @@ class Block(nn.Module):
         attention_disabled_rows: torch.Tensor | None = None,
         puncture_mask: torch.Tensor | None = None,
         write_cache: bool = True,
+        column_position: int | None = None,
     ) -> tuple[torch.Tensor, LayerCache, torch.Tensor | None]:
         attn_input = self._apply_xctx_bias(x, xctx_bias, self.xctx_attn_gain)
         attn_norm = self.ln1(attn_input)
@@ -3293,6 +3307,7 @@ class Block(nn.Module):
             puncture_mask=puncture_mask,
             disable_rows=attention_disabled_rows,
             write_cache=write_cache,
+            position_index=column_position,
         )
         if attention_disabled_rows is not None and attention_disabled_rows.any():
             mask = (~attention_disabled_rows).view(-1, 1, 1).to(attn_out.dtype)
@@ -3475,9 +3490,15 @@ class TransformerStackCore(nn.Module):
         mode: str = "decode",
         qh_query_callback=None,
         position_offsets: torch.Tensor | None = None,
+        rope_positions: torch.Tensor | None = None,
         attention_capture: AttentionCapture | None = None,
     ) -> tuple[torch.Tensor, list[torch.Tensor], list[tuple[torch.Tensor, torch.Tensor]]]:
         rows, cols, _ = x.shape
+        rope_positions_tensor = None
+        if rope_positions is not None:
+            rope_positions_tensor = rope_positions.to(device=x.device, dtype=torch.long)
+            if rope_positions_tensor.dim() != 1 or rope_positions_tensor.size(0) != cols:
+                raise ValueError("rope_positions must match column count")
         xctx_tensor = _merge_bias_list(
             xctx_bias_list_in or [],
             rows,
@@ -3529,6 +3550,7 @@ class TransformerStackCore(nn.Module):
                 layer_idx=layer_idx,
                 full_attention=(mode == "encode"),
                 attention_capture=attention_capture,
+                rope_positions=rope_positions_tensor,
             )
             samples.append(current)
             kv_outputs.append(kv_pair if kv_pair is not None else None)
@@ -3821,6 +3843,7 @@ class TransformerStackColumn:
         qh_query_callback=None,
         detach_internal_kv_cache: bool = False,
         attention_capture: "AttentionCapture" | None = None,
+        column_position: int | None = None,
     ) -> tuple[
         torch.Tensor,
         list[torch.Tensor],
@@ -3832,6 +3855,11 @@ class TransformerStackColumn:
             grce_biases.append(self.grce.bias_forward(grce_state))
         if self.xctx is not None and xctx_state is not None:
             xctx_biases.append(self.xctx.bias_forward(xctx_state))
+        rope_positions = None
+        if column_position is not None:
+            rope_positions = torch.tensor(
+                [column_position], device=column_input.device, dtype=torch.long
+            )
         column_output, samples, kv_pairs = self.core.forward_grid(
             column_input,
             xctx_bias_list_in=xctx_biases,
@@ -3839,6 +3867,7 @@ class TransformerStackColumn:
             kv_cache_list_in=kv_sources,
             mode="decode",
             qh_query_callback=qh_query_callback,
+            rope_positions=rope_positions,
             attention_capture=attention_capture,
         )
         if detach_internal_kv_cache:
@@ -3925,6 +3954,7 @@ class TransformerStackSequence(nn.Module):
         attention_capture: AttentionCapture | None = None,
         think_step_index: torch.Tensor | None = None,
         think_step_count: torch.Tensor | None = None,
+        column_positions: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None, list]:
         if mode not in {"forward", "encode", "decode", "reverse", "noattn"}:
             raise ValueError(f"Unknown TransformerStackSequence mode: {mode}")
@@ -3951,7 +3981,14 @@ class TransformerStackSequence(nn.Module):
                 context_detach_span=context_detach_span,
                 context_detach_enabled=context_detach_enabled,
                 attention_capture=attention_capture,
+                column_positions=column_positions,
             )
+        column_positions_tensor = None
+        if column_positions is not None:
+            positions = column_positions.to(device=device, dtype=torch.long)
+            if positions.dim() != 1 or positions.size(0) != cols:
+                raise ValueError("column_positions must match sequence columns")
+            column_positions_tensor = positions
         use_internal_cache = mode != "noattn"
         base_sources = list(kv_cache_list_in or [])
         kv_history: list[list[tuple[torch.Tensor, torch.Tensor] | None]] = []
@@ -3961,6 +3998,9 @@ class TransformerStackSequence(nn.Module):
         loop_residual: torch.Tensor | None = None
         for col in range(cols):
             column_input = x[:, col : col + 1, :]
+            column_position = None
+            if column_positions_tensor is not None:
+                column_position = int(column_positions_tensor[col].item())
             if think_step_index is not None and think_step_count is not None:
                 step_index = int(think_step_index[col].item())
                 step_count = int(think_step_count[col].item())
@@ -3993,6 +4033,7 @@ class TransformerStackSequence(nn.Module):
                 qh_query_callback=qh_query_callback,
                 detach_internal_kv_cache=detach_internal_kv_cache,
                 attention_capture=column_capture,
+                column_position=column_position,
             )
             outputs.append(column_output)
             if step_count > 1 and step_index < step_count:
@@ -4062,8 +4103,14 @@ class TransformerStackSequence(nn.Module):
         context_detach_span: int | None,
         context_detach_enabled: bool | None,
         attention_capture: AttentionCapture | None,
+        column_positions: torch.Tensor | None,
     ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None, list[tuple[torch.Tensor, torch.Tensor]]]:
         rows, cols, _ = x.shape
+        rope_positions = None
+        if column_positions is not None:
+            rope_positions = column_positions.to(device=x.device, dtype=torch.long)
+            if rope_positions.dim() != 1 or rope_positions.size(0) != cols:
+                raise ValueError("column_positions must match sequence columns")
         grid_grce_biases = list(grce_bias_list_in or [])
         grid_xctx_biases = list(xctx_bias_list_in or [])
         if self.grce is not None and grce_state is not None:
@@ -4077,6 +4124,7 @@ class TransformerStackSequence(nn.Module):
             kv_cache_list_in=kv_cache_list_in,
             mode=mode,
             qh_query_callback=qh_query_callback,
+            rope_positions=rope_positions,
             attention_capture=attention_capture,
         )
         kv_out = kv_pairs
@@ -4464,6 +4512,7 @@ def _run_microbatch_pass(
                 yb,
                 pos_offsets,
             )
+            column_positions = _segment_column_positions(group.segments, device)
             control_ids = torch.zeros((row_count, cols_total), dtype=torch.long, device=device)
             cursor = 0
             kv_chain: list[list[tuple[torch.Tensor, torch.Tensor]] | None] = []
@@ -4536,6 +4585,7 @@ def _run_microbatch_pass(
                 kv_sources = None if mode == "noattn" else (kv_chain if kv_chain else None)
                 prev_grce_state = grce_state
                 prev_xctx_state = xctx_state
+                segment_positions = column_positions[start:end]
                 chunk_output, grce_state, xctx_state, kv_out = model.stack_sequence.forward(
                     chunk_input,
                     grce_in=grce_state,
@@ -4545,6 +4595,7 @@ def _run_microbatch_pass(
                     detach_internal_kv_cache=row_detach_kv_cache,
                     context_detach_span=detach_span_override,
                     context_detach_enabled=context_detach_override,
+                    column_positions=segment_positions,
                     think_step_index=think_index,
                     think_step_count=think_count,
                 )
@@ -4917,6 +4968,40 @@ def _segment_think_metadata(
     step_index = (idx % factor) + 1
     mask = step_index != step_count
     return step_index, step_count, mask
+
+
+def _segment_column_positions(
+    segments: Sequence[SegmentLayout], device: torch.device
+) -> torch.Tensor:
+    total_cols = sum(max(0, int(seg.columns)) for seg in segments)
+    positions = torch.zeros(total_cols, dtype=torch.long, device=device)
+    cursor = 0
+    position_cursor = 0
+    for segment in segments:
+        cols = int(segment.columns)
+        if cols <= 0:
+            continue
+        factor = max(1, int(getattr(segment, "think_factor", 1) or 1))
+        if factor <= 1:
+            local = torch.arange(cols, dtype=torch.long, device=device)
+            positions[cursor : cursor + cols] = local + position_cursor
+            position_cursor += cols
+        else:
+            token_cols = cols // factor
+            base = torch.arange(max(1, token_cols), dtype=torch.long, device=device)
+            repeated = base.repeat_interleave(factor)
+            if repeated.numel() > cols:
+                repeated = repeated[:cols]
+            elif repeated.numel() < cols:
+                repeated = torch.nn.functional.pad(
+                    repeated,
+                    (0, cols - repeated.numel()),
+                    mode="replicate",
+                )
+            positions[cursor : cursor + cols] = repeated + position_cursor
+            position_cursor += token_cols
+        cursor += cols
+    return positions
 
 
 def _scale_gradients(module: nn.Module, scale: float) -> None:
@@ -5709,6 +5794,7 @@ def _evaluate_row_block(
         expanded_targets,
         None,
     )
+    column_positions = _segment_column_positions(row.segments, token_components.device)
     device = token_components.device
     column_modes: list[str] = [""] * cols_total
     supervision_mask = torch.ones(cols_total, dtype=torch.bool, device=device)
@@ -5795,6 +5881,7 @@ def _evaluate_row_block(
         kv_sources = None if segment.mode == "noattn" else (kv_chain if kv_chain else None)
         prev_grce_state = grce_state
         prev_xctx_state = xctx_state
+        segment_positions = column_positions[start:end]
         chunk_output, grce_state, xctx_state, kv_out = model.stack_sequence.forward(
             chunk_input,
             grce_in=grce_state,
@@ -5805,6 +5892,7 @@ def _evaluate_row_block(
             context_detach_span=detach_span_override,
             context_detach_enabled=context_detach_override,
             attention_capture=chunk_capture,
+            column_positions=segment_positions,
             think_step_index=think_index,
             think_step_count=think_count,
         )
