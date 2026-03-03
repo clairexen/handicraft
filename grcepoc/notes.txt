@@ -22,6 +22,10 @@ the output token data.)
 
 ## Transformer
 
+The transformer stack itself is a rather "classical" GTP-2 like design,
+with LayerNorm's in the input paths to multi-head self-attention and MLP
+building blocks, using GELU activations, and RoPE.
+
 ## Recurrent Path
 
 

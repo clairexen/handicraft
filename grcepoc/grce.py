@@ -98,6 +98,7 @@ class ModelGeometry:
     n_layer: int = 12       # GPT-2 base uses 12 layers.
     n_head: int = 12        # GPT-2 base uses 12 attention heads.
     n_width: int = 768       # GPT-2 base uses 768 embedding dims.
+    n_rope: int = 0         # Number of Q/K dims using RoPE (0 => half head width).
     n_grce: int = 64        # Narrow GRCE context dims.
     n_xctx: int = 1536      # Wide XCTX context dims.
 
@@ -119,6 +120,7 @@ class Defaults:
     n_layer: int = MODEL_GEOMETRY_DEFAULTS.n_layer
     n_head: int = MODEL_GEOMETRY_DEFAULTS.n_head
     n_width: int = MODEL_GEOMETRY_DEFAULTS.n_width
+    n_rope: int = MODEL_GEOMETRY_DEFAULTS.n_rope
     n_grce: int = MODEL_GEOMETRY_DEFAULTS.n_grce
     n_xctx: int = MODEL_GEOMETRY_DEFAULTS.n_xctx
     corpus: str | None = None
@@ -975,6 +977,12 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         help="Transformer width (GPT-2 base uses 768); must be a multiple of n_head.",
     )
     model_group.add_argument(
+        "--n-rope",
+        type=int,
+        default=DEFAULTS.n_rope,
+        help="Number of Q/K features using Rotary Position Embedding (must be even).",
+    )
+    model_group.add_argument(
         "--n-grce",
         type=int,
         default=DEFAULTS.n_grce,
@@ -1652,6 +1660,15 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         args.block_size = args.n_pos
     if args.block_size <= 0:
         parser.error("--block-size must be positive")
+    if args.n_rope < 0:
+        parser.error("--n-rope must be non-negative")
+    if args.n_rope and args.n_rope % 2 != 0:
+        parser.error("--n-rope must be even")
+    if args.n_width % args.n_head != 0:
+        parser.error("--n-width must be divisible by --n-head")
+    head_dim = args.n_width // args.n_head
+    if args.n_rope and args.n_rope >= head_dim:
+        parser.error("--n-rope must be smaller than per-head width (n_width / n_head)")
     if args.block_size > args.n_pos:
         parser.error("--block-size must be <= --n-pos")
     if args.log_row_details:
@@ -1712,6 +1729,7 @@ def args_to_model_geometry(args: Args):
         n_layer=args.n_layer,
         n_head=args.n_head,
         n_width=args.n_width,
+        n_rope=args.n_rope,
         n_grce=args.n_grce,
         n_xctx=args.n_xctx,
     )
@@ -2900,8 +2918,13 @@ class CausalSelfAttention(nn.Module):
     def __init__(self, args: Args) -> None:
         super().__init__()
         config = args
-        assert config.n_width % config.n_head == 0
+        if config.n_width % config.n_head != 0:
+            raise ValueError("--n-width must be divisible by --n-head")
         self.n_head = config.n_head
+        self.head_dim = config.n_width // config.n_head
+        raw_rope = max(0, int(getattr(config, "n_rope", 0) or 0))
+        self.raw_n_rope = raw_rope
+        self.rope_dim = self._resolve_rope_dim(raw_rope)
         self.key = nn.Linear(config.n_width, config.n_width)
         self.query = nn.Linear(config.n_width, config.n_width)
         self.value = nn.Linear(config.n_width, config.n_width)
@@ -2910,6 +2933,83 @@ class CausalSelfAttention(nn.Module):
         self.register_buffer(
             "tril", torch.tril(torch.ones(config.n_pos, config.n_pos))
         )
+        if self.rope_dim:
+            if self.rope_dim >= self.head_dim:
+                raise ValueError("Resolved RoPE width must be smaller than per-head width")
+            base = max(1, int(config.n_pos))
+            idx = torch.arange(0, self.rope_dim, 2, dtype=torch.float32)
+            inv_freq = torch.pow(torch.tensor(float(base), dtype=torch.float32), -idx / self.rope_dim)
+            self.register_buffer("rope_inv_freq", inv_freq, persistent=False)
+            self.register_buffer("rope_cos_cached", torch.empty(0), persistent=False)
+            self.register_buffer("rope_sin_cached", torch.empty(0), persistent=False)
+            self._build_rope_cache(max(1, config.n_pos))
+        else:
+            self.register_buffer("rope_inv_freq", torch.empty(0), persistent=False)
+            self.register_buffer("rope_cos_cached", torch.empty(0), persistent=False)
+            self.register_buffer("rope_sin_cached", torch.empty(0), persistent=False)
+
+    def _resolve_rope_dim(self, raw: int) -> int:
+        head_dim = self.head_dim
+        if raw > 0:
+            if raw % 2 != 0:
+                raise ValueError("--n-rope must be even")
+            return raw
+        half = head_dim // 2
+        if half % 2 != 0:
+            half -= 1
+        return max(0, half)
+
+    def _build_rope_cache(self, max_seq: int) -> None:
+        if self.rope_dim <= 0:
+            return
+        device = self.rope_inv_freq.device
+        pos = torch.arange(max_seq, dtype=torch.float32, device=device)
+        freqs = torch.outer(pos, self.rope_inv_freq)
+        cos = torch.cos(freqs)
+        sin = torch.sin(freqs)
+        self.rope_cos_cached = cos.cpu()
+        self.rope_sin_cached = sin.cpu()
+
+    def _ensure_rope_cache(self, needed: int) -> None:
+        if self.rope_dim <= 0:
+            return
+        cached = self.rope_cos_cached.size(0)
+        if needed <= cached:
+            return
+        self._build_rope_cache(needed)
+
+    def _rope_cos_sin(
+        self,
+        seq_len: int,
+        device: torch.device,
+        dtype: torch.dtype,
+        *,
+        start_index: int = 0,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if self.rope_dim <= 0:
+            raise RuntimeError("RoPE cache requested but n_rope is zero")
+        end = start_index + seq_len
+        self._ensure_rope_cache(end)
+        cos = self.rope_cos_cached[start_index:end].to(device=device, dtype=dtype)
+        sin = self.rope_sin_cached[start_index:end].to(device=device, dtype=dtype)
+        return cos, sin
+
+    def _apply_rope(self, tensor: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
+        rope_dim = self.rope_dim
+        if rope_dim <= 0:
+            return tensor
+        orig_shape = tensor.shape
+        rope_slice = tensor[..., :rope_dim]
+        other = tensor[..., rope_dim:]
+        rope_view = rope_slice.view(*orig_shape[:-1], rope_dim // 2, 2)
+        x_even = rope_view[..., 0]
+        x_odd = rope_view[..., 1]
+        cos = cos.view(1, cos.size(0), 1, cos.size(1))
+        sin = sin.view(1, sin.size(0), 1, sin.size(1))
+        rotated_even = x_even * cos - x_odd * sin
+        rotated_odd = x_even * sin + x_odd * cos
+        rotated = torch.stack((rotated_even, rotated_odd), dim=-1).reshape(*orig_shape[:-1], rope_dim)
+        return torch.cat((rotated, other), dim=-1)
 
     def forward(
         self,
@@ -2925,12 +3025,17 @@ class CausalSelfAttention(nn.Module):
         attention_capture: AttentionCapture | None = None,
     ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
         B, T, C = x.shape
-        head_dim = C // self.n_head
-        k_full = self.key(x)
-        q = self.query(x).view(B, T, self.n_head, head_dim).transpose(1, 2)
-        v_full = self.value(x)
-        k_local = k_full.view(B, T, self.n_head, head_dim).transpose(1, 2)
-        v_local = v_full.view(B, T, self.n_head, head_dim).transpose(1, 2)
+        head_dim = self.head_dim
+        key_states = self.key(x).view(B, T, self.n_head, head_dim)
+        query_states = self.query(x).view(B, T, self.n_head, head_dim)
+        value_states = self.value(x).view(B, T, self.n_head, head_dim)
+        if self.rope_dim:
+            cos, sin = self._rope_cos_sin(T, x.device, query_states.dtype, start_index=0)
+            query_states = self._apply_rope(query_states, cos, sin)
+            key_states = self._apply_rope(key_states, cos, sin)
+        q = query_states.transpose(1, 2)
+        k_local = key_states.transpose(1, 2)
+        v_local = value_states.transpose(1, 2)
 
         cache_keys: list[torch.Tensor] = []
         cache_values: list[torch.Tensor] = []
@@ -2990,8 +3095,8 @@ class CausalSelfAttention(nn.Module):
                 scores = scores.masked_fill(atten_block_mask[:, None, :, :], float("-inf"))
 
         kv_output = (
-            k_full.view(B, T, self.n_head, head_dim),
-            v_full.view(B, T, self.n_head, head_dim),
+            key_states,
+            value_states,
         )
 
         local_max = scores.max(dim=-1).values
@@ -3057,11 +3162,18 @@ class CausalSelfAttention(nn.Module):
         if x.size(1) != 1:
             raise ValueError("Incremental attention expects a single-token sequence")
         B, T, C = x.shape
-        k_full = self.key(x)
-        q = self.query(x).view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
-        v_full = self.value(x)
-        v = v_full.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
-        k_new = k_full.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
+        head_dim = self.head_dim
+        key_states = self.key(x).view(B, T, self.n_head, head_dim)
+        query_states = self.query(x).view(B, T, self.n_head, head_dim)
+        value_states = self.value(x).view(B, T, self.n_head, head_dim)
+        if self.rope_dim:
+            start_index = cache.length
+            cos, sin = self._rope_cos_sin(T, x.device, query_states.dtype, start_index=start_index)
+            query_states = self._apply_rope(query_states, cos, sin)
+            key_states = self._apply_rope(key_states, cos, sin)
+        q = query_states.transpose(1, 2)
+        v = value_states.transpose(1, 2)
+        k_new = key_states.transpose(1, 2)
         key_append = k_new.squeeze(2).unsqueeze(2)
         value_append = v.squeeze(2).unsqueeze(2)
         if write_cache:
@@ -3069,7 +3181,7 @@ class CausalSelfAttention(nn.Module):
             k, v = cache.tensors()
         else:
             k, v = key_append, value_append
-        att = (q @ k.transpose(-2, -1)) / math.sqrt(k.size(-1))
+        att = (q @ k.transpose(-2, -1)) / math.sqrt(head_dim)
         if puncture_mask is not None:
             att = att.masked_fill(puncture_mask[:, None, None, :], float("-inf"))
         att = F.softmax(att, dim=-1)
@@ -6163,6 +6275,8 @@ def preprocess_runtime_args(args: Args) -> None:
                 saved["n_grce"] = 0
             else:
                 saved["n_xctx"] = 0
+        if "n_rope" not in saved:
+            saved["n_rope"] = MODEL_GEOMETRY_DEFAULTS.n_rope
         config = ModelGeometry(**saved)
         args.checkpoint_payload_override = payload
         args.tokenizer_json_override = payload.get("tokenizer_json")
@@ -6174,6 +6288,7 @@ def preprocess_runtime_args(args: Args) -> None:
         args.n_layer = config.n_layer
         args.n_head = config.n_head
         args.n_width = config.n_width
+        args.n_rope = config.n_rope
         args.n_grce = config.n_grce
         args.n_xctx = config.n_xctx
         args.vocab_size = config.vocab_size
@@ -6187,6 +6302,7 @@ def preprocess_runtime_args(args: Args) -> None:
         n_layer=args.n_layer,
         n_head=args.n_head,
         n_width=args.n_width,
+        n_rope=args.n_rope,
         n_grce=args.n_grce,
         n_xctx=args.n_xctx,
     )
