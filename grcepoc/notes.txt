@@ -914,6 +914,6 @@ Current experiments:
 
 python grce.py --pt model/wp_simple_think2x_small.pt --small create
 python grce.py --pt model/wp_simple_think2x_small.pt corpus --add wikipedia-simple
-python grce.py --pt model/wp_simple_think2x_small.pt --cycles 25 \
+python grce.py --pt model/wp_simple_think2x_small.pt --cycles 100 \
   --lr-warmup-steps 200 --lr-cosine-steps 500 --block-size 100 --batch-size 100 \
   --layout '*[8e=*tx2=4f=4D]' train

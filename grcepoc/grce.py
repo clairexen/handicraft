@@ -4456,12 +4456,12 @@ LOSS_IGNORE_INDEX = -100
 # -----------------------------------------------------------------------------
 
 
-BATCH_MODES: tuple[str, ...] = ("reverse", "encode", "decode", "forward", "think", "noattn")
+BATCH_MODES: tuple[str, ...] = ("encode", "decode", "forward", "think", "noattn", "reverse")
 
 
 ROW_METRIC_HIST_KEYS = list(BATCH_MODES)
 ROW_METRIC_LOG_KEYS = list(BATCH_MODES)
-ROW_METRIC_LOG_GROUP = {"reverse", "forward", "noattn"}
+ROW_METRIC_LOG_GROUP = {"encode", "forward", "noattn"}
 
 
 @dataclass
