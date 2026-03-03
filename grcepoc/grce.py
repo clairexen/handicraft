@@ -4038,7 +4038,7 @@ class TransformerStackSequence(nn.Module):
             )
             outputs.append(column_output)
             if step_count > 1 and step_index < step_count:
-                loop_residual = self.loop_ln(column_output)
+                loop_residual = self.core.loop_ln(column_output)
             else:
                 loop_residual = None
             if detach_internal_kv_cache and kv_storage is not None:
