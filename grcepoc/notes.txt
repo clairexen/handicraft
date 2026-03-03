@@ -599,8 +599,8 @@ Appending `2x`, `3x`, or `4x` to a mode enables 2x/3x/4x "thinking" (see below).
 When the letter `t` is used instead of `f`, loss from thinking is recorded
 in the "think" category rather than "forward".
 
-We also allow > instead of = for chaining sequences inside of a [...] block.
-The difference is that with > we drop the entire k/v-history at this point,
+We also allow # instead of = for chaining sequences inside of a [...] block.
+The difference is that with # we drop the entire k/v-history at this point,
 so only the recurrent channels can pass information along that barrier.
 
 

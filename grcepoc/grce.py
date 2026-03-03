@@ -477,9 +477,7 @@ def _split_segments(body: str) -> list[tuple[str, str | None]]:
     for index, ch in enumerate(body):
         if ch in "[]()":
             raise LayoutParseError("Unexpected bracket in segment string")
-        if ch == "/":
-            raise LayoutParseError("Use '=' between segments; '/' is reserved for fractions")
-        if ch in "=>":
+        if ch in "=#":
             token = body[start:index].strip()
             if token:
                 parts.append((token, connector))
@@ -4493,8 +4491,8 @@ def _run_microbatch_pass(
                     continue
                 mode = segment.mode
                 connector = getattr(segment, "connector", None)
-                if connector == ">":
-                    kv_chain = []
+            if connector == "#":
+                kv_chain = []
                 start = cursor
                 end = cursor + cols
                 if mode == "reverse":
@@ -5746,7 +5744,7 @@ def _evaluate_row_block(
         if cursor + cols > cols_total:
             raise ValueError("Layout segment exceeds available token columns during evaluation")
         connector = getattr(segment, "connector", None)
-        if connector == ">":
+        if connector == "#":
             kv_chain = []
         start = cursor
         end = cursor + cols
