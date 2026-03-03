@@ -7,11 +7,30 @@ README.md.
 
 ---------------------------------------------------------------------------
 
-# GPT+GRCE+XCTX Reference Specs
+# Overview of the Architecture
+
+## Input/Output Embedding Spaces
+
+The learned embeddings span only half of the transformer data path width.
+
+The input embedding space lives in the even positions of the transformer
+data path and the output embedding space lives in the odd positions of the
+transformer data path. (This representation is especially useful for the
+"multi-cycle" thinking mode, as it makes it very easy for the model to
+preserve and process relevant input token data while iteratively refining
+the output token data.)
+
+## Transformer
+
+## Recurrent Path
+
+
+---------------------------------------------------------------------------
+
+# Detailed Specification
 
 This is the hand-written reference spec, the definitive source of information
 about the intended design behavior, mostly directed at AI agents (= OpenAI Codex).
-
 
 ## GRCE and XCTX data path spec
 

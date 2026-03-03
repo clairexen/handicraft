@@ -878,7 +878,7 @@ from collections import OrderedDict, defaultdict
 import json
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Tuple, Sequence, Callable
+from typing import Any, Dict, List, Tuple, Sequence, Callable, Mapping
 
 
 def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
@@ -1173,6 +1173,14 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         "--no-detach-ctx",
         action="store_true",
         help="Keep gradients through the recurrent GRCE context even when spans trigger",
+    )
+    parser.add_argument(
+        "--allow-shape-mismatch-load",
+        action="store_true",
+        help=(
+            "When loading checkpoints, reuse overlapping parameter slices even if shapes differ."
+            " By default shape mismatches cause an error."
+        ),
     )
     training_group.add_argument(
         "--dropout",
@@ -2695,6 +2703,181 @@ class TextDataset:
 # -----------------------------------------------------------------------------
 
 
+def _expand_tensor_to_parity(
+    tensor: torch.Tensor, full_dim: int, parity: int
+) -> torch.Tensor:
+    """Scatter last-dim features into even/odd slots of a wider tensor."""
+
+    if parity not in (0, 1):
+        raise ValueError("parity must be 0 (even) or 1 (odd)")
+    shape = tensor.shape[:-1] + (full_dim,)
+    expanded = tensor.new_zeros(shape)
+    expanded[..., parity::2] = tensor
+    return expanded
+
+
+def _select_parity_features(tensor: torch.Tensor, parity: int) -> torch.Tensor:
+    """Return a contiguous view of the even or odd slots of ``tensor``."""
+
+    if parity not in (0, 1):
+        raise ValueError("parity must be 0 (even) or 1 (odd)")
+    return tensor[..., parity::2].contiguous()
+
+
+def _partial_state_dict_load(
+    model: nn.Module, source_state: Mapping[str, torch.Tensor]
+) -> dict[str, object]:
+    """Copy overlapping tensor slices from ``source_state`` into ``model`` state."""
+
+    target_state = model.state_dict()
+    total = len(target_state)
+    reused = 0
+    missing = 0
+    resized = 0
+    incompatible = 0
+    missing_examples: list[str] = []
+    resized_examples: list[str] = []
+    incompatible_examples: list[str] = []
+    for name, target_value in list(target_state.items()):
+        source_value = source_state.get(name)
+        if source_value is None:
+            missing += 1
+            if len(missing_examples) < 5:
+                missing_examples.append(name)
+            continue
+        if source_value.dim() != target_value.dim():
+            incompatible += 1
+            if len(incompatible_examples) < 5:
+                incompatible_examples.append(
+                    f"{name}: checkpoint {tuple(source_value.shape)} vs model {tuple(target_value.shape)}"
+                )
+            continue
+        overlap = tuple(min(s, t) for s, t in zip(source_value.shape, target_value.shape))
+        if any(length <= 0 for length in overlap):
+            incompatible += 1
+            if len(incompatible_examples) < 5:
+                incompatible_examples.append(
+                    f"{name}: checkpoint {tuple(source_value.shape)} vs model {tuple(target_value.shape)}"
+                )
+            continue
+        target_copy = target_value.clone()
+        slices = tuple(slice(0, length) for length in overlap)
+        converted = source_value.to(dtype=target_value.dtype)
+        target_copy[slices] = converted[slices]
+        target_state[name] = target_copy
+        reused += 1
+        if source_value.shape != target_value.shape:
+            resized += 1
+            if len(resized_examples) < 5:
+                resized_examples.append(
+                    f"{name}: checkpoint {tuple(source_value.shape)} -> model {tuple(target_value.shape)}"
+                )
+    unused = 0
+    if hasattr(source_state, "keys"):
+        try:
+            source_keys = set(source_state.keys())
+            target_keys = set(target_state.keys())
+            unused = len(source_keys - target_keys)
+        except TypeError:
+            unused = 0
+    model.load_state_dict(target_state)
+    return {
+        "total": total,
+        "reused": reused,
+        "missing": missing,
+        "resized": resized,
+        "incompatible": incompatible,
+        "unused": unused,
+        "missing_examples": missing_examples,
+        "resized_examples": resized_examples,
+        "incompatible_examples": incompatible_examples,
+    }
+
+
+def _load_checkpoint_state(
+    model: nn.Module, state: Mapping[str, torch.Tensor], *, allow_partial: bool
+) -> dict[str, object]:
+    """Attempt to load ``state`` strictly; fall back to partial loading on mismatch."""
+
+    total = len(model.state_dict())
+    try:
+        model.load_state_dict(state)
+        return {
+            "success": True,
+            "partial": False,
+            "total": total,
+            "reused": total,
+            "missing": 0,
+            "resized": 0,
+            "incompatible": 0,
+            "unused": 0,
+            "error": None,
+        }
+    except RuntimeError as err:
+        if not allow_partial:
+            raise RuntimeError(
+                "Checkpoint load failed due to parameter shape mismatch. "
+                "Delete the checkpoint or rerun with --allow-shape-mismatch-load to continue with partial weights."
+            ) from err
+        summary = _partial_state_dict_load(model, state)
+        summary.update({
+            "success": False,
+            "partial": True,
+            "error": err,
+        })
+        return summary
+
+
+def _log_partial_checkpoint_warning(summary: Mapping[str, object]) -> None:
+    """Explain how many tensors were reused vs. reinitialized."""
+
+    reused = int(summary.get("reused", 0))
+    total = int(summary.get("total", 0))
+    missing = int(summary.get("missing", 0))
+    resized = int(summary.get("resized", 0))
+    incompatible = int(summary.get("incompatible", 0))
+    unused = int(summary.get("unused", 0))
+    parts = [f"reused {reused}/{total} tensors"]
+    if missing:
+        parts.append(f"initialized {missing} new tensors")
+    if resized:
+        parts.append(f"cropped/extended {resized} tensors to fit new shapes")
+    if incompatible:
+        parts.append(f"skipped {incompatible} incompatible tensors")
+    if unused:
+        parts.append(f"ignored {unused} checkpoint-only tensors")
+    main = ", ".join(parts)
+    print(
+        color_text(
+            f"Checkpoint partially loaded ({main}). New parameters keep their default initialization.",
+            Colors.YELLOW,
+            bold=True,
+        )
+    )
+    resized_examples = summary.get("resized_examples", []) or []
+    if resized_examples:
+        print(color_text("Examples of tensors that were cropped/extended:", Colors.YELLOW))
+        for entry in resized_examples:
+            print(f"  - {entry}")
+    incompatible_examples = summary.get("incompatible_examples", []) or []
+    if incompatible_examples:
+        print(color_text("Examples of tensors that could not be mapped:", Colors.YELLOW))
+        for entry in incompatible_examples:
+            print(f"  - {entry}")
+    missing_examples = summary.get("missing_examples", []) or []
+    if missing_examples:
+        print(color_text("Examples of tensors only present in the new model:", Colors.YELLOW))
+        for name in missing_examples:
+            print(f"  - {name}")
+    print(color_text("Optimizer state discarded due to architecture changes.", Colors.YELLOW))
+    print(
+        color_text(
+            "Set --allow-shape-mismatch-load to enable this behavior explicitly in future runs.",
+            Colors.YELLOW,
+        )
+    )
+
+
 def _module_param_count(module: nn.Module) -> int:
     """Return ``sum(p.numel())`` for :func:`grce_cmd_size` sanity checks."""
 
@@ -3163,14 +3346,27 @@ class TransformerStackCore(nn.Module):
         super().__init__()
         config = args
         self.config = config
-        self.tok_emb = nn.Embedding(config.vocab_size, config.n_embd)
-        self.pos_emb = nn.Embedding(config.n_pos, config.n_embd)
-        self.control_emb = nn.Embedding(3, config.n_embd, padding_idx=0)
-        self.think_emb = ThinkEmbeddingLibrary(config.n_embd, think_spans=(2, 3, 4))
+        if config.n_embd % 2 != 0:
+            raise ValueError("n_embd must be even so embeddings can occupy even/odd slots")
+        self.embedding_dim = config.n_embd // 2
+        self.tok_emb = nn.Embedding(config.vocab_size, self.embedding_dim)
+        self.pos_emb = nn.Embedding(config.n_pos, self.embedding_dim)
+        self.control_emb = nn.Embedding(3, self.embedding_dim, padding_idx=0)
+        self.think_emb = ThinkEmbeddingLibrary(self.embedding_dim, think_spans=(2, 3, 4))
         self.drop = nn.Dropout(config.dropout)
         self.blocks = nn.ModuleList([Block(config) for _ in range(config.n_layer)])
         self.ln_f = nn.LayerNorm(config.n_embd)
-        self.head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+        self.head = nn.Linear(self.embedding_dim, config.vocab_size, bias=False)
+
+    def expand_to_even(self, tensor: torch.Tensor) -> torch.Tensor:
+        """Place half-width embedding features into the even data-path slots."""
+
+        return _expand_tensor_to_parity(tensor, self.config.n_embd, parity=0)
+
+    def output_features(self, tensor: torch.Tensor) -> torch.Tensor:
+        """Extract the odd data-path slots that feed into the LM head."""
+
+        return _select_parity_features(tensor, parity=1)
 
     def forward_grid(
         self,
@@ -3950,8 +4146,8 @@ class GRCEGPT(nn.Module):
         pos_idx = self._position_ids(T, B, device, position_offsets)
         if torch.any(pos_idx >= self.config.n_pos):
             raise ValueError("position ids exceed configured --n-pos")
-        tok = self.core.tok_emb(idx)
-        pos = self.core.pos_emb(pos_idx)
+        tok = self.core.expand_to_even(self.core.tok_emb(idx))
+        pos = self.core.expand_to_even(self.core.pos_emb(pos_idx))
         x = self.core.drop(tok + pos)
         context_info: dict[str, torch.Tensor] | None = None
         if mode in {"forward", "noattn", "encode"}:
@@ -3972,7 +4168,7 @@ class GRCEGPT(nn.Module):
             hidden = decode_output
         else:
             raise ValueError(f"Unknown forward_autoreg mode: {mode}")
-        logits = self.core.head(self.core.ln_f(hidden))
+        logits = self.core.head(self.core.output_features(self.core.ln_f(hidden)))
         return logits, None, context_info
 
     @contextmanager
@@ -4211,7 +4407,9 @@ def _run_microbatch_pass(
                     control_ids[:, start:end] = CONTROL_NONE
                     control_ids[:, end - 1 : end] = CONTROL_PREDICT_NEXT
                 control_slice = control_ids[:, start:end].clone()
-                control_embed = model.core.control_emb(control_slice)
+                control_embed = model.core.expand_to_even(
+                    model.core.control_emb(control_slice)
+                )
                 if mode == "reverse":
                     token_source = future_token_components
                     chunk_target = xb[:, start:end]
@@ -4260,7 +4458,9 @@ def _run_microbatch_pass(
                 if not getattr(segment, "context_enabled", True):
                     grce_state = prev_grce_state
                     xctx_state = prev_xctx_state
-                logits = model.core.head(model.core.ln_f(chunk_output))
+                logits = model.core.head(
+                    model.core.output_features(model.core.ln_f(chunk_output))
+                )
                 (
                     loss_sum,
                     token_count,
@@ -4518,8 +4718,8 @@ def _embedding_components_with_offsets(
 ) -> tuple[torch.Tensor, torch.Tensor]:
     batch_size, seq_len = token_batch.shape
     pos_idx = model._position_ids(seq_len, batch_size, token_batch.device, position_offsets)
-    token_emb = model.core.tok_emb(token_batch)
-    pos_emb = model.core.pos_emb(pos_idx)
+    token_emb = model.core.expand_to_even(model.core.tok_emb(token_batch))
+    pos_emb = model.core.expand_to_even(model.core.pos_emb(pos_idx))
     return token_emb, pos_emb
 
 
@@ -4608,8 +4808,9 @@ def _segment_think_slice(
         return None
     slot_sequence = core.think_emb.sequence(factor)
     template = slot_sequence.unsqueeze(0).repeat(tokens, 1, 1)
-    chunk = template.view(tokens * factor, -1)
-    return chunk.unsqueeze(0).expand(row_count, -1, -1).to(device)
+    chunk = template.view(tokens * factor, -1).to(device)
+    expanded = core.expand_to_even(chunk)
+    return expanded.unsqueeze(0).expand(row_count, -1, -1)
 
 
 def _segment_think_metadata(
@@ -5468,7 +5669,7 @@ def _evaluate_row_block(
             control_ids[:, start:end] = CONTROL_NONE
             control_ids[:, end - 1 : end] = CONTROL_PREDICT_NEXT
         control_slice = control_ids[:, start:end]
-        control_embed = model.core.control_emb(control_slice)
+        control_embed = model.core.expand_to_even(model.core.control_emb(control_slice))
         if segment.mode == "reverse":
             token_source = future_token_components
             chunk_target = expanded_inputs[:, start:end]
@@ -5523,7 +5724,7 @@ def _evaluate_row_block(
             grce_state = prev_grce_state
             xctx_state = prev_xctx_state
         target_ids[:, start:end] = chunk_target
-        logits = model.core.head(model.core.ln_f(chunk_output))
+        logits = model.core.head(model.core.output_features(model.core.ln_f(chunk_output)))
         logits_buffer.append(logits)
         loss_sum, token_count = loss_sum_and_token_count(
             logits,
@@ -6839,38 +7040,50 @@ class Runtime:
                     weights_only=False,  # checkpoints also store dataset offsets/counters
                 )
             if payload is not None:
-                try:
-                    if isinstance(payload, dict) and "model" in payload:
-                        self.args.completed_cycles = int(payload.get("completed_cycles", 0) or 0)
-                        upgraded = upgrade_state_dict(payload["model"])
-                        payload["model"] = upgraded
-                        model.load_state_dict(upgraded)
-                        total_steps = int(payload.get("total_steps", 0))
-                        loss_history = list(payload.get("loss_history", []))
-                        total_train_wall = float(payload.get("train_wall_seconds", 0.0))
-                        total_train_tokens = int(payload.get("total_train_tokens", 0) or 0)
-                        prompt_registry = PromptRegistry(
-                            tokenizer,
-                            payload.get("prompts"),
-                        )
+                load_summary: dict[str, object] | None = None
+                if isinstance(payload, dict) and "model" in payload:
+                    self.args.completed_cycles = int(payload.get("completed_cycles", 0) or 0)
+                    upgraded = upgrade_state_dict(payload["model"])
+                    payload["model"] = upgraded
+                    load_summary = _load_checkpoint_state(
+                        model,
+                        upgraded,
+                        allow_partial=self.args.allow_shape_mismatch_load,
+                    )
+                    if load_summary["success"]:
                         if self.args.checkpoint_optimizer:
                             optimizer_state = payload.get("optimizer")
-                        if "tokenizer_json" in payload:
-                            self.args.tokenizer_json_override = payload.get("tokenizer_json")
                     else:
-                        model.load_state_dict(upgrade_state_dict(payload))
-                    print(color_text(f"Loaded existing model from {model_path}", Colors.YELLOW))
-                    hours = total_train_wall / 3600.0
-                    days = hours / 24.0
-                    print(
-                        color_text(
-                            f"Total training so far: {total_steps} steps, {hours:.2f} hours ({days:.2f} days)",
-                            Colors.YELLOW,
-                        )
+                        optimizer_state = None
+                        _log_partial_checkpoint_warning(load_summary)
+                    total_steps = int(payload.get("total_steps", 0))
+                    loss_history = list(payload.get("loss_history", []))
+                    total_train_wall = float(payload.get("train_wall_seconds", 0.0))
+                    total_train_tokens = int(payload.get("total_train_tokens", 0) or 0)
+                    prompt_registry = PromptRegistry(
+                        tokenizer,
+                        payload.get("prompts"),
                     )
-                except RuntimeError as err:
-                    print(color_text("Checkpoint load failed (shape mismatch); starting fresh.", Colors.RED, bold=True))
-                    print(color_text(str(err), Colors.RED))
+                    if "tokenizer_json" in payload:
+                        self.args.tokenizer_json_override = payload.get("tokenizer_json")
+                else:
+                    load_summary = _load_checkpoint_state(
+                        model,
+                        upgrade_state_dict(payload),
+                        allow_partial=self.args.allow_shape_mismatch_load,
+                    )
+                    if not load_summary["success"]:
+                        optimizer_state = None
+                        _log_partial_checkpoint_warning(load_summary)
+                print(color_text(f"Loaded existing model from {model_path}", Colors.YELLOW))
+                hours = total_train_wall / 3600.0
+                days = hours / 24.0
+                print(
+                    color_text(
+                        f"Total training so far: {total_steps} steps, {hours:.2f} hours ({days:.2f} days)",
+                        Colors.YELLOW,
+                    )
+                )
             elif self.args.command == "create" and self.args.create_args.import_model:
                 import_timer = Timer().start()
                 if not self.args.create_args.import_model.exists():
