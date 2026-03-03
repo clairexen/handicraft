@@ -567,7 +567,6 @@ Modifiers for the [...] block can be inserted directly before the [ char:
 	c   enable --no-detach-ctx for the [...] block
 	T   freeze recurrent parameters so only the transformer stack learns
 	C   freeze transformer parameters so only the context/recurrent channels learn
-	P   suppress positional encodings within this block
 	H   don't add the loss values from this block to the typed metrics, only {test,train}_loss
 
 In this context "transformer parameters" include everything that shapes the
@@ -590,11 +589,6 @@ Lowercase `r` defines a "reverse" sequence: it behaves like `d` (decode)
 but uses the transpose of the standard causal mask, so each position attends
 to future tokens instead of the past. Uppercase `R` works the same way but
 disables recurrent/context updates, mirroring how `E/D/F/N` behave.
-
-Appending `p`/`P` to a mode (e.g. `16ep` or `4Rp`) suppresses positional
-embeddings inside that block. This trains the model to rely on contextual
-state for indexing rather than absolute positions; the uppercase/lowercase
-rules still apply in addition to the positional suppression.
 
 Likewise `h`/`H` (hide typed losses) can be appended to a mode to suppress
 adding those losses to the typed metrics. For example *[16e=*th2x=*t4x]
@@ -725,9 +719,6 @@ embedding names that correspond to special tokens below.
   during training this is added to all tokens except the <|----|>
   article seperator and the direction is kept constant within an
   article, and changed at the article boundary.
-
-[|pos:0|] [|pos:1|] ... [|pos:BS-1|]
-  position embeddings for the max BS positions in a sequence
 
 [|think:1/2|] [|think:2/2|]
   additional "think" embeddings for think2x mode, in think2x
