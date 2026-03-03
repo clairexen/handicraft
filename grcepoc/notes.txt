@@ -502,10 +502,9 @@ Next we have a single 4-row by 48-column "forward" sequence. Finally there's a
 single-row sequence with 8 columns of "forward", followed by 8 columns of
 "decode", and another 8 columns of "forward".
 
-We remove all --rows-*, --cols-*, --split-* CLI options, and --batch-layout,
-and replace it all by a single --layout STR option, that accepts the above
-syntax. A warning is generated when the number of rows exceeds --batch-size
-or the number of cols in any row exceeds --n-pos/--block-size.
+The --layout STR option, that accepts the above syntax. A warning is generated
+when the number of rows exceeds --batch-size or the number of cols in any row
+exceeds --n-pos/--block-size.
 
 There's more syntax to introduce randomness and dynamically adjust a layout
 to a given --batch-size and --n-pos/--block-size. Consider this layout:
@@ -602,6 +601,14 @@ in the "think" category rather than "forward".
 We also allow # instead of = for chaining sequences inside of a [...] block.
 The difference is that with # we drop the entire k/v-history at this point,
 so only the recurrent channels can pass information along that barrier.
+
+After a segment’s mode you may append `>metric1>metric2` to accrue its loss
+into extra metric buckets. For instance `*[8f>first=8f>second]` adds the
+losses from each segment to the built-in `forward` metric and also to the
+named buckets `first`/`second`. Using `>>metric` suppresses the default bucket
+so the loss only contributes to the named metrics. The live per-step log shows
+these extras in a `> foo bar ...` suffix, and `--hide-default-metrics` hides
+the default mode columns so only the custom metrics remain.
 
 
 ## Thinking Models -- (this is work in progress)
