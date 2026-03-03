@@ -131,6 +131,7 @@ class Defaults:
     eval_interval: int = 10
     dropout: float = 0.05
     detach_span: int = 0
+    detach_think_span: int = 0
     log_step_details: bool = False
     log_row_details: bool = False
     lr_base: float = 3e-4
@@ -1204,6 +1205,15 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         type=int,
         default=DEFAULTS.detach_span,
         help="Detach GRCE context gradients every N positions (0 disables detaching).",
+    )
+    training_group.add_argument(
+        "--detach-think-span",
+        type=int,
+        default=DEFAULTS.detach_think_span,
+        help=(
+            "When think spans are present, isolate groups of N spans by detaching the recurrent"
+            " state and KV cache replicas at their boundaries (0 disables detaching)."
+        ),
     )
     training_group.add_argument(
         "--no-detach-ctx",
@@ -3929,6 +3939,7 @@ class TransformerStackSequence(nn.Module):
         self.grce = TransformerGRCE(config) if config.n_grce > 0 else None
         self.xctx = TransformerXCTX(config) if config.n_xctx > 0 else None
         self.kv_rebalance = args.kv_rebalance
+        self.detach_think_span = max(0, int(getattr(config, "detach_think_span", 0)))
         modules = [m for m in (self.grce, self.xctx) if m is not None]
         self.context_modules = nn.ModuleList(modules)
         self.column = TransformerStackColumn(self.core, self.grce, self.xctx)
@@ -4037,6 +4048,25 @@ class TransformerStackSequence(nn.Module):
         if detach_internal_kv_cache:
             kv_storage = self._allocate_detached_kv_storage(rows, cols, device, dtype)
         loop_residual: torch.Tensor | None = None
+        think_group_size = self.detach_think_span
+        think_detach_active = (
+            think_group_size > 0
+            and think_step_index is not None
+            and think_step_count is not None
+        )
+        think_span_counter = 0
+
+        def _detach_think_boundary() -> None:
+            nonlocal grce_state, xctx_state, base_sources, kv_history
+            if grce_state is not None:
+                grce_state = grce_state.detach()
+            if xctx_state is not None:
+                xctx_state = xctx_state.detach()
+            if base_sources:
+                base_sources = kv_cache_list_detach(base_sources)
+            if (not detach_internal_kv_cache) and kv_history:
+                kv_history = kv_cache_list_detach(kv_history)
+
         for col in range(cols):
             column_input = x[:, col : col + 1, :]
             column_position = None
@@ -4048,10 +4078,18 @@ class TransformerStackSequence(nn.Module):
             else:
                 step_index = 1
                 step_count = 1
+            is_think_column = think_detach_active and step_count > 1
             if step_index <= 1:
                 loop_residual = None
             if loop_residual is not None:
                 column_input = column_input + loop_residual
+            if think_detach_active and is_think_column and step_index == 1:
+                think_span_counter += 1
+                span_offset = (think_span_counter - 1) % think_group_size
+                if span_offset == 0:
+                    _detach_think_boundary()
+            elif think_detach_active and not is_think_column:
+                think_span_counter = 0
             column_kv_sources: list[Sequence[tuple[torch.Tensor, torch.Tensor] | None]] = []
             if base_sources:
                 column_kv_sources.extend(base_sources)
@@ -4116,6 +4154,16 @@ class TransformerStackSequence(nn.Module):
                     detach_ctx_enabled=context_detach_enabled,
                     detach_span_override=context_detach_span,
                 )
+            if think_detach_active and is_think_column and step_index == step_count:
+                next_is_think = False
+                if (col + 1) < cols:
+                    next_step_count = int(think_step_count[col + 1].item())
+                    next_is_think = next_step_count > 1
+                group_closed = (think_span_counter % think_group_size) == 0
+                if group_closed or (not next_is_think):
+                    _detach_think_boundary()
+                if not next_is_think:
+                    think_span_counter = 0
         stacked = torch.cat(outputs, dim=1)
         if detach_internal_kv_cache and kv_storage is not None:
             kv_out_base = [
