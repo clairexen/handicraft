@@ -533,7 +533,7 @@ def _parse_segment_spec(text: str, connector: str | None) -> SegmentSpec:
         if not context_enabled:
             raise LayoutParseError("Think multipliers require context-enabled segments")
     size_spec = CountSpec.parse(size_token or "1")
-    if connector not in {None, "=", ">"}:
+    if connector not in {None, "=", "#"}:
         raise LayoutParseError(f"Unsupported segment connector '{connector}'")
     return SegmentSpec(
         size_spec,
@@ -4491,8 +4491,8 @@ def _run_microbatch_pass(
                     continue
                 mode = segment.mode
                 connector = getattr(segment, "connector", None)
-            if connector == "#":
-                kv_chain = []
+                if connector == "#":
+                    kv_chain = []
                 start = cursor
                 end = cursor + cols
                 if mode == "reverse":
@@ -4613,12 +4613,14 @@ def train_layout_batch(
     micro_logs: list[tuple[int, float, float, str]] = []
     detail_entries: list[dict[str, object]] = []
     layout_text = layout.serialize()
+    last_rows_text = ""
     for index, batch in enumerate(layout.micro_batches, start=1):
         micro_span = sum(row.token_span() for row in batch)
         if micro_span <= 0:
             micro_logs.append((index, 0.0, 0.0, layout.serialize_rows(batch)))
             continue
         rows_text = layout.serialize_rows(batch)
+        last_rows_text = rows_text
         micro_detail = {
             "index": index,
             "token_span": micro_span,
@@ -4663,7 +4665,9 @@ def train_layout_batch(
         )
         total_tokens += result.total_tokens
     if total_loss_sum is None:
-        raise RuntimeError("Layout batch produced no tokens")
+        raise RuntimeError(
+            f"Layout batch produced no tokens (last rows: {last_rows_text or '<none>'})"
+        )
     meta_entry: dict[str, object] = {"rows": detail_entries}
     return total_loss_sum, total_tokens, micro_logs, meta_entry
 
