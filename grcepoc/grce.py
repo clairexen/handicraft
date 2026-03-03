@@ -360,6 +360,8 @@ class SegmentSpec:
     think_factor: int = 1
     metric_mode: str | None = None
     hide_typed_metrics: bool = False
+    extra_metrics: tuple[str, ...] = ()
+    suppress_default_metric: bool = False
 
 
 @dataclass(frozen=True)
@@ -391,6 +393,8 @@ class SegmentLayout:
     think_factor: int = 1
     metric_mode: str | None = None
     hide_typed_metrics: bool = False
+    extra_metrics: tuple[str, ...] = ()
+    suppress_default_metric: bool = False
 
     def token_columns(self) -> int:
         if self.think_factor <= 1:
@@ -499,9 +503,16 @@ def _parse_segment_spec(text: str, connector: str | None) -> SegmentSpec:
     if index == len(text):
         raise LayoutParseError(f"Missing mode in segment '{text}'")
     size_token = text[:index]
-    mode_token = text[index:]
-    if not mode_token:
+    mode_with_metrics = text[index:]
+    if not mode_with_metrics:
         raise LayoutParseError("Missing mode in segment")
+    metric_text = ""
+    gt_index = mode_with_metrics.find('>')
+    if gt_index != -1:
+        metric_text = mode_with_metrics[gt_index:]
+        mode_token = mode_with_metrics[:gt_index]
+    else:
+        mode_token = mode_with_metrics
     think_factor = 1
     for suffix in ("2x", "3x", "4x"):
         if mode_token.lower().endswith(suffix):
@@ -535,6 +546,21 @@ def _parse_segment_spec(text: str, connector: str | None) -> SegmentSpec:
     size_spec = CountSpec.parse(size_token or "1")
     if connector not in {None, "=", "#"}:
         raise LayoutParseError(f"Unsupported segment connector '{connector}'")
+    extra_metrics: list[str] = []
+    suppress_default = False
+    if metric_text:
+        if metric_text.startswith('>>'):
+            suppress_default = True
+            metric_body = metric_text[2:]
+        elif metric_text.startswith('>'):
+            metric_body = metric_text[1:]
+        else:
+            raise LayoutParseError("Metric annotations must start with '>' or '>>'")
+        if not metric_body:
+            raise LayoutParseError("Metric annotations require at least one name")
+        extra_metrics = [part for part in metric_body.split('>') if part]
+        if not extra_metrics:
+            raise LayoutParseError("Metric annotations require non-empty names")
     return SegmentSpec(
         size_spec,
         _MODE_ALIASES[mode_key],
@@ -543,6 +569,8 @@ def _parse_segment_spec(text: str, connector: str | None) -> SegmentSpec:
         think_factor=think_factor,
         metric_mode=metric_mode,
         hide_typed_metrics=hide_typed_metrics,
+        extra_metrics=tuple(extra_metrics),
+        suppress_default_metric=suppress_default,
     )
 
 
@@ -719,6 +747,11 @@ class BatchLayout:
             raise LayoutParseError("Layout string is empty")
         self.micro_batches = [self._materialize_rows(specs) for specs in self.micro_specs]
         self.rows = [row for batch in self.micro_batches for row in batch]
+        extra_names: set[str] = set()
+        for row in self.rows:
+            for segment in row.segments:
+                extra_names.update(getattr(segment, "extra_metrics", ()))
+        self.extra_metric_names = sorted(extra_names)
 
     def micro_token_spans(self) -> list[int]:
         spans: list[int] = []
@@ -784,6 +817,8 @@ class BatchLayout:
                     think_factor=think_factor,
                     metric_mode=getattr(spec, "metric_mode", None),
                     hide_typed_metrics=getattr(spec, "hide_typed_metrics", False),
+                    extra_metrics=getattr(spec, "extra_metrics", ()),
+                    suppress_default_metric=getattr(spec, "suppress_default_metric", False),
                 )
             )
         max_cols = sum(segment.columns for segment in segments)
@@ -816,7 +851,12 @@ class BatchLayout:
                 think_suffix = ""
                 if getattr(segment, "think_factor", 1) and segment.think_factor > 1:
                     think_suffix = f"{segment.think_factor}x"
-                bit = f"{segment.columns}{letter}{hide_suffix}{think_suffix}"
+                metric_suffix = ""
+                extra = getattr(segment, "extra_metrics", ())
+                if extra:
+                    prefix = ">>" if getattr(segment, "suppress_default_metric", False) else ">"
+                    metric_suffix = prefix + ">".join(extra)
+                bit = f"{segment.columns}{letter}{hide_suffix}{think_suffix}{metric_suffix}"
                 if idx > 0:
                     connector = segment.connector or "="
                     bit = connector + bit
@@ -1041,6 +1081,11 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         action="store_true",
         default=DEFAULTS.log_row_details,
         help="Print per-row metrics and window spans (implies --log-step-details)",
+    )
+    training_group.add_argument(
+        "--hide-default-metrics",
+        action="store_true",
+        help="Collapse the per-mode log columns and show only custom metric tags.",
     )
     training_group.add_argument(
         "--lr-base",
@@ -4388,15 +4433,20 @@ class EvalBatchStats:
 def _combine_eval_stats(stats_list: Sequence[EvalBatchStats]) -> EvalBatchStats:
     """Merge multiple evaluation runs by summing loss totals and counts."""
 
-    keys = list(BATCH_MODES) + ["target"]
-    combined_sums = {key: 0.0 for key in keys}
-    combined_counts = {key: 0 for key in keys}
+    key_set: set[str] = {"target"}
     for stats in stats_list:
-        for key in keys:
+        key_set.update(stats.loss_sums.keys())
+    ordered_keys = list(BATCH_MODES)
+    extras = sorted(key for key in key_set if key not in set(ordered_keys) | {"target"})
+    ordered_keys += extras + ["target"]
+    combined_sums = {key: 0.0 for key in ordered_keys}
+    combined_counts = {key: 0 for key in ordered_keys}
+    for stats in stats_list:
+        for key in ordered_keys:
             combined_sums[key] += stats.loss_sums.get(key, 0.0)
             combined_counts[key] += stats.token_counts.get(key, 0)
-    metrics = {key: None for key in keys}
-    for key in keys:
+    metrics = {key: None for key in ordered_keys}
+    for key in ordered_keys:
         count = combined_counts[key]
         if count > 0:
             metrics[key] = combined_sums[key] / count
@@ -4624,29 +4674,44 @@ def _run_microbatch_pass(
                     total_loss_sum = (
                         loss_sum if total_loss_sum is None else total_loss_sum + loss_sum
                     )
+                    loss_value = float(loss_sum.detach().item())
                     metric_key = segment.metric_mode or mode
                     if (
                         collect_mode_metrics
                         and not getattr(segment, "hide_typed_metrics", False)
-                        and metric_key in mode_loss_sums
+                        and not getattr(segment, "suppress_default_metric", False)
                     ):
-                        mode_loss_sums[metric_key] += float(loss_sum.detach().item())
+                        if metric_key not in mode_loss_sums:
+                            mode_loss_sums[metric_key] = 0.0
+                            mode_token_counts[metric_key] = 0
+                        mode_loss_sums[metric_key] += loss_value
                         mode_token_counts[metric_key] += token_count
-                        if row_loss_sums is not None and row_token_counts is not None:
-                            loss_values = row_loss_sums.detach().cpu().tolist()
-                            token_values = row_token_counts.detach().cpu().tolist()
-                            for idx, entry in enumerate(row_entries):
-                                if idx >= len(loss_values):
-                                    break
-                                entry["loss_sum"] = entry.get("loss_sum", 0.0) + float(loss_values[idx])
-                                entry["token_count"] = (
-                                    int(entry.get("token_count", 0)) + int(token_values[idx])
-                                )
+                    for tag in getattr(segment, "extra_metrics", ()):
+                        if tag not in mode_loss_sums:
+                            mode_loss_sums[tag] = 0.0
+                            mode_token_counts[tag] = 0
+                        mode_loss_sums[tag] += loss_value
+                        mode_token_counts[tag] += token_count
+                    if row_loss_sums is not None and row_token_counts is not None:
+                        loss_values = row_loss_sums.detach().cpu().tolist()
+                        token_values = row_token_counts.detach().cpu().tolist()
+                        for idx, entry in enumerate(row_entries):
+                            if idx >= len(loss_values):
+                                break
+                            entry["loss_sum"] = entry.get("loss_sum", 0.0) + float(loss_values[idx])
+                            entry["token_count"] = (
+                                int(entry.get("token_count", 0)) + int(token_values[idx])
+                            )
                     if mode != "noattn":
                         kv_chain.append(kv_out)
                 cursor += cols
             row_details.extend(row_entries)
-    result = LayoutPassResult(total_loss_sum, total_tokens, mode_loss_sums, mode_token_counts)
+    result = LayoutPassResult(
+        total_loss_sum,
+        total_tokens,
+        dict(mode_loss_sums),
+        dict(mode_token_counts),
+    )
     return result, time.time() - start_time, row_details
 
 
@@ -4736,16 +4801,18 @@ def evaluate_layout_batch(
     device: torch.device,
 ) -> EvalBatchStats:
     step_span = layout.total_token_span()
-    aggregate_loss_sums = {mode: 0.0 for mode in BATCH_MODES}
-    aggregate_token_counts = {mode: 0 for mode in BATCH_MODES}
+    aggregate_loss_sums: dict[str, float] = {mode: 0.0 for mode in BATCH_MODES}
+    aggregate_token_counts: dict[str, int] = {mode: 0 for mode in BATCH_MODES}
     total_loss_sum: torch.Tensor | None = None
     total_tokens = 0
     if step_span <= 0:
-        metrics: dict[str, float | None] = {mode: None for mode in BATCH_MODES}
+        base_keys = list(BATCH_MODES)
+        extra_keys = list(layout.extra_metric_names)
+        metrics: dict[str, float | None] = {mode: None for mode in base_keys + extra_keys}
         metrics["target"] = None
-        loss_sums = {mode: 0.0 for mode in BATCH_MODES}
+        loss_sums = {mode: 0.0 for mode in base_keys + extra_keys}
         loss_sums["target"] = 0.0
-        token_counts = {mode: 0 for mode in BATCH_MODES}
+        token_counts = {mode: 0 for mode in base_keys + extra_keys}
         token_counts["target"] = 0
         return EvalBatchStats(metrics, loss_sums, token_counts)
     window_rng = random.Random()
@@ -4770,14 +4837,20 @@ def evaluate_layout_batch(
                 else total_loss_sum + result.total_loss_sum
             )
         total_tokens += result.total_tokens
-        for mode in BATCH_MODES:
-            aggregate_loss_sums[mode] += result.mode_loss_sums.get(mode, 0.0)
-            aggregate_token_counts[mode] += result.mode_token_counts.get(mode, 0)
-    metrics: dict[str, float | None] = {mode: None for mode in BATCH_MODES}
-    loss_sums = {mode: aggregate_loss_sums[mode] for mode in BATCH_MODES}
-    token_counts = {mode: aggregate_token_counts[mode] for mode in BATCH_MODES}
+        for key, value in result.mode_loss_sums.items():
+            aggregate_loss_sums[key] = aggregate_loss_sums.get(key, 0.0) + value
+        for key, value in result.mode_token_counts.items():
+            aggregate_token_counts[key] = aggregate_token_counts.get(key, 0) + value
+    base_keys = list(BATCH_MODES)
+    extra_keys = sorted(
+        key for key in aggregate_loss_sums.keys() if key not in base_keys
+    )
+    all_keys = base_keys + extra_keys
+    metrics: dict[str, float | None] = {mode: None for mode in all_keys}
+    loss_sums = {mode: aggregate_loss_sums.get(mode, 0.0) for mode in all_keys}
+    token_counts = {mode: aggregate_token_counts.get(mode, 0) for mode in all_keys}
     total_loss_value = float(total_loss_sum.item()) if total_loss_sum is not None else 0.0
-    for mode in BATCH_MODES:
+    for mode in all_keys:
         count = token_counts[mode]
         if count > 0:
             metrics[mode] = loss_sums[mode] / count
@@ -5167,7 +5240,19 @@ def train_model(
     run_total_steps = max(1, args.steps * args.cycles)
     current_lr = args.lr_base
 
-    long_loss_header = " ".join([""] + [f"{': ' if key in ROW_METRIC_LOG_GROUP else ''}{key}" for key in ROW_METRIC_LOG_KEYS])
+    header_probe = BatchLayout(
+        args.layout,
+        batch_size=batch_size,
+        block_size=block_size,
+        rng=random.Random(0),
+    )
+    header_extra_metric_keys = header_probe.extra_metric_names
+    long_loss_header = " ".join(
+        [""] + [f"{': ' if key in ROW_METRIC_LOG_GROUP else ''}{key}" for key in ROW_METRIC_LOG_KEYS]
+    )
+    show_default_metrics = not getattr(args, "hide_default_metrics", False)
+    if not show_default_metrics:
+        long_loss_header = ""
 
     header_columns: List[Tuple[str, str]] = []
     if show_time:
@@ -5175,16 +5260,23 @@ def train_model(
     header_columns.append(("step", Colors.CYAN))
     header_columns.append(
         (
-            "train" + (long_loss_header if show_train_loss_details else ""),
+            "train" + (long_loss_header if show_train_loss_details and show_default_metrics else ""),
             Colors.MAGENTA,
         )
     )
     header_columns.append(
         (
-            "test" + (long_loss_header if show_test_loss_details else ""),
+            "test" + (long_loss_header if show_test_loss_details and show_default_metrics else ""),
             Colors.GREEN,
         )
     )
+    if header_extra_metric_keys:
+        header_columns.append(
+            (
+                "> " + " ".join(header_extra_metric_keys),
+                Colors.WHITE,
+            )
+        )
     header_columns.append(("lr", Colors.YELLOW))
     header_line = " | ".join(color_text(label, color) for label, color in header_columns)
     print(header_line + " |")
@@ -5468,38 +5560,65 @@ def train_model(
         sample_render = (Colors.YELLOW if sampling_strategy == 'argmax' else Colors.CYAN) + \
                         f"{sampling_strategy}:{Colors.RESET} " + sample_prefix + sample_suffix
 
-        def format_metric(dataset_split: str, key: str) -> str:
+        def format_metric(dataset_split: str, key: str, *, sep_override: str | None = None) -> str:
             value = eval_metrics[dataset_split].metrics.get(key)
-            if key in ROW_METRIC_LOG_GROUP:
-                sep = ": "
-            else:
-                sep = ""
+            sep = sep_override if sep_override is not None else (
+                ": " if key in ROW_METRIC_LOG_GROUP else ""
+            )
             if value is None:
                 return f"{sep}****"
             return f"{sep}{value:.2f}"
 
+        def metric_value_text(dataset_split: str, key: str) -> str:
+            value = eval_metrics[dataset_split].metrics.get(key)
+            return "****" if value is None else f"{value:.2f}"
+
         detail_keys = ROW_METRIC_LOG_KEYS
 
         def format_train_line() -> str:
-            base = format_metric("train", "target")
-            if not show_train_loss_details:
-                return base
-            diag = " ".join(
-                format_metric("train", key) for key in detail_keys
-            )
-            return f"{base} {diag}"
+            base = format_metric("train", "target", sep_override="")
+            if show_default_metrics and show_train_loss_details:
+                diag = " ".join(format_metric("train", key) for key in detail_keys)
+                if diag.strip():
+                    base = f"{base} {diag}"
+            return base
 
         def format_test_line() -> str:
-            base = format_metric("test", "target")
-            if not show_test_loss_details:
-                return base
-            diag = " ".join(
-                format_metric("test", key) for key in detail_keys
-            )
-            return f"{base} {diag}"
+            base = format_metric("test", "target", sep_override="")
+            if show_default_metrics and show_test_loss_details:
+                diag = " ".join(format_metric("test", key) for key in detail_keys)
+                if diag.strip():
+                    base = f"{base} {diag}"
+            return base
+
+        def format_extra_metrics_block(keys: Sequence[str]) -> str:
+            if not keys:
+                return ""
+            parts = []
+            for key in keys:
+                train_text = metric_value_text("train", key)
+                test_text = metric_value_text("test", key)
+                parts.append(f"{key} {train_text}/{test_text}")
+            return "> " + " ".join(parts)
+
+        active_extra_metrics = sorted(
+            set(header_extra_metric_keys)
+            | set(layout.extra_metric_names)
+            | {
+                key
+                for key in eval_metrics["train"].metrics.keys()
+                if key not in ROW_METRIC_LOG_KEYS and key != "target"
+            }
+            | {
+                key
+                for key in eval_metrics["test"].metrics.keys()
+                if key not in ROW_METRIC_LOG_KEYS and key != "target"
+            }
+        )
 
         train_values = format_train_line()
         test_values = format_test_line()
+        extra_metrics_text = format_extra_metrics_block(active_extra_metrics)
         line_parts: List[str] = []
         if show_time:
             timestamp = time.strftime("%H:%M", time.localtime())
@@ -5507,6 +5626,8 @@ def train_model(
         line_parts.append(color_text(f"{total_steps}", Colors.CYAN))
         line_parts.append(color_text(train_values, Colors.MAGENTA))
         line_parts.append(color_text(test_values, Colors.GREEN))
+        if extra_metrics_text:
+            line_parts.append(color_text(extra_metrics_text, Colors.WHITE))
         line_parts.append(color_text(f"{current_lr:.2e}", Colors.YELLOW))
         line = " | ".join(line_parts) + " | " + sample_render
         print(line)
@@ -5529,6 +5650,12 @@ def train_model(
         record["batch_layout"] = layout_serialized
         record["learning_rate"] = current_lr
         metric_keys = list(ROW_METRIC_HIST_KEYS)
+        extra_history_keys = sorted(
+            key
+            for key in eval_metrics["train"].metrics.keys()
+            if key not in metric_keys and key != "target"
+        )
+        metric_keys.extend(extra_history_keys)
         for key in metric_keys:
             train_val = eval_metrics["train"].metrics.get(key)
             test_val = eval_metrics["test"].metrics.get(key)
@@ -5857,6 +5984,7 @@ def _evaluate_row_block(
         else:
             token_source = token_components
             chunk_target = expanded_targets[:, start:end]
+        token_slice = token_source[:, start:end, :]
         think_index, think_count, think_mask = _segment_think_metadata(
             segment,
             cols,
@@ -5917,9 +6045,18 @@ def _evaluate_row_block(
         column_modes[start:end] = [metric_key] * (end - start)
         if token_count > 0:
             loss_value = float(loss_sum.detach().item())
-            if not getattr(segment, "hide_typed_metrics", False) and metric_key in mode_loss_sums:
+            if not getattr(segment, "hide_typed_metrics", False) and not segment.suppress_default_metric:
+                if metric_key not in mode_loss_sums:
+                    mode_loss_sums[metric_key] = 0.0
+                    mode_token_counts[metric_key] = 0
                 mode_loss_sums[metric_key] += loss_value
                 mode_token_counts[metric_key] += token_count
+            for tag in getattr(segment, "extra_metrics", ()):
+                if tag not in mode_loss_sums:
+                    mode_loss_sums[tag] = 0.0
+                    mode_token_counts[tag] = 0
+                mode_loss_sums[tag] += loss_value
+                mode_token_counts[tag] += token_count
             total_loss += loss_value
             total_tokens += token_count
         if segment.mode != "noattn":
@@ -6264,17 +6401,15 @@ def run_eval_layout(
                 print(color_text(f"Row block #{row_idx}: {row_desc} -> error: {exc}", Colors.RED))
                 continue
 
-            metrics: dict[str, float | None] = {}
-            if row_result.total_tokens > 0:
-                metrics["target"] = row_result.total_loss_sum / row_result.total_tokens
-            else:
-                metrics["target"] = None
-            for mode in BATCH_MODES:
-                count = row_result.mode_token_counts.get(mode, 0)
-                if count > 0:
-                    metrics[mode] = row_result.mode_loss_sums.get(mode, 0.0) / count
-                else:
-                    metrics[mode] = None
+        metrics: dict[str, float | None] = {}
+        keys = set(row_result.mode_loss_sums.keys()) | set(BATCH_MODES)
+        if row_result.total_tokens > 0:
+            metrics["target"] = row_result.total_loss_sum / row_result.total_tokens
+        else:
+            metrics["target"] = None
+        for mode in keys:
+            count = row_result.mode_token_counts.get(mode, 0)
+            metrics[mode] = row_result.mode_loss_sums.get(mode, 0.0) / count if count > 0 else None
 
             line = format_metrics(metrics)
             print(f"Row block #{row_idx}: {row_desc} (rows={row.rows}) -> {line}")
@@ -6284,12 +6419,19 @@ def run_eval_layout(
                 continue
             overall_loss_sums["target"] += row_result.total_loss_sum * weight
             overall_token_counts["target"] += row_result.total_tokens * weight
-            for mode in BATCH_MODES:
-                overall_loss_sums[mode] += row_result.mode_loss_sums.get(mode, 0.0) * weight
+            for mode, value in row_result.mode_loss_sums.items():
+                overall_loss_sums.setdefault(mode, 0.0)
+                overall_token_counts.setdefault(mode, 0)
+                overall_loss_sums[mode] += value * weight
                 overall_token_counts[mode] += row_result.mode_token_counts.get(mode, 0) * weight
 
         overall_metrics: dict[str, float | None] = {}
-        for key in ["target"] + list(BATCH_MODES):
+        combined_keys = ["target"] + list(BATCH_MODES) + sorted(
+            key
+            for key in overall_loss_sums.keys()
+            if key not in BATCH_MODES and key != "target"
+        )
+        for key in combined_keys:
             count = overall_token_counts.get(key, 0)
             if count > 0:
                 overall_metrics[key] = overall_loss_sums.get(key, 0.0) / count
