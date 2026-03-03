@@ -3468,6 +3468,7 @@ class TransformerStackCore(nn.Module):
         self.drop = nn.Dropout(config.dropout)
         self.blocks = nn.ModuleList([Block(config) for _ in range(config.n_layer)])
         self.ln_f = nn.LayerNorm(config.n_width)
+        self.loop_ln = nn.LayerNorm(config.n_width)
         self.head = nn.Linear(self.embedding_dim, config.vocab_size, bias=False)
 
     def expand_to_even(self, tensor: torch.Tensor) -> torch.Tensor:
@@ -4037,7 +4038,7 @@ class TransformerStackSequence(nn.Module):
             )
             outputs.append(column_output)
             if step_count > 1 and step_index < step_count:
-                loop_residual = self.core.ln_f(column_output)
+                loop_residual = self.loop_ln(column_output)
             else:
                 loop_residual = None
             if detach_internal_kv_cache and kv_storage is not None:
