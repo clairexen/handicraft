@@ -1083,11 +1083,6 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         help="Print per-row metrics and window spans (implies --log-step-details)",
     )
     training_group.add_argument(
-        "--hide-default-metrics",
-        action="store_true",
-        help="Collapse the per-mode log columns and show only custom metric tags.",
-    )
-    training_group.add_argument(
         "--lr-base",
         type=float,
         default=DEFAULTS.lr_base,
@@ -5250,9 +5245,6 @@ def train_model(
     long_loss_header = " ".join(
         [""] + [f"{': ' if key in ROW_METRIC_LOG_GROUP else ''}{key}" for key in ROW_METRIC_LOG_KEYS]
     )
-    show_default_metrics = not getattr(args, "hide_default_metrics", False)
-    if not show_default_metrics:
-        long_loss_header = ""
 
     header_columns: List[Tuple[str, str]] = []
     if show_time:
@@ -5260,20 +5252,20 @@ def train_model(
     header_columns.append(("step", Colors.CYAN))
     header_columns.append(
         (
-            "train" + (long_loss_header if show_train_loss_details and show_default_metrics else ""),
+            "train" + (long_loss_header if show_train_loss_details else ""),
             Colors.MAGENTA,
         )
     )
     header_columns.append(
         (
-            "test" + (long_loss_header if show_test_loss_details and show_default_metrics else ""),
+            "test" + (long_loss_header if show_test_loss_details else ""),
             Colors.GREEN,
         )
     )
     if header_extra_metric_keys:
         header_columns.append(
             (
-                "> " + " ".join(header_extra_metric_keys),
+                " ".join(header_extra_metric_keys),
                 Colors.WHITE,
             )
         )
@@ -5577,7 +5569,7 @@ def train_model(
 
         def format_train_line() -> str:
             base = format_metric("train", "target", sep_override="")
-            if show_default_metrics and show_train_loss_details:
+            if show_train_loss_details:
                 diag = " ".join(format_metric("train", key) for key in detail_keys)
                 if diag.strip():
                     base = f"{base} {diag}"
@@ -5585,7 +5577,7 @@ def train_model(
 
         def format_test_line() -> str:
             base = format_metric("test", "target", sep_override="")
-            if show_default_metrics and show_test_loss_details:
+            if show_test_loss_details:
                 diag = " ".join(format_metric("test", key) for key in detail_keys)
                 if diag.strip():
                     base = f"{base} {diag}"
@@ -5596,10 +5588,8 @@ def train_model(
                 return ""
             parts = []
             for key in keys:
-                train_text = metric_value_text("train", key)
-                test_text = metric_value_text("test", key)
-                parts.append(f"{key} {train_text}/{test_text}")
-            return "> " + " ".join(parts)
+                parts.append(metric_value_text("test", key))
+            return " ".join(parts)
 
         active_extra_metrics = sorted(
             set(header_extra_metric_keys)

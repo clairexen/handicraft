@@ -12,39 +12,6 @@ from typing import Dict, List, Tuple
 import matplotlib.pyplot as plt
 import numpy as np
 
-LEGACY_SPECIAL_FIELDS = {
-    # "train_loss_noatt": "train_loss_noattn",
-    # "test_loss_noatt": "test_loss_noattn",
-}
-
-ALLOWED_FIELDS = {
-    "step",
-    "step_split_eval",
-    "batch_layout",
-    "train_loss",
-    # "train_loss_target",
-    "train_loss_encode",
-    "train_loss_decode",
-    "train_loss_forward",
-    "train_loss_noattn",
-    "test_loss",
-    # "test_loss_target",
-    "test_loss_encode",
-    "test_loss_decode",
-    "test_loss_forward",
-    "train_loss_think",
-    "test_loss_think",
-    "test_loss_noattn",
-    "train_wall_seconds",
-    "unix_time",
-    "corpus",
-    "train_cursor",
-    "test_cursor",
-    "train_cycle",
-    "test_cycle",
-    "learning_rate"
-}
-
 
 class MetricExpression:
     """Safely parses and evaluates simple arithmetic expressions over metrics."""
@@ -102,10 +69,6 @@ class MetricExpression:
                 self._validate(comp)
             return node
         if isinstance(node, ast.Name):
-            if node.id not in ALLOWED_FIELDS:
-                raise ValueError(
-                    f"unknown metric '{node.id}' in expression '{self.text}'"
-                )
             self._fields.add(node.id)
             return node
         if isinstance(node, ast.Constant):
@@ -331,8 +294,7 @@ def normalize_entry(entry: Dict[str, float]) -> Dict[str, float]:
             if new_key not in out:
                 out[new_key] = value
 
-    apply_alias(LEGACY_SPECIAL_FIELDS)
-    filtered = {k: v for k, v in out.items() if k in ALLOWED_FIELDS}
+    filtered = {k: v for k, v in out.items()}
     return filtered
 
 
@@ -374,7 +336,7 @@ def summarize_source(
             else:
                 print(f"  {expr.text}: no numeric samples")
         return
-    fields = sorted({key for rec in records for key in rec if key in ALLOWED_FIELDS})
+    fields = sorted({key for rec in records for key in rec})
     if filters:
         wanted = set(filters)
         fields = [field for field in fields if field in wanted]
@@ -834,7 +796,7 @@ def main() -> None:
     list_filters: List[str] | None = None
     list_expressions: List[MetricExpression] | None = None
     if args.list is not None and args.list:
-        if all(token in ALLOWED_FIELDS for token in args.list):
+        if all(token.isalnum() for token in args.list):
             list_filters = list(args.list)
         else:
             try:
