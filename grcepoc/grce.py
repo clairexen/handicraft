@@ -97,7 +97,7 @@ class ModelGeometry:
     n_pos: int = 1024       # GPT-2 base uses 1024 tokens.
     n_layer: int = 12       # GPT-2 base uses 12 layers.
     n_head: int = 12        # GPT-2 base uses 12 attention heads.
-    n_embd: int = 768       # GPT-2 base uses 768 embedding dims.
+    n_width: int = 768       # GPT-2 base uses 768 embedding dims.
     n_grce: int = 64        # Narrow GRCE context dims.
     n_xctx: int = 1536      # Wide XCTX context dims.
 
@@ -118,7 +118,7 @@ class Defaults:
     block_size: int = MODEL_GEOMETRY_DEFAULTS.n_pos
     n_layer: int = MODEL_GEOMETRY_DEFAULTS.n_layer
     n_head: int = MODEL_GEOMETRY_DEFAULTS.n_head
-    n_embd: int = MODEL_GEOMETRY_DEFAULTS.n_embd
+    n_width: int = MODEL_GEOMETRY_DEFAULTS.n_width
     n_grce: int = MODEL_GEOMETRY_DEFAULTS.n_grce
     n_xctx: int = MODEL_GEOMETRY_DEFAULTS.n_xctx
     corpus: str | None = None
@@ -899,8 +899,11 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         allow_abbrev=False,
     )
-    def flag_present(flag: str) -> bool:
-        return any(arg == flag or arg.startswith(f"{flag}=") for arg in raw_cli_args)
+    def flag_present(*flags: str) -> bool:
+        for flag in flags:
+            if any(arg == flag or arg.startswith(f"{flag}=") for arg in raw_cli_args):
+                return True
+        return False
 
     def raw_flag_value(flag: str) -> str | None:
         for idx, arg in enumerate(raw_cli_args):
@@ -965,10 +968,11 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         help="Number of attention heads per block (GPT-2 base uses 12).",
     )
     model_group.add_argument(
-        "--n-embd",
+        "--n-width",
         type=int,
-        default=DEFAULTS.n_embd,
-        help="Embedding/hidden dimension (GPT-2 base uses 768); must be a multiple of n_head.",
+        default=DEFAULTS.n_width,
+        dest="n_width",
+        help="Transformer width (GPT-2 base uses 768); must be a multiple of n_head.",
     )
     model_group.add_argument(
         "--n-grce",
@@ -993,7 +997,7 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         "--small",
         action="store_true",
         help=(
-            "Shortcut for --n-layer 6 --n-head 8 --n-embd 256 --n-grce 48 --n-xctx 720"
+            "Shortcut for --n-layer 6 --n-head 8 --n-width 256 --n-grce 48 --n-xctx 720"
         ),
     )
     model_group.add_argument(
@@ -1001,7 +1005,7 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         action="store_true",
         help=(
             "Shortcut for --vocab-size 600 --batch-size 12 --n-pos 6 --block-size 6 --n-layer 3 --n-head 2 "
-            "--n-embd 8 --n-grce 4 --n-xctx 9 --steps 2 --eval-interval 1"
+            "--n-width 8 --n-grce 4 --n-xctx 9 --steps 2 --eval-interval 1"
         ),
     )
 
@@ -1612,8 +1616,8 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
             args.n_layer = 6
         if not flag_present("--n-head"):
             args.n_head = 8
-        if not flag_present("--n-embd"):
-            args.n_embd = 256
+        if not flag_present("--n-width"):
+            args.n_width = 256
         if not flag_present("--n-grce"):
             args.n_grce = 48
         if not flag_present("--n-xctx"):
@@ -1630,8 +1634,8 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
             args.n_layer = 3
         if not flag_present("--n-head"):
             args.n_head = 2
-        if not flag_present("--n-embd"):
-            args.n_embd = 8
+        if not flag_present("--n-width"):
+            args.n_width = 8
         if not flag_present("--n-grce"):
             args.n_grce = 4
         if not flag_present("--n-xctx"):
@@ -1707,7 +1711,7 @@ def args_to_model_geometry(args: Args):
         n_pos=args.n_pos,
         n_layer=args.n_layer,
         n_head=args.n_head,
-        n_embd=args.n_embd,
+        n_width=args.n_width,
         n_grce=args.n_grce,
         n_xctx=args.n_xctx,
     )
@@ -1930,9 +1934,9 @@ def _get_inner_xctx_width(config: GeometryLike) -> int:
     """Return the XCTX inner width used by :class:`TransformerXCTX` samplers."""
 
     return min(
-        config.n_embd // 2,
+        config.n_width // 2,
         config.n_xctx // 2,
-        max(config.n_embd // 4, config.n_xctx // config.n_layer),
+        max(config.n_width // 4, config.n_xctx // config.n_layer),
     )
 
 
@@ -1944,7 +1948,7 @@ def _build_geometry(config: GeometryLike, n_pos: int) -> list[tuple[str, str, in
         ("B", "block size", n_pos),
         ("L", "transform layers", config.n_layer),
         ("H", "attention heads", config.n_head),
-        ("E", "embedding width", config.n_embd),
+        ("E", "embedding width", config.n_width),
         ("G", "grce width", config.n_grce),
         ("X", "xctx width", config.n_xctx),
         ("U", "inner xctx width", _get_inner_xctx_width(config)),
@@ -1957,7 +1961,7 @@ def _expected_sections(config: GeometryLike, n_pos: int) -> list[tuple[str, str,
     B = n_pos
     L = config.n_layer
     H = config.n_head
-    E = config.n_embd
+    E = config.n_width
     G = config.n_grce
     X = config.n_xctx
     sections: list[tuple[str, str, list[dict]]] = []
@@ -1971,7 +1975,7 @@ def _expected_sections(config: GeometryLike, n_pos: int) -> list[tuple[str, str,
                     "B": n_pos,
                     "L": config.n_layer,
                     "H": config.n_head,
-                    "E": config.n_embd,
+                    "E": config.n_width,
                     "G": config.n_grce,
                     "X": config.n_xctx,
                 },
@@ -2161,7 +2165,7 @@ def _dominant_estimates(config: GeometryLike) -> list[tuple[str, int, str]]:
     """Return asymptotic parameter counts shown by ``size --estimate``."""
 
     L = config.n_layer
-    E = config.n_embd
+    E = config.n_width
     G = config.n_grce
     X = config.n_xctx
     U = _get_inner_xctx_width(config)
@@ -2896,12 +2900,12 @@ class CausalSelfAttention(nn.Module):
     def __init__(self, args: Args) -> None:
         super().__init__()
         config = args
-        assert config.n_embd % config.n_head == 0
+        assert config.n_width % config.n_head == 0
         self.n_head = config.n_head
-        self.key = nn.Linear(config.n_embd, config.n_embd)
-        self.query = nn.Linear(config.n_embd, config.n_embd)
-        self.value = nn.Linear(config.n_embd, config.n_embd)
-        self.proj = nn.Linear(config.n_embd, config.n_embd)
+        self.key = nn.Linear(config.n_width, config.n_width)
+        self.query = nn.Linear(config.n_width, config.n_width)
+        self.value = nn.Linear(config.n_width, config.n_width)
+        self.proj = nn.Linear(config.n_width, config.n_width)
         self.dropout = nn.Dropout(config.dropout)
         self.register_buffer(
             "tril", torch.tril(torch.ones(config.n_pos, config.n_pos))
@@ -3084,10 +3088,10 @@ class FeedForward(nn.Module):
     def __init__(self, args: Args) -> None:
         super().__init__()
         config = args
-        hidden = 4 * config.n_embd
-        self.fc1 = nn.Linear(config.n_embd, hidden)
+        hidden = 4 * config.n_width
+        self.fc1 = nn.Linear(config.n_width, hidden)
         self.act = nn.GELU()
-        self.fc2 = nn.Linear(hidden, config.n_embd)
+        self.fc2 = nn.Linear(hidden, config.n_width)
         self.drop = nn.Dropout(config.dropout)
 
     def forward(
@@ -3109,14 +3113,14 @@ class Block(nn.Module):
     def __init__(self, args: Args) -> None:
         super().__init__()
         config = args
-        self.ln1 = nn.LayerNorm(config.n_embd)
+        self.ln1 = nn.LayerNorm(config.n_width)
         self.attn = CausalSelfAttention(config)
-        self.ln2 = nn.LayerNorm(config.n_embd)
+        self.ln2 = nn.LayerNorm(config.n_width)
         self.ff = FeedForward(config)
-        self.xctx_attn_gain = nn.Parameter(torch.ones(config.n_embd))
-        self.xctx_mlp_gain = nn.Parameter(torch.ones(config.n_embd))
-        self.grce_attn_ld = LayerDampening(config.n_embd)
-        self.grce_mlp_ld = LayerDampening(config.n_embd)
+        self.xctx_attn_gain = nn.Parameter(torch.ones(config.n_width))
+        self.xctx_mlp_gain = nn.Parameter(torch.ones(config.n_width))
+        self.grce_attn_ld = LayerDampening(config.n_width)
+        self.grce_mlp_ld = LayerDampening(config.n_width)
 
     def _apply_xctx_bias(
         self, tensor: torch.Tensor, bias: torch.Tensor | None, gain: torch.Tensor
@@ -3213,7 +3217,7 @@ def _merge_bias_list(
     rows: int,
     cols: int,
     n_layers: int,
-    n_embd: int,
+    n_width: int,
     device: torch.device,
     dtype: torch.dtype,
 ) -> torch.Tensor | None:
@@ -3221,7 +3225,7 @@ def _merge_bias_list(
 
     if not bias_list:
         return None
-    merged = torch.zeros(rows, cols, n_layers, n_embd, device=device, dtype=dtype)
+    merged = torch.zeros(rows, cols, n_layers, n_width, device=device, dtype=dtype)
     for bias in bias_list:
         if bias is None:
             continue
@@ -3346,22 +3350,22 @@ class TransformerStackCore(nn.Module):
         super().__init__()
         config = args
         self.config = config
-        if config.n_embd % 2 != 0:
-            raise ValueError("n_embd must be even so embeddings can occupy even/odd slots")
-        self.embedding_dim = config.n_embd // 2
+        if config.n_width % 2 != 0:
+            raise ValueError("n_width must be even so embeddings can occupy even/odd slots")
+        self.embedding_dim = config.n_width // 2
         self.tok_emb = nn.Embedding(config.vocab_size, self.embedding_dim)
         self.pos_emb = nn.Embedding(config.n_pos, self.embedding_dim)
         self.control_emb = nn.Embedding(3, self.embedding_dim, padding_idx=0)
         self.think_emb = ThinkEmbeddingLibrary(self.embedding_dim, think_spans=(2, 3, 4))
         self.drop = nn.Dropout(config.dropout)
         self.blocks = nn.ModuleList([Block(config) for _ in range(config.n_layer)])
-        self.ln_f = nn.LayerNorm(config.n_embd)
+        self.ln_f = nn.LayerNorm(config.n_width)
         self.head = nn.Linear(self.embedding_dim, config.vocab_size, bias=False)
 
     def expand_to_even(self, tensor: torch.Tensor) -> torch.Tensor:
         """Place half-width embedding features into the even data-path slots."""
 
-        return _expand_tensor_to_parity(tensor, self.config.n_embd, parity=0)
+        return _expand_tensor_to_parity(tensor, self.config.n_width, parity=0)
 
     def output_features(self, tensor: torch.Tensor) -> torch.Tensor:
         """Extract the odd data-path slots that feed into the LM head."""
@@ -3386,7 +3390,7 @@ class TransformerStackCore(nn.Module):
             rows,
             cols,
             self.config.n_layer,
-            self.config.n_embd,
+            self.config.n_width,
             x.device,
             x.dtype,
         )
@@ -3395,7 +3399,7 @@ class TransformerStackCore(nn.Module):
             rows,
             cols,
             self.config.n_layer,
-            self.config.n_embd,
+            self.config.n_width,
             x.device,
             x.dtype,
         )
@@ -3475,20 +3479,20 @@ class TransformerGRCE(nn.Module):
         self.disabled = config.n_grce <= 0
         self.context_dim = config.n_grce
         self.n_layers = config.n_layer
-        self.n_embd = config.n_embd
+        self.n_width = config.n_width
         self.detach_span = max(0, int(config.detach_span))
         self.detach_ctx_enabled_default = not getattr(config, "no_detach_ctx", False)
         if self.disabled:
             return
         self.sample_norms = nn.ModuleList(
-            nn.LayerNorm(self.n_embd) for _ in range(self.n_layers)
+            nn.LayerNorm(self.n_width) for _ in range(self.n_layers)
         )
         self.sample_projections = nn.ModuleList(
-            nn.Linear(self.n_embd, self.context_dim) for _ in range(self.n_layers)
+            nn.Linear(self.n_width, self.context_dim) for _ in range(self.n_layers)
         )
         self.bias_norm = nn.LayerNorm(self.context_dim)
         self.bias_projections = nn.ModuleList(
-            nn.Linear(self.context_dim, self.n_embd) for _ in range(self.n_layers)
+            nn.Linear(self.context_dim, self.n_width) for _ in range(self.n_layers)
         )
         self.mix_norm = nn.LayerNorm(self.context_dim)
         hidden = max(1, 4 * self.context_dim)
@@ -3504,7 +3508,7 @@ class TransformerGRCE(nn.Module):
         if self.disabled:
             raise RuntimeError("GRCE disabled")
         if self.n_layers <= 0:
-            return grce_state.new_zeros(grce_state.size(0), 1, 0, self.n_embd)
+            return grce_state.new_zeros(grce_state.size(0), 1, 0, self.n_width)
         normed = self.bias_norm(grce_state)
         per_layer = [proj(normed) for proj in self.bias_projections]
         stacked = torch.stack(per_layer, dim=1)
@@ -3570,7 +3574,7 @@ class TransformerXCTX(nn.Module):
         config = args
         self.disabled = config.n_xctx <= 0
         self.n_layers = config.n_layer
-        self.n_embd = config.n_embd
+        self.n_width = config.n_width
         self.context_dim = config.n_xctx
         self.inner_dim = _get_inner_xctx_width(config)
         self.squeeze_dim = max(1, self.context_dim // 2)
@@ -3579,7 +3583,7 @@ class TransformerXCTX(nn.Module):
         if self.disabled:
             return
         self.sample_linear = nn.ModuleList(
-            nn.Linear(self.n_embd, self.inner_dim) for _ in range(self.n_layers)
+            nn.Linear(self.n_width, self.inner_dim) for _ in range(self.n_layers)
         )
         self.sample_norms = nn.ModuleList(
             nn.LayerNorm(self.inner_dim) for _ in range(self.n_layers)
@@ -3594,7 +3598,7 @@ class TransformerXCTX(nn.Module):
             nn.LayerNorm(self.inner_dim) for _ in range(self.n_layers)
         )
         self.bias_up = nn.ModuleList(
-            nn.Linear(self.inner_dim, self.n_embd) for _ in range(self.n_layers)
+            nn.Linear(self.inner_dim, self.n_width) for _ in range(self.n_layers)
         )
         self.mix_down = nn.Linear(self.context_dim, self.squeeze_dim)
         self.mix_norm = nn.LayerNorm(self.squeeze_dim)
@@ -3610,7 +3614,7 @@ class TransformerXCTX(nn.Module):
         if self.disabled:
             raise RuntimeError("XCTX disabled")
         if self.n_layers <= 0:
-            return xctx_state.new_zeros(xctx_state.size(0), 1, 0, self.n_embd)
+            return xctx_state.new_zeros(xctx_state.size(0), 1, 0, self.n_width)
         per_layer: list[torch.Tensor] = []
         for idx in range(self.n_layers):
             reduced = self.bias_down[idx](xctx_state)
@@ -3758,7 +3762,7 @@ class TransformerStackSequence(nn.Module):
         self.core = core
         config = args
         self.n_layers = config.n_layer
-        self.n_embd = config.n_embd
+        self.n_width = config.n_width
         self.grce = TransformerGRCE(config) if config.n_grce > 0 else None
         self.xctx = TransformerXCTX(config) if config.n_xctx > 0 else None
         self.kv_rebalance = args.kv_rebalance
@@ -3774,7 +3778,7 @@ class TransformerStackSequence(nn.Module):
         dtype: torch.dtype,
     ) -> list[tuple[torch.Tensor, torch.Tensor]]:
         n_heads = self.core.config.n_head
-        head_dim = self.n_embd // n_heads
+        head_dim = self.n_width // n_heads
         storage: list[tuple[torch.Tensor, torch.Tensor]] = []
         for _ in range(self.n_layers):
             key_buf = torch.empty(rows, cols, n_heads, head_dim, device=device, dtype=dtype)
@@ -4205,7 +4209,7 @@ def build_model_tag(config: GeometryLike) -> str:
     """Build the filename tag used by ``train``/``create`` checkpoints."""
 
     tag = (
-        f"v{config.vocab_size}_bs{config.n_pos}_emb{config.n_embd}_"
+        f"v{config.vocab_size}_bs{config.n_pos}_emb{config.n_width}_"
         f"layers{config.n_layer}_heads{config.n_head}"
     )
     if config.n_grce > 0:
@@ -6169,7 +6173,7 @@ def preprocess_runtime_args(args: Args) -> None:
             raise ValueError("--block-size cannot exceed checkpoint --n-pos")
         args.n_layer = config.n_layer
         args.n_head = config.n_head
-        args.n_embd = config.n_embd
+        args.n_width = config.n_width
         args.n_grce = config.n_grce
         args.n_xctx = config.n_xctx
         args.vocab_size = config.vocab_size
@@ -6182,7 +6186,7 @@ def preprocess_runtime_args(args: Args) -> None:
         n_pos=args.n_pos,
         n_layer=args.n_layer,
         n_head=args.n_head,
-        n_embd=args.n_embd,
+        n_width=args.n_width,
         n_grce=args.n_grce,
         n_xctx=args.n_xctx,
     )

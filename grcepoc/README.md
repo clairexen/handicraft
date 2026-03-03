@@ -38,7 +38,7 @@ pattern.
 ## How the context channel works
 
 1. **Per-position capture.** For every position we collect the inputs to each Transformer block before self-attention/FFN work on them. Those vectors are the only items allowed to leak information across time.
-2. **Gradient-limited sampling.** Each block input goes through LayerNorm plus a learned projection `n_embd → n_grce` to produce per-layer messages `V_i`. Messages are detached according to `--detach-span`, so gradients never travel through time for more than a few steps.
+2. **Gradient-limited sampling.** Each block input goes through LayerNorm plus a learned projection `n_width → n_grce` to produce per-layer messages `V_i`. Messages are detached according to `--detach-span`, so gradients never travel through time for more than a few steps.
 3. **Context propagation.** The previous recurrent state `G` is added to the sum of sampled messages, LayerNorm'ed, pushed through the shared MLP `n_grce → 4*n_grce → ReLU → n_grce`, and then passed through a LayerDampening residual `G' = LD(G + Δ, with_gain=False)` instead of a plain LayerNorm. LD softly shrinks large updates while letting small features travel untouched, so the recurrent signal stays stable without being forced onto a unit sphere.
 4. **Bias injection.** Before processing the next token each block consumes both context channels via `LN(S_i + α ⊙ X_i) + LD(G_i)` where `α` is a learned per-feature gain, injecting the result only into the newest token row so the GRCE/XCTX biases steer attention and MLP work without disturbing the rest of the window.
 
@@ -76,9 +76,9 @@ Remember: when the model computes logits for position N+1, it already synthesize
 
 Ignoring embeddings and other lower-order pieces, two terms dominate:
 
-- Position-domain Transformer stack: `~ 12 * n_layer * n_embd^2`
-- Time-domain GRCE network (only if `n_grce > 0`): `~ 2 * n_layer * n_embd * n_grce + 8 * n_grce^2`
-- Time-domain XCTX network (only if `n_xctx > 0`): `~ 2 * n_embd * n_xctx + 2 * n_xctx^2 + 8 * n_xctx^2 / n_layer`
+- Position-domain Transformer stack: `~ 12 * n_layer * n_width^2`
+- Time-domain GRCE network (only if `n_grce > 0`): `~ 2 * n_layer * n_width * n_grce + 8 * n_grce^2`
+- Time-domain XCTX network (only if `n_xctx > 0`): `~ 2 * n_width * n_xctx + 2 * n_xctx^2 + 8 * n_xctx^2 / n_layer`
 
 For exact counts (including the XCTX channel and bias/sampler splits) run `python grce.py size [--check]` with your chosen hyperparameters—the report prints every contribution with its closed-form formula and can optionally instantiate a model to verify the arithmetic.
 
