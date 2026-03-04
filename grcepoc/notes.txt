@@ -292,11 +292,10 @@ Mode="encode" allows every position to attend to every other position (only
 the final column is supervised) and mode="noattn" uses purely self-attention.
 External KV caches and `qh_query_callback` are available in every mode.
 
-The output 's_out' is a list of size n_layers+1, containing tensors of size
-[rows, cols, n_embd], with the sampled inputs and outputs to all transformer
-blocks in the grid.  Note that the first element in 's_out' is simply the input
-'x' and the last element is simply the "transformed" output 'y'. Each entry in
-`kv_out` is a `(key, value)` tuple of shape [rows, cols, n_heads, head_dim]
+The output 's_out' is a list of size n_layers, containing tensors of size
+[rows, cols, n_embd], with the sampled output of every transformer block in the
+stack (so the last entry is the full stack output). Each entry in `kv_out` is a
+`(key, value)` tuple of tensors with shape [rows, cols, n_heads, head_dim]
 mirroring the layers in the stack.
 
 ### Optimized tensor memory layout (not currently implemented that way)
