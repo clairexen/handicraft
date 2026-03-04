@@ -66,6 +66,8 @@ open_shell() {
 
 pod_init() {
         run_ssh "set -ex; ln -sf /usr/share/zoneinfo/Europe/Vienna /etc/localtime; mkdir -p $REMOTE_DIR/data $REMOTE_DIR/model; echo $POD_NAME > /.podname; apt update; apt install -y rsync tmux; pip install --break-system-packages tokenizers transformers nvidia-ml-py"
+        rsync "${RSYNC_COMMON[@]}" -e "$(join_cmd "${RSYNC_SSH[@]}")" "$ROOT_DIR/rpwd.py" "${REMOTE_HOST}:/root/rpwd.py"
+        run_ssh "python3 /root/rpwd.py"
 }
 
 rsync_update() {
