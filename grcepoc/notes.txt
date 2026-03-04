@@ -230,9 +230,17 @@ any "architectural noise" into the critical (recurrent) path in the process.
 We create the following TransformerStackGrid(nn.Module) class:
 
 	stackgrid = TransformerStackGrid(settings)
-	y, s_out, kv_out = stackgrid.forward(x,
-			bias_list_in=[], kv_cache_list_in=[],
-			qh_query_callback=None, mode="decode")
+	y, s_out, kv_out = stackgrid.forward(
+		x,
+		xctx_bias_list_in=[],
+		grce_bias_list_in=[],
+		kv_cache_list_in=[],
+		mode="decode",
+		qh_query_callback=None,
+		position_offsets=None,
+		rope_positions=None,
+		attention_capture=None,
+	)
 
 Note: We use rows for the batch dimension (often B) and cols for the
 time dimension (often T). This is intentional: a full batch may be
@@ -247,13 +255,11 @@ as 'x'. So the "stack" in "StackGrid" really is only the stack of transformer
 blocks, without the embeddings generating the n_embd-sized input vectors in 'x'
 and the decoder interpreting the n_embd-sized output vectors in 'y'.
 
-The (possibly empty) list 'bias_list_in' contains tensors of maximum size
+The (possibly empty) GRCE/XCTX bias lists contain tensors of maximum size
 [rows, <=cols, <=n_layers, n_embd]. (Each tensor in a list can have a different
-size in its second of third dimension, as long as the 2nd dim is <=cols and the
-third dimension is <=n-layers. The tensors contain the 'biases' added to the
-two n_embd-sized LN() output vectors in each block in the stack, for the first
-<=cols columns in the grid, and the first <=n_layers. (usually <=cols is simply
-either one or cols, and <=n_layers is usually either one or n_layer.)
+size in its second or third dimension, as long as the 2nd dim is <=cols and the
+third dimension is <=n_layers.) Tensors are merged internally so callers can
+provide multiple bias contributors without manual summation.
 
 The argument 'kv_cache_list_in' is a list of lists of 2-tuples. The first
 list-dimension is simply the source and the second dimension is the layer.
@@ -262,6 +268,13 @@ size: [rows, n_kv, n_heads, head_dim], with n_embd = n_heads * head_dim, and
 with n_kv as the arbitrary number of entries in the given cache. (Usually
 n_kv is simply the number of columns of the grid that produced this kv-cache.
 The output 'kv_out' is a single such n_layers-sized list of 2-tuples.
+
+`mode` selects the attention behavior (`decode`, `encode`, `reverse`, or
+`noattn`). `position_offsets` can shift RoPE indices per row, while
+`rope_positions` passes explicit absolute positions for every column; both are
+1-D tensors and optional. `qh_query_callback` integrates external memory, and
+`attention_capture` (when not `None`) taps the attention matrices for logging or
+debugging.
 
 The callback 'qh_query_callback,' basically implements keyed external memory:
 
@@ -287,7 +300,9 @@ External KV caches and `qh_query_callback` are available in every mode.
 The output 's_out' is a list of size n_layers+1, containing tensors of size
 [rows, cols, n_embd], with the sampled inputs and outputs to all transformer
 blocks in the grid.  Note that the first element in 's_out' is simply the input
-'x' and the last element is simply the "transformed" output 'y'.
+'x' and the last element is simply the "transformed" output 'y'. Each entry in
+`kv_out` is a `(key, value)` tuple of shape [rows, cols, n_heads, head_dim]
+mirroring the layers in the stack.
 
 ### Optimized tensor memory layout (not currently implemented that way)
 
@@ -353,14 +368,43 @@ TransformerStackSequence is a 2-D (rows x cols) sequence of such columns,
 resembling a StackGrid, but with added GRCE and XCTX channels:
 
 	seq = TransformerStackSequence(settings)
-	y, grce_out, xctx_out, kv_out = seq.forward(x, grce_in, xctx_in,
-			bias_list_in=[], kv_cache_list_in=[], qh_query_callback=None,
-			mode="forward", detach_internal_kv_cache=False,
-			detach_samples_span=0, detach_grce_span=0, detach_xctx_span=0,
-			think_step_index=None, think_step_count=None)
+	y, grce_out, xctx_out, kv_out = seq.forward(
+		x,
+		grce_in=None,
+		xctx_in=None,
+		grce_bias_list_in=[],
+		xctx_bias_list_in=[],
+		kv_cache_list_in=[],
+		mode="forward",
+		qh_query_callback=None,
+		detach_internal_kv_cache=False,
+		detach_samples_span=0,
+		detach_grce_span=0,
+		detach_xctx_span=0,
+		context_detach_span=None,
+		context_detach_enabled=None,
+		think_step_index=None,
+		think_step_count=None,
+		column_positions=None,
+		attention_capture=None,
+	)
 
-With {grce,xctx}_{in,out} of size [rows, n_{grce,xctx}]. (So {grce,xctx}_out
-are the final recurrent states after the last column.)
+`x` has shape [rows, cols, n_embd] just like StackGrid. `grce_in` and
+`xctx_in` are the current recurrent states ([rows, n_grce] / [rows, n_xctx]) and
+`grce_out` / `xctx_out` return the updated states from the final column.
+`grce_bias_list_in` and `xctx_bias_list_in` mirror the StackGrid bias inputs but
+are applied column-by-column inside the sequence. `kv_cache_list_in` supplies
+external cache chains, while `kv_out` returns the internal cache after the last
+column. The optional `column_positions` vector provides absolute RoPE indices
+for each column.
+
+`mode`/`qh_query_callback`/`attention_capture` behave exactly like the StackGrid
+API. `detach_internal_kv_cache` switches between live cache chains and detached
+buffers. The span-related arguments (`detach_samples_span`, `detach_grce_span`,
+`detach_xctx_span`, `context_detach_span`, `context_detach_enabled`) control how
+often we detach the sample tensors or the GRCE/XCTX channels and whether a
+segment can override the default behavior. `think_step_index`/
+`think_step_count` describe explicit think spans as noted below.
 
 Columns are evaluated strictly left-to-right, and GRCE/XCTX state updates from
 column t are visible only to column t+1. When the layout requests explicit
@@ -379,11 +423,14 @@ With GRCE and XCTX disabled (n_grce=0 and n_xctx=0), TransformerStackSequence
 is functionally equivalent to evaluating a TransformerStackGrid with the same
 inputs.
 
-The values from 'bias_list_in' are applied per column: biases for column t are
-applied to TransformerStackColumn[t] in the same way as in TransformerStackGrid.
+The values from 'grce_bias_list_in' / 'xctx_bias_list_in' are applied per
+column: biases for column t are taken from whichever tensors cover that column
+and injected into TransformerStackColumn[t] just like StackGrid.
 
 We maintain an internal kv_cache, as described in "Management and balancing of
-k/v-caches in sequences" below, which we return as kv_out.
+k/v-caches in sequences" below, which we return as kv_out. When
+`detach_internal_kv_cache` is true we preallocate detached buffers per layer so
+the caches do not retain autograd history beyond the configured span.
 
 When mode="noattn" we skip applying the internal kv_cache. Thus in "noattn"
 mode the recurrent channels are the only way of passing information forward
@@ -594,9 +641,22 @@ adding those losses to the typed metrics. For example *[16e=*th2x=*t4x]
 will train for 2x and 4x thinking, but only the 4x thinking losses are
 reported in the "think" metric.
 
-Appending `2x`, `3x`, or `4x` to a mode enables 2x/3x/4x "thinking" (see below).
-When the letter `t` is used instead of `f`, loss from thinking is recorded
-in the "think" category rather than "forward".
+Appending `2x`, `3x`, or `4x` to a mode enables 2x/3x/4x "thinking" along the
+position axis (we refer to this family as the `Nx` modifier below). Using `t`
+instead of `f` keeps the computation identical but routes *all* loss from that
+segment into the "think" metric instead of "forward".
+
+We also support stacking the virtual transformer along the *layer* axis via
+an `Ny` modifier. Appending `2y`, `3y`, … causes every physical transformer
+layer to be replicated N times vertically, so a model configured with
+`n_layer=L` behaves like a `N*L` layer stack for that segment. Lowercase `Ny`
+emits K/V cache chunks for every replicated layer, equivalent to processing a
+sequence whose depth is multiplied by N. Uppercase `NY` (e.g. `2Y`) produces the same
+logical compute but only exposes the caches from the final `L` layers in each
+column; this is useful when downstream consumers expect the cache size to match
+the physical model depth. In either case the attention layers operate as if the
+full `N*L` transformer were unrolled, and cache/callback bookkeeping should be
+indexed modulo the underlying `n_layer`.
 
 We also allow # instead of = for chaining sequences inside of a [...] block.
 The difference is that with # we drop the entire k/v-history at this point,
@@ -927,5 +987,5 @@ python grce.py --pt model/wp_simple_think2x_small_think.pt --cycles 10 \
 cp model/wp_simple_think2x_small.pt model/wp_simple_think2x_small_nothink.pt
 python grce.py --pt model/wp_simple_think2x_small_nothink.pt reset
 python grce.py --pt model/wp_simple_think2x_small_nothink.pt --cycles 10 \
-  --lr-warmup-steps 20 --lr-cosine-steps 200 --block-size 100 --batch-size 100 \
+  --lr-warmup-steps 20 --lr-cosine-steps 200 --block-size 50 --batch-size 100 \
   --layout '*[*f]' train --json
