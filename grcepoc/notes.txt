@@ -665,9 +665,10 @@ emits K/V cache chunks for every replicated layer, equivalent to processing a
 sequence whose depth is multiplied by N. Uppercase `NY` (e.g. `2Y`) produces the same
 logical compute but only exposes the caches from the final `L` layers in each
 column; this is useful when downstream consumers expect the cache size to match
-the physical model depth. In either case the attention layers operate as if the
-full `N*L` transformer were unrolled, and cache/callback bookkeeping should be
-indexed modulo the underlying `n_layer`.
+the physical model depth. During Ny/NY execution we inject the GRCE/XCTX biases
+on every virtual pass and, after the column completes, we sample the GRCE/XCTX
+state from the *final* (top) repetition so the recurrent channels always see
+the last step’s activations.
 
 We also allow # instead of = for chaining sequences inside of a [...] block.
 The difference is that with # we drop the entire k/v-history at this point,

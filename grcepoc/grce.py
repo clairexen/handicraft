@@ -3633,7 +3633,7 @@ class TransformerStackCore(nn.Module):
                     layer_kv_sources[layer_idx].append(kv_pair)
         current = x
         repeats = max(1, int(layer_repeat))
-        samples: list[torch.Tensor] = [current]
+        samples: list[torch.Tensor | None] = [current] + [None] * len(self.blocks)
         kv_outputs: list[tuple[torch.Tensor, torch.Tensor] | None] = [None] * len(self.blocks)
         for rep_idx in range(repeats):
             for layer_idx, block in enumerate(self.blocks):
@@ -3656,8 +3656,7 @@ class TransformerStackCore(nn.Module):
                     attention_capture=attention_capture,
                     rope_positions=rope_positions_tensor,
                 )
-                if rep_idx == 0:
-                    samples.append(current)
+                samples[layer_idx + 1] = current
                 if kv_pair is None:
                     if layer_top_only and rep_idx == repeats - 1:
                         kv_outputs[layer_idx] = None
@@ -3673,7 +3672,12 @@ class TransformerStackCore(nn.Module):
                         key = torch.cat([existing[0], kv_pair[0]], dim=1)
                         value = torch.cat([existing[1], kv_pair[1]], dim=1)
                         kv_outputs[layer_idx] = (key, value)
-        return current, samples, kv_outputs
+        finalized_samples: list[torch.Tensor] = []
+        for tensor in samples:
+            if tensor is None:
+                raise RuntimeError("Missing layer sample; layer_repeat loop malfunctioned")
+            finalized_samples.append(tensor)
+        return current, finalized_samples, kv_outputs
 
 
 class TransformerStackGrid(nn.Module):
