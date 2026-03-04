@@ -133,6 +133,7 @@ class Defaults:
     detach_span: int = 0
     detach_think_span: int = 0
     rng_seed: int = 1234
+    rng_cycle_only: bool = False
     log_step_details: bool = False
     log_row_details: bool = False
     lr_base: float = 3e-4
@@ -1268,6 +1269,12 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         type=int,
         default=DEFAULTS.rng_seed,
         help="Base RNG seed (0 disables deterministic seeding)",
+    )
+    training_group.add_argument(
+        "--rng-cycle-only",
+        action="store_true",
+        default=DEFAULTS.rng_cycle_only,
+        help="Derive RNG seeds only from --rng-seed and the cycle index (ignore consumed tokens)",
     )
     parser.add_argument(
         "--allow-shape-mismatch-load",
@@ -5084,6 +5091,21 @@ def _derive_cycle_seed(base_seed: int, cycle_index: int) -> int:
     return int(base_seed) + normalized_cycle * multiplier
 
 
+def _derive_cycle_token_seed(
+    base_seed: int,
+    cycle_index: int,
+    total_train_tokens: int,
+    *,
+    cycle_only: bool = False,
+) -> int:
+    seed = _derive_cycle_seed(base_seed, cycle_index)
+    if cycle_only:
+        return seed
+    token_component = max(0, int(total_train_tokens))
+    token_multiplier = 97_000_319
+    return seed + token_component * token_multiplier
+
+
 def _apply_global_rng_seed(seed: int) -> None:
     """Seed Python and Torch RNGs using the provided integer."""
 
@@ -5465,7 +5487,7 @@ def train_model(
 
     if optimizer is None:
         raise ValueError("train_model requires an initialized optimizer instance")
-    total_steps = start_step
+    train_step_index = start_step
     history_updates: List[Dict[str, float]] = []
     printed_header = False
     eval_interval = max(1, int(eval_interval))
@@ -5536,7 +5558,7 @@ def train_model(
         layout_serialized = layout.serialize()
         layout_span = layout.total_token_span()
         _log_layout_warnings(args, layout)
-        current_step_index = total_steps + 1
+        current_step_index = train_step_index + 1
         step_wall_start = time.time()
         try:
             current_lr = _scheduled_lr(
@@ -5548,7 +5570,7 @@ def train_model(
                 args.lr_linear_min,
                 args.lr_cosine_steps,
                 run_total_steps,
-                max(0, total_steps),
+                max(0, train_step_index),
             )
             for group in optimizer.param_groups:
                 group["lr"] = current_lr
@@ -5593,7 +5615,7 @@ def train_model(
             if show_time:
                 timestamp = time.strftime("%H:%M", time.localtime())
                 line_parts.append(color_text(timestamp, Colors.BLUE))
-            line_parts.append(color_text(f"{total_steps}", Colors.CYAN))
+            line_parts.append(color_text(f"{train_step_index}", Colors.CYAN))
             detail_note = ""
             detail = getattr(oom_err, "microbatch_detail", None)
             if isinstance(detail, dict):
@@ -5700,7 +5722,7 @@ def train_model(
                     print(color_text(row_line, Colors.BLUE))
         oom_retries = 0
         step += 1
-        total_steps += 1
+        train_step_index += 1
 
         eval_due = step == 1 or step % eval_interval == 0 or step == steps
         if not eval_due:
@@ -5854,7 +5876,7 @@ def train_model(
         if show_time:
             timestamp = time.strftime("%H:%M", time.localtime())
             line_parts.append(color_text(timestamp, Colors.BLUE))
-        line_parts.append(color_text(f"{total_steps}", Colors.CYAN))
+        line_parts.append(color_text(f"{train_step_index}", Colors.CYAN))
         line_parts.append(color_text(train_values, Colors.MAGENTA))
         line_parts.append(color_text(test_values, Colors.GREEN))
         if extra_metrics_text:
@@ -5869,7 +5891,7 @@ def train_model(
 
         current_total_train_tokens = base_total_train_tokens + train_tokens_used
         record = {
-            "step": total_steps,
+            "step": train_step_index,
             "train_loss": float(eval_metrics["train"].metrics.get("target", 0.0) or 0.0),
             "test_loss": float(eval_metrics["test"].metrics.get("target", 0.0) or 0.0),
             "train_wall_seconds": float(total_wall_seconds),
@@ -5914,7 +5936,7 @@ def train_model(
         )
         print(summary)
 
-    return total_steps, history_updates, loop_timer.stop(), eval_timer, train_tokens_used
+    return train_step_index, history_updates, loop_timer.stop(), eval_timer, train_tokens_used
 
 
 def run_profile_mode(
@@ -7299,10 +7321,10 @@ class Runtime:
             raise ValueError("Checkpoint payload must be a dictionary")
         baseline_loss_history = payload.get("loss_history")
         baseline_cycles = int(payload.get("completed_cycles", 0) or 0)
-        baseline_steps = int(payload.get("total_steps", 0) or 0)
+        baseline_steps = int(payload.get("train_step_index", 0) or 0)
         payload["loss_history"] = []
         payload["completed_cycles"] = 0
-        payload["total_steps"] = 0
+        payload["train_step_index"] = 0
         payload["train_wall_seconds"] = 0.0
         atomic_torch_save(payload, model_path)
         print(
@@ -7584,7 +7606,7 @@ class Runtime:
                     fullgraph=False,
                 )
 
-            total_steps = 0
+            train_step_index = 0
             loss_history: List[Dict[str, float]] = []
             total_train_wall = 0.0
             total_train_tokens = 0
@@ -7617,7 +7639,7 @@ class Runtime:
                     else:
                         optimizer_state = None
                         _log_partial_checkpoint_warning(load_summary)
-                    total_steps = int(payload.get("total_steps", 0))
+                    train_step_index = int(payload.get("train_step_index", 0) or 0)
                     loss_history = list(payload.get("loss_history", []))
                     total_train_wall = float(payload.get("train_wall_seconds", 0.0))
                     total_train_tokens = int(payload.get("total_train_tokens", 0) or 0)
@@ -7641,7 +7663,7 @@ class Runtime:
                 days = hours / 24.0
                 print(
                     color_text(
-                        f"Total training so far: {total_steps} steps, {hours:.2f} hours ({days:.2f} days)",
+                        f"Total training so far: {train_step_index} steps, {hours:.2f} hours ({days:.2f} days)",
                         Colors.YELLOW,
                     )
                 )
@@ -7676,7 +7698,7 @@ class Runtime:
                     allow_trim=self.args.create_args.trim_model,
                     mapping=mapping,
                 )
-                total_steps = int(meta.get("total_steps", 0))
+                train_step_index = int(meta.get("train_step_index", 0) or 0)
                 total_train_wall = float(meta.get("train_wall_seconds", 0.0))
                 total_train_tokens = int(meta.get("total_train_tokens", 0) or 0)
                 loss_history = []
@@ -7684,7 +7706,8 @@ class Runtime:
                 atomic_torch_save(
                     {
                         "model": model.state_dict(),
-                        "total_steps": total_steps,
+                        "train_step_index": train_step_index,
+                        "total_steps": train_step_index,
                         "loss_history": loss_history,
                         "config": asdict(args_to_model_geometry(self.args)),
                         "train_wall_seconds": total_train_wall,
@@ -7698,7 +7721,7 @@ class Runtime:
                 )
                 print(
                     color_text(
-                        f"[import] total steps: {total_steps}; time spent (wall/cpu/gpu): {import_timer.stop()}; writing model: {write_timer.stop()}",
+                        f"[import] total steps: {train_step_index}; time spent (wall/cpu/gpu): {import_timer.stop()}; writing model: {write_timer.stop()}",
                         Colors.CYAN,
                     )
                 )
@@ -7712,7 +7735,7 @@ class Runtime:
             if self.args.command == "create":
                 checkpoint_payload = {
                     "model": model.state_dict(),
-                    "total_steps": 0,
+                    "train_step_index": 0,
                     "loss_history": [],
                     "config": asdict(args_to_model_geometry(self.args)),
                     "train_wall_seconds": 0.0,
@@ -7873,10 +7896,17 @@ class Runtime:
             completed_cycles = getattr(self.args, "completed_cycles", 0)
             cycle_start = completed_cycles + 1
             cycle_end = max(completed_cycles, self.args.cycles)
+            rng_cycle_only = bool(getattr(self.args, "rng_cycle_only", False))
             for cycle in range(cycle_start, cycle_end + 1):
                 base_seed = max(0, int(getattr(self.args, "rng_seed", 0)))
                 if base_seed > 0:
-                    cycle_seed = _derive_cycle_seed(base_seed, cycle)
+                    seed_total_tokens = total_train_tokens
+                    cycle_seed = _derive_cycle_token_seed(
+                        base_seed,
+                        cycle,
+                        seed_total_tokens,
+                        cycle_only=rng_cycle_only,
+                    )
                     _apply_global_rng_seed(cycle_seed)
                 dataset = self._activate_corpus()
                 cycle_wall = time.time()
@@ -7930,7 +7960,7 @@ class Runtime:
                 print(
                     color_text(
                         f"[{label}] Training Cycle {per_run_idx}/{self.args.cycles}. "
-                        f"Total training so far: {total_steps} steps, {hours:.2f} hours ({days:.2f} days)",
+                        f"Total training so far: {train_step_index} steps, {hours:.2f} hours ({days:.2f} days)",
                         Colors.BLUE,
                     )
                 )
@@ -7943,7 +7973,7 @@ class Runtime:
                     optimizer = shared_optimizer
 
                 (
-                    total_steps,
+                    train_step_index,
                     updates,
                     train_timer,
                     eval_timer,
@@ -7957,7 +7987,7 @@ class Runtime:
                     self.args.block_size,
                     self.args.batch_size,
                     self.args.eval_interval,
-                    total_steps,
+                    train_step_index,
                     optimizer,
                     prompt_tokens,
                     self.args.generate,
@@ -7995,7 +8025,7 @@ class Runtime:
                     checkpoint_payload: dict[str, Any] = {
                         "model": model.state_dict(),
                         "corpua": self.corpua,
-                        "total_steps": total_steps,
+                        "train_step_index": train_step_index,
                         "loss_history": loss_history,
                         "config": asdict(args_to_model_geometry(self.args)),
                         "train_wall_seconds": total_train_wall,

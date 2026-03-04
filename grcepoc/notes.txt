@@ -28,6 +28,12 @@ building blocks, using GELU activations, and RoPE.
 
 ## Recurrent Path
 
+TBD
+
+## Looping / Thinking
+
+TBD
+
 
 ---------------------------------------------------------------------------
 
@@ -683,7 +689,7 @@ these extras in a `> foo bar ...` suffix, and `--hide-default-metrics` hides
 the default mode columns so only the custom metrics remain.
 
 
-## Thinking Models -- (this is work in progress)
+## Thinking Models
 
 Standard transformers have a structural limitation: attention only connects
 tokens across time *within the same layer*. Information computed in higher
@@ -752,33 +758,7 @@ mode. If "t" is used instead of "f" in the layout string then the losses are
 recorded under the "think" metric instead of "forward".
 
 
-## 2-D RoPE on a Torus (future work)
-
-We extend RoPE from a single circular phase to two orthogonal angles (θ₀, θ₁) on S¹×S¹. Each
-attention head splits its Q/K subspace into rotary pairs and applies both rotations, so
-dimensionality stays unchanged and relative phases still determine the attention weights. The
-primary axis θ₀ advances along the base text while θ₁ advances whenever we branch off into a
-lateral chain; holding θ₀ fixed at a branch point and walking along θ₁ lets us “step off” the text
-without forgetting where the branch started.
-
-During pretraining on ordinary 1-D text we can draw a random positive-quadrant direction vector
-(α, β) and treat each fragment as moving along αθ₀ + βθ₁. Because RoPE depends only on relative
-angles, this acts as positional augmentation without privileging a single axis. Isolation of
-segments still relies on standard attention masking; random phases alone do not fence them off.
-
-The learned direction embeddings [|rope:0|] / [|rope:1|] encode the current trajectory
-so downstream modules know whether we are moving along the text axis, a branch axis, or a mixture.
-Straight text sets α≈1, β≈0; a lateral chain sets α≈0, β≈1; diagonal walks are also possible.
-Depending on the task we can dedicate half the rotary frequencies to θ₀ and half to θ₁ for clean
-separability, or linearly mix both angles per frequency to capture interactions between text
-position and branch depth.
-
-This torus inductive bias is well-suited to “text plus lateral reasoning” structures. Extending
-and generalizing to an N-torus would be straightforward, but we only need a 2-torus in our
-application, with θ₀ for the "external" text and θ₁ for the "internal" chain of thought.
-
-
-## Non-token embeddings -- (updated; implementation not up-to-date)
+## Non-token embeddings
 
 (the following names for non-token embeddings are used for
 documentation, comments, and log messages. the syntax looks
@@ -792,14 +772,6 @@ embedding names that correspond to special tokens below.
   add [|predict-prev|] to all positions in "reverse" sequences.
   And we add [|predict-next|] to only the last position in an
   "encode" sequence, because the other positions are unconstrained.
-
-[|rope:0|] [|rope:1]
-  the current direction on the 2D RoPE Torus is encoded as linear
-  combination of these two learned embeddings. (the direction is
-  always in the positive quadrant but otherwise can be arbitrary)
-  during training this is added to all tokens except the <|----|>
-  article seperator and the direction is kept constant within an
-  article, and changed at the article boundary.
 
 [|think:1/2|] [|think:2/2|]
   additional "think" embeddings for think2x mode, in think2x
@@ -830,7 +802,9 @@ embedding names that correspond to special tokens below.
   to the input of a stack, the stack can decide early to do more
   thinking and can then confidently do whatever the model wants to
   do, when it knows, there will be at least one more time slice
-  before it has to make up its mind.
+  before it has to make up its mind. (this embedding is currently
+  still future work, as the adaptive allocation of think slot is
+  not implemented yet)
 
 
 ## Special tokens embeddings
@@ -906,32 +880,6 @@ embedding names that correspond to special tokens below.
   between a punctuation mark (!?:;,. or ") and a whitespace that follows it.
 
 
-## Special GRCE embeddings -- (this is future work)
-
-We define the following learned GRCE embeddings and corresponding simple on-off state machines:
-
-{tokipona}
-  set by <|tokipona:> and </tokipona:>, cleared by <|english:>, </english:>, <|//|>, and <|----|>
-
-{english}
-  set by <|english:> and </english:>, cleared by <|tokipona:>, </tokipona:>, <|//|>, and <|----|>
-
-{lq}
-  set by <|lq:>, cleared by <:lq|> and <|----|>. Likewise:
-
-{hq}, {!}, {?}, {*}, {-}, {=}, {/}, {@}
-  set by <|...:>, cleared by <:...|> and <|----|>.
-
-Future work: During training when --learn-grce-embeddings is present, we parse th
-BLOCK_SIZE sequence for each block and maintain a state variable for each of
-these GRCE embeddings. Initially they are all zero.  Whenever we see a "set"
-token, we set the corresponding variable to +1, whenever we see a "clear"
-token, we set the corresponding variable to -1. For each step we look at the
-non-zero states and then either add the objective G.dot(embedding) > 1 for all
-GRCE state embeddings that are expected "ON" (+1), and G.dot(embedding) < 1 for
-all GRCE state embeddings that are expected "OFF" (-1).
-
-
 ---------------------------------------------------------------------------
 
 # TODOs / Prompt Scratchpad
@@ -1001,3 +949,12 @@ python grce.py --pt model/wp_simple_think2x_small_nothink.pt reset
 python grce.py --pt model/wp_simple_think2x_small_nothink.pt --cycles 10 \
   --lr-warmup-steps 20 --lr-cosine-steps 200 --block-size 50 --batch-size 100 \
   --layout '*[*f]' train --json
+
+----
+
+python grce.py --pt model/wp_en_loop.pt create
+python grce.py --pt model/wp_en_loop.pt corpus --add wikipedia-en-000{0,1,2,3,4,5,6,7}
+python grce.py --pt model/wp_en_loop.pt --cycles 150 \
+  --lr-warmup-steps 200 --lr-cosine-steps 500 --block-size 100 --batch-size 100 \
+  --layout '*[8e=*tx2=4f=4D]' train --json
+
