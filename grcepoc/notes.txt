@@ -440,10 +440,11 @@ k/v-caches in sequences" below, which we return as kv_out. When
 `detach_internal_kv_cache` is true we preallocate detached buffers per layer so
 the caches do not retain autograd history beyond the configured span.
 
-When mode="noattn" we skip applying the internal kv_cache. Thus in "noattn"
-mode the recurrent channels are the only way of passing information forward
-within the sequence. (Note that we still apply self-attention and we still
-attend to 'kv_cache_list_in' and 'qh_query_callback'.)
+When mode="noattn" we skip writing/reading the sequence’s *internal* KV cache;
+recurrent channels become the only way to carry information between columns.
+However the segment still receives external KV sources and
+`qh_query_callback`, and it still emits its own KV slices so downstream
+segments or later spans can access them.
 
 When mode is "encode", "decode", or "reverse", then a single large internal stack grid
 is created that covers all the positions in the sequence. In this case we
@@ -652,7 +653,9 @@ reported in the "think" metric.
 Appending `2x`, `3x`, or `4x` to a mode enables 2x/3x/4x "thinking" along the
 position axis (we refer to this family as the `Nx` modifier below). Using `t`
 instead of `f` keeps the computation identical but routes *all* loss from that
-segment into the "think" metric instead of "forward".
+segment into the "think" metric instead of "forward". Uppercase `X` behaves
+like lowercase `x` but only exposes the K/V cache from the final think step to
+later segments; intermediate steps remain accessible inside the span.
 
 We also support stacking the virtual transformer along the *layer* axis via
 an `Ny` modifier. Appending `2y`, `3y`, … causes every physical transformer

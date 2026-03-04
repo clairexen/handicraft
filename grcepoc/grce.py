@@ -362,6 +362,7 @@ class SegmentSpec:
     think_factor: int = 1
     layer_repeat: int = 1
     layer_top_only: bool = False
+    think_last_only: bool = False
     metric_mode: str | None = None
     hide_typed_metrics: bool = False
     extra_metrics: tuple[str, ...] = ()
@@ -395,6 +396,7 @@ class SegmentLayout:
     context_enabled: bool = True
     connector: str | None = None
     think_factor: int = 1
+    think_last_only: bool = False
     layer_repeat: int = 1
     layer_top_only: bool = False
     metric_mode: str | None = None
@@ -520,6 +522,7 @@ def _parse_segment_spec(text: str, connector: str | None) -> SegmentSpec:
     else:
         mode_token = mode_with_metrics
     think_factor = 1
+    think_last_only = False
     layer_repeat = 1
     layer_top_only = False
     suffix_pattern = re.compile(r"(\d+)([xXyY])$")
@@ -536,6 +539,7 @@ def _parse_segment_spec(text: str, connector: str | None) -> SegmentSpec:
             if think_factor != 1:
                 raise LayoutParseError("Think modifier specified multiple times")
             think_factor = count
+            think_last_only = marker.isupper()
         else:
             if count <= 0:
                 raise LayoutParseError("Layer repeat modifiers require a positive integer")
@@ -591,6 +595,7 @@ def _parse_segment_spec(text: str, connector: str | None) -> SegmentSpec:
         context_enabled,
         connector,
         think_factor=think_factor,
+        think_last_only=think_last_only,
         layer_repeat=layer_repeat,
         layer_top_only=layer_top_only,
         metric_mode=metric_mode,
@@ -841,6 +846,7 @@ class BatchLayout:
                     spec.context_enabled,
                     spec.connector,
                     think_factor=think_factor,
+                    think_last_only=bool(getattr(spec, "think_last_only", False)),
                     layer_repeat=max(1, int(getattr(spec, "layer_repeat", 1) or 1)),
                     layer_top_only=bool(getattr(spec, "layer_top_only", False)),
                     metric_mode=getattr(spec, "metric_mode", None),
@@ -878,7 +884,8 @@ class BatchLayout:
                     hide_suffix = "H" if letter.isupper() else "h"
                 think_suffix = ""
                 if getattr(segment, "think_factor", 1) and segment.think_factor > 1:
-                    think_suffix = f"{segment.think_factor}x"
+                    suffix_letter = "X" if getattr(segment, "think_last_only", False) else "x"
+                    think_suffix = f"{segment.think_factor}{suffix_letter}"
                 layer_suffix = ""
                 if getattr(segment, "layer_repeat", 1) and segment.layer_repeat > 1:
                     suffix_letter = "Y" if getattr(segment, "layer_top_only", False) else "y"
@@ -911,6 +918,7 @@ class BatchLayout:
                             seg.context_enabled,
                             seg.connector,
                             think_factor=seg.think_factor,
+                            think_last_only=seg.think_last_only,
                             layer_repeat=seg.layer_repeat,
                             layer_top_only=seg.layer_top_only,
                             metric_mode=seg.metric_mode,
@@ -4031,13 +4039,14 @@ class TransformerStackSequence(nn.Module):
     def _detached_kv_prefix(
         self,
         storage: list[tuple[torch.Tensor, torch.Tensor]],
-        upto_col: int,
+        start_col: int,
+        end_col: int,
     ) -> list[tuple[torch.Tensor, torch.Tensor] | None]:
-        if upto_col <= 0:
+        if end_col <= start_col:
             return [None] * len(storage)
         prefix: list[tuple[torch.Tensor, torch.Tensor]] = []
         for key_buf, value_buf in storage:
-            prefix.append((key_buf[:, :upto_col, :, :], value_buf[:, :upto_col, :, :]))
+            prefix.append((key_buf[:, start_col:end_col, :, :], value_buf[:, start_col:end_col, :, :]))
         return prefix
 
     def _ensure_state(
@@ -4077,6 +4086,7 @@ class TransformerStackSequence(nn.Module):
         column_positions: torch.Tensor | None = None,
         layer_repeat: int = 1,
         layer_top_only: bool = False,
+        think_last_only: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None, list]:
         if mode not in {"forward", "encode", "decode", "reverse", "noattn"}:
             raise ValueError(f"Unknown TransformerStackSequence mode: {mode}")
@@ -4107,6 +4117,7 @@ class TransformerStackSequence(nn.Module):
                 column_positions=column_positions,
                 layer_repeat=layer_repeat,
                 layer_top_only=layer_top_only,
+                think_last_only=think_last_only,
             )
         column_positions_tensor = None
         if column_positions is not None:
@@ -4118,6 +4129,9 @@ class TransformerStackSequence(nn.Module):
         base_sources = list(kv_cache_list_in or [])
         kv_history: list[list[tuple[torch.Tensor, torch.Tensor] | None]] = []
         kv_storage: list[tuple[torch.Tensor, torch.Tensor]] | None = None
+        kv_storage_cursor = 0
+        kv_storage_visible_start = 0
+        kv_storage_lengths: list[int] = []
         if detach_internal_kv_cache:
             kv_storage = self._allocate_detached_kv_storage(
                 rows,
@@ -4171,9 +4185,13 @@ class TransformerStackSequence(nn.Module):
             column_kv_sources: list[Sequence[tuple[torch.Tensor, torch.Tensor] | None]] = []
             if base_sources:
                 column_kv_sources.extend(base_sources)
-            if detach_internal_kv_cache and kv_storage is not None and col > 0:
+            if detach_internal_kv_cache and kv_storage is not None and kv_storage_cursor > kv_storage_visible_start:
                 column_kv_sources.append(
-                    self._detached_kv_prefix(kv_storage, col * kv_repeat_factor)
+                    self._detached_kv_prefix(
+                        kv_storage,
+                        kv_storage_visible_start,
+                        kv_storage_cursor,
+                    )
                 )
             elif (not detach_internal_kv_cache) and use_internal_cache and kv_history:
                 column_kv_sources.extend(kv_history)
@@ -4201,19 +4219,24 @@ class TransformerStackSequence(nn.Module):
                 loop_residual = self.core.loop_ln(column_output)
             else:
                 loop_residual = None
-            if detach_internal_kv_cache and kv_storage is not None:
+            kv_column_length = _kv_column_length(kv_pairs)
+            if detach_internal_kv_cache and kv_storage is not None and kv_column_length > 0:
                 for layer_idx, kv_pair in enumerate(kv_pairs):
                     if kv_pair is None:
                         continue
                     key_chunk, value_chunk = kv_pair
                     key_buf, value_buf = kv_storage[layer_idx]
-                    kv_start = col * kv_repeat_factor
+                    kv_start = kv_storage_cursor
                     kv_end = kv_start + key_chunk.size(1)
                     key_buf[:, kv_start:kv_end, :, :].copy_(key_chunk.detach())
                     value_buf[:, kv_start:kv_end, :, :].copy_(value_chunk.detach())
+                kv_storage_cursor += kv_column_length
+                kv_storage_lengths.append(kv_column_length)
+            elif detach_internal_kv_cache and kv_storage is not None:
+                kv_storage_lengths.append(0)
             else:
                 kv_history.append(kv_pairs)
-                if self.kv_rebalance:
+                if self.kv_rebalance and not think_last_only:
                     kv_history = kv_cache_list_balance(kv_history)
             detach_samples = detach_samples_span > 0 and (col % detach_samples_span) == 0
             if self.grce is not None and grce_state is not None:
@@ -4238,6 +4261,19 @@ class TransformerStackSequence(nn.Module):
                     detach_ctx_enabled=context_detach_enabled,
                     detach_span_override=context_detach_span,
                 )
+            if (
+                think_last_only
+                and think_step_index is not None
+                and think_step_count is not None
+                and step_count > 1
+                and step_index == step_count
+            ):
+                drop_columns = max(0, step_count - 1)
+                if drop_columns > 0:
+                    _kv_history_prune_last(kv_history, drop_columns)
+                    if detach_internal_kv_cache and kv_storage is not None:
+                        drop_len = _kv_storage_prune_lengths(kv_storage_lengths, drop_columns)
+                        kv_storage_visible_start += drop_len
             if think_detach_active and is_think_column and step_index == step_count:
                 next_is_think = False
                 if (col + 1) < cols:
@@ -4250,10 +4286,19 @@ class TransformerStackSequence(nn.Module):
                     think_span_counter = 0
         stacked = torch.cat(outputs, dim=1)
         if detach_internal_kv_cache and kv_storage is not None:
-            kv_out_base = [
-                (key_buf.detach(), value_buf.detach()) for key_buf, value_buf in kv_storage
-            ]
-            kv_out = kv_out_base
+            length = kv_storage_cursor - kv_storage_visible_start
+            kv_out: list[tuple[torch.Tensor, torch.Tensor] | None] = []
+            for key_buf, value_buf in kv_storage:
+                if length <= 0:
+                    kv_out.append(None)
+                    continue
+                key_slice = key_buf[
+                    :, kv_storage_visible_start:kv_storage_cursor, :, :
+                ].detach()
+                value_slice = value_buf[
+                    :, kv_storage_visible_start:kv_storage_cursor, :, :
+                ].detach()
+                kv_out.append((key_slice, value_slice))
         else:
             kv_out = kv_cache_list_merge(kv_history)
         return stacked, grce_state, xctx_state, kv_out
@@ -4279,6 +4324,7 @@ class TransformerStackSequence(nn.Module):
         column_positions: torch.Tensor | None,
         layer_repeat: int,
         layer_top_only: bool,
+        think_last_only: bool,
     ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None, list[tuple[torch.Tensor, torch.Tensor]]]:
         rows, cols, _ = x.shape
         rope_positions = None
@@ -4767,12 +4813,13 @@ def _run_microbatch_pass(
                     control_slice=control_embed,
                     think_slice=think_slice,
                 )
-                kv_sources = None if mode == "noattn" else (kv_chain if kv_chain else None)
+                kv_sources = kv_chain if kv_chain else None
                 prev_grce_state = grce_state
                 prev_xctx_state = xctx_state
                 segment_positions = column_positions[start:end]
                 layer_repeat = max(1, int(getattr(segment, "layer_repeat", 1) or 1))
                 layer_top_only = bool(getattr(segment, "layer_top_only", False))
+                think_last_only = bool(getattr(segment, "think_last_only", False))
                 chunk_output, grce_state, xctx_state, kv_out = model.stack_sequence.forward(
                     chunk_input,
                     grce_in=grce_state,
@@ -4787,6 +4834,7 @@ def _run_microbatch_pass(
                     think_step_count=think_count,
                     layer_repeat=layer_repeat,
                     layer_top_only=layer_top_only,
+                    think_last_only=think_last_only,
                 )
                 if not getattr(segment, "context_enabled", True):
                     grce_state = prev_grce_state
@@ -4837,8 +4885,7 @@ def _run_microbatch_pass(
                             entry["token_count"] = (
                                 int(entry.get("token_count", 0)) + int(token_values[idx])
                             )
-                    if mode != "noattn":
-                        kv_chain.append(kv_out)
+                    kv_chain.append(kv_out)
                 cursor += cols
             row_details.extend(row_entries)
     result = LayoutPassResult(
@@ -5199,6 +5246,37 @@ def _segment_think_metadata(
     step_index = (idx % factor) + 1
     mask = step_index != step_count
     return step_index, step_count, mask
+
+
+def _kv_column_length(kv_pairs: Sequence[tuple[torch.Tensor, torch.Tensor] | None]) -> int:
+    for pair in kv_pairs:
+        if pair is None:
+            continue
+        return pair[0].size(1)
+    return 0
+
+
+def _kv_history_prune_last(
+    history: list[list[tuple[torch.Tensor, torch.Tensor] | None]],
+    drop_columns: int,
+) -> None:
+    if drop_columns <= 0:
+        return
+    if len(history) < drop_columns + 1:
+        return
+    del history[-(drop_columns + 1):-1]
+
+
+def _kv_storage_prune_lengths(lengths: list[int], drop_columns: int) -> int:
+    if drop_columns <= 0:
+        return 0
+    if len(lengths) < drop_columns + 1:
+        return 0
+    start = len(lengths) - (drop_columns + 1)
+    end = len(lengths) - 1
+    removed = lengths[start:end]
+    del lengths[start:end]
+    return sum(removed)
 
 
 def _segment_column_positions(
@@ -6161,12 +6239,13 @@ def _evaluate_row_block(
         chunk_capture = None
         if base_capture is not None:
             chunk_capture = base_capture.subset(cursor, cols)
-        kv_sources = None if segment.mode == "noattn" else (kv_chain if kv_chain else None)
+        kv_sources = kv_chain if kv_chain else None
         prev_grce_state = grce_state
         prev_xctx_state = xctx_state
         segment_positions = column_positions[start:end]
         layer_repeat = max(1, int(getattr(segment, "layer_repeat", 1) or 1))
         layer_top_only = bool(getattr(segment, "layer_top_only", False))
+        think_last_only = bool(getattr(segment, "think_last_only", False))
         chunk_output, grce_state, xctx_state, kv_out = model.stack_sequence.forward(
             chunk_input,
             grce_in=grce_state,
@@ -6182,6 +6261,7 @@ def _evaluate_row_block(
             think_step_count=think_count,
             layer_repeat=layer_repeat,
             layer_top_only=layer_top_only,
+            think_last_only=think_last_only,
         )
         if not segment.context_enabled:
             grce_state = prev_grce_state
@@ -6212,8 +6292,7 @@ def _evaluate_row_block(
                 mode_token_counts[tag] += token_count
             total_loss += loss_value
             total_tokens += token_count
-        if segment.mode != "noattn":
-            kv_chain.append(kv_out)
+        kv_chain.append(kv_out)
         for local_idx in range(cols):
             idx = cursor + local_idx
             if segment.mode == "encode" and local_idx < cols - 1:
