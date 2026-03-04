@@ -132,6 +132,7 @@ class Defaults:
     dropout: float = 0.05
     detach_span: int = 0
     detach_think_span: int = 0
+    rng_seed: int = 1234
     log_step_details: bool = False
     log_row_details: bool = False
     lr_base: float = 3e-4
@@ -1219,6 +1220,12 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         "--no-detach-ctx",
         action="store_true",
         help="Keep gradients through the recurrent GRCE context even when spans trigger",
+    )
+    training_group.add_argument(
+        "--rng-seed",
+        type=int,
+        default=DEFAULTS.rng_seed,
+        help="Base RNG seed (0 disables deterministic seeding)",
     )
     parser.add_argument(
         "--allow-shape-mismatch-load",
@@ -4766,11 +4773,12 @@ def train_layout_batch(
     device: torch.device,
     grad_hook: Callable[[int, int], None] | None = None,
     position_shift: int = 0,
+    rng: random.Random | None = None,
 ) -> tuple[torch.Tensor, int, list[tuple[int, float, float, str]], dict[str, object]]:
     step_span = layout.total_token_span()
     if step_span <= 0:
         raise ValueError("Layout produced zero tokens for training step")
-    window_rng = random.Random()
+    window_rng = rng if rng is not None else random
     total_loss_sum: torch.Tensor | None = None
     total_tokens = 0
     micro_logs: list[tuple[int, float, float, str]] = []
@@ -4842,6 +4850,7 @@ def evaluate_layout_batch(
     split: str,
     layout: BatchLayout,
     device: torch.device,
+    rng: random.Random | None = None,
 ) -> EvalBatchStats:
     step_span = layout.total_token_span()
     aggregate_loss_sums: dict[str, float] = {mode: 0.0 for mode in BATCH_MODES}
@@ -4858,7 +4867,7 @@ def evaluate_layout_batch(
         token_counts = {mode: 0 for mode in base_keys + extra_keys}
         token_counts["target"] = 0
         return EvalBatchStats(metrics, loss_sums, token_counts)
-    window_rng = random.Random()
+    window_rng = rng if rng is not None else random
     for batch_rows in layout.micro_batches:
         micro_span = sum(row.token_span() for row in batch_rows)
         if micro_span <= 0:
@@ -4929,6 +4938,23 @@ def evaluation_step_indices(steps: int, interval: int) -> list[int]:
             eval_steps.add(current)
             current += interval
     return sorted(eval_steps)
+
+
+def _derive_cycle_seed(base_seed: int, cycle_index: int) -> int:
+    """Mix the base RNG seed with the 1-based cycle index."""
+
+    normalized_cycle = max(0, int(cycle_index) - 1)
+    multiplier = 1_000_003
+    return int(base_seed) + normalized_cycle * multiplier
+
+
+def _apply_global_rng_seed(seed: int) -> None:
+    """Seed Python and Torch RNGs using the provided integer."""
+
+    random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():  # pragma: no cover - depends on hardware
+        torch.cuda.manual_seed_all(seed)
 
 
 def loss_sum_and_token_count(
@@ -7589,7 +7615,8 @@ class Runtime:
                     total = len(dataset.test_tokens)
                     if total <= 0:
                         raise ValueError("Test corpus is empty; cannot run random evaluations")
-                    rng = random.Random()
+                    base_seed = max(0, int(getattr(self.args, "rng_seed", 0)))
+                    rng = random if base_seed > 0 else random.Random()
                     window = max(1, total - (self.args.block_size + 1))
                     for run_idx in range(rand_runs):
                         start_pos = rng.randint(0, window - 1)
@@ -7675,6 +7702,10 @@ class Runtime:
             cycle_start = completed_cycles + 1
             cycle_end = max(completed_cycles, self.args.cycles)
             for cycle in range(cycle_start, cycle_end + 1):
+                base_seed = max(0, int(getattr(self.args, "rng_seed", 0)))
+                if base_seed > 0:
+                    cycle_seed = _derive_cycle_seed(base_seed, cycle)
+                    _apply_global_rng_seed(cycle_seed)
                 dataset = self._activate_corpus()
                 cycle_wall = time.time()
                 tags = ["GPT"]
@@ -7878,8 +7909,12 @@ def grce_main(args: argparse.Namespace) -> int:
 
     preprocess_runtime_args(args)
 
-    torch.manual_seed(42)
-    random.seed(time.time())
+    base_seed = max(0, int(getattr(args, "rng_seed", DEFAULTS.rng_seed)))
+    if base_seed > 0:
+        _apply_global_rng_seed(base_seed)
+    else:
+        torch.manual_seed(42)
+        random.seed(time.time())
 
     # otherwise: run the big "default" main
     rt = Runtime(args)
