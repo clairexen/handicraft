@@ -7405,20 +7405,6 @@ class Runtime:
                 log_path = model_dir / f"{prefix}{model_tag}.log"
                 self.args.model_path_override = model_path
                 self.args.log_path_override = log_path
-            def _model_summary_line() -> str:
-                param_total = sum(p.numel() for p in (self._model_for_summary or []))
-                param_embed = sum(p.numel() for p in (self._embed_params_for_summary or []))
-                param_excl = max(0, param_total - param_embed)
-                chin_goal = param_excl * 20
-                token_text = f"{self._tokens_for_summary:,} tokens"
-                param_text = f"{param_excl:,} params"
-                percent = (
-                    f"{(self._tokens_for_summary / chin_goal) * 100:.0f}%"
-                    if chin_goal > 0 and self._tokens_for_summary >= 0
-                    else "∞%"
-                )
-                return f"Model: {model_path} ({token_text} / {param_text} = {percent} of 20x)"
-
             self._model_for_summary = None
             self._embed_params_for_summary = None
             self._tokens_for_summary = 0
@@ -7979,7 +7965,7 @@ class Runtime:
                 param_fragment = f"{body_param_count:,} params"
                 if chin_goal > 0:
                     pct = (total_train_tokens / chin_goal) * 100.0
-                    chin_fragment = f"{pct:.0f}% of 20x"
+                    chin_fragment = f"{pct:.2f}% of 20x"
                 else:
                     chin_fragment = "∞% of 20x"
                 model_line = (
