@@ -3504,44 +3504,49 @@ def kv_cache_list_detach(
 def kv_cache_list_balance(
     kv_cache_list: Sequence[Sequence[tuple[torch.Tensor, torch.Tensor]] | None],
 ) -> list[list[tuple[torch.Tensor, torch.Tensor]]]:
-    """Collapse many small cache segments into a single chunk per layer."""
+    """Collapse many small cache segments into a single chunk per layer.
+
+       The implemented method is based on the following assumptions:
+       - Merging two caches of approx same size (same .bit_length()) is always good
+       - When creating a merged cache it is always good to merge anything smaller into it too
+       - The order of caches does not matter and empty caches can be dropped entirely
+    """
 
     if not kv_cache_list or (kv_cache_list[0] and kv_cache_list[0][0] and
                              len(kv_cache_list) <= kv_cache_list[0][0][0].size(1).bit_length()):
         return kv_cache_list
 
-    total_size = 0
-    clog2_buckets = defaultdict(list)
-    for i, kv_cache in enumerate(kv_cache_list):
+    sorted_caches = list()
+    clog2_counts = defaultdict(int)
+    for kv_cache in kv_cache_list:
         if not kv_cache or not kv_cache[0]: continue
         n_kv = kv_cache[0][0].size(1)
         if not n_kv: continue
-        total_size += n_kv
+        sorted_caches.append((n_kv, kv_cache))
         clog2_n_kv = n_kv.bit_length()
-        clog2_buckets[clog2_n_kv].append((n_kv, i))
+        clog2_counts[clog2_n_kv] += 1
 
-    if len(kv_cache_list) == len(clog2_buckets):
-        return kv_cache_list
+    sorted_caches = sorted(sorted_caches, key=lambda item: item[0])
 
-    merge_size = 0
+    clog2_filtered_list = [clog2_n_kv for clog2_n_kv, count in clog2_counts.items() if count > 1]
+    clog2_cursor = max(clog2_filtered_list) if clog2_filtered_list else 0
+
+    nomerge_caches = list()
     merge_caches = list()
-    final_caches = list()
-    for clog2_n_kv, bucket in sorted(clog2_buckets.items()):
-        if len(bucket) > 2 or clog2_n_kv == merge_size.bit_length():
-            merge_size += sum(n for n, i in bucket)
-            merge_caches += bucket
+    merge_n_kv = 0
+
+    for n_kv, kv_cache in sorted_caches:
+        if n_kv.bit_length() > clog2_cursor:
+            nomerge_caches.append(kv_cache)
         else:
-            final_caches += bucket
+            merge_caches.append(kv_cache)
+            merge_n_kv += n_kv
+            clog2_cursor = max(clog2_cursor, merge_n_kv.bit_length())
 
-    if merge_size:
-        merged = kv_cache_list_merge([kv_cache_list[i] for n, i in merge_caches])
-        assert merged[0][0].size(1) == merge_size
-        final_caches.append((merge_size, None))
-    else:
-        merged = None
-
-    # return with largest element in position 0 for quick exit on next call
-    return [merged if i is None else kv_cache_list[i] for n, i in reversed(sorted(final_caches))]
+    final_caches = list(reversed(nomerge_caches))
+    if merge_caches:
+        final_caches.append(kv_cache_list_merge(merge_caches))
+    return final_caches
 
 
 class RMSNorm(nn.Module):
