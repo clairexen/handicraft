@@ -952,9 +952,7 @@ python grce.py --pt model/wp_simple_think2x_small_nothink.pt --cycles 10 \
 
 ----
 
-python grce.py --pt model/wp_en_loop.pt create
-python grce.py --pt model/wp_en_loop.pt corpus --add wikipedia-en-000{0,1,2,3,4,5,6,7}
-python grce.py --pt model/wp_en_loop.pt --cycles 150 \
-  --lr-warmup-steps 200 --lr-cosine-steps 500 --block-size 100 --batch-size 100 \
-  --layout '*[8e=*tx2=4f=4D]' train --json
-
+python grce.py --pt model/wp_en_E_D4Y.pt create
+python grce.py --pt model/wp_en_E_D4Y.pt corpus --add wikipedia-en-000{0,1,2,3,4,5,6,7}
+python grce.py --pt model/wp_en_E_D4Y.pt --cycles 3600 --lr-warmup-steps 200 --lr-cosine-steps 500 \
+  --block-size 100 --batch-size 50 --layout '*[8E=*D4Y=*D4Y]' train --json

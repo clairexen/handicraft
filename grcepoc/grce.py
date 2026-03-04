@@ -7400,7 +7400,25 @@ class Runtime:
                 log_path = model_dir / f"{prefix}{model_tag}.log"
                 self.args.model_path_override = model_path
                 self.args.log_path_override = log_path
-            print(color_text(f"Model: {model_path}", Colors.CYAN))
+            def _model_summary_line() -> str:
+                param_total = sum(p.numel() for p in (self._model_for_summary or []))
+                param_embed = sum(p.numel() for p in (self._embed_params_for_summary or []))
+                param_excl = max(0, param_total - param_embed)
+                chin_goal = param_excl * 20
+                token_text = f"{self._tokens_for_summary:,} tokens"
+                param_text = f"{param_excl:,} params"
+                percent = (
+                    f"{(self._tokens_for_summary / chin_goal) * 100:.0f}%"
+                    if chin_goal > 0 and self._tokens_for_summary >= 0
+                    else "∞%"
+                )
+                return f"Model: {model_path} ({token_text} / {param_text} = {percent} of 20x)"
+
+            self._model_for_summary = None
+            self._embed_params_for_summary = None
+            self._tokens_for_summary = 0
+            summary_line = f"Model: {model_path}"
+            print(color_text(summary_line, Colors.CYAN))
             print(color_text(f"Logfile: {log_path}", Colors.CYAN))
             dataset_commands = {"train", "try", "report", "test", "eval", "profile", "prompts"}
             requires_checkpoint = self.args.command in {"train", "try", "report", "test", "eval", "profile", "prompts", "reset", "corpus"}
@@ -7598,6 +7616,10 @@ class Runtime:
                     model = GRCEGPT(config).to(device)
                 else:
                     raise
+
+            model_param_count = sum(p.numel() for p in model.parameters())
+            embed_param_count = sum(p.numel() for p in model.core.tok_emb.parameters())
+            body_param_count = max(0, model_param_count - embed_param_count)
 
             if self.args.torch_compile != "off":
                 model = torch.compile(
@@ -7944,7 +7966,21 @@ class Runtime:
                                 bold=True,
                             )
                         )
-                print(color_text(f"Model: {model_path}", Colors.CYAN))
+                self._model_param_count = None
+                self._embed_param_count = None
+                self._tokens_for_summary = 0
+                chin_goal = body_param_count * 20
+                token_fragment = f"{total_train_tokens:,} tokens"
+                param_fragment = f"{body_param_count:,} params"
+                if chin_goal > 0:
+                    pct = (total_train_tokens / chin_goal) * 100.0
+                    chin_fragment = f"{pct:.0f}% of 20x"
+                else:
+                    chin_fragment = "∞% of 20x"
+                model_line = (
+                    f"Model: {model_path} ({token_fragment} / {param_fragment} = {chin_fragment})"
+                )
+                print(color_text(model_line, Colors.CYAN))
                 corpus_entry = self.active_corpus_entry or {}
                 used_tokens = int(corpus_entry.get("used_train_tokens", 0) or 0)
                 num_tokens = int(corpus_entry.get("num_train_tokens", dataset.train_tokens.numel()) or dataset.train_tokens.numel())
