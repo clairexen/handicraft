@@ -360,6 +360,8 @@ class SegmentSpec:
     context_enabled: bool = True
     connector: str | None = None
     think_factor: int = 1
+    layer_repeat: int = 1
+    layer_top_only: bool = False
     metric_mode: str | None = None
     hide_typed_metrics: bool = False
     extra_metrics: tuple[str, ...] = ()
@@ -393,6 +395,8 @@ class SegmentLayout:
     context_enabled: bool = True
     connector: str | None = None
     think_factor: int = 1
+    layer_repeat: int = 1
+    layer_top_only: bool = False
     metric_mode: str | None = None
     hide_typed_metrics: bool = False
     extra_metrics: tuple[str, ...] = ()
@@ -516,11 +520,29 @@ def _parse_segment_spec(text: str, connector: str | None) -> SegmentSpec:
     else:
         mode_token = mode_with_metrics
     think_factor = 1
-    for suffix in ("2x", "3x", "4x"):
-        if mode_token.lower().endswith(suffix):
-            think_factor = int(suffix[0])
-            mode_token = mode_token[: -len(suffix)]
+    layer_repeat = 1
+    layer_top_only = False
+    suffix_pattern = re.compile(r"(\d+)([xXyY])$")
+    while True:
+        match = suffix_pattern.search(mode_token)
+        if not match:
             break
+        count = int(match.group(1))
+        marker = match.group(2)
+        mode_token = mode_token[: match.start()]
+        if marker in {"x", "X"}:
+            if count not in (2, 3, 4):
+                raise LayoutParseError("Think modifiers only support 2x/3x/4x")
+            if think_factor != 1:
+                raise LayoutParseError("Think modifier specified multiple times")
+            think_factor = count
+        else:
+            if count <= 0:
+                raise LayoutParseError("Layer repeat modifiers require a positive integer")
+            if layer_repeat != 1:
+                raise LayoutParseError("Layer repeat modifier specified multiple times")
+            layer_repeat = count
+            layer_top_only = marker.isupper()
     hide_typed_metrics = False
     if mode_token and mode_token[-1] in {"h", "H"}:
         hide_typed_metrics = True
@@ -569,6 +591,8 @@ def _parse_segment_spec(text: str, connector: str | None) -> SegmentSpec:
         context_enabled,
         connector,
         think_factor=think_factor,
+        layer_repeat=layer_repeat,
+        layer_top_only=layer_top_only,
         metric_mode=metric_mode,
         hide_typed_metrics=hide_typed_metrics,
         extra_metrics=tuple(extra_metrics),
@@ -817,6 +841,8 @@ class BatchLayout:
                     spec.context_enabled,
                     spec.connector,
                     think_factor=think_factor,
+                    layer_repeat=max(1, int(getattr(spec, "layer_repeat", 1) or 1)),
+                    layer_top_only=bool(getattr(spec, "layer_top_only", False)),
                     metric_mode=getattr(spec, "metric_mode", None),
                     hide_typed_metrics=getattr(spec, "hide_typed_metrics", False),
                     extra_metrics=getattr(spec, "extra_metrics", ()),
@@ -853,12 +879,16 @@ class BatchLayout:
                 think_suffix = ""
                 if getattr(segment, "think_factor", 1) and segment.think_factor > 1:
                     think_suffix = f"{segment.think_factor}x"
+                layer_suffix = ""
+                if getattr(segment, "layer_repeat", 1) and segment.layer_repeat > 1:
+                    suffix_letter = "Y" if getattr(segment, "layer_top_only", False) else "y"
+                    layer_suffix = f"{segment.layer_repeat}{suffix_letter}"
                 metric_suffix = ""
                 extra = getattr(segment, "extra_metrics", ())
                 if extra:
                     prefix = ">>" if getattr(segment, "suppress_default_metric", False) else ">"
                     metric_suffix = prefix + ">".join(extra)
-                bit = f"{segment.columns}{letter}{hide_suffix}{think_suffix}{metric_suffix}"
+                bit = f"{segment.columns}{letter}{hide_suffix}{layer_suffix}{think_suffix}{metric_suffix}"
                 if idx > 0:
                     connector = segment.connector or "="
                     bit = connector + bit
@@ -881,8 +911,12 @@ class BatchLayout:
                             seg.context_enabled,
                             seg.connector,
                             think_factor=seg.think_factor,
+                            layer_repeat=seg.layer_repeat,
+                            layer_top_only=seg.layer_top_only,
                             metric_mode=seg.metric_mode,
                             hide_typed_metrics=seg.hide_typed_metrics,
+                            extra_metrics=seg.extra_metrics,
+                            suppress_default_metric=seg.suppress_default_metric,
                         )
                         for seg in group.segments
                     ]
@@ -3550,6 +3584,8 @@ class TransformerStackCore(nn.Module):
         position_offsets: torch.Tensor | None = None,
         rope_positions: torch.Tensor | None = None,
         attention_capture: AttentionCapture | None = None,
+        layer_repeat: int = 1,
+        layer_top_only: bool = False,
     ) -> tuple[torch.Tensor, list[torch.Tensor], list[tuple[torch.Tensor, torch.Tensor]]]:
         rows, cols, _ = x.shape
         rope_positions_tensor = None
@@ -3588,30 +3624,47 @@ class TransformerStackCore(nn.Module):
                         continue
                     layer_kv_sources[layer_idx].append(kv_pair)
         current = x
+        repeats = max(1, int(layer_repeat))
         samples: list[torch.Tensor] = [current]
-        kv_outputs: list[tuple[torch.Tensor, torch.Tensor]] = []
-        for layer_idx, block in enumerate(self.blocks):
-            layer_xctx_bias = None
-            if xctx_tensor is not None:
-                layer_xctx_bias = xctx_tensor[:, :, layer_idx, :]
-            layer_grce_bias = None
-            if grce_tensor is not None:
-                layer_grce_bias = grce_tensor[:, :, layer_idx, :]
-            kv_sources = layer_kv_sources[layer_idx] or None
-            current, _, kv_pair = block(
-                current,
-                xctx_bias=layer_xctx_bias,
-                grce_bias=layer_grce_bias,
-                kv_cache_sources=kv_sources,
-                qh_query_callback=qh_query_callback,
-                attn_mode=mode,
-                layer_idx=layer_idx,
-                full_attention=(mode == "encode"),
-                attention_capture=attention_capture,
-                rope_positions=rope_positions_tensor,
-            )
-            samples.append(current)
-            kv_outputs.append(kv_pair if kv_pair is not None else None)
+        kv_outputs: list[tuple[torch.Tensor, torch.Tensor] | None] = [None] * len(self.blocks)
+        for rep_idx in range(repeats):
+            for layer_idx, block in enumerate(self.blocks):
+                layer_xctx_bias = None
+                if xctx_tensor is not None:
+                    layer_xctx_bias = xctx_tensor[:, :, layer_idx, :]
+                layer_grce_bias = None
+                if grce_tensor is not None:
+                    layer_grce_bias = grce_tensor[:, :, layer_idx, :]
+                kv_sources = layer_kv_sources[layer_idx] or None
+                current, _, kv_pair = block(
+                    current,
+                    xctx_bias=layer_xctx_bias,
+                    grce_bias=layer_grce_bias,
+                    kv_cache_sources=kv_sources,
+                    qh_query_callback=qh_query_callback,
+                    attn_mode=mode,
+                    layer_idx=layer_idx,
+                    full_attention=(mode == "encode"),
+                    attention_capture=attention_capture,
+                    rope_positions=rope_positions_tensor,
+                )
+                if rep_idx == 0:
+                    samples.append(current)
+                if kv_pair is None:
+                    if layer_top_only and rep_idx == repeats - 1:
+                        kv_outputs[layer_idx] = None
+                    continue
+                existing = kv_outputs[layer_idx]
+                if layer_top_only:
+                    if rep_idx == repeats - 1 or existing is None:
+                        kv_outputs[layer_idx] = kv_pair
+                else:
+                    if existing is None:
+                        kv_outputs[layer_idx] = kv_pair
+                    else:
+                        key = torch.cat([existing[0], kv_pair[0]], dim=1)
+                        value = torch.cat([existing[1], kv_pair[1]], dim=1)
+                        kv_outputs[layer_idx] = (key, value)
         return current, samples, kv_outputs
 
 
@@ -3631,6 +3684,8 @@ class TransformerStackGrid(nn.Module):
         kv_cache_list_in: Sequence[Sequence[tuple[torch.Tensor, torch.Tensor]]] | None = None,
         qh_query_callback=None,
         mode: str = "decode",
+        layer_repeat: int = 1,
+        layer_top_only: bool = False,
     ) -> tuple[torch.Tensor, list[torch.Tensor], list]:
         output, samples, kv_out = self.core.forward_grid(
             x,
@@ -3639,6 +3694,8 @@ class TransformerStackGrid(nn.Module):
             kv_cache_list_in=kv_cache_list_in,
             mode=mode,
             qh_query_callback=qh_query_callback,
+            layer_repeat=layer_repeat,
+            layer_top_only=layer_top_only,
         )
         return output, samples, kv_out
 
@@ -3902,6 +3959,8 @@ class TransformerStackColumn:
         detach_internal_kv_cache: bool = False,
         attention_capture: "AttentionCapture" | None = None,
         column_position: int | None = None,
+        layer_repeat: int = 1,
+        layer_top_only: bool = False,
     ) -> tuple[
         torch.Tensor,
         list[torch.Tensor],
@@ -3927,6 +3986,8 @@ class TransformerStackColumn:
             qh_query_callback=qh_query_callback,
             rope_positions=rope_positions,
             attention_capture=attention_capture,
+            layer_repeat=layer_repeat,
+            layer_top_only=layer_top_only,
         )
         if detach_internal_kv_cache:
             column_output = column_output.detach()
@@ -4014,12 +4075,15 @@ class TransformerStackSequence(nn.Module):
         think_step_index: torch.Tensor | None = None,
         think_step_count: torch.Tensor | None = None,
         column_positions: torch.Tensor | None = None,
+        layer_repeat: int = 1,
+        layer_top_only: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None, list]:
         if mode not in {"forward", "encode", "decode", "reverse", "noattn"}:
             raise ValueError(f"Unknown TransformerStackSequence mode: {mode}")
         rows, cols, _ = x.shape
         device = x.device
         dtype = x.dtype
+        kv_repeat_factor = layer_repeat if (layer_repeat > 1 and not layer_top_only) else 1
         outputs: list[torch.Tensor] = []
         grce_state = self._ensure_state(self.grce, grce_in, rows, device, dtype)
         xctx_state = self._ensure_state(self.xctx, xctx_in, rows, device, dtype)
@@ -4041,6 +4105,8 @@ class TransformerStackSequence(nn.Module):
                 context_detach_enabled=context_detach_enabled,
                 attention_capture=attention_capture,
                 column_positions=column_positions,
+                layer_repeat=layer_repeat,
+                layer_top_only=layer_top_only,
             )
         column_positions_tensor = None
         if column_positions is not None:
@@ -4053,7 +4119,12 @@ class TransformerStackSequence(nn.Module):
         kv_history: list[list[tuple[torch.Tensor, torch.Tensor] | None]] = []
         kv_storage: list[tuple[torch.Tensor, torch.Tensor]] | None = None
         if detach_internal_kv_cache:
-            kv_storage = self._allocate_detached_kv_storage(rows, cols, device, dtype)
+            kv_storage = self._allocate_detached_kv_storage(
+                rows,
+                cols * kv_repeat_factor,
+                device,
+                dtype,
+            )
         loop_residual: torch.Tensor | None = None
         think_group_size = self.detach_think_span
         think_detach_active = (
@@ -4101,7 +4172,9 @@ class TransformerStackSequence(nn.Module):
             if base_sources:
                 column_kv_sources.extend(base_sources)
             if detach_internal_kv_cache and kv_storage is not None and col > 0:
-                column_kv_sources.append(self._detached_kv_prefix(kv_storage, col))
+                column_kv_sources.append(
+                    self._detached_kv_prefix(kv_storage, col * kv_repeat_factor)
+                )
             elif (not detach_internal_kv_cache) and use_internal_cache and kv_history:
                 column_kv_sources.extend(kv_history)
             kv_sources_arg = column_kv_sources if column_kv_sources else None
@@ -4120,6 +4193,8 @@ class TransformerStackSequence(nn.Module):
                 detach_internal_kv_cache=detach_internal_kv_cache,
                 attention_capture=column_capture,
                 column_position=column_position,
+                layer_repeat=layer_repeat,
+                layer_top_only=layer_top_only,
             )
             outputs.append(column_output)
             if step_count > 1 and step_index < step_count:
@@ -4132,8 +4207,10 @@ class TransformerStackSequence(nn.Module):
                         continue
                     key_chunk, value_chunk = kv_pair
                     key_buf, value_buf = kv_storage[layer_idx]
-                    key_buf[:, col : col + key_chunk.size(1), :, :].copy_(key_chunk.detach())
-                    value_buf[:, col : col + value_chunk.size(1), :, :].copy_(value_chunk.detach())
+                    kv_start = col * kv_repeat_factor
+                    kv_end = kv_start + key_chunk.size(1)
+                    key_buf[:, kv_start:kv_end, :, :].copy_(key_chunk.detach())
+                    value_buf[:, kv_start:kv_end, :, :].copy_(value_chunk.detach())
             else:
                 kv_history.append(kv_pairs)
                 if self.kv_rebalance:
@@ -4200,6 +4277,8 @@ class TransformerStackSequence(nn.Module):
         context_detach_enabled: bool | None,
         attention_capture: AttentionCapture | None,
         column_positions: torch.Tensor | None,
+        layer_repeat: int,
+        layer_top_only: bool,
     ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None, list[tuple[torch.Tensor, torch.Tensor]]]:
         rows, cols, _ = x.shape
         rope_positions = None
@@ -4222,6 +4301,8 @@ class TransformerStackSequence(nn.Module):
             qh_query_callback=qh_query_callback,
             rope_positions=rope_positions,
             attention_capture=attention_capture,
+            layer_repeat=layer_repeat,
+            layer_top_only=layer_top_only,
         )
         kv_out = kv_pairs
         if detach_internal_kv_cache:
@@ -4690,6 +4771,8 @@ def _run_microbatch_pass(
                 prev_grce_state = grce_state
                 prev_xctx_state = xctx_state
                 segment_positions = column_positions[start:end]
+                layer_repeat = max(1, int(getattr(segment, "layer_repeat", 1) or 1))
+                layer_top_only = bool(getattr(segment, "layer_top_only", False))
                 chunk_output, grce_state, xctx_state, kv_out = model.stack_sequence.forward(
                     chunk_input,
                     grce_in=grce_state,
@@ -4702,6 +4785,8 @@ def _run_microbatch_pass(
                     column_positions=segment_positions,
                     think_step_index=think_index,
                     think_step_count=think_count,
+                    layer_repeat=layer_repeat,
+                    layer_top_only=layer_top_only,
                 )
                 if not getattr(segment, "context_enabled", True):
                     grce_state = prev_grce_state
@@ -6080,6 +6165,8 @@ def _evaluate_row_block(
         prev_grce_state = grce_state
         prev_xctx_state = xctx_state
         segment_positions = column_positions[start:end]
+        layer_repeat = max(1, int(getattr(segment, "layer_repeat", 1) or 1))
+        layer_top_only = bool(getattr(segment, "layer_top_only", False))
         chunk_output, grce_state, xctx_state, kv_out = model.stack_sequence.forward(
             chunk_input,
             grce_in=grce_state,
@@ -6093,6 +6180,8 @@ def _evaluate_row_block(
             column_positions=segment_positions,
             think_step_index=think_index,
             think_step_count=think_count,
+            layer_repeat=layer_repeat,
+            layer_top_only=layer_top_only,
         )
         if not segment.context_enabled:
             grce_state = prev_grce_state
