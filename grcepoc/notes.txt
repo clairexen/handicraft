@@ -914,29 +914,9 @@ other FIXMEs, and let me know if you find duplicate articles.)
 
 ---------------------------------------------------------------------------
 
-Current experiments:
-
-python grce.py --pt model/wp_simple_think2x_small.pt --small create
-python grce.py --pt model/wp_simple_think2x_small.pt corpus --add wikipedia-simple
-python grce.py --pt model/wp_simple_think2x_small.pt --cycles 150 \
-  --lr-warmup-steps 200 --lr-cosine-steps 500 --block-size 100 --batch-size 100 \
-  --layout '*[8e=*tx2=4f=4D]' train --json
-
-cp model/wp_simple_think2x_small.pt model/wp_simple_think2x_small_think.pt
-python grce.py --pt model/wp_simple_think2x_small_think.pt reset
-python grce.py --pt model/wp_simple_think2x_small_think.pt --cycles 10 \
-  --lr-warmup-steps 20 --lr-cosine-steps 200 --block-size 100 --batch-size 100 \
-  --layout '*[*tx2]' train --json
-
-cp model/wp_simple_think2x_small.pt model/wp_simple_think2x_small_nothink.pt
-python grce.py --pt model/wp_simple_think2x_small_nothink.pt reset
-python grce.py --pt model/wp_simple_think2x_small_nothink.pt --cycles 10 \
-  --lr-warmup-steps 20 --lr-cosine-steps 200 --block-size 50 --batch-size 100 \
-  --layout '*[*f]' train --json
-
-----
+Current experiment:
 
 python grce.py --pt model/wp_en_E_D4Y.pt create
 python grce.py --pt model/wp_en_E_D4Y.pt corpus --add wikipedia-en-000{0,1,2,3,4,5,6,7}
 python grce.py --pt model/wp_en_E_D4Y.pt --cycles 3600 --lr-warmup-steps 200 --lr-cosine-steps 500 \
-  --block-size 100 --batch-size 50 --layout '*[8E=*D4Y=*D4Y]' train --json
+  --block-size 100 --batch-size 50 --layout '*[8E=8D4Y>head=*D4Y=*D4Y=8D4Y>tail]' train --json
