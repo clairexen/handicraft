@@ -44,13 +44,12 @@ about the intended design behavior, mostly directed at AI agents (= OpenAI Codex
 
 ## GRCE and XCTX data path spec
 
-GRCE and XCTX both sample the n_layer input vectors to the transformer blocks
-in the stack at a position, mix with a recurrent GRCE or XCTX signal (G or X),
-remix, and update the recurrent signal (G' and X'), and then inject the context
-information into the transformer layers at later positions. Each has a
-per-layer sample stage, a shared mix and remix stage, and then a per-layer
-bias-injection stage in the next position. In the current implementation the
-bias injection point uses
+GRCE and XCTX both sample the output of every transformer block at a position,
+mix with a recurrent GRCE or XCTX signal (G or X), remix, and update the
+recurrent signal (G' and X'), and then inject the context information into the
+transformer layers at later positions. Each has a per-layer sample stage, a
+shared mix and remix stage, and then a per-layer bias-injection stage in the
+next position. In the current implementation the bias injection point uses
 
 	LN(S_i + alpha .* XCTX_Bias_i) + LD(GRCE_Bias_i),
 
@@ -71,8 +70,8 @@ adapt the strength of injected bias differently for attention and MLP paths with
 minimal additional parameters.
 
 Let's call the recurrent GRCE signal G, the updated recurrent signal G'. Let the
-sampled signal from the input to transformer layer i be S_i, and let the per-layer bias
-vectors, added to both LN()-outputs in the transformer block, be B_i.
+sampled signal from the output of transformer layer i be S_i, and let the
+per-layer bias vectors, added to both LN()-outputs in the transformer block, be B_i.
 
 The model embedding dimension is n_embd. The width of the recurrent GRCE channel
 is n_grce, and the width of the recurrent XCTX channel is n_xctx. Note that usually
@@ -152,20 +151,6 @@ run the *full layer stack for a single token*, appending that token’s K/V to
 per-layer caches and attending only against cached past keys/values. (In
 `encode` blocks we run the transformer with simple un-masked attention, so
 we must not use a KV-cached architecture in the case of `encode` blocks.)
-
-### Future/Next Experiments
-
-We propose a “Radial Gated Mixer” (RGM) for the recurrent update. Right now every
-partial sum inside GRCE/XCTX passes through Layer Dampening, so the model has to
-keep rebuilding old signals (G' = LD(G + delta)). In RGM we add a per-feature gate
-alpha and define
-
-      G' = alpha * G + dampen(delta)
-
-where dampen(delta) uses the same soft radial shrinkage to keep the resulting
-G' inside the unit ball. Redundant or oversized delta terms are softened or even
-eliminated before they modify the state, while the residual alpha * G carries
-useful information forward without extra amplification.
 
 ### Rationale for the recurrent channels, additional thoughts, and predicted behavior
 
