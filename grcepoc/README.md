@@ -47,8 +47,9 @@ Training a base encode/decode transformer model (with optional "y-looping"):
 ```
 python grce.py --pt model/wp_en_E_D4Y.pt create
 python grce.py --pt model/wp_en_E_D4Y.pt corpus --add wikipedia-en-000{0,1,2,3,4,5,6,7}
-python grce.py --pt model/wp_en_E_D4Y.pt --cycles 5000 --lr-warmup-steps 200 --lr-cosine-steps 500 --generate-with-decode \
-  --block-size 128 --batch-size 32 --layout '*[8E=8D4(Y|y)>head=*D4Y=*D4Y=8D(1|2|3)(Y|y)>>D123Y=8D4Y>tail]' train --json
+python grce.py --pt model/wp_en_E_D4Y.pt --cycles 5000 --generate-with-decode \
+  --lr-warmup-steps 200 --lr-cosine-steps 500 --block-size 128 --batch-size 32 \
+  --layout '*[8E=8D4(Y|y)>head=*D4Y=1D4Yb>>b=1D4YB>>B=*D4Y=8D(1|2|3)(Y|y)>>D123Y=8D4Y>tail]' train --json
 ```
 
 Plot various losses recorded during base encode/decode transformer training:
