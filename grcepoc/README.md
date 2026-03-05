@@ -47,7 +47,7 @@ Training a base encode/decode transformer model (with optional "y-looping"):
 ```
 python grce.py --pt model/wp_en_E_D4Y.pt create
 python grce.py --pt model/wp_en_E_D4Y.pt corpus --add wikipedia-en-000{0,1,2,3,4,5,6,7}
-python grce.py --pt model/wp_en_E_D4Y.pt --cycles 3600 --lr-warmup-steps 200 --lr-cosine-steps 500 \
+python grce.py --pt model/wp_en_E_D4Y.pt --cycles 3600 --lr-warmup-steps 200 --lr-cosine-steps 500 --generate-with-decode \
   --block-size 100 --batch-size 50 --layout '*[8E=8D4Y>head=*D4Y=*D4Y=8D(1|2|3)Y>>D123Y=8D4Y>tail]' train --json
 ```
 

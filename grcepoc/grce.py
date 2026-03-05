@@ -148,6 +148,7 @@ class Defaults:
     lr_cosine_steps: int = 0
     no_detach_ctx: bool = False
     prompt_no_prefix: bool = False
+    generate_with_decode: bool = False
 
 DEFAULTS = Defaults()
 
@@ -1322,6 +1323,12 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         type=int,
         default=10,
         help="Number of new tokens to sample after training",
+    )
+    sampling_group.add_argument(
+        "--generate-with-decode",
+        action="store_true",
+        default=DEFAULTS.generate_with_decode,
+        help="Use decode-mode attention when generating samples",
     )
     sampling_group.add_argument(
         "--no-newlines",
@@ -5787,6 +5794,7 @@ def train_model(
             newline_token_id=newline_token_id,
             first_token_blocklist=(boundary_blocklist if prompt_needs_boundary_flag else None),
             sampling_strategy=sampling_strategy,
+            use_decode_mode=args.generate_with_decode,
         )
         sample_ids = sample_tokens[0].detach().cpu().tolist()
         prompt_ids = sample_ids[:prompt_len]
@@ -6015,6 +6023,7 @@ def generate(
     newline_token_id: int | None = None,
     first_token_blocklist: Sequence[int] | None = None,
     sampling_strategy: str = "sample",
+    use_decode_mode: bool = False,
 ) -> tuple[torch.Tensor, int]:
     """Autoregressively sample tokens for CLI reports and prompt tests."""
 
@@ -6025,7 +6034,10 @@ def generate(
     blocklist = list(first_token_blocklist or [])
     for _ in range(steps):
         idx_cond = idx[:, -model.config.n_pos :]
-        logits, _, _ = model.forward_autoreg(idx_cond)
+        logits, _, _ = model.forward_autoreg(
+            idx_cond,
+            mode="decode" if use_decode_mode else "forward",
+        )
         logits_last = logits[:, -1, :]
         probs = F.softmax(logits_last, dim=-1)
         suppressed_ids: list[int] = []
@@ -6061,6 +6073,8 @@ def run_report_mode(
     newline_token_id: int | None,
     default_prompt_boundary: bool,
     boundary_blocklist: Sequence[int] | None,
+    *,
+    use_decode_mode: bool = False,
 ) -> None:
     """Emit CLI prompt samples used by ``train --report`` and prompt tools."""
 
@@ -6076,6 +6090,7 @@ def run_report_mode(
             newline_token_id=newline_token_id,
             first_token_blocklist=(boundary_blocklist if needs_boundary else None),
             sampling_strategy="sample" if idx % 2 else "argmax",
+            use_decode_mode=use_decode_mode,
         )
         sample_ids = generated[0].tolist()
         completion_ids = sample_ids[prompt_len:]
@@ -7776,6 +7791,7 @@ class Runtime:
                     newline_token_id=newline_token_id,
                     default_prompt_boundary=default_prompt_boundary,
                     boundary_blocklist=boundary_blocklist,
+                    use_decode_mode=self.args.generate_with_decode,
                 )
                 return
 
