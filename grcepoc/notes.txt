@@ -666,6 +666,14 @@ the input-stream reconstruction losses remain. Use these sparingly (typically a
 single column per batch) to encourage embeddings that stay meaningful through
 the stack and to keep even/odd parity lanes well separated for looping.
 
+Both probes use the LM head and cross-entropy objective: for `B` we feed the
+odd stream into the head (identical to the default loss), while `b` feeds the
+even stream into the same head to ensure layers remain predictive of the input
+token identity even as they reshape features. This avoids forcing exact
+reconstruction of the embedding vector (which would block context-dependent
+refinement) while still enforcing that the token can be recovered from any
+layer’s parity lane.
+
 Appending `2x`, `3x`, or `4x` to a mode enables 2x/3x/4x "thinking" along the
 position axis (we refer to this family as the `Nx` modifier below). Using `t`
 instead of `f` keeps the computation identical but routes *all* loss from that
