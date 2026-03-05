@@ -51,6 +51,11 @@ python grce.py --pt model/wp_en_E_D4Y.pt --cycles 3600 --lr-warmup-steps 200 --l
   --block-size 100 --batch-size 50 --layout '*[8E=8D4Y>head=*D4Y=*D4Y=8D(1|2|3)Y>>D123Y=8D4Y>tail]' train --json
 ```
 
+Plot various losses recorded during base encode/decode transformer training:
+```
+python plot.py --json model/wp_en_E_D4Y.json --median 10 --plot-time test_loss_head test_loss_tail test_loss
+```
+
 Additional training of recurrent backbone network (with optional "x-looping"):
 ```
 cp model/wp_en_E_D4Y.pt model/wp_en_E_D4Y_f_t4x.pt
@@ -59,7 +64,7 @@ python grce.py --pt model/wp_en_E_D4Y_f_t4x.pt --cycles 500 --lr-warmup-steps 20
   --block-size 64 --batch-size 64 --layout '*[8E=8D(1|2|3|4)Y=*8f=*8t(2x|3x|4x)]' train --json
 ```
 
-Plot test losses recorded during training:
+Plot stacked test losses recorded during training:
 ```
-python plot.py --json model/wp_en_E_D4Y.json --json model/wp_en_E_D4Y_f_t4x.json --stack-sources --plot-time test_loss
+python plot.py --json model/wp_en_E_D4Y.json --json model/wp_en_E_D4Y_f_t4x.json --stack-sources --plot-time
 ```
