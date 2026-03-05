@@ -369,6 +369,8 @@ class SegmentSpec:
     hide_typed_metrics: bool = False
     extra_metrics: tuple[str, ...] = ()
     suppress_default_metric: bool = False
+    loss_input_stream: bool = False
+    loss_output_stream: bool = False
 
 
 @dataclass(frozen=True)
@@ -405,6 +407,8 @@ class SegmentLayout:
     hide_typed_metrics: bool = False
     extra_metrics: tuple[str, ...] = ()
     suppress_default_metric: bool = False
+    loss_input_stream: bool = False
+    loss_output_stream: bool = False
 
     def token_columns(self) -> int:
         if self.think_factor <= 1:
@@ -550,11 +554,24 @@ def _parse_segment_spec(text: str, connector: str | None) -> SegmentSpec:
             layer_repeat = count
             layer_top_only = marker.isupper()
     hide_typed_metrics = False
-    if mode_token and mode_token[-1] in {"h", "H"}:
-        hide_typed_metrics = True
-        mode_token = mode_token[:-1]
-        if not mode_token:
-            raise LayoutParseError("Hide-metric modifier requires a base mode")
+    bias_input_loss = False
+    bias_output_loss = False
+    while mode_token:
+        tail = mode_token[-1]
+        if tail in {"h", "H"}:
+            hide_typed_metrics = True
+            mode_token = mode_token[:-1]
+            continue
+        if tail in {"b", "B"}:
+            if tail == "b":
+                bias_input_loss = True
+            else:
+                bias_output_loss = True
+            mode_token = mode_token[:-1]
+            continue
+        break
+    if hide_typed_metrics and not mode_token:
+        raise LayoutParseError("Hide-metric modifier requires a base mode")
     if not mode_token:
         raise LayoutParseError("Missing mode in segment")
     mode_char = mode_token[0]
@@ -604,6 +621,8 @@ def _parse_segment_spec(text: str, connector: str | None) -> SegmentSpec:
         hide_typed_metrics=hide_typed_metrics,
         extra_metrics=tuple(extra_metrics),
         suppress_default_metric=suppress_default,
+        loss_input_stream=bias_input_loss,
+        loss_output_stream=bias_output_loss,
     )
 
 
@@ -855,6 +874,8 @@ class BatchLayout:
                     hide_typed_metrics=getattr(spec, "hide_typed_metrics", False),
                     extra_metrics=getattr(spec, "extra_metrics", ()),
                     suppress_default_metric=getattr(spec, "suppress_default_metric", False),
+                    loss_input_stream=getattr(spec, "loss_input_stream", False),
+                    loss_output_stream=getattr(spec, "loss_output_stream", False),
                 )
             )
         max_cols = sum(segment.columns for segment in segments)
@@ -892,12 +913,17 @@ class BatchLayout:
                 if getattr(segment, "layer_repeat", 1) and segment.layer_repeat > 1:
                     suffix_letter = "Y" if getattr(segment, "layer_top_only", False) else "y"
                     layer_suffix = f"{segment.layer_repeat}{suffix_letter}"
+                bias_suffix = ""
+                if getattr(segment, "loss_output_stream", False):
+                    bias_suffix += "B"
+                if getattr(segment, "loss_input_stream", False):
+                    bias_suffix += "b"
                 metric_suffix = ""
                 extra = getattr(segment, "extra_metrics", ())
                 if extra:
                     prefix = ">>" if getattr(segment, "suppress_default_metric", False) else ">"
                     metric_suffix = prefix + ">".join(extra)
-                bit = f"{segment.columns}{letter}{hide_suffix}{layer_suffix}{think_suffix}{metric_suffix}"
+                bit = f"{segment.columns}{letter}{hide_suffix}{layer_suffix}{think_suffix}{bias_suffix}{metric_suffix}"
                 if idx > 0:
                     connector = segment.connector or "="
                     bit = connector + bit
@@ -927,6 +953,8 @@ class BatchLayout:
                             hide_typed_metrics=seg.hide_typed_metrics,
                             extra_metrics=seg.extra_metrics,
                             suppress_default_metric=seg.suppress_default_metric,
+                            loss_input_stream=seg.loss_input_stream,
+                            loss_output_stream=seg.loss_output_stream,
                         )
                         for seg in group.segments
                     ]
@@ -4170,7 +4198,8 @@ class TransformerStackSequence(nn.Module):
         layer_repeat: int = 1,
         layer_top_only: bool = False,
         think_last_only: bool = False,
-    ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None, list]:
+        capture_layer_outputs: bool = False,
+    ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None, list, list[torch.Tensor] | None]:
         if mode not in {"forward", "encode", "decode", "reverse", "noattn"}:
             raise ValueError(f"Unknown TransformerStackSequence mode: {mode}")
         rows, cols, _ = x.shape
@@ -4178,6 +4207,9 @@ class TransformerStackSequence(nn.Module):
         dtype = x.dtype
         kv_repeat_factor = layer_repeat if (layer_repeat > 1 and not layer_top_only) else 1
         outputs: list[torch.Tensor] = []
+        captured_layers: list[list[torch.Tensor]] | None = None
+        if capture_layer_outputs:
+            captured_layers = [[] for _ in range(self.n_layers)]
         grce_state = self._ensure_state(self.grce, grce_in, rows, device, dtype)
         xctx_state = self._ensure_state(self.xctx, xctx_in, rows, device, dtype)
         if mode in {"encode", "decode", "reverse"}:
@@ -4201,6 +4233,7 @@ class TransformerStackSequence(nn.Module):
                 layer_repeat=layer_repeat,
                 layer_top_only=layer_top_only,
                 think_last_only=think_last_only,
+                capture_layer_outputs=capture_layer_outputs,
             )
         column_positions_tensor = None
         if column_positions is not None:
@@ -4298,6 +4331,9 @@ class TransformerStackSequence(nn.Module):
                 layer_top_only=layer_top_only,
             )
             outputs.append(column_output)
+            if captured_layers is not None:
+                for layer_idx in range(min(len(samples), self.n_layers)):
+                    captured_layers[layer_idx].append(samples[layer_idx])
             if step_count > 1 and step_index < step_count:
                 loop_residual = self.core.loop_ln(column_output)
             else:
@@ -4384,7 +4420,13 @@ class TransformerStackSequence(nn.Module):
                 kv_out.append((key_slice, value_slice))
         else:
             kv_out = kv_cache_list_merge(kv_history)
-        return stacked, grce_state, xctx_state, kv_out
+        layer_outputs = None
+        if captured_layers is not None:
+            layer_outputs = [
+                torch.cat(chunks, dim=1) if chunks else stacked.new_zeros(rows, 0, self.n_width)
+                for chunks in captured_layers
+            ]
+        return stacked, grce_state, xctx_state, kv_out, layer_outputs
 
     def _forward_grid_mode(
         self,
@@ -4408,7 +4450,14 @@ class TransformerStackSequence(nn.Module):
         layer_repeat: int,
         layer_top_only: bool,
         think_last_only: bool,
-    ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None, list[tuple[torch.Tensor, torch.Tensor]]]:
+        capture_layer_outputs: bool,
+    ) -> tuple[
+        torch.Tensor,
+        torch.Tensor | None,
+        torch.Tensor | None,
+        list[tuple[torch.Tensor, torch.Tensor]],
+        list[torch.Tensor] | None,
+    ]:
         rows, cols, _ = x.shape
         rope_positions = None
         if column_positions is not None:
@@ -4434,6 +4483,7 @@ class TransformerStackSequence(nn.Module):
             layer_top_only=layer_top_only,
         )
         kv_out = kv_pairs
+        layer_outputs = samples if capture_layer_outputs else None
         if detach_internal_kv_cache:
             kv_out = [
                 None if pair is None else (pair[0].detach(), pair[1].detach())
@@ -4466,7 +4516,7 @@ class TransformerStackSequence(nn.Module):
                     detach_ctx_enabled=context_detach_enabled,
                     detach_span_override=context_detach_span,
                 )
-        return output, grce_state, xctx_state, kv_out
+        return output, grce_state, xctx_state, kv_out, layer_outputs
 
 
 @dataclass
@@ -4601,7 +4651,7 @@ class GRCEGPT(nn.Module):
         x = self.core.drop(tok)
         context_info: dict[str, torch.Tensor] | None = None
         if mode in {"forward", "noattn", "encode"}:
-            sequence_output, grce_out, xctx_out, _ = self.stack_sequence.forward(
+            sequence_output, grce_out, xctx_out, _, _ = self.stack_sequence.forward(
                 x,
                 mode=mode,
             )
@@ -4911,7 +4961,11 @@ def _run_microbatch_pass(
                 layer_repeat = max(1, int(getattr(segment, "layer_repeat", 1) or 1))
                 layer_top_only = bool(getattr(segment, "layer_top_only", False))
                 think_last_only = bool(getattr(segment, "think_last_only", False))
-                chunk_output, grce_state, xctx_state, kv_out = model.stack_sequence.forward(
+                capture_layers = bool(
+                    getattr(segment, "loss_input_stream", False)
+                    or getattr(segment, "loss_output_stream", False)
+                )
+                chunk_output, grce_state, xctx_state, kv_out, layer_outputs = model.stack_sequence.forward(
                     chunk_input,
                     grce_in=grce_state,
                     xctx_in=xctx_state,
@@ -4926,6 +4980,7 @@ def _run_microbatch_pass(
                     layer_repeat=layer_repeat,
                     layer_top_only=layer_top_only,
                     think_last_only=think_last_only,
+                    capture_layer_outputs=capture_layers,
                 )
                 if not getattr(segment, "context_enabled", True):
                     grce_state = prev_grce_state
@@ -4933,21 +4988,60 @@ def _run_microbatch_pass(
                 logits = model.core.head(
                     model.core.output_features(model.core.ln_f(chunk_output))
                 )
-                (
-                    loss_sum,
-                    token_count,
-                    row_loss_sums,
-                    row_token_counts,
-                ) = loss_sum_token_count_with_rows(
-                    logits,
-                    chunk_target,
-                    last_only=(mode == "encode"),
+                use_standard_loss = not (
+                    getattr(segment, "loss_input_stream", False)
+                    or getattr(segment, "loss_output_stream", False)
                 )
-                if token_count > 0:
-                    total_tokens += token_count
+                if use_standard_loss:
+                    (
+                        loss_sum,
+                        token_count,
+                        row_loss_sums,
+                        row_token_counts,
+                    ) = loss_sum_token_count_with_rows(
+                        logits,
+                        chunk_target,
+                        last_only=(mode == "encode"),
+                    )
+                else:
+                    loss_sum = None
+                    token_count = _count_supervised_tokens(
+                        chunk_target,
+                        last_only=(mode == "encode"),
+                    )
+                    row_loss_sums = None
+                    row_token_counts = None
+                bias_terms: list[torch.Tensor] = []
+                if getattr(segment, "loss_output_stream", False):
+                    if layer_outputs is None:
+                        raise RuntimeError("Requested output-stream loss without captured layers")
+                    output_loss = _layer_output_stream_loss(
+                        model,
+                        layer_outputs,
+                        chunk_target,
+                        last_only=(mode == "encode"),
+                    )
+                    if output_loss is not None:
+                        bias_terms.append(output_loss)
+                if getattr(segment, "loss_input_stream", False):
+                    if layer_outputs is None:
+                        raise RuntimeError("Requested input-stream loss without captured layers")
+                    input_loss = _layer_input_stream_loss(
+                        model.core,
+                        layer_outputs,
+                        token_slice,
+                    )
+                    if input_loss is not None:
+                        bias_terms.append(input_loss)
+                if bias_terms:
+                    bias_loss = sum(bias_terms) / len(bias_terms)
+                    loss_sum = bias_loss
+                if loss_sum is not None:
                     total_loss_sum = (
                         loss_sum if total_loss_sum is None else total_loss_sum + loss_sum
                     )
+                if token_count > 0 and loss_sum is not None:
+                    total_tokens += token_count
                     loss_value = float(loss_sum.detach().item())
                     metric_key = segment.metric_mode or mode
                     if (
@@ -4976,7 +5070,7 @@ def _run_microbatch_pass(
                             entry["token_count"] = (
                                 int(entry.get("token_count", 0)) + int(token_values[idx])
                             )
-                    kv_chain.append(kv_out)
+                kv_chain.append(kv_out)
                 cursor += cols
             row_details.extend(row_entries)
     result = LayoutPassResult(
@@ -5375,6 +5469,57 @@ def _segment_think_metadata(
     step_index = (idx % factor) + 1
     mask = step_index != step_count
     return step_index, step_count, mask
+
+
+def _layer_output_stream_loss(
+    model: "GRCEGPT",
+    layer_outputs: Sequence[torch.Tensor],
+    targets: torch.Tensor,
+    *,
+    last_only: bool,
+) -> torch.Tensor | None:
+    total_loss: torch.Tensor | None = None
+    layer_count = 0
+    for tensor in layer_outputs:
+        logits = model.core.head(model.core.output_features(model.core.ln_f(tensor)))
+        loss_sum, token_count = loss_sum_and_token_count(logits, targets, last_only=last_only)
+        if token_count <= 0:
+            continue
+        total_loss = loss_sum if total_loss is None else total_loss + loss_sum
+        layer_count += 1
+    if total_loss is None or layer_count == 0:
+        return None
+    return total_loss / layer_count
+
+
+def _layer_input_stream_loss(
+    core: TransformerStackCore,
+    layer_outputs: Sequence[torch.Tensor],
+    token_slice: torch.Tensor,
+) -> torch.Tensor | None:
+    if not layer_outputs:
+        return None
+    target_even = _select_parity_features(token_slice, parity=0)
+    accumulated: torch.Tensor | None = None
+    layer_count = 0
+    for tensor in layer_outputs:
+        normalized = core.ln_f(tensor)
+        even_stream = _select_parity_features(normalized, parity=0)
+        diff = even_stream - target_even
+        mse = diff.pow(2).mean(dim=-1)
+        layer_loss = mse.sum()
+        accumulated = layer_loss if accumulated is None else accumulated + layer_loss
+        layer_count += 1
+    if accumulated is None or layer_count == 0:
+        return None
+    return accumulated / layer_count
+
+
+def _count_supervised_tokens(targets: torch.Tensor, *, last_only: bool) -> int:
+    if last_only:
+        targets = targets[:, -1:]
+    mask = targets != LOSS_IGNORE_INDEX
+    return int(mask.sum().item())
 
 
 def _kv_column_length(kv_pairs: Sequence[tuple[torch.Tensor, torch.Tensor] | None]) -> int:
@@ -6391,7 +6536,11 @@ def _evaluate_row_block(
         layer_repeat = max(1, int(getattr(segment, "layer_repeat", 1) or 1))
         layer_top_only = bool(getattr(segment, "layer_top_only", False))
         think_last_only = bool(getattr(segment, "think_last_only", False))
-        chunk_output, grce_state, xctx_state, kv_out = model.stack_sequence.forward(
+        capture_layers = bool(
+            getattr(segment, "loss_input_stream", False)
+            or getattr(segment, "loss_output_stream", False)
+        )
+        chunk_output, grce_state, xctx_state, kv_out, layer_outputs = model.stack_sequence.forward(
             chunk_input,
             grce_in=grce_state,
             xctx_in=xctx_state,
@@ -6407,6 +6556,7 @@ def _evaluate_row_block(
             layer_repeat=layer_repeat,
             layer_top_only=layer_top_only,
             think_last_only=think_last_only,
+            capture_layer_outputs=capture_layers,
         )
         if not segment.context_enabled:
             grce_state = prev_grce_state
@@ -6414,14 +6564,50 @@ def _evaluate_row_block(
         target_ids[:, start:end] = chunk_target
         logits = model.core.head(model.core.output_features(model.core.ln_f(chunk_output)))
         logits_buffer.append(logits)
-        loss_sum, token_count = loss_sum_and_token_count(
-            logits,
-            eval_targets,
-            last_only=(segment.mode == "encode"),
+        use_standard_loss = not (
+            getattr(segment, "loss_input_stream", False)
+            or getattr(segment, "loss_output_stream", False)
         )
+        if use_standard_loss:
+            loss_sum, token_count = loss_sum_and_token_count(
+                logits,
+                eval_targets,
+                last_only=(segment.mode == "encode"),
+            )
+        else:
+            loss_sum = None
+            token_count = _count_supervised_tokens(
+                eval_targets,
+                last_only=(segment.mode == "encode"),
+            )
+        extra_losses: list[torch.Tensor] = []
+        if getattr(segment, "loss_output_stream", False):
+            if layer_outputs is None:
+                raise RuntimeError("Requested output-stream loss without captured layers")
+            output_loss = _layer_output_stream_loss(
+                model,
+                layer_outputs,
+                eval_targets,
+                last_only=(segment.mode == "encode"),
+            )
+            if output_loss is not None:
+                extra_losses.append(output_loss)
+        if getattr(segment, "loss_input_stream", False):
+            if layer_outputs is None:
+                raise RuntimeError("Requested input-stream loss without captured layers")
+            input_loss = _layer_input_stream_loss(
+                model.core,
+                layer_outputs,
+                token_slice,
+            )
+            if input_loss is not None:
+                extra_losses.append(input_loss)
+        if extra_losses:
+            bias_loss = sum(extra_losses) / len(extra_losses)
+            loss_sum = bias_loss
         metric_key = segment.metric_mode or segment.mode
         column_modes[start:end] = [metric_key] * (end - start)
-        if token_count > 0:
+        if token_count > 0 and loss_sum is not None:
             loss_value = float(loss_sum.detach().item())
             if not getattr(segment, "hide_typed_metrics", False) and not segment.suppress_default_metric:
                 if metric_key not in mode_loss_sums:
