@@ -156,11 +156,11 @@ DEFAULTS = Defaults()
 from argparse import Namespace as Args
 GeometryLike = ModelGeometry | Args
 
+ROPE_PHASE_FRACTION = 12.0  # fraction of n_pos that spans 360 degrees
 
 FANCY_SPACE = "\u2423"  # Open Box symbol for visible spaces
 FANCY_ENTER = "\u23CE " # Return symbol for visible newlines
 PROMPT_PREFIX_TEXT = "\n\n"
-ROPE_PHASE_FRACTION = 1.0  # fraction of n_pos that spans 360 degrees
 
 def normalize_prompt(text: str) -> str:
     """Map placeholder characters back to literal spaces/newlines."""
