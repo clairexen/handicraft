@@ -8223,7 +8223,10 @@ class Runtime:
             acc_eval = Timer()
             completed_cycles = getattr(self.args, "completed_cycles", 0)
             cycle_start = completed_cycles + 1
-            cycle_end = max(completed_cycles, self.args.cycles)
+            if self.args.command == "try":
+                cycle_end = cycle_start
+            else:
+                cycle_end = max(completed_cycles, self.args.cycles)
             rng_cycle_only = bool(getattr(self.args, "rng_cycle_only", False))
             for cycle in range(cycle_start, cycle_end + 1):
                 base_seed = max(0, int(getattr(self.args, "rng_seed", 0)))
