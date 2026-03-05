@@ -7608,10 +7608,6 @@ class Runtime:
                 else:
                     raise
 
-            model_param_count = sum(p.numel() for p in model.parameters())
-            embed_param_count = sum(p.numel() for p in model.core.tok_emb.parameters())
-            body_param_count = max(0, model_param_count - embed_param_count)
-
             if self.args.torch_compile != "off":
                 model = torch.compile(
                     model,
@@ -7904,6 +7900,11 @@ class Runtime:
             else:
                 optimizer_state = None
 
+            model_param_count = sum(p.numel() for p in model.parameters())
+            embed_param_count = sum(p.numel() for p in model.core.tok_emb.parameters())
+            body_param_count = max(0, model_param_count - embed_param_count)
+            chin_goal = body_param_count * 20
+
             acc_train = Timer()
             acc_eval = Timer()
             completed_cycles = getattr(self.args, "completed_cycles", 0)
@@ -7957,10 +7958,6 @@ class Runtime:
                                 bold=True,
                             )
                         )
-                self._model_param_count = None
-                self._embed_param_count = None
-                self._tokens_for_summary = 0
-                chin_goal = body_param_count * 20
                 token_fragment = f"{total_train_tokens:,} tokens"
                 param_fragment = f"{body_param_count:,} params"
                 if chin_goal > 0:
