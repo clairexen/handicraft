@@ -47,8 +47,8 @@ Training a base encode/decode transformer model (with optional "y-looping"):
 ```
 python grce.py --pt model/wp_en_E_D4Y.pt create
 python grce.py --pt model/wp_en_E_D4Y.pt corpus --add wikipedia-en-000{0,1,2,3,4,5,6,7}
-python grce.py --pt model/wp_en_E_D4Y.pt --cycles 3600 --lr-warmup-steps 200 --lr-cosine-steps 500 --generate-with-decode \
-  --block-size 100 --batch-size 50 --layout '*[8E=8D4Y>head=*D4Y=*D4Y=8D(1|2|3)Y>>D123Y=8D4Y>tail]' train --json
+python grce.py --pt model/wp_en_E_D4Y.pt --cycles 5000 --lr-warmup-steps 200 --lr-cosine-steps 500 --generate-with-decode \
+  --block-size 128 --batch-size 32 --layout '*[8E=8D4(Y|y)>head=*D4Y=*D4Y=8D(1|2|3)(Y|y)>>D123Y=8D4Y>tail]' train --json
 ```
 
 Plot various losses recorded during base encode/decode transformer training:
@@ -56,7 +56,7 @@ Plot various losses recorded during base encode/decode transformer training:
 python plot.py --json model/wp_en_E_D4Y.json --median 10 --plot-time test_loss_head test_loss_tail test_loss
 ```
 
-Additional training of recurrent backbone network (with optional "x-looping"):
+Additional training of the recurrent network (with optional "x-looping"):
 ```
 cp model/wp_en_E_D4Y.pt model/wp_en_E_D4Y_f_t4x.pt
 python grce.py --pt model/wp_en_E_D4Y_f_t4x.pt reset
