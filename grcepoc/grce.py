@@ -160,6 +160,7 @@ GeometryLike = ModelGeometry | Args
 FANCY_SPACE = "\u2423"  # Open Box symbol for visible spaces
 FANCY_ENTER = "\u23CE " # Return symbol for visible newlines
 PROMPT_PREFIX_TEXT = "\n\n"
+ROPE_PHASE_FRACTION = 1.0  # fraction of n_pos that spans 360 degrees
 
 def normalize_prompt(text: str) -> str:
     """Map placeholder characters back to literal spaces/newlines."""
@@ -3059,13 +3060,14 @@ class CausalSelfAttention(nn.Module):
         if self.rope_dim:
             if self.rope_dim >= self.head_dim:
                 raise ValueError("Resolved RoPE width must be smaller than per-head width")
-            base = max(1, int(config.n_pos))
+            base = max(1, int(config.n_pos * ROPE_PHASE_FRACTION))
             idx = torch.arange(0, self.rope_dim, 2, dtype=torch.float32)
             inv_freq = torch.pow(torch.tensor(float(base), dtype=torch.float32), -idx / self.rope_dim)
             self.register_buffer("rope_inv_freq", inv_freq, persistent=False)
             self.register_buffer("rope_cos_cached", torch.empty(0), persistent=False)
             self.register_buffer("rope_sin_cached", torch.empty(0), persistent=False)
-            self._build_rope_cache(max(1, config.n_pos))
+            cache_len = max(1, int(config.n_pos / max(ROPE_PHASE_FRACTION, 1e-6)))
+            self._build_rope_cache(cache_len)
         else:
             self.register_buffer("rope_inv_freq", torch.empty(0), persistent=False)
             self.register_buffer("rope_cos_cached", torch.empty(0), persistent=False)
