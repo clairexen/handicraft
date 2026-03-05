@@ -5027,7 +5027,7 @@ def _run_microbatch_pass(
                     if layer_outputs is None:
                         raise RuntimeError("Requested input-stream loss without captured layers")
                     input_loss = _layer_input_stream_loss(
-                        model.core,
+                        model,
                         layer_outputs,
                         token_slice,
                     )
@@ -5493,22 +5493,23 @@ def _layer_output_stream_loss(
 
 
 def _layer_input_stream_loss(
-    core: TransformerStackCore,
+    model: "GRCEGPT",
     layer_outputs: Sequence[torch.Tensor],
     token_slice: torch.Tensor,
 ) -> torch.Tensor | None:
     if not layer_outputs:
         return None
-    target_even = _select_parity_features(token_slice, parity=0)
+    target_ids = token_slice.argmax(dim=-1)
     accumulated: torch.Tensor | None = None
     layer_count = 0
     for tensor in layer_outputs:
-        normalized = core.ln_f(tensor)
-        even_stream = _select_parity_features(normalized, parity=0)
-        diff = even_stream - target_even
-        mse = diff.pow(2).mean(dim=-1)
-        layer_loss = mse.sum()
-        accumulated = layer_loss if accumulated is None else accumulated + layer_loss
+        logits = model.core.head(model.core.output_features(model.core.ln_f(tensor)))
+        per_token = F.cross_entropy(
+            logits.reshape(-1, logits.size(-1)),
+            target_ids.reshape(-1),
+            reduction="mean",
+        )
+        accumulated = per_token if accumulated is None else accumulated + per_token
         layer_count += 1
     if accumulated is None or layer_count == 0:
         return None
@@ -6596,7 +6597,7 @@ def _evaluate_row_block(
             if layer_outputs is None:
                 raise RuntimeError("Requested input-stream loss without captured layers")
             input_loss = _layer_input_stream_loss(
-                model.core,
+                model,
                 layer_outputs,
                 token_slice,
             )
