@@ -3619,6 +3619,12 @@ class TransformerStackCore(nn.Module):
         self.tok_emb = nn.Embedding(config.vocab_size, self.embedding_dim)
         self.control_emb = nn.Embedding(3, self.embedding_dim, padding_idx=0)
         self.think_emb = ThinkEmbeddingLibrary(self.embedding_dim, think_spans=(2, 3, 4))
+        self.loop_embeddings = nn.ParameterDict(
+            {
+                str(count): nn.Parameter(torch.zeros(self.embedding_dim))
+                for count in (2, 3, 4)
+            }
+        )
         self.drop = nn.Dropout(config.dropout)
         self.blocks = nn.ModuleList([Block(config) for _ in range(config.n_layer)])
         self.ln_f = nn.LayerNorm(config.n_width)
@@ -3634,6 +3640,12 @@ class TransformerStackCore(nn.Module):
         """Extract the odd data-path slots that feed into the LM head."""
 
         return _select_parity_features(tensor, parity=1)
+
+    def loop_embedding(self, repeat: int) -> torch.Tensor | None:
+        key = str(int(repeat))
+        if key not in self.loop_embeddings:
+            return None
+        return self.loop_embeddings[key]
 
     def forward_grid(
         self,
@@ -4878,11 +4890,19 @@ def _run_microbatch_pass(
                     row_count,
                     token_slice.device,
                 )
+                loop_slice = _segment_loop_slice(
+                    model.core,
+                    segment,
+                    row_count,
+                    token_slice.size(1),
+                    token_slice.device,
+                )
                 chunk_input = _compose_chunk_embeddings(
                     model.core.drop,
                     token_slice,
                     control_slice=control_embed,
                     think_slice=think_slice,
+                    loop_slice=loop_slice,
                 )
                 kv_sources = kv_chain if kv_chain else None
                 prev_grce_state = grce_state
@@ -5254,12 +5274,15 @@ def _compose_chunk_embeddings(
     *,
     control_slice: torch.Tensor | None = None,
     think_slice: torch.Tensor | None = None,
+    loop_slice: torch.Tensor | None = None,
 ) -> torch.Tensor:
     base = token_slice
     if control_slice is not None:
         base = base + control_slice
     if think_slice is not None:
         base = base + think_slice
+    if loop_slice is not None:
+        base = base + loop_slice
     return dropout_layer(base)
 
 
@@ -5317,6 +5340,26 @@ def _segment_think_slice(
     chunk = template.view(tokens * factor, -1).to(device)
     expanded = core.expand_to_even(chunk)
     return expanded.unsqueeze(0).expand(row_count, -1, -1)
+
+
+def _segment_loop_slice(
+    core: TransformerStackCore,
+    segment: SegmentLayout,
+    row_count: int,
+    cols: int,
+    device: torch.device,
+) -> torch.Tensor | None:
+    if cols <= 0:
+        return None
+    repeat = max(1, int(getattr(segment, "layer_repeat", 1) or 1))
+    if repeat <= 1:
+        return None
+    loop_vector = core.loop_embedding(repeat)
+    if loop_vector is None:
+        return None
+    tiled = loop_vector.view(1, 1, -1)
+    even = core.expand_to_even(tiled)
+    return even.expand(row_count, cols, -1)
 
 
 def _segment_think_metadata(
@@ -6324,11 +6367,19 @@ def _evaluate_row_block(
             1,
             token_slice.device,
         )
+        loop_slice = _segment_loop_slice(
+            model.core,
+            segment,
+            1,
+            token_slice.size(1),
+            token_slice.device,
+        )
         chunk_input = _compose_chunk_embeddings(
             model.core.drop,
             token_slice,
             control_slice=control_embed,
             think_slice=think_slice,
+            loop_slice=loop_slice,
         )
         chunk_capture = None
         if base_capture is not None:
