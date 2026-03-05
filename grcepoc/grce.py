@@ -7529,6 +7529,7 @@ class Runtime:
             total_params = summary_counts.get("total", 0)
             embedding_params = summary_counts.get("embeddings", 0)
             non_emb_params = total_params - embedding_params
+            chin_goal = non_emb_params * 20
             print(
                 color_text(
                     f"Trainable model params: {total_params:,}; "
@@ -7900,11 +7901,6 @@ class Runtime:
             else:
                 optimizer_state = None
 
-            model_param_count = sum(p.numel() for p in model.parameters())
-            embed_param_count = sum(p.numel() for p in model.core.tok_emb.parameters())
-            body_param_count = max(0, model_param_count - embed_param_count)
-            chin_goal = body_param_count * 20
-
             acc_train = Timer()
             acc_eval = Timer()
             completed_cycles = getattr(self.args, "completed_cycles", 0)
@@ -7959,7 +7955,7 @@ class Runtime:
                             )
                         )
                 token_fragment = f"{total_train_tokens:,} tokens"
-                param_fragment = f"{body_param_count:,} params"
+                param_fragment = f"{non_emb_params:,} params"
                 if chin_goal > 0:
                     pct = (total_train_tokens / chin_goal) * 100.0
                     chin_fragment = f"{pct:.2f}% of 20x"
