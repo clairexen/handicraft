@@ -3091,6 +3091,27 @@ class CausalSelfAttention(nn.Module):
         sin = self.rope_sin_cached.index_select(0, index).to(device=device, dtype=dtype)
         return cos, sin
 
+    def _rope_cos_sin_with_offsets(
+        self,
+        positions: torch.Tensor,
+        position_offsets: torch.Tensor | None,
+        device: torch.device,
+        dtype: torch.dtype,
+        batch_size: int,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if position_offsets is None:
+            return self._rope_cos_sin_positions(positions, device, dtype)
+        offsets = position_offsets.to(device=device, dtype=torch.long)
+        if offsets.dim() != 1 or offsets.size(0) != batch_size:
+            raise ValueError("position_offsets must be 1D with batch_size entries")
+        base = positions.to(device=device, dtype=torch.long)
+        grid = base.unsqueeze(0) + offsets.view(-1, 1)
+        flat = grid.reshape(-1)
+        cos, sin = self._rope_cos_sin_positions(flat, device, dtype)
+        cos = cos.view(batch_size, base.size(0), -1)
+        sin = sin.view(batch_size, base.size(0), -1)
+        return cos, sin
+
     def _apply_rope(self, tensor: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
         rope_dim = self.rope_dim
         if rope_dim <= 0:
@@ -3101,8 +3122,14 @@ class CausalSelfAttention(nn.Module):
         rope_view = rope_slice.view(*orig_shape[:-1], rope_dim // 2, 2)
         x_even = rope_view[..., 0]
         x_odd = rope_view[..., 1]
-        cos = cos.view(1, cos.size(0), 1, cos.size(1))
-        sin = sin.view(1, sin.size(0), 1, sin.size(1))
+        if cos.dim() == 2:
+            cos = cos.view(1, cos.size(0), 1, cos.size(1))
+            sin = sin.view(1, sin.size(0), 1, sin.size(1))
+        elif cos.dim() == 3:
+            cos = cos.view(cos.size(0), cos.size(1), 1, cos.size(2))
+            sin = sin.view(sin.size(0), sin.size(1), 1, sin.size(2))
+        else:
+            raise ValueError("RoPE cos/sin tensors must be rank 2 or 3")
         rotated_even = x_even * cos - x_odd * sin
         rotated_odd = x_even * sin + x_odd * cos
         rotated = torch.stack((rotated_even, rotated_odd), dim=-1).reshape(*orig_shape[:-1], rope_dim)
@@ -3121,6 +3148,7 @@ class CausalSelfAttention(nn.Module):
         layer_idx: int | None = None,
         attention_capture: AttentionCapture | None = None,
         rope_positions: torch.Tensor | None = None,
+        position_offsets: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
         B, T, C = x.shape
         head_dim = self.head_dim
@@ -3129,12 +3157,18 @@ class CausalSelfAttention(nn.Module):
         value_states = self.value(x).view(B, T, self.n_head, head_dim)
         if self.rope_dim:
             if rope_positions is None:
-                positions = torch.arange(T, device=x.device, dtype=torch.long)
+                base_positions = torch.arange(T, device=x.device, dtype=torch.long)
             else:
-                positions = rope_positions.to(device=x.device, dtype=torch.long)
-                if positions.dim() != 1 or positions.size(0) != T:
+                base_positions = rope_positions.to(device=x.device, dtype=torch.long)
+                if base_positions.dim() != 1 or base_positions.size(0) != T:
                     raise ValueError("rope_positions must match sequence length")
-            cos, sin = self._rope_cos_sin_positions(positions, x.device, query_states.dtype)
+            cos, sin = self._rope_cos_sin_with_offsets(
+                base_positions,
+                position_offsets,
+                x.device,
+                query_states.dtype,
+                x.size(0),
+            )
             query_states = self._apply_rope(query_states, cos, sin)
             key_states = self._apply_rope(key_states, cos, sin)
         q = query_states.transpose(1, 2)
@@ -3371,6 +3405,7 @@ class Block(nn.Module):
         full_attention: bool = False,
         attention_capture: AttentionCapture | None = None,
         rope_positions: torch.Tensor | None = None,
+        position_offsets: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor | None, tuple[torch.Tensor, torch.Tensor] | None]:
         attn_input = self._apply_xctx_bias(x, xctx_bias, self.xctx_attn_gain)
         attn_norm = self.ln1(attn_input)
@@ -3385,6 +3420,7 @@ class Block(nn.Module):
             attn_mode=attn_mode,
             layer_idx=layer_idx,
             rope_positions=rope_positions,
+            position_offsets=position_offsets,
             attention_capture=attention_capture,
         )
         if attention_disabled_rows is not None and attention_disabled_rows.any():
@@ -3620,6 +3656,11 @@ class TransformerStackCore(nn.Module):
             rope_positions_tensor = rope_positions.to(device=x.device, dtype=torch.long)
             if rope_positions_tensor.dim() != 1 or rope_positions_tensor.size(0) != cols:
                 raise ValueError("rope_positions must match column count")
+        position_offsets_tensor = None
+        if position_offsets is not None:
+            position_offsets_tensor = position_offsets.to(device=x.device, dtype=torch.long)
+            if position_offsets_tensor.dim() != 1 or position_offsets_tensor.size(0) != rows:
+                raise ValueError("position_offsets must match row count")
         xctx_tensor = _merge_bias_list(
             xctx_bias_list_in or [],
             rows,
@@ -3674,6 +3715,7 @@ class TransformerStackCore(nn.Module):
                     full_attention=(mode == "encode"),
                     attention_capture=attention_capture,
                     rope_positions=rope_positions_tensor,
+                    position_offsets=position_offsets_tensor,
                 )
                 samples[layer_idx] = current
                 if kv_pair is None:
@@ -3717,6 +3759,9 @@ class TransformerStackGrid(nn.Module):
         mode: str = "decode",
         layer_repeat: int = 1,
         layer_top_only: bool = False,
+        position_offsets: torch.Tensor | None = None,
+        rope_positions: torch.Tensor | None = None,
+        attention_capture: AttentionCapture | None = None,
     ) -> tuple[torch.Tensor, list[torch.Tensor], list]:
         output, samples, kv_out = self.core.forward_grid(
             x,
@@ -3725,6 +3770,9 @@ class TransformerStackGrid(nn.Module):
             kv_cache_list_in=kv_cache_list_in,
             mode=mode,
             qh_query_callback=qh_query_callback,
+            position_offsets=position_offsets,
+            rope_positions=rope_positions,
+            attention_capture=attention_capture,
             layer_repeat=layer_repeat,
             layer_top_only=layer_top_only,
         )

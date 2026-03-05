@@ -771,6 +771,9 @@ embedding names that correspond to special tokens below.
 [|think:1/4|] [|think:2/4|] [|think:3/4|] [|think:4/4|]
   additional "think" embeddings for think4x mode
 
+[|loop:2|] [|loop:3|] [|loop:4|]
+  add one of those to the input of 2y/3y/4y/2Y/3Y/4Y positions
+
 [|think-more|]
   automatically added whenever we add [|think:N/M|] with N < M
 
