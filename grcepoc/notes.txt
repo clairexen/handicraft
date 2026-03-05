@@ -263,12 +263,14 @@ n_kv is simply the number of columns of the grid that produced this kv-cache.
 The output 'kv_out' is a single such n_layers-sized list of 2-tuples.
 
 `mode` selects the attention behavior (`decode`, `encode`, `reverse`, or
-`noattn`). `position_offsets` can shift RoPE indices per row, while
-`rope_positions` passes explicit absolute positions for every column; both are
-1-D tensors and optional. `qh_query_callback` integrates external memory, and
-`attention_capture` (when not `None`) taps the attention matrices for logging or
-debugging. `layer_repeat`/`layer_top_only` implement the Ny/NY modifiers: we run
-the stack `layer_repeat` times per position, concatenating each pass’s K/V
+`noattn`). The optional `position_offsets` tensor has length = rows and shifts
+the RoPE phase independently for each row (useful when stitching cached
+prefixes that are already several tokens deep). `rope_positions` is an optional
+length = cols tensor that specifies the absolute position index for each column
+before row offsets are applied. `qh_query_callback` integrates external memory,
+and `attention_capture` (when supplied) taps the attention matrices for logging
+or debugging. `layer_repeat`/`layer_top_only` implement the Ny/NY modifiers: we
+run the stack `layer_repeat` times per position, concatenating each pass’s K/V
 output (Ny) or only exposing the final pass (NY).
 
 The callback 'qh_query_callback,' basically implements keyed external memory:
