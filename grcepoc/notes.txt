@@ -372,7 +372,7 @@ TransformerStackSequence is a 2-D (rows x cols) sequence of such columns,
 resembling a StackGrid, but with added GRCE and XCTX channels:
 
 	seq = TransformerStackSequence(settings)
-	y, grce_out, xctx_out, kv_out = seq.forward(
+	y, grce_out, xctx_out, kv_out, s_out = seq.forward(
 		x,
 		grce_in=None,
 		xctx_in=None,
@@ -402,17 +402,21 @@ resembling a StackGrid, but with added GRCE and XCTX channels:
 are applied column-by-column inside the sequence. `kv_cache_list_in` supplies
 external cache chains, while `kv_out` returns the internal cache after the last
 column. The optional `column_positions` vector provides absolute RoPE indices
-for each column.
+for each column. When per-layer supervision is enabled (via `b`/`B` modifiers),
+`s_out` contains a list of tensors with shape [rows, cols, n_embd] capturing the
+post-layer activations for every stack layer; otherwise `s_out` is an empty list.
 
-`mode`/`qh_query_callback`/`attention_capture` behave exactly like the StackGrid
-API. `detach_internal_kv_cache` switches between live cache chains and detached
-buffers. The span-related arguments (`detach_samples_span`, `detach_grce_span`,
-`detach_xctx_span`, `context_detach_span`, `context_detach_enabled`) control how
-often we detach the sample tensors or the GRCE/XCTX channels and whether a
-segment can override the default behavior. `think_step_index`/
-`think_step_count` describe explicit think spans as noted below. The
-`layer_repeat`/`layer_top_only` pair mirrors StackGrid and selects between Ny
-and NY cache behavior for the current segment.
+`mode` selects the attention behavior (`forward`, `decode`, `encode`, `reverse`,
+or `noattn`). `qh_query_callback` integrates external memory just like in the
+grid API, and `attention_capture` taps attention matrices for individual rows or
+columns (see StackGrid). `detach_internal_kv_cache` switches between live cache
+chains and detached buffers. The span-related arguments
+(`detach_samples_span`, `detach_grce_span`, `detach_xctx_span`,
+`context_detach_span`, `context_detach_enabled`) control how often we detach the
+sample tensors or the GRCE/XCTX channels and whether a segment can override the
+default behavior. `think_step_index` / `think_step_count` describe explicit
+think spans as noted below. The `layer_repeat` / `layer_top_only` pair mirrors
+StackGrid and selects between Ny and NY cache behavior for the current segment.
 
 Columns are evaluated strictly left-to-right, and GRCE/XCTX state updates from
 column t are visible only to column t+1. When the layout requests explicit
