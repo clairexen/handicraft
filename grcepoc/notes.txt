@@ -650,6 +650,18 @@ adding those losses to the typed metrics. For example *[16e=*th2x=*t4x]
 will train for 2x and 4x thinking, but only the 4x thinking losses are
 reported in the "think" metric.
 
+The `b`/`B` modifiers control where we probe the stream for supervision:
+`B` (uppercase) measures the standard next-token loss against the *output*
+stream after **every** layer instead of just the top layer. The losses from all
+layers are averaged to produce the segment’s contribution. `b` (lowercase)
+does the same for the *input* stream by comparing it to the embedding of the
+ground-truth input token at that position. When both modifiers are present we
+compute both sets of losses and average the 2*n_layers results. When `b` is
+used without `B`, the usual top-layer output loss is skipped entirely and only
+the input-stream reconstruction losses remain. Use these sparingly (typically a
+single column per batch) to encourage embeddings that stay meaningful through
+the stack and to keep even/odd parity lanes well separated for looping.
+
 Appending `2x`, `3x`, or `4x` to a mode enables 2x/3x/4x "thinking" along the
 position axis (we refer to this family as the `Nx` modifier below). Using `t`
 instead of `f` keeps the computation identical but routes *all* loss from that
