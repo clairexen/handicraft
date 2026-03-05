@@ -127,7 +127,7 @@ class Defaults:
     steps: int = 100
     cycles: int = 100
     batch_size: int = 256
-    layout: str = "2[*d]+2[*f],*[*1-2e=*1-4d=*1-4f=*1-2n],*[*1-2e=*1-4f=*1-4d=*1-2n]"
+    layout: str = "*[*1e=*1d=*1f=*2t2x=*1n=*1r]"
     eval_interval: int = 10
     dropout: float = 0.05
     detach_span: int = 0
@@ -1081,7 +1081,7 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         "--tiny",
         action="store_true",
         help=(
-            "Shortcut for --vocab-size 600 --batch-size 12 --n-pos 6 --block-size 6 --n-layer 3 --n-head 2 "
+            "Shortcut for --vocab-size 600 --batch-size 12 --n-pos 10 --block-size 10 --n-layer 3 --n-head 2 "
             "--n-width 8 --n-grce 4 --n-xctx 9 --steps 2 --eval-interval 1"
         ),
     )
@@ -1727,7 +1727,7 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         if not flag_present("--batch-size"):
             args.batch_size = 12
         if not flag_present("--n-pos"):
-            args.n_pos = 6
+            args.n_pos = 10
         if not flag_present("--n-layer"):
             args.n_layer = 3
         if not flag_present("--n-head"):
