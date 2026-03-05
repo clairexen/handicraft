@@ -273,6 +273,14 @@ or debugging. `layer_repeat`/`layer_top_only` implement the Ny/NY modifiers: we
 run the stack `layer_repeat` times per position, concatenating each pass’s K/V
 output (Ny) or only exposing the final pass (NY).
 
+`attention_capture` is an object with two fields: ``columns`` (a set of global
+column indices to record) and ``storage`` (a dict[layer][column] → tensor). When
+supplied, `TransformerStackGrid` automatically requests column-aligned subsets
+for each block, and every attention head snapshot for the requested rows/cols is
+stored in ``storage`` after detaching to CPU memory. This enables tooling to
+render per-layer attention heatmaps for arbitrarily chosen positions without
+instrumenting the model code further.
+
 The callback 'qh_query_callback,' basically implements keyed external memory:
 
 	M, S, T = qh_query_callback(Q, layer)
