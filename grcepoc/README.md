@@ -1,6 +1,6 @@
 # GPT with Gradient-limited Recurrent Context Encoding and Extended Context (GPT+GRCE+XCTX)
 
-See `notes.txt` for the full specification and `grce.py` for the (mostly AI-generated) implementation.
+See [`notes.txt`](notes.txt) for the full specification and [`grce.py`](grce.py) for the (mostly AI-generated) implementation.
 
 This repo extends a tiny picoGPT-style language model with two recurrent context channels: a lightweight low-bandwidth “role/focus” state alongside the usual token stream (GRCE) plus a high-bandwidth “short-term memory” channel for pushing information forward in time (XCTX) in parallel to multi-head attention, which still looks backward. “GPT+GRCE+XCTX” is pronounced “GPT with grace and extended context”.
 
