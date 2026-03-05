@@ -627,10 +627,16 @@ Modifiers for the [...] block can be inserted directly before the [ char:
 	T   freeze recurrent parameters so only the transformer stack learns
 	C   freeze transformer parameters so only the context/recurrent channels learn
 	H   don't add the loss values from this block to the typed metrics, only {test,train}_loss
+	h   halt RoPE for this block (all positions share phase zero)
 
 In this context "transformer parameters" include everything that shapes the
 encode/decode (E/D) stack, while "recurrent parameters" cover the GRCE/XCTX
 channels, their samplers, mixers, and bias injectors.
+
+The `h` row modifier freezes RoPE: every column in that block is evaluated at
+phase zero, so the transformer sees no positional rotation regardless of the
+actual index. This is useful for experiments where we want to measure behavior
+without spatial cues or to recompute the same token multiple times.
 
 This means 'sc[*f]' has a deep path along the context, but we never backprop
 into the transformer. 'ks3[*f]' on the other hand will backprop a few columns
@@ -649,7 +655,7 @@ but uses the transpose of the standard causal mask, so each position attends
 to future tokens instead of the past. Uppercase `R` works the same way but
 disables recurrent/context updates, mirroring how `E/D/F/N` behave.
 
-Likewise `h`/`H` (hide typed losses) can be appended to a mode to suppress
+Likewise `H` (hide typed losses) can be appended to a mode to suppress
 adding those losses to the typed metrics. For example *[16e=*th2x=*t4x]
 will train for 2x and 4x thinking, but only the 4x thinking losses are
 reported in the "think" metric.

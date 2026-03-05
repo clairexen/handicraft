@@ -381,6 +381,7 @@ class RowModifiers:
     no_detach_ctx: bool = False
     train_transformer_only: bool = False
     train_recurrent_only: bool = False
+    halt_rope: bool = False
     raw: str = ""
 
     def render(self) -> str:
@@ -559,7 +560,9 @@ def _parse_segment_spec(text: str, connector: str | None) -> SegmentSpec:
     bias_output_loss = False
     while mode_token:
         tail = mode_token[-1]
-        if tail in {"h", "H"}:
+        if tail == "h":
+            raise LayoutParseError("Lowercase 'h' is reserved as a row modifier; use 'H' to hide metrics")
+        if tail == "H":
             hide_typed_metrics = True
             mode_token = mode_token[:-1]
             continue
@@ -652,6 +655,7 @@ def _parse_row_modifiers(text: str) -> RowModifiers | None:
     no_detach_ctx = False
     train_transformer_only = False
     train_recurrent_only = False
+    halt_rope = False
     raw_parts: list[str] = []
     while idx < len(text):
         ch = text[idx]
@@ -689,6 +693,11 @@ def _parse_row_modifiers(text: str) -> RowModifiers | None:
             detach_span = span_value
             raw_parts.append("s" + digits)
             continue
+        if ch == "h":
+            halt_rope = True
+            raw_parts.append("h")
+            idx += 1
+            continue
         raise LayoutParseError(f"Unknown row modifier '{ch}' in '{text}'")
     raw = "".join(raw_parts)
     return RowModifiers(
@@ -697,6 +706,7 @@ def _parse_row_modifiers(text: str) -> RowModifiers | None:
         no_detach_ctx=no_detach_ctx,
         train_transformer_only=train_transformer_only,
         train_recurrent_only=train_recurrent_only,
+        halt_rope=halt_rope,
         raw=raw,
     )
 
@@ -905,7 +915,7 @@ class BatchLayout:
                         letter = letter.upper()
                 hide_suffix = ""
                 if getattr(segment, "hide_typed_metrics", False):
-                    hide_suffix = "H" if letter.isupper() else "h"
+                    hide_suffix = "H"
                 think_suffix = ""
                 if getattr(segment, "think_factor", 1) and segment.think_factor > 1:
                     suffix_letter = "X" if getattr(segment, "think_last_only", False) else "x"
@@ -4876,6 +4886,8 @@ def _run_microbatch_pass(
                 pos_offsets,
             )
             column_positions = _segment_column_positions(group.segments, device)
+            if group.modifiers and getattr(group.modifiers, "halt_rope", False):
+                column_positions = torch.zeros_like(column_positions)
             control_ids = torch.zeros((row_count, cols_total), dtype=torch.long, device=device)
             cursor = 0
             kv_chain: list[list[tuple[torch.Tensor, torch.Tensor]] | None] = []
@@ -6438,6 +6450,8 @@ def _evaluate_row_block(
         None,
     )
     column_positions = _segment_column_positions(row.segments, token_components.device)
+    if row.modifiers and getattr(row.modifiers, "halt_rope", False):
+        column_positions = torch.zeros_like(column_positions)
     device = token_components.device
     column_modes: list[str] = [""] * cols_total
     supervision_mask = torch.ones(cols_total, dtype=torch.bool, device=device)
