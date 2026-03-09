@@ -5767,8 +5767,12 @@ def train_model(
         block_size=block_size,
         rng=random.Random(0),
     )
-    header_extra_metric_keys = header_probe.extra_metric_names
-    seen_extra_metric_keys: set[str] = set(header_extra_metric_keys)
+    seen_extra_metric_keys = getattr(args, "_seen_extra_metric_keys", None)
+    if seen_extra_metric_keys is None:
+        seen_extra_metric_keys = set()
+        setattr(args, "_seen_extra_metric_keys", seen_extra_metric_keys)
+    seen_extra_metric_keys.update(header_probe.extra_metric_names)
+    header_extra_metric_keys = sorted(seen_extra_metric_keys)
     long_loss_header = " ".join(
         [""] + [f"{': ' if key in ROW_METRIC_LOG_GROUP else ''}{key}" for key in ROW_METRIC_LOG_KEYS]
     )
@@ -8298,9 +8302,10 @@ class Runtime:
                 )
                 print(color_text(corpus_status, Colors.CYAN))
                 per_run_idx = cycle
+                cycles_pct = (per_run_idx / max(1, self.args.cycles)) * 100.0 if self.args.cycles > 0 else 0.0
                 print(
                     color_text(
-                        f"[{label}] Training Cycle {per_run_idx}/{self.args.cycles}. "
+                        f"[{label}] Training Cycle {per_run_idx}/{self.args.cycles} ({cycles_pct:.2f}%). "
                         f"Total training so far: {train_step_index} steps, {hours:.2f} hours ({days:.2f} days)",
                         Colors.BLUE,
                     )
