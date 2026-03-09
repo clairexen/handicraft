@@ -149,13 +149,15 @@ This channel is used in three places.
 
 #### Token input
 
-Add the absolute phase contribution directly into the tail of the transformer
-width:
+Add the absolute phase contribution directly into the even slots of the tail of
+the transformer width so that odd slots remain free for future schemes (e.g.,
+SANe):
 
-	h_t^(0)[-d_abs:] += z_abs(a_t)
+	h_t^(0)[-d_abs:][even indices] += z_abs(a_t)
 
-No additional projection is required and the even/odd embedding split does not
-apply to this suffix.
+Only the even elements receive positional signal; the odd elements stay
+untouched and can be used by other mechanisms (see sane.txt for details
+on the even/odd split).
 
 #### Key/value absolute subspace
 
