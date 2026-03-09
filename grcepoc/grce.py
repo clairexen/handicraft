@@ -129,6 +129,7 @@ class Defaults:
     n_rope: int = MODEL_GEOMETRY_DEFAULTS.n_rope
     n_grce: int = MODEL_GEOMETRY_DEFAULTS.n_grce
     n_xctx: int = MODEL_GEOMETRY_DEFAULTS.n_xctx
+    use_carpe: bool = MODEL_GEOMETRY_DEFAULTS.use_carpe
     corpus: str | None = None
     steps: int = 100
     cycles: int = 100
@@ -993,7 +994,7 @@ from collections import OrderedDict, defaultdict
 import json
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Tuple, Sequence, Callable, Mapping
+from typing import Any, Dict, List, Tuple, Sequence, Callable, Mapping, NamedTuple
 
 
 def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
@@ -1094,6 +1095,15 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         type=int,
         default=DEFAULTS.n_rope,
         help="Number of Q/K features using Rotary Position Embedding (0 => full head width; must be even).",
+    )
+    model_group.add_argument(
+        "--use-carpe",
+        action="store_true",
+        default=DEFAULTS.use_carpe,
+        help=(
+            "Enable CARPE (coarse absolute + relative positional encoding) which splits n_rope into "
+            "relative/absolute channels"
+        ),
     )
     model_group.add_argument(
         "--n-grce",
@@ -1876,6 +1886,7 @@ def args_to_model_geometry(args: Args):
         n_rope=args.n_rope,
         n_grce=args.n_grce,
         n_xctx=args.n_xctx,
+        use_carpe=getattr(args, "use_carpe", MODEL_GEOMETRY_DEFAULTS.use_carpe),
     )
 
 
@@ -2418,6 +2429,36 @@ def _carpe_optimal_rho(total_dims: int, n_pos: int) -> tuple[float, int, int] | 
         else:
             low = mid
     return best_rho, best_counts[1], best_counts[2]
+
+
+class CarpeSetup(NamedTuple):
+    rho: float
+    rel_dim: int
+    abs_dim: int
+    total_dim: int
+
+
+def _resolve_carpe_setup(
+    config: GeometryLike, resolved_rope_dim: int | None = None
+) -> CarpeSetup | None:
+    """Return (rho, rel_dim, abs_dim, total_dim) for CARPE-enabled configs."""
+
+    if not getattr(config, "use_carpe", False):
+        return None
+    cache: CarpeSetup | None = getattr(config, "_carpe_setup_cache", None)
+    total_dim = resolved_rope_dim or _resolved_rope_width(config)
+    if cache is not None and cache.total_dim == total_dim:
+        return cache
+    result = _carpe_optimal_rho(total_dim, config.n_pos)
+    if result is None:
+        raise ValueError(
+            "CARPE configuration requires n_rope (or head width) large enough to host "
+            "relative and absolute channels"
+        )
+    rho, d_rel, d_abs = result
+    setup = CarpeSetup(rho=rho, rel_dim=d_rel, abs_dim=d_abs, total_dim=total_dim)
+    setattr(config, "_carpe_setup_cache", setup)
+    return setup
 
 
 def _print_rope_reports(config: GeometryLike, n_pos: int) -> None:
@@ -3159,7 +3200,18 @@ class CausalSelfAttention(nn.Module):
         self.head_dim = config.n_width // config.n_head
         raw_rope = max(0, int(getattr(config, "n_rope", 0) or 0))
         self.raw_n_rope = raw_rope
-        self.rope_dim = self._resolve_rope_dim(raw_rope)
+        resolved_rope = self._resolve_rope_dim(raw_rope)
+        self.total_rope_dim = resolved_rope
+        carpe_setup = _resolve_carpe_setup(config, resolved_rope)
+        self.carpe_setup = carpe_setup
+        if carpe_setup:
+            self.rope_dim = carpe_setup.rel_dim
+            self.carpe_abs_dim = carpe_setup.abs_dim
+            self.carpe_rho = carpe_setup.rho
+        else:
+            self.rope_dim = resolved_rope
+            self.carpe_abs_dim = 0
+            self.carpe_rho = None
         self.key = nn.Linear(config.n_width, config.n_width)
         self.query = nn.Linear(config.n_width, config.n_width)
         self.value = nn.Linear(config.n_width, config.n_width)
@@ -3168,7 +3220,26 @@ class CausalSelfAttention(nn.Module):
         self.register_buffer(
             "tril", torch.tril(torch.ones(config.n_pos, config.n_pos))
         )
-        if self.rope_dim:
+        if self.carpe_abs_dim > 0:
+            abs_pairs = self.carpe_abs_dim // 2
+            abs_inv = torch.tensor(
+                [1.0 / (CARPE_LOCALITY_SCALE * (self.carpe_rho ** idx)) for idx in range(abs_pairs)],
+                dtype=torch.float32,
+            )
+        else:
+            abs_inv = torch.empty(0)
+        self.register_buffer("carpe_abs_inv_freq", abs_inv, persistent=False)
+        if self.carpe_setup:
+            rel_pairs = max(0, self.rope_dim // 2)
+            rel_inv = torch.tensor(
+                [1.0 / (self.carpe_rho ** idx) for idx in range(rel_pairs)],
+                dtype=torch.float32,
+            )
+            self.register_buffer("carpe_rel_inv_freq", rel_inv, persistent=False)
+            self.register_buffer("rope_inv_freq", torch.empty(0), persistent=False)
+            self.register_buffer("rope_cos_cached", torch.empty(0), persistent=False)
+            self.register_buffer("rope_sin_cached", torch.empty(0), persistent=False)
+        elif self.rope_dim:
             if self.rope_dim > self.head_dim:
                 raise ValueError("Resolved RoPE width cannot exceed per-head width")
             base = max(1, config.n_pos)
@@ -3177,11 +3248,13 @@ class CausalSelfAttention(nn.Module):
             self.register_buffer("rope_inv_freq", inv_freq, persistent=False)
             self.register_buffer("rope_cos_cached", torch.empty(0), persistent=False)
             self.register_buffer("rope_sin_cached", torch.empty(0), persistent=False)
+            self.register_buffer("carpe_rel_inv_freq", torch.empty(0), persistent=False)
             self._build_rope_cache(base)
         else:
             self.register_buffer("rope_inv_freq", torch.empty(0), persistent=False)
             self.register_buffer("rope_cos_cached", torch.empty(0), persistent=False)
             self.register_buffer("rope_sin_cached", torch.empty(0), persistent=False)
+            self.register_buffer("carpe_rel_inv_freq", torch.empty(0), persistent=False)
 
     def _resolve_rope_dim(self, raw: int) -> int:
         head_dim = self.head_dim
@@ -3274,6 +3347,59 @@ class CausalSelfAttention(nn.Module):
         rotated = torch.stack((rotated_even, rotated_odd), dim=-1).reshape(*orig_shape[:-1], rope_dim)
         return torch.cat((rotated, other), dim=-1)
 
+    def _carpe_rel_cos_sin(
+        self,
+        positions: torch.Tensor,
+        position_offsets: torch.Tensor | None,
+        device: torch.device,
+        dtype: torch.dtype,
+        batch_size: int,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if self.carpe_setup is None:
+            raise RuntimeError("CARPE relative cos/sin requested but setup missing")
+        inv = self.carpe_rel_inv_freq.to(device=device, dtype=dtype)
+        base = positions.to(device=device, dtype=dtype)
+        if position_offsets is None:
+            phases = base.view(-1, 1) * inv
+            cos = torch.cos(phases)
+            sin = torch.sin(phases)
+            return cos, sin
+        offsets = position_offsets.to(device=device, dtype=dtype)
+        if offsets.dim() != 1 or offsets.size(0) != batch_size:
+            raise ValueError("position_offsets must be 1D with batch_size entries")
+        grid = base.view(1, -1) + offsets.view(-1, 1)
+        phases = grid.unsqueeze(-1) * inv
+        cos = torch.cos(phases)
+        sin = torch.sin(phases)
+        return cos, sin
+
+    def _carpe_abs_tail(
+        self,
+        positions: torch.Tensor,
+        position_offsets: torch.Tensor | None,
+        batch_size: int,
+        device: torch.device,
+        dtype: torch.dtype,
+    ) -> torch.Tensor:
+        if self.carpe_abs_dim <= 0:
+            raise RuntimeError("CARPE absolute tail requested but disabled")
+        inv = self.carpe_abs_inv_freq.to(device=device, dtype=dtype)
+        base = positions.to(device=device, dtype=dtype)
+        if position_offsets is None:
+            phases = base.view(1, -1, 1) * inv
+            cos = torch.cos(phases)
+            sin = torch.sin(phases)
+            features = torch.cat([cos, sin], dim=-1)
+            return features.expand(batch_size, -1, -1)
+        offsets = position_offsets.to(device=device, dtype=dtype)
+        if offsets.dim() != 1 or offsets.size(0) != batch_size:
+            raise ValueError("position_offsets must be 1D with batch_size entries")
+        grid = base.view(1, -1) + offsets.view(-1, 1)
+        phases = grid.unsqueeze(-1) * inv
+        cos = torch.cos(phases)
+        sin = torch.sin(phases)
+        return torch.cat([cos, sin], dim=-1)
+
     def forward(
         self,
         x: torch.Tensor,
@@ -3294,22 +3420,42 @@ class CausalSelfAttention(nn.Module):
         key_states = self.key(x).view(B, T, self.n_head, head_dim)
         query_states = self.query(x).view(B, T, self.n_head, head_dim)
         value_states = self.value(x).view(B, T, self.n_head, head_dim)
+        if rope_positions is None:
+            base_positions = torch.arange(T, device=x.device, dtype=torch.long)
+        else:
+            base_positions = rope_positions.to(device=x.device, dtype=torch.long)
+            if base_positions.dim() != 1 or base_positions.size(0) != T:
+                raise ValueError("rope_positions must match sequence length")
         if self.rope_dim:
-            if rope_positions is None:
-                base_positions = torch.arange(T, device=x.device, dtype=torch.long)
+            if self.carpe_setup:
+                cos, sin = self._carpe_rel_cos_sin(
+                    base_positions,
+                    position_offsets,
+                    x.device,
+                    query_states.dtype,
+                    x.size(0),
+                )
             else:
-                base_positions = rope_positions.to(device=x.device, dtype=torch.long)
-                if base_positions.dim() != 1 or base_positions.size(0) != T:
-                    raise ValueError("rope_positions must match sequence length")
-            cos, sin = self._rope_cos_sin_with_offsets(
-                base_positions,
-                position_offsets,
-                x.device,
-                query_states.dtype,
-                x.size(0),
-            )
+                cos, sin = self._rope_cos_sin_with_offsets(
+                    base_positions,
+                    position_offsets,
+                    x.device,
+                    query_states.dtype,
+                    x.size(0),
+                )
             query_states = self._apply_rope(query_states, cos, sin)
             key_states = self._apply_rope(key_states, cos, sin)
+        if self.carpe_abs_dim > 0:
+            abs_tail = self._carpe_abs_tail(
+                base_positions,
+                position_offsets,
+                x.size(0),
+                key_states.device,
+                key_states.dtype,
+            )
+            abs_tail = abs_tail.unsqueeze(2)
+            key_states[..., -self.carpe_abs_dim :] = key_states[..., -self.carpe_abs_dim :] + abs_tail
+            value_states[..., -self.carpe_abs_dim :] = value_states[..., -self.carpe_abs_dim :] + abs_tail
         q = query_states.transpose(1, 2)
         k_local = key_states.transpose(1, 2)
         v_local = value_states.transpose(1, 2)
@@ -3769,6 +3915,18 @@ class TransformerStackCore(nn.Module):
         self.ln_f = nn.LayerNorm(config.n_width)
         self.loop_ln = nn.LayerNorm(config.n_width)
         self.head = nn.Linear(self.embedding_dim, config.vocab_size, bias=False)
+        self.carpe_setup = _resolve_carpe_setup(config)
+        self.carpe_abs_dim = self.carpe_setup.abs_dim if self.carpe_setup else 0
+        if self.carpe_abs_dim > 0:
+            abs_pairs = self.carpe_setup.abs_dim // 2
+            inv_values = [
+                1.0 / (CARPE_LOCALITY_SCALE * (self.carpe_setup.rho ** idx))
+                for idx in range(abs_pairs)
+            ]
+            abs_inv = torch.tensor(inv_values, dtype=torch.float32)
+        else:
+            abs_inv = torch.empty(0)
+        self.register_buffer("carpe_abs_inv_freq", abs_inv, persistent=False)
 
     def expand_to_even(self, tensor: torch.Tensor) -> torch.Tensor:
         """Place half-width embedding features into the even data-path slots."""
@@ -3807,6 +3965,8 @@ class TransformerStackCore(nn.Module):
             rope_positions_tensor = rope_positions.to(device=x.device, dtype=torch.long)
             if rope_positions_tensor.dim() != 1 or rope_positions_tensor.size(0) != cols:
                 raise ValueError("rope_positions must match column count")
+        if rope_positions_tensor is None:
+            rope_positions_tensor = torch.arange(cols, dtype=torch.long, device=x.device)
         position_offsets_tensor = None
         if position_offsets is not None:
             position_offsets_tensor = position_offsets.to(device=x.device, dtype=torch.long)
@@ -3843,6 +4003,16 @@ class TransformerStackCore(nn.Module):
                         continue
                     layer_kv_sources[layer_idx].append(kv_pair)
         current = x
+        if self.carpe_abs_dim > 0:
+            abs_features = self._carpe_absolute_features(
+                rope_positions_tensor,
+                position_offsets_tensor,
+                rows,
+                x.dtype,
+                x.device,
+            )
+            current = current.clone()
+            current[..., -self.carpe_abs_dim :] += abs_features
         repeats = max(1, int(layer_repeat))
         samples: list[torch.Tensor | None] = [None] * len(self.blocks)
         kv_outputs: list[tuple[torch.Tensor, torch.Tensor] | None] = [None] * len(self.blocks)
@@ -3890,6 +4060,27 @@ class TransformerStackCore(nn.Module):
                 raise RuntimeError("Missing layer sample; layer_repeat loop malfunctioned")
             finalized_samples.append(tensor)
         return current, finalized_samples, kv_outputs
+
+    def _carpe_absolute_features(
+        self,
+        positions: torch.Tensor,
+        position_offsets: torch.Tensor | None,
+        rows: int,
+        dtype: torch.dtype,
+        device: torch.device,
+    ) -> torch.Tensor:
+        if self.carpe_abs_dim <= 0:
+            raise RuntimeError("CARPE absolute features requested but CARPE disabled")
+        inv = self.carpe_abs_inv_freq.to(device=device, dtype=dtype)
+        base = positions.to(device=device, dtype=dtype).view(1, -1, 1)
+        phases = base
+        if position_offsets is not None:
+            offsets = position_offsets.to(device=device, dtype=dtype).view(rows, 1, 1)
+            phases = base + offsets
+        features = torch.cat([torch.cos(phases * inv), torch.sin(phases * inv)], dim=-1)
+        if features.size(0) == 1 and rows > 1 and position_offsets is None:
+            features = features.expand(rows, -1, -1)
+        return features
 
 
 class TransformerStackGrid(nn.Module):
@@ -7170,6 +7361,8 @@ def preprocess_runtime_args(args: Args) -> None:
                 saved["n_xctx"] = 0
         if "n_rope" not in saved:
             saved["n_rope"] = MODEL_GEOMETRY_DEFAULTS.n_rope
+        if "use_carpe" not in saved:
+            saved["use_carpe"] = MODEL_GEOMETRY_DEFAULTS.use_carpe
         config = ModelGeometry(**saved)
         args.checkpoint_payload_override = payload
         args.tokenizer_json_override = payload.get("tokenizer_json")
@@ -7184,6 +7377,7 @@ def preprocess_runtime_args(args: Args) -> None:
         args.n_rope = config.n_rope
         args.n_grce = config.n_grce
         args.n_xctx = config.n_xctx
+        args.use_carpe = config.use_carpe
         args.vocab_size = config.vocab_size
         args.model_path_override = checkpoint_path
         args.log_path_override = checkpoint_path.with_suffix(".log")
@@ -7198,6 +7392,7 @@ def preprocess_runtime_args(args: Args) -> None:
         n_rope=args.n_rope,
         n_grce=args.n_grce,
         n_xctx=args.n_xctx,
+        use_carpe=args.use_carpe,
     )
     tag = build_model_tag(inferred)
     for extra_tag in args.tag:
