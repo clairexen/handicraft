@@ -156,8 +156,6 @@ DEFAULTS = Defaults()
 from argparse import Namespace as Args
 GeometryLike = ModelGeometry | Args
 
-ROPE_PHASE_FRACTION = 12.0  # fraction of n_pos that spans 360 degrees
-
 FANCY_SPACE = "\u2423"  # Open Box symbol for visible spaces
 FANCY_ENTER = "\u23CE " # Return symbol for visible newlines
 PROMPT_PREFIX_TEXT = "\n\n"
@@ -3070,14 +3068,13 @@ class CausalSelfAttention(nn.Module):
         if self.rope_dim:
             if self.rope_dim >= self.head_dim:
                 raise ValueError("Resolved RoPE width must be smaller than per-head width")
-            base = max(1, int(config.n_pos * ROPE_PHASE_FRACTION))
+            base = max(1, config.n_pos)
             idx = torch.arange(0, self.rope_dim, 2, dtype=torch.float32)
             inv_freq = torch.pow(torch.tensor(float(base), dtype=torch.float32), -idx / self.rope_dim)
             self.register_buffer("rope_inv_freq", inv_freq, persistent=False)
             self.register_buffer("rope_cos_cached", torch.empty(0), persistent=False)
             self.register_buffer("rope_sin_cached", torch.empty(0), persistent=False)
-            cache_len = max(1, int(config.n_pos / max(ROPE_PHASE_FRACTION, 1e-6)))
-            self._build_rope_cache(cache_len)
+            self._build_rope_cache(base)
         else:
             self.register_buffer("rope_inv_freq", torch.empty(0), persistent=False)
             self.register_buffer("rope_cos_cached", torch.empty(0), persistent=False)

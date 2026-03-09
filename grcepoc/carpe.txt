@@ -35,6 +35,20 @@ system in which RoPE captures local structure while the absolute phase channel
 provides coarse global addressing for long-context retrieval and
 disambiguation.
 
+CARPE is particularly well suited to **looped or recurrent transformer
+architectures** that repeatedly refine their key/value state across multiple
+passes. In such models, higher-layer reasoning from earlier passes can annotate
+or modify the memory state that later tokens attend to. The presence of a
+stable coarse absolute coordinate makes it easier for these annotations to
+reference and revisit specific regions of the context. This illustrates a
+broader advantage of looping architectures: they can propagate structural or
+positional signals through internal representations rather than through
+additional natural-language tokens. In contrast, chain-of-thought prompting
+must express intermediate information linguistically and rely on lower layers
+to reinterpret it. CARPE therefore highlights a setting where looping models
+can transmit higher-level structural knowledge to future attention computations
+in a way that token-level reasoning alone cannot.
+
 
 ### Parameterization
 
@@ -51,6 +65,16 @@ Key parameters:
 * **ρ > 1**: geometric ratio between adjacent frequency bands
 
 The fastest RoPE band corresponds to period **2π tokens**, while the fastest absolute band corresponds to **2πS tokens**.
+
+For a given maximum span **N** encoded with **d** sinusoidal dimensions, the
+usual RoPE construction picks ρ = N^(2/d); here we instead treat **ρ** as
+primary so that both relative and absolute ladders share the same ratio, and
+solve for their dimensionalities based on **N_rel**, **N_abs**, and **S**.
+
+Our reference implementation in grce.py picks N_abs = S*N_rel for simplicity,
+so there's the same number of rel and abs dimensions, and then uses a quarter
+of the head dimension as number of dimensions for rel and abs encoding each,
+so that half of K and a quarter of Q and V contain position-related information.
 
 
 ### Frequency Ladders
@@ -71,7 +95,7 @@ Relative phase:
 
 	φ_rel(t, j) = r_t / λ_rel(j)
 
-The wrap period in tokens is
+The wrap period in tokens is:
 
 	T_rel(j) = 2π λ_rel(j)
 
@@ -206,11 +230,15 @@ The model can later be fine‑tuned with a fixed phase origin if desired.
 
 ### Randomized K/V Cache Placement
 
-To ensure the model learns to use the full absolute ring even when training sequences are short, training may include **coherent spans of cached key/value states** placed at random absolute positions.
+To ensure the model learns to use the full absolute ring even when training
+sequences are short, training may include **coherent spans of cached key/value
+states** placed at random absolute positions.
 
-Each span corresponds to a small sequence segment with meaningful internal neighborhood structure.
+Each span corresponds to a small sequence segment with meaningful internal
+neighborhood structure.
 
-These spans occupy otherwise unused regions of the absolute ring, allowing the model to practice addressing and revisiting distant memory regions.
+These spans occupy otherwise unused regions of the absolute ring, allowing the
+model to practice addressing and revisiting distant memory regions.
 
 
 ### Summary
@@ -220,4 +248,6 @@ CARPE constructs a dual coordinate system:
 * **RoPE** encodes precise local relative geometry
 * **Absolute sinusoidal phase** provides coarse global addressing
 
-Structured dropout and randomized phase placement prevent reliance on a single positional mechanism and encourage robust long‑context retrieval and disambiguation.
+Structured dropout and randomized phase placement prevent reliance on a single
+positional mechanism and encourage robust long‑context retrieval and
+disambiguation.
