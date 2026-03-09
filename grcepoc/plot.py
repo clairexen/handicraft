@@ -221,11 +221,6 @@ def parse_args() -> argparse.Namespace:
         help="Plot unix_time vs metric (default: test_loss); ':' makes separate subplots",
     )
     parser.add_argument(
-        "--skip-split-evals",
-        action="store_true",
-        help="Ignore records where step_split_eval == 1.0 (pure split evaluations)",
-    )
-    parser.add_argument(
         "--fit-line",
         type=int,
         default=0,
@@ -783,12 +778,6 @@ def main() -> None:
             else:
                 trimmed_sources.append((label, []))
         sources = trimmed_sources
-    if args.skip_split_evals and sources:
-        filtered_sources: List[Tuple[str, List[Dict[str, float]]]] = []
-        for label, history in sources:
-            filtered_history = [rec for rec in history if not _skip_split_eval(rec)]
-            filtered_sources.append((label, filtered_history))
-        sources = filtered_sources
     if not sources:
         print("no data sources provided")
         return
