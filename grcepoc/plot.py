@@ -197,13 +197,13 @@ def parse_args() -> argparse.Namespace:
         "--filter",
         type=int,
         default=0,
-        help="For each group of N samples, drop the smallest/largest 25%% before plotting",
+        help="Grow each block until it contains N non-NaN samples, then mask the outer quartiles",
     )
     parser.add_argument(
         "--median",
         type=int,
         default=0,
-        help="For each group of N samples, replace the block with its median",
+        help="Grow each block until it contains N non-NaN samples, then replace it with its median",
     )
     parser.add_argument(
         "--plot-steps",
@@ -263,6 +263,16 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=0,
         help="Ignore records with step indices smaller than this value",
+    )
+    parser.add_argument(
+        "--sparse",
+        action="store_true",
+        help="Render dashed lines with filled-circle markers to highlight isolated samples",
+    )
+    parser.add_argument(
+        "--interpolate",
+        action="store_true",
+        help="Drop NaN-aligned samples so lines connect between observed points",
     )
     return parser.parse_args()
 
@@ -453,33 +463,31 @@ def _apply_filter_groups(
     y_values: List[float],
     group_size: int,
 ) -> Tuple[List[float], List[float]]:
-    if group_size <= 1 or not y_values:
+    if group_size <= 0 or not y_values:
         return x_values, y_values
-    filtered_x: List[float] = []
-    filtered_y: List[float] = []
-    total = len(y_values)
-    for start in range(0, total, group_size):
-        end = min(total, start + group_size)
-        block_x = x_values[start:end]
-        block_y = y_values[start:end]
-        if not block_y:
-            continue
-        if any(math.isnan(val) for val in block_y):
-            filtered_x.extend(block_x)
-            filtered_y.extend(block_y)
-            continue
-        drop = int(len(block_y) * 0.25)
-        if drop <= 0 or drop * 2 >= len(block_y):
-            mask = [True] * len(block_y)
-        else:
-            sorted_indices = sorted(range(len(block_y)), key=lambda idx: block_y[idx])
-            drop_set = set(sorted_indices[:drop] + sorted_indices[-drop:])
-            mask = [idx not in drop_set for idx in range(len(block_y))]
-        for keep, x_val, y_val in zip(mask, block_x, block_y):
-            if keep:
-                filtered_x.append(x_val)
-                filtered_y.append(y_val)
-    return filtered_x, filtered_y
+    filtered_y = list(y_values)
+    total = len(filtered_y)
+    start = 0
+    while start < total:
+        end = start
+        non_nan_entries: List[tuple[float, int]] = []
+        while end < total and len(non_nan_entries) < group_size:
+            value = filtered_y[end]
+            if not math.isnan(value):
+                non_nan_entries.append((value, end))
+            end += 1
+        if len(non_nan_entries) < group_size:
+            break
+        drop = int(len(non_nan_entries) * 0.25)
+        if drop > 0:
+            sorted_entries = sorted(non_nan_entries, key=lambda item: item[0])
+            drop_indices = {
+                idx for _, idx in sorted_entries[:drop] + sorted_entries[-drop:]
+            }
+            for idx in drop_indices:
+                filtered_y[idx] = float("nan")
+        start = end
+    return list(x_values), filtered_y
 
 
 def _apply_median_groups(
@@ -487,28 +495,41 @@ def _apply_median_groups(
     y_values: List[float],
     group_size: int,
 ) -> Tuple[List[float], List[float]]:
-    if group_size <= 1 or not y_values:
+    if group_size <= 0 or not y_values:
         return x_values, y_values
     result_x: List[float] = []
     result_y: List[float] = []
     total = len(y_values)
-    for start in range(0, total, group_size):
-        end = min(total, start + group_size)
-        block_y = y_values[start:end]
-        block_x = x_values[start:end]
-        if not block_y:
-            continue
-        if len(block_y) == 1:
-            result_x.append(block_x[0])
-            result_y.append(block_y[0])
-            continue
-        clean = [val for val in block_y if not math.isnan(val)]
-        if not clean:
-            continue
-        median_val = float(np.median(clean))
-        result_x.append(block_x[-1])
-        result_y.append(median_val)
+    start = 0
+    while start < total:
+        end = start
+        valid_indices: List[int] = []
+        while end < total and len(valid_indices) < group_size:
+            if not math.isnan(y_values[end]):
+                valid_indices.append(end)
+            end += 1
+        if len(valid_indices) < group_size:
+            break
+        block_x = [x_values[idx] for idx in valid_indices]
+        block_y = [y_values[idx] for idx in valid_indices]
+        result_x.append(float(np.median(block_x)))
+        result_y.append(float(np.median(block_y)))
+        start = end
     return result_x, result_y
+
+
+def _remove_nan_pairs(
+    x_values: List[float],
+    y_values: List[float],
+) -> Tuple[List[float], List[float]]:
+    filtered_x: List[float] = []
+    filtered_y: List[float] = []
+    for x_val, y_val in zip(x_values, y_values):
+        if math.isnan(y_val):
+            continue
+        filtered_x.append(x_val)
+        filtered_y.append(y_val)
+    return filtered_x, filtered_y
 
 
 def _fit_line(points: List[Tuple[float, float]]) -> Tuple[float, float] | None:
@@ -570,6 +591,8 @@ def plot_metric_traces(
     group_median: int = 0,
     stack_sources: bool = False,
     fill_sign: bool = False,
+    sparse: bool = False,
+    interpolate: bool = False,
 ) -> None:
     expression_cache: Dict[str, MetricExpression] = {}
     parsed_metric_groups: List[List[MetricExpression]] = []
@@ -612,10 +635,12 @@ def plot_metric_traces(
                     continue
                 x_series = x_values
                 y_series = y_values
-                if value_filter > 1:
+                if value_filter > 0:
                     x_series, y_series = _apply_filter_groups(x_series, y_series, value_filter)
-                if group_median > 1:
+                if group_median > 0:
                     x_series, y_series = _apply_median_groups(x_series, y_series, group_median)
+                if interpolate:
+                    x_series, y_series = _remove_nan_pairs(x_series, y_series)
                 if x_field == "step" and step_period > 1:
                     y_segments = _split_segments(y_series, step_period)
                     x_segments = [list(range(len(seg))) for seg in y_segments]
@@ -643,11 +668,23 @@ def plot_metric_traces(
                             alpha=0.9,
                         )
                     else:
+                        plot_kwargs = {
+                            "label": label_name,
+                            "linewidth": 2,
+                        }
+                        if sparse:
+                            plot_kwargs.update(
+                                {
+                                    "linestyle": "--",
+                                    "marker": "o",
+                                    "markersize": 5,
+                                    "markerfacecolor": "auto",
+                                }
+                            )
                         ax.plot(
                             x_plot,
                             y_plot,
-                            label=label_name,
-                            linewidth=2,
+                            **plot_kwargs,
                         )
                         if fill_sign:
                             y_array = np.array(y_plot)
@@ -838,6 +875,8 @@ def main() -> None:
             group_median=args.median,
             stack_sources=args.stack_sources,
             fill_sign=args.plot_fill_sign,
+            sparse=args.sparse,
+            interpolate=args.interpolate,
         )
         performed = True
     if args.plot_time is not None:
@@ -858,6 +897,8 @@ def main() -> None:
             group_median=args.median,
             stack_sources=args.stack_sources,
             fill_sign=args.plot_fill_sign,
+            sparse=args.sparse,
+            interpolate=args.interpolate,
         )
         performed = True
     if args.plot_timestamp is not None:
@@ -878,6 +919,8 @@ def main() -> None:
             group_median=args.median,
             stack_sources=args.stack_sources,
             fill_sign=args.plot_fill_sign,
+            sparse=args.sparse,
+            interpolate=args.interpolate,
         )
         performed = True
     if not performed:

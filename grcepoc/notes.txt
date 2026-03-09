@@ -626,7 +626,7 @@ Modifiers for the [...] block can be inserted directly before the [ char:
 	c   enable --no-detach-ctx for the [...] block
 	T   freeze recurrent parameters so only the transformer stack learns
 	C   freeze transformer parameters so only the context/recurrent channels learn
-	H   don't add the loss values from this block to the typed metrics, only {test,train}_loss
+	H   "hide" the loss values from this block from per-type metric buckets
 	h   halt RoPE for this block (all positions share phase zero)
 
 In this context "transformer parameters" include everything that shapes the
@@ -656,7 +656,7 @@ to future tokens instead of the past. Uppercase `R` works the same way but
 disables recurrent/context updates, mirroring how `E/D/F/N` behave.
 
 Likewise `H` (hide typed losses) can be appended to a mode to suppress
-adding those losses to the typed metrics. For example *[16e=*th2x=*t4x]
+adding those losses to the typed metrics. For example *[16e=*tH2x=*t4x]
 will train for 2x and 4x thinking, but only the 4x thinking losses are
 reported in the "think" metric.
 
@@ -962,4 +962,7 @@ python grce.py --pt model/wp_en_E_D4Y.pt create
 python grce.py --pt model/wp_en_E_D4Y.pt corpus --add wikipedia-en-000{0,1,2,3,4,5,6,7}
 python grce.py --pt model/wp_en_E_D4Y.pt --cycles 3600 --lr-warmup-steps 200 --lr-cosine-steps 500 \
   --block-size 100 --batch-size 50 --layout '*[8E=8D4Y>head=*D4Y=*D4Y=8D(1|2|3)Y>>D123Y=8D4Y>tail]' train --json
-  # and/or --layout '(32[8E=256D>D1]|24[8E=256D2Y>D2]|20[8E=256D3Y>D3]|16[8E=256D4Y>D4]|8[8E=104D>XL])'
+
+Or instead:
+  --layout "(32[8E=256D>D1]|24[8E=256D2Y>D2]|20[8E=256D3Y>D3]|16[8E=256D4Y>D4]|8[8E=1016D>XL]|`
+            `16[8E(|2Y|3Y|4Y)=40D=100D4Y>DX1=8D4Y>DX2=8D4Y>DX3=100D4Y>DX4=1D4YHBb])"
