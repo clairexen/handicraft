@@ -149,25 +149,33 @@ This channel is used in three places.
 
 #### Token input
 
-	h_t^(0) = embedding(x_t) + W_in z_abs(a_t)
+Add the absolute phase contribution directly into the tail of the transformer
+width:
+
+	h_t^(0)[-d_abs:] += z_abs(a_t)
+
+No additional projection is required and the even/odd embedding split does not
+apply to this suffix.
 
 #### Key/value absolute subspace
 
-Reserve a slice of K and V **that does not overlap with the RoPE dimensions**.
+Reuse the same d_abs features by adding them to the last d_abs slots of the key
+and value tensors (still within the existing n_width dimensions):
 
-	k_abs = W_K z_abs(a_t)
-	v_abs = W_V z_abs(a_t)
+	K_t[:, :, -d_abs:] += z_abs(a_t)
+	V_t[:, :, -d_abs:] += z_abs(a_t)
 
-(As an arbitrary choice we place the relative position encoding at the begin of
-Q/K and the absolute position encoding at the end of K/V.)
+This reuses part of the head width without changing tensor ranks. The relative
+RoPE slice remains at the beginning of Q/K, while the absolute information lives
+at the end of K/V for easier disambiguation.
 
 Final vectors conceptually become
 
 	q_t = [ k_rel_rot | q_nonpos ]
-	k_t = [ k_rel_rot | k_nonpos | k_abs ]
-	v_t = [ v_nonpos | v_abs ]
+	k_t = [ k_rel_rot | k_nonpos | k_abs_add ]
+	v_t = [ v_nonpos | v_abs_add ]
 
-This allows attention heads to query approximate regions and recover coarse positional provenance.
+This allows attention heads to query approximate regions and recover coarse positional provenance without introducing extra dimensions.
 
 
 ### Overlap Between Relative and Absolute Bands
