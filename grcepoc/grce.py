@@ -5768,6 +5768,7 @@ def train_model(
         rng=random.Random(0),
     )
     header_extra_metric_keys = header_probe.extra_metric_names
+    seen_extra_metric_keys: set[str] = set(header_extra_metric_keys)
     long_loss_header = " ".join(
         [""] + [f"{': ' if key in ROW_METRIC_LOG_GROUP else ''}{key}" for key in ROW_METRIC_LOG_KEYS]
     )
@@ -6118,20 +6119,19 @@ def train_model(
                 parts.append(metric_value_text("test", key))
             return " ".join(parts)
 
-        active_extra_metrics = sorted(
-            set(header_extra_metric_keys)
-            | set(layout.extra_metric_names)
-            | {
-                key
-                for key in eval_metrics["train"].metrics.keys()
-                if key not in ROW_METRIC_LOG_KEYS and key != "target"
-            }
-            | {
-                key
-                for key in eval_metrics["test"].metrics.keys()
-                if key not in ROW_METRIC_LOG_KEYS and key != "target"
-            }
+        newly_observed_extra_metrics = set(layout.extra_metric_names)
+        newly_observed_extra_metrics.update(
+            key
+            for key in eval_metrics["train"].metrics.keys()
+            if key not in ROW_METRIC_LOG_KEYS and key != "target"
         )
+        newly_observed_extra_metrics.update(
+            key
+            for key in eval_metrics["test"].metrics.keys()
+            if key not in ROW_METRIC_LOG_KEYS and key != "target"
+        )
+        seen_extra_metric_keys.update(newly_observed_extra_metrics)
+        active_extra_metrics = sorted(seen_extra_metric_keys)
 
         train_values = format_train_line()
         test_values = format_test_line()
