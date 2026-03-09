@@ -83,6 +83,11 @@ PROMPT_GOALS = [
 ]
 
 
+# CARPE parameterization defaults (see carpe.txt)
+CARPE_LOCALITY_SCALE = 30
+CARPE_RELATIVE_MAX = 100
+
+
 # -----------------------------------------------------------------------------
 # GRCE Model Configuration
 # -----------------------------------------------------------------------------
@@ -101,6 +106,7 @@ class ModelGeometry:
     n_rope: int = 0         # Number of Q/K dims using RoPE (0 => full head width).
     n_grce: int = 64        # Narrow GRCE context dims.
     n_xctx: int = 1536      # Wide XCTX context dims.
+    use_carpe: bool = False
 
     @property
     def block_size(self) -> int:
@@ -2347,6 +2353,97 @@ def _dominant_estimates(config: GeometryLike) -> list[tuple[str, int, str]]:
     return estimates
 
 
+def _resolved_rope_width(config: GeometryLike) -> int:
+    """Return the effective RoPE width per head after defaults are applied."""
+
+    head_dim = max(1, config.n_width // max(1, config.n_head))
+    rope_dim = int(config.n_rope)
+    if rope_dim <= 0:
+        rope_dim = head_dim
+    return rope_dim
+
+
+def _standard_rope_rho(n_pos: int, rope_dim: int) -> float | None:
+    """Compute the classic RoPE ρ value for ``n_pos`` tokens and ``rope_dim`` dims."""
+
+    if n_pos <= 0 or rope_dim <= 0:
+        return None
+    return float(n_pos) ** (2.0 / float(rope_dim))
+
+
+def _carpe_dimension_counts(rho: float, n_pos: int) -> tuple[int, int, int]:
+    """Return (d_total, d_rel, d_abs) for CARPE at a specific ρ."""
+
+    if rho <= 1.0:
+        return math.inf, math.inf, math.inf
+    log_rho = math.log(rho)
+
+    def ceil_log(value: float) -> int:
+        if value <= 1.0:
+            return 0
+        return math.ceil(math.log(value) / log_rho)
+
+    rel_pairs = 1 + ceil_log(float(CARPE_RELATIVE_MAX))
+    abs_ratio = max(float(n_pos) / float(CARPE_LOCALITY_SCALE), 1e-12)
+    abs_pairs = 1 + ceil_log(abs_ratio)
+    d_rel = 2 * rel_pairs
+    d_abs = 2 * abs_pairs
+    return d_rel + d_abs, d_rel, d_abs
+
+
+def _carpe_optimal_rho(total_dims: int, n_pos: int) -> tuple[float, int, int] | None:
+    """Find the smallest ρ>1 so CARPE fits within ``total_dims`` dimensions."""
+
+    if total_dims <= 0 or n_pos <= 0:
+        return None
+
+    high = 2.0
+    total, d_rel, d_abs = _carpe_dimension_counts(high, n_pos)
+    while total > total_dims and high < 1e6:
+        high *= 2.0
+        total, d_rel, d_abs = _carpe_dimension_counts(high, n_pos)
+    if total > total_dims:
+        return None
+
+    low = 1.0
+    best_rho = high
+    best_counts = (total, d_rel, d_abs)
+    for _ in range(64):
+        mid = (low + high) / 2.0
+        dims_mid = _carpe_dimension_counts(mid, n_pos)
+        if dims_mid[0] <= total_dims:
+            best_rho = mid
+            best_counts = dims_mid
+            high = mid
+        else:
+            low = mid
+    return best_rho, best_counts[1], best_counts[2]
+
+
+def _print_rope_reports(config: GeometryLike, n_pos: int) -> None:
+    """Emit RoPE/CARPE ρ diagnostics for the size report."""
+
+    rope_dim = _resolved_rope_width(config)
+    standard_rho = _standard_rope_rho(n_pos, rope_dim)
+    carpe_stats = _carpe_optimal_rho(rope_dim, n_pos)
+    print(color_text("Positional Encoding", Colors.CYAN, bold=True))
+    print(f"  resolved n_rope dims : {rope_dim}")
+    if standard_rho is None:
+        print("  roh (standard RoPE): n/a")
+    else:
+        print(f"  roh (standard RoPE, N={n_pos}): {standard_rho:.6f}")
+    if carpe_stats is None:
+        print(
+            f"  roh (CARPE, S={CARPE_LOCALITY_SCALE}, N_rel={CARPE_RELATIVE_MAX}, N_abs={n_pos}): n/a"
+        )
+    else:
+        rho_value, d_rel, d_abs = carpe_stats
+        print(
+            f"  roh (CARPE, S={CARPE_LOCALITY_SCALE}, N_rel={CARPE_RELATIVE_MAX}, N_abs={n_pos}): "
+            f"{rho_value:.6f} (d_rel={d_rel}, d_abs={d_abs})"
+        )
+
+
 def grce_cmd_size(
     args: GeometryLike,
     *,
@@ -2362,6 +2459,8 @@ def grce_cmd_size(
     geometry = _build_geometry(args, args.n_pos)
     sections = _append_summary_section(_expected_sections(args, args.n_pos))
     _print_geometry(geometry)
+    print()
+    _print_rope_reports(args, args.n_pos)
     for idx, (key, title, items) in enumerate(sections):
         print()
         if key == "summary":
@@ -4717,13 +4816,15 @@ def build_model_tag(config: GeometryLike) -> str:
     """Build the filename tag used by ``train``/``create`` checkpoints."""
 
     tag = (
-        f"v{config.vocab_size}_bs{config.n_pos}_emb{config.n_width}_"
-        f"layers{config.n_layer}_heads{config.n_head}"
+        f"v{config.vocab_size}_n{config.n_pos}_w{config.n_width}_"
+        f"d{config.n_layer}_h{config.n_head}"
     )
     if config.n_grce > 0:
-        tag += f"_grce{config.n_grce}"
+        tag += f"_g{config.n_grce}"
     if config.n_xctx > 0:
-        tag += f"_xctx{config.n_xctx}"
+        tag += f"_x{config.n_xctx}"
+    if config.use_carpe:
+        tag += "_carpe"
     return tag
 
 

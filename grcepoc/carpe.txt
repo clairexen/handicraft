@@ -71,8 +71,13 @@ usual RoPE construction picks ρ = N^(2/d); here we instead treat **ρ** as
 primary so that both relative and absolute ladders share the same ratio, and
 solve for their dimensionalities based on **N_rel**, **N_abs**, and **S**.
 
-Our reference implementation in grce.py uses S=30, N_rel=6*S=180, N_abs=n_pos.
-And then we pick the smallest ρ > 1 so that d_rel + d_abs <= n_width / n_head.
+In standard RoPE mode grce.py uses n_rope RoPE dimensions and N=n_pos. The
+default value of n_rope is the full head dimension n_width / n_head.
+
+In CARPE mode grce.py automatically splits n_rope into d_rel + d_abs <= n_rope.
+So n_rope, despite it's name, stays the total number of head dimensions that
+participate in positional encoding. Conceptionally we set S=30, N_rel=100, and
+N_abs=n_pos, and then pick the smallest ρ > 1 so that d_rel + d_abs <= n_rope.
 
 
 ### Frequency Ladders
