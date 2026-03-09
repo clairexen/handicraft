@@ -3188,16 +3188,6 @@ def _module_list_param_count(modules: nn.ModuleList) -> int:
     return sum(_module_param_count(m) for m in modules)
 
 
-def _inject_carpe_even_tail(base: torch.Tensor, abs_features: torch.Tensor) -> torch.Tensor:
-    """Add absolute features into the even slots of ``base`` (last dimension)."""
-
-    if base.size(-1) != abs_features.size(-1):
-        raise ValueError("CARPE absolute injection dimension mismatch")
-    result = base.clone()
-    result[..., ::2] += abs_features
-    return result
-
-
 class CausalSelfAttention(nn.Module):
     """GPT-style attention block used inside :class:`Block`."""
 
@@ -3464,10 +3454,10 @@ class CausalSelfAttention(nn.Module):
                 key_states.dtype,
             )
             abs_tail = abs_tail.unsqueeze(2)
-            key_tail = key_states[..., -self.carpe_abs_dim :]
-            value_tail = value_states[..., -self.carpe_abs_dim :]
-            key_states[..., -self.carpe_abs_dim :] = _inject_carpe_even_tail(key_tail, abs_tail)
-            value_states[..., -self.carpe_abs_dim :] = _inject_carpe_even_tail(value_tail, abs_tail)
+            key_even = key_states[..., ::2]
+            value_even = value_states[..., ::2]
+            key_even[..., -self.carpe_abs_dim :] += abs_tail
+            value_even[..., -self.carpe_abs_dim :] += abs_tail
         q = query_states.transpose(1, 2)
         k_local = key_states.transpose(1, 2)
         v_local = value_states.transpose(1, 2)
@@ -4023,10 +4013,8 @@ class TransformerStackCore(nn.Module):
                 x.dtype,
                 x.device,
             )
-            current = current.clone()
-            current[..., -self.carpe_abs_dim :] = _inject_carpe_even_tail(
-                current[..., -self.carpe_abs_dim :], abs_features
-            )
+            even_tail = current[..., ::2]
+            even_tail[..., -self.carpe_abs_dim :] += abs_features
         repeats = max(1, int(layer_repeat))
         samples: list[torch.Tensor | None] = [None] * len(self.blocks)
         kv_outputs: list[tuple[torch.Tensor, torch.Tensor] | None] = [None] * len(self.blocks)
