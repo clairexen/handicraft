@@ -1128,7 +1128,7 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         "--small",
         action="store_true",
         help=(
-            "Shortcut for --n-layer 6 --n-head 8 --n-width 256 --n-grce 48 --n-xctx 720"
+            "Shortcut for --n-layer 6 --n-head 4 --n-width 256 --n-grce 48 --n-xctx 720"
         ),
     )
     model_group.add_argument(
@@ -1773,7 +1773,7 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         if not flag_present("--n-layer"):
             args.n_layer = 6
         if not flag_present("--n-head"):
-            args.n_head = 8
+            args.n_head = 4
         if not flag_present("--n-width"):
             args.n_width = 256
         if not flag_present("--n-grce"):
