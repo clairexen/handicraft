@@ -258,6 +258,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Offset each source's x-axis by the last x value of the previous source",
     )
+    parser.add_argument(
+        "--first-step",
+        type=int,
+        default=0,
+        help="Ignore records with step indices smaller than this value",
+    )
     return parser.parse_args()
 
 
@@ -769,6 +775,18 @@ def main() -> None:
             print(f"warning: missing json source {json_path}")
             continue
         label, history = load_checkpoint_json(json_path)
+        if args.first_step > 0:
+            filtered_history = []
+            for record in history:
+                step_value = record.get("step")
+                try:
+                    step_index = int(step_value)
+                except (TypeError, ValueError):
+                    filtered_history.append(record)
+                    continue
+                if step_index >= args.first_step:
+                    filtered_history.append(record)
+            history = filtered_history
         sources.append((label, history))
     if args.backtrace > 0:
         trimmed_sources: List[Tuple[str, List[Dict[str, float]]]] = []
