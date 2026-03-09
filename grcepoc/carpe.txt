@@ -1,0 +1,223 @@
+## CARPE: Coarse Absolute and Relative Positional Encoding for Robust Long-Context Transformers
+
+**CARPE** combines local RoPE-based relative positioning with a coarse absolute
+sinusoidal phase channel, trained with structured positional dropout to improve
+long-context disambiguation.
+
+### Abstract
+
+We propose **CARPE (Coarse Absolute and Relative Positional Encoding)**, a
+positional encoding scheme that separates **local relative addressing** from
+**global positional disambiguation** in transformer attention. Standard Rotary
+Position Embedding (RoPE) provides precise relative offsets for nearby tokens
+but becomes unreliable for distinguishing similar content across large
+contexts. CARPE augments RoPE with a **low-resolution absolute sinusoidal phase
+channel** whose highest frequency corresponds to a fixed locality scale (e.g.,
+32 tokens) and whose lower frequencies extend to the full context length. These
+absolute features are injected both into the **token input representation** and
+into a small **key/value subspace that does not overlap with the RoPE
+dimensions**, allowing attention to query coarse regions and preserve
+positional provenance while RoPE continues to encode local relational geometry.
+RoPE may optionally operate on a reduced ring size to reinforce its role as a
+local relative encoding.
+
+Training employs **structured positional dropout** to encourage the model to
+utilize both mechanisms. RoPE frequency components overlapping with the
+absolute regime are dropped with high probability, while the entire absolute
+channel is occasionally removed for sequences that remain within the RoPE
+locality window. The absolute phase origin is randomized during training, and
+coherent spans of cached key/value states—representing short sequences with
+meaningful internal neighborhood structure—may be placed at random positions on
+the absolute ring. This ensures the model learns to address and revisit regions
+across the entire positional range rather than relying only on the local
+training window. Together these mechanisms create a robust dual-coordinate
+system in which RoPE captures local structure while the absolute phase channel
+provides coarse global addressing for long-context retrieval and
+disambiguation.
+
+
+### Parameterization
+
+Let token *t* have
+
+* **Relative position**: r_t (index within the current sequence window)
+* **Absolute position**: a_t (position on the global absolute ring)
+
+Key parameters:
+
+* **S**: locality scale (tokens) where responsibility transitions from RoPE to absolute positioning
+* **N_rel**: maximum relative scale represented by RoPE
+* **N_abs**: maximum absolute context scale represented by the absolute channel
+* **ρ > 1**: geometric ratio between adjacent frequency bands
+
+The fastest RoPE band corresponds to period **2π tokens**, while the fastest absolute band corresponds to **2πS tokens**.
+
+
+### Frequency Ladders
+
+#### Relative (RoPE) scales
+
+Relative token scales:
+
+	λ_rel(j) = ρ^j   for   j = 0 … m_rel − 1   where   m_rel = 1 + ceil(log_ρ(N_rel))
+
+Each scale corresponds to one sine/cosine pair.
+
+Dimension count:
+
+	d_rel = 2 m_rel
+
+Relative phase:
+
+	φ_rel(t, j) = r_t / λ_rel(j)
+
+The wrap period in tokens is
+
+	T_rel(j) = 2π λ_rel(j)
+
+#### Absolute scales
+
+Absolute token scales start at S:
+
+	λ_abs(k) = S ρ^k   for   k = 0 … m_abs − 1   where   m_abs = 1 + ceil(log_ρ(N_abs / S))
+
+Dimension count:
+
+	d_abs = 2 m_abs
+
+Absolute phase:
+
+	φ_abs(t, k) = a_t / λ_abs(k)
+
+Wrap period:
+
+	T_abs(k) = 2π λ_abs(k)
+
+
+### RoPE Transformation
+
+Let the query and key vectors contain a dedicated RoPE slice:
+
+	q_rel , k_rel ∈ R^(d_rel)
+
+Define the block‑diagonal rotation
+
+	R_rel(r_t) = diag(Rot(φ_rel(t,0)), … , Rot(φ_rel(t,m_rel−1)))   where   Rot(θ) = [[cos θ, −sin θ], [sin θ, cos θ]]
+
+Then
+
+	q_rel_rot = R_rel(r_t) q_rel
+	k_rel_rot = R_rel(r_t) k_rel
+
+RoPE may intentionally operate with a small **N_rel**, restricting its effective ring size to a local neighborhood.
+
+
+### Absolute Phase Channel
+
+Absolute sinusoidal feature vector:
+
+	z_abs(a_t) = [cos(φ_abs(t,0)), sin(φ_abs(t,0)), … , cos(φ_abs(t,m_abs−1)), sin(φ_abs(t,m_abs−1))]
+
+This channel is used in three places.
+
+#### Token input
+
+	h_t^(0) = embedding(x_t) + W_in z_abs(a_t)
+
+#### Key/value absolute subspace
+
+Reserve a slice of K and V **that does not overlap with the RoPE dimensions**.
+
+	k_abs = W_K z_abs(a_t)
+	v_abs = W_V z_abs(a_t)
+
+(As an arbitrary choice we place the relative position encoding at the begin of
+Q/K and the absolute position encoding at the end of K/V.)
+
+Final vectors conceptually become
+
+	q_t = [ k_rel_rot | q_nonpos ]
+	k_t = [ k_rel_rot | k_nonpos | k_abs ]
+	v_t = [ v_nonpos | v_abs ]
+
+This allows attention heads to query approximate regions and recover coarse positional provenance.
+
+
+### Overlap Between Relative and Absolute Bands
+
+Overlapping scales occur when
+
+	λ_rel(j) ≥ S   and   λ_rel(j) ≤ N_rel
+
+Let
+
+	j_S = ceil(log_ρ(S))
+
+Then the overlapping RoPE indices are
+
+	J_overlap = { j_S , j_S + 1 , … , m_rel − 1 }
+
+Number of overlapping frequency pairs:
+
+	m_overlap = max(0, m_rel − j_S)
+
+These are the lowest‑frequency RoPE bands.
+
+
+### Structured Positional Dropout
+
+#### RoPE dropout
+
+During training, the overlapping RoPE bands are dropped with high probability.
+
+This may be applied
+* globally per batch
+* independently per attention head
+
+Operationally, the rotated components corresponding to indices in **J_overlap** are zeroed.
+
+This removes long‑range relative cues and forces the model to rely on absolute addressing for distant disambiguation.
+
+#### Absolute channel dropout
+
+With lower probability, the entire absolute channel is dropped:
+
+	z_abs(a_t) → 0
+
+This is applied only when the sequence length fits within the RoPE locality window.
+
+This ensures attention queries remain functional without absolute coordinates.
+
+
+### Randomized Absolute Phase Origin
+
+During training, the absolute coordinate system is randomly shifted:
+
+	a_t = a_t* + δ
+
+where
+
+	δ ~ Uniform(0 , N_abs)
+
+This prevents the model from associating specific semantics with fixed absolute phases.
+
+The model can later be fine‑tuned with a fixed phase origin if desired.
+
+
+### Randomized K/V Cache Placement
+
+To ensure the model learns to use the full absolute ring even when training sequences are short, training may include **coherent spans of cached key/value states** placed at random absolute positions.
+
+Each span corresponds to a small sequence segment with meaningful internal neighborhood structure.
+
+These spans occupy otherwise unused regions of the absolute ring, allowing the model to practice addressing and revisiting distant memory regions.
+
+
+### Summary
+
+CARPE constructs a dual coordinate system:
+
+* **RoPE** encodes precise local relative geometry
+* **Absolute sinusoidal phase** provides coarse global addressing
+
+Structured dropout and randomized phase placement prevent reliance on a single positional mechanism and encourage robust long‑context retrieval and disambiguation.
