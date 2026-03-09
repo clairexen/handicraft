@@ -98,7 +98,7 @@ class ModelGeometry:
     n_layer: int = 12       # GPT-2 base uses 12 layers.
     n_head: int = 12        # GPT-2 base uses 12 attention heads.
     n_width: int = 768       # GPT-2 base uses 768 embedding dims.
-    n_rope: int = 0         # Number of Q/K dims using RoPE (0 => half head width).
+    n_rope: int = 0         # Number of Q/K dims using RoPE (0 => full head width).
     n_grce: int = 64        # Narrow GRCE context dims.
     n_xctx: int = 1536      # Wide XCTX context dims.
 
@@ -1087,7 +1087,7 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         "--n-rope",
         type=int,
         default=DEFAULTS.n_rope,
-        help="Number of Q/K features using Rotary Position Embedding (must be even).",
+        help="Number of Q/K features using Rotary Position Embedding (0 => full head width; must be even).",
     )
     model_group.add_argument(
         "--n-grce",
@@ -1801,8 +1801,12 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
     if args.n_width % args.n_head != 0:
         parser.error("--n-width must be divisible by --n-head")
     head_dim = args.n_width // args.n_head
-    if args.n_rope and args.n_rope >= head_dim:
-        parser.error("--n-rope must be smaller than per-head width (n_width / n_head)")
+    if args.n_rope == 0 and head_dim % 2 != 0:
+        parser.error(
+            "Default RoPE span requires an even per-head width; either adjust n_width/n_head or set --n-rope"
+        )
+    if args.n_rope and args.n_rope > head_dim:
+        parser.error("--n-rope must be <= per-head width (n_width / n_head)")
     if args.block_size > args.n_pos:
         parser.error("--block-size must be <= --n-pos")
     if args.log_row_details:
@@ -3066,8 +3070,8 @@ class CausalSelfAttention(nn.Module):
             "tril", torch.tril(torch.ones(config.n_pos, config.n_pos))
         )
         if self.rope_dim:
-            if self.rope_dim >= self.head_dim:
-                raise ValueError("Resolved RoPE width must be smaller than per-head width")
+            if self.rope_dim > self.head_dim:
+                raise ValueError("Resolved RoPE width cannot exceed per-head width")
             base = max(1, config.n_pos)
             idx = torch.arange(0, self.rope_dim, 2, dtype=torch.float32)
             inv_freq = torch.pow(torch.tensor(float(base), dtype=torch.float32), -idx / self.rope_dim)
@@ -3086,10 +3090,9 @@ class CausalSelfAttention(nn.Module):
             if raw % 2 != 0:
                 raise ValueError("--n-rope must be even")
             return raw
-        half = head_dim // 2
-        if half % 2 != 0:
-            half -= 1
-        return max(0, half)
+        if head_dim % 2 != 0:
+            raise ValueError("Per-head width must be even when using default RoPE span")
+        return max(0, head_dim)
 
     def _build_rope_cache(self, max_seq: int) -> None:
         if self.rope_dim <= 0:

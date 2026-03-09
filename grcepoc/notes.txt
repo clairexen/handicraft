@@ -914,8 +914,7 @@ embedding names that correspond to special tokens below.
 Before we start, familiarize yourself with the project. Read notes.txt,
 AGENTS.md, and explore grce.py. Summarize any differences between notes.txt
 and the implementation in grce.py. Then propose in a few lines a possible
-architectural improvement, both as inspiration for me, and as busy-work for
-you, so you have a meaningful goal to focus on while absorbing the information.
+architectural improvement, and/or clean-ups in the code base.
 
 ----
 
@@ -923,9 +922,9 @@ you, so you have a meaningful goal to focus on while absorbing the information.
 
 ----
 
-Summarize our most importand points in a few short paragraphs that I can easily
-review and then copy-and-paste to the other AI instance that maintains the
-original text.
+Summarize our most importand points in a few short self-contained paragraphs
+that I can easily review and then copy-and-paste to the other AI instance that
+maintains the original text and code base.
 
 ----
 
