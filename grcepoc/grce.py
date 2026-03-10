@@ -8685,10 +8685,10 @@ class Runtime:
                     summaries: list[EvalSummary] = []
                     for run_idx in range(rand_runs):
                         start_pos = rng.randint(0, window - 1)
-                        if self.args.eval_verbose:
+                        if self.args.eval_verbose or True:
                             print(
                                 color_text(
-                                    f"[eval random #{run_idx + 1}] offset {start_pos}",
+                                    f"[eval random #{run_idx + 1}/{rand_runs} - {100.0*(run_idx+1) / rand_runs:.2f}%]",
                                     Colors.BLUE,
                                 )
                             )
