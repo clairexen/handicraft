@@ -1,8 +1,12 @@
 # GPT with Gradient-limited Recurrent Context Encoding and Extended Context (GPT+GRCE+XCTX)
 
+**This is a test-bed for experimenting with different tweaks to transformer architectures. Nothing here is stable.**
+
 See [`notes.txt`](notes.txt) for the full specification and [`grce.py`](grce.py) for the (mostly AI-generated) implementation.
 
 This repo extends a tiny picoGPT-style language model with two recurrent context channels: a lightweight low-bandwidth “role/focus” state alongside the usual token stream (GRCE) plus a high-bandwidth “short-term memory” channel for pushing information forward in time (XCTX) in parallel to multi-head attention, which still looks backward. “GPT+GRCE+XCTX” is pronounced “GPT with grace and extended context”.
+
+For position encoding both RoPE and CARPE (see [`carpe.txt`](carpe.txt)) are supported for comparison.
 
 The additions provide a few concrete benefits:
 
@@ -13,7 +17,7 @@ We also implement “looping” (https://arxiv.org/abs/2502.17416) along both ax
 
 ### Getting Started
 
-Setting up and activating venv:
+Create and activate venv:
 ```
 python3 -m venv .venv
 source activate
@@ -23,15 +27,21 @@ pip install -r requirements.txt
 Setup the tiny "simplestwiki" corpus:
 ```
 cd data
-bash wikipedia-setup.sh
+bash simplestwiki-setup.sh
 cd ..
 ```
 
-Training a tiny model for testing the flow:
+Train a tiny (8k) model for testing the flow:
 ```
 python grce.py --tiny create
 python grce.py --tiny corpus --add simplestwiki
-python grce.py --tiny --steps 10 train
+python grce.py --tiny --cycles 10 --steps 100 --eval-interval 10 train
+```
+
+Plot test losses recorded during training:
+```
+python grce.py --tiny json
+python plot.py --json model/default_model_v600_n10_w8_d3_h2_g4_x9.json --plot-steps test_loss
 ```
 
 ### Training a more serious model
