@@ -108,6 +108,7 @@ class ModelGeometry:
     n_xctx: int = 1536      # Wide XCTX context dims.
     n_query: int = 1        # Number of query vectors per head.
     use_carpet: bool = False
+    use_gmlp: bool = False
 
     @property
     def block_size(self) -> int:
@@ -132,6 +133,7 @@ class Defaults:
     n_xctx: int = MODEL_GEOMETRY_DEFAULTS.n_xctx
     n_query: int = MODEL_GEOMETRY_DEFAULTS.n_query
     use_carpet: bool = MODEL_GEOMETRY_DEFAULTS.use_carpe
+    use_gmlp: bool = MODEL_GEOMETRY_DEFAULTS.use_gmlp
     corpus: str | None = None
     steps: int = 100
     cycles: int = 100
@@ -1116,6 +1118,12 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         ),
     )
     model_group.add_argument(
+        "--use-gmlp",
+        action="store_true",
+        default=DEFAULTS.use_gmlp,
+        help="Use gated MLP feed-forward blocks (adds a second 4x projection as a multiplicative gate)",
+    )
+    model_group.add_argument(
         "--n-grce",
         type=int,
         default=DEFAULTS.n_grce,
@@ -1924,6 +1932,7 @@ def args_to_model_geometry(args: Args):
         n_xctx=args.n_xctx,
         n_query=getattr(args, "n_query", MODEL_GEOMETRY_DEFAULTS.n_query),
         use_carpet=getattr(args, "use_carpet", MODEL_GEOMETRY_DEFAULTS.use_carpet),
+        use_gmlp=getattr(args, "use_gmlp", MODEL_GEOMETRY_DEFAULTS.use_gmlp),
     )
 
 
@@ -2220,6 +2229,13 @@ def _expected_sections(config: GeometryLike, n_pos: int) -> list[tuple[str, str,
             "formula": "L * (4*E*E + E)",
         },
     ])
+    if getattr(config, "use_gmlp", False):
+        transformer_items.append(
+            {
+                "label": "ffn gate",
+                "formula": "L * (4*E*E + 4*E)",
+            }
+        )
     sections.append(("transformer", "Transformer", transformer_items))
 
     if G > 0:
@@ -2349,6 +2365,7 @@ def _compute_actual_counts(config: GeometryLike) -> dict[tuple[str, str], int]:
     attn_proj = 0
     ffn_fc1 = 0
     ffn_fc2 = 0
+    ffn_gate = 0
     for block in model.core.blocks:
         attn_qkv += sum(
             _module_param_count(getattr(block.attn, attr))
@@ -2357,10 +2374,14 @@ def _compute_actual_counts(config: GeometryLike) -> dict[tuple[str, str], int]:
         attn_proj += _module_param_count(block.attn.proj)
         ffn_fc1 += _module_param_count(block.ff.fc1)
         ffn_fc2 += _module_param_count(block.ff.fc2)
+        if getattr(block.ff, "fc_gate", None) is not None:
+            ffn_gate += _module_param_count(block.ff.fc_gate)
     counts[("transformer", "attn qkv")] = attn_qkv
     counts[("transformer", "attn proj")] = attn_proj
     counts[("transformer", "ffn fc1")] = ffn_fc1
     counts[("transformer", "ffn fc2")] = ffn_fc2
+    if ffn_gate:
+        counts[("transformer", "ffn gate")] = ffn_gate
 
     for channel in model.context_channels:
         if channel.disabled:
@@ -2381,8 +2402,10 @@ def _dominant_estimates(config: GeometryLike) -> list[tuple[str, int, str]]:
     X = config.n_xctx
     U = _get_inner_xctx_width(config)
     Q = getattr(config, "n_query", 1)
+    extra = 4 if getattr(config, "use_gmlp", False) else 0
+    transformer_factor = 11 + Q + extra
     estimates = [
-        ("transformer", (11+Q)*L*E*E, "((11+Q)*L*E^2)"),
+        ("transformer", transformer_factor * L * E * E, f"({transformer_factor}*L*E^2)"),
     ]
     if G > 0:
         estimates.append(
@@ -3747,6 +3770,8 @@ class FeedForward(nn.Module):
         self.act = nn.GELU()
         self.fc2 = nn.Linear(hidden, config.n_width)
         self.drop = nn.Dropout(config.dropout)
+        self.use_gmlp = bool(getattr(config, "use_gmlp", False))
+        self.fc_gate = nn.Linear(config.n_width, hidden) if self.use_gmlp else None
 
     def forward(
         self, x: torch.Tensor, *, record_mask: bool = False
@@ -3756,6 +3781,9 @@ class FeedForward(nn.Module):
         if record_mask:
             mask = hidden[:, -1, :] > 0
         activated = self.act(hidden)
+        if self.use_gmlp and self.fc_gate is not None:
+            gate = self.fc_gate(x)
+            activated = activated * gate
         out = self.fc2(activated)
         out = self.drop(out)
         return out, mask
@@ -5133,8 +5161,10 @@ def build_model_tag(config: GeometryLike) -> str:
         tag += f"_x{config.n_xctx}"
     if getattr(config, "n_query", 1) != 1:
         tag += f"_q{config.n_query}"
-    if config.use_carpet:
+    if getattr(config, "use_carpet", False):
         tag += "_carpet"
+    if getattr(config, "use_gmlp", False):
+        tag += "_gmlp"
     return tag
 
 
@@ -7639,6 +7669,8 @@ def preprocess_runtime_args(args: Args) -> None:
             saved["n_query"] = MODEL_GEOMETRY_DEFAULTS.n_query
         if "use_carpet" not in saved:
             saved["use_carpet"] = MODEL_GEOMETRY_DEFAULTS.use_carpe
+        if "use_gmlp" not in saved:
+            saved["use_gmlp"] = MODEL_GEOMETRY_DEFAULTS.use_gmlp
         config = ModelGeometry(**saved)
         args.checkpoint_payload_override = payload
         args.tokenizer_json_override = payload.get("tokenizer_json")
@@ -7666,6 +7698,7 @@ def preprocess_runtime_args(args: Args) -> None:
         args.n_xctx = config.n_xctx
         args.n_query = config.n_query
         args.use_carpet = config.use_carpe
+        args.use_gmlp = getattr(config, "use_gmlp", MODEL_GEOMETRY_DEFAULTS.use_gmlp)
         args.vocab_size = config.vocab_size
         args.model_path_override = checkpoint_path
         args.log_path_override = checkpoint_path.with_suffix(".log")
@@ -7681,6 +7714,7 @@ def preprocess_runtime_args(args: Args) -> None:
         n_grce=args.n_grce,
         n_xctx=args.n_xctx,
         use_carpet=args.use_carpet,
+        use_gmlp=getattr(args, "use_gmlp", MODEL_GEOMETRY_DEFAULTS.use_gmlp),
     )
     tag = build_model_tag(inferred)
     for extra_tag in args.tag:
