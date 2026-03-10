@@ -1570,6 +1570,12 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
             " the test corpus (quote the text to preserve spaces)."
         ),
     )
+    eval_parser.add_argument(
+        "--verbose",
+        dest="eval_verbose",
+        action="store_true",
+        help="Print the evaluated slice and per-row metrics",
+    )
 
 
     # --------------------------------------------------------
@@ -5063,6 +5069,7 @@ LOSS_IGNORE_INDEX = -100
 
 
 BATCH_MODES: tuple[str, ...] = ("encode", "decode", "forward", "think", "noattn", "reverse")
+METRIC_BUCKET_ORDER = ["target", *BATCH_MODES]
 
 
 ROW_METRIC_HIST_KEYS = list(BATCH_MODES)
@@ -6746,6 +6753,15 @@ class BlockAttention:
     layer_weights: dict[int, torch.Tensor]
 
 
+@dataclass
+class EvalSummary:
+    loss_sums: dict[str, float]
+    token_counts: dict[str, int]
+    column_loss_sums: list[float]
+    column_token_counts: list[int]
+    source_label: str
+
+
 def _evaluate_row_block(
     args: Args,
     model: GRCEGPT,
@@ -7231,11 +7247,130 @@ def _print_attention_heatmap(
             row_text += f" {''.join(digits):>4}"
         print(row_text)
 
-def _format_eval_metric_value(key: str, value: float | None) -> str:
-    sep = ": " if key in ROW_METRIC_LOG_GROUP else ""
-    if value is None:
-        return f"{sep}****"
-    return f"{sep}{value:.3f}"
+def _metric_bucket_keys(metric_map: dict[str, float | None]) -> list[str]:
+    extras = sorted(
+        key for key in metric_map.keys() if key not in METRIC_BUCKET_ORDER
+    )
+    ordered: list[str] = []
+    for key in METRIC_BUCKET_ORDER:
+        if key in metric_map:
+            ordered.append(key)
+    ordered.extend(extras)
+    return ordered
+
+
+def _format_metric_map(metric_map: dict[str, float | None]) -> list[str]:
+    lines: list[str] = []
+    for key in _metric_bucket_keys(metric_map):
+        value = metric_map.get(key)
+        text = "****" if value is None else f"{value:.3f}"
+        lines.append(f"  {key:>12}: {text}")
+    if not lines:
+        lines.append("  (no metrics recorded)")
+    return lines
+
+
+def _format_metric_inline(metric_map: dict[str, float | None]) -> str:
+    parts: list[str] = []
+    for key in _metric_bucket_keys(metric_map):
+        value = metric_map.get(key)
+        text = "****" if value is None else f"{value:.3f}"
+        parts.append(f"{key}={text}")
+    return ", ".join(parts) if parts else "(no metrics recorded)"
+
+
+def _row_metric_values(row_result: RowEvalResult) -> dict[str, float | None]:
+    metrics: dict[str, float | None] = {}
+    metrics["target"] = (
+        row_result.total_loss_sum / row_result.total_tokens
+        if row_result.total_tokens > 0
+        else None
+    )
+    for key, loss_sum in row_result.mode_loss_sums.items():
+        count = row_result.mode_token_counts.get(key, 0)
+        metrics[key] = loss_sum / count if count > 0 else None
+    for key in METRIC_BUCKET_ORDER:
+        metrics.setdefault(key, None)
+    return metrics
+
+
+def _overall_metric_values(
+    loss_sums: dict[str, float],
+    token_counts: dict[str, int],
+) -> dict[str, float | None]:
+    metrics: dict[str, float | None] = {}
+    for key, total in loss_sums.items():
+        count = token_counts.get(key, 0)
+        metrics[key] = total / count if count > 0 else None
+    for key in METRIC_BUCKET_ORDER:
+        metrics.setdefault(key, None)
+    return metrics
+
+
+def _column_loss_values(
+    row_result: RowEvalResult,
+) -> tuple[list[float], list[bool]]:
+    log_probs = torch.log_softmax(row_result.logits, dim=-1)
+    targets = row_result.target_ids.unsqueeze(-1)
+    gathered = torch.gather(log_probs, dim=-1, index=targets).squeeze(-1)
+    losses = (-gathered).squeeze(0).detach().cpu().tolist()
+    mask = row_result.supervision_mask.detach().cpu().tolist()
+    return losses, mask
+
+
+def _column_summary_lines(
+    loss_sums: Sequence[float],
+    token_counts: Sequence[int],
+) -> list[str]:
+    lines: list[str] = []
+    for idx, (loss_sum, count) in enumerate(zip(loss_sums, token_counts)):
+        if count <= 0:
+            continue
+        avg = loss_sum / count
+        lines.append(f"  col{idx:03d}: {avg:.3f}")
+    if not lines:
+        lines.append("  (no supervised columns)")
+    return lines
+
+
+def _aggregate_eval_summaries(
+    summaries: Sequence[EvalSummary],
+) -> tuple[dict[str, float], dict[str, int], list[float], list[int]]:
+    total_loss: dict[str, float] = {}
+    total_counts: dict[str, int] = {}
+    max_columns = max((len(summary.column_loss_sums) for summary in summaries), default=0)
+    column_loss = [0.0] * max_columns
+    column_counts = [0] * max_columns
+    for summary in summaries:
+        for key, value in summary.loss_sums.items():
+            total_loss[key] = total_loss.get(key, 0.0) + value
+        for key, value in summary.token_counts.items():
+            total_counts[key] = total_counts.get(key, 0) + value
+        for idx in range(len(summary.column_loss_sums)):
+            column_loss[idx] += summary.column_loss_sums[idx]
+            column_counts[idx] += summary.column_token_counts[idx]
+    return total_loss, total_counts, column_loss, column_counts
+
+
+def _print_eval_summary(
+    label: str,
+    layout_text: str,
+    summaries: Sequence[EvalSummary],
+) -> None:
+    if not summaries:
+        return
+    total_loss, total_counts, column_loss, column_counts = _aggregate_eval_summaries(summaries)
+    metrics = _overall_metric_values(total_loss, total_counts)
+    header = f"{label} layout '{layout_text}' across {len(summaries)} evaluation(s)"
+    print(color_text(header, Colors.CYAN))
+    sources = ", ".join(summary.source_label for summary in summaries)
+    print(f"  sources: {sources}")
+    print(color_text("Metric buckets:", Colors.CYAN))
+    for line in _format_metric_map(metrics):
+        print(line)
+    print(color_text("Per-column losses:", Colors.CYAN))
+    for line in _column_summary_lines(column_loss, column_counts):
+        print(line)
 
 
 def run_eval_layout(
@@ -7247,7 +7382,8 @@ def run_eval_layout(
     start_pos: int,
     *,
     custom_text: str | None = None,
-) -> None:
+    verbose: bool | None = None,
+) -> EvalSummary:
     """Evaluate the layout on a deterministic slice and print per-row metrics."""
 
     if block_size <= 0 and not custom_text:
@@ -7256,6 +7392,7 @@ def run_eval_layout(
     model_device = next(model.parameters()).device
     was_training = model.training
     model.eval()
+    verbose_flag = bool(verbose if verbose is not None else getattr(args, "eval_verbose", False))
 
     with torch.no_grad():
         layout = BatchLayout(args.layout, batch_size=args.batch_size, block_size=block_size)
@@ -7279,8 +7416,9 @@ def run_eval_layout(
             custom_text=custom_text,
         )
 
-        print(color_text(f"Evaluating layout '{args.layout}' on {source_label}:", Colors.CYAN))
-        print(pretty_text)
+        if verbose_flag:
+            print(color_text(f"Evaluating layout '{args.layout}' on {source_label}:", Colors.CYAN))
+            print(pretty_text)
 
         xb_base = inputs.unsqueeze(0).to(model_device)
         yb_base = targets.unsqueeze(0).to(model_device)
@@ -7289,14 +7427,9 @@ def run_eval_layout(
         overall_token_counts = {mode: 0 for mode in BATCH_MODES}
         overall_loss_sums["target"] = 0.0
         overall_token_counts["target"] = 0
-
-        def format_metrics(metric_map: dict[str, float | None]) -> str:
-            base = _format_eval_metric_value("target", metric_map.get("target"))
-            diag = " ".join(
-                _format_eval_metric_value(key, metric_map.get(key))
-                for key in ROW_METRIC_LOG_KEYS
-            )
-            return f"{base} {diag}"
+        max_columns = max((row.total_columns() for row in layout.rows), default=0)
+        column_loss_sums = [0.0] * max_columns
+        column_token_counts = [0] * max_columns
 
         for row_idx, row in enumerate(layout.rows, start=1):
             row_desc = _row_description(layout, row)
@@ -7312,48 +7445,42 @@ def run_eval_layout(
                 print(color_text(f"Row block #{row_idx}: {row_desc} -> error: {exc}", Colors.RED))
                 continue
 
-        metrics: dict[str, float | None] = {}
-        keys = set(row_result.mode_loss_sums.keys()) | set(BATCH_MODES)
-        if row_result.total_tokens > 0:
-            metrics["target"] = row_result.total_loss_sum / row_result.total_tokens
-        else:
-            metrics["target"] = None
-        for mode in keys:
-            count = row_result.mode_token_counts.get(mode, 0)
-            metrics[mode] = row_result.mode_loss_sums.get(mode, 0.0) / count if count > 0 else None
-
-            line = format_metrics(metrics)
-            print(f"Row block #{row_idx}: {row_desc} (rows={row.rows}) -> {line}")
+            row_metrics = _row_metric_values(row_result)
+            if verbose_flag:
+                inline_metrics = _format_metric_inline(row_metrics)
+                print(
+                    f"Row block #{row_idx}: {row_desc} (rows={row.rows}) -> {inline_metrics}"
+                )
 
             weight = max(0, int(row.rows))
-            if weight <= 0:
-                continue
-            overall_loss_sums["target"] += row_result.total_loss_sum * weight
-            overall_token_counts["target"] += row_result.total_tokens * weight
-            for mode, value in row_result.mode_loss_sums.items():
-                overall_loss_sums.setdefault(mode, 0.0)
-                overall_token_counts.setdefault(mode, 0)
-                overall_loss_sums[mode] += value * weight
-                overall_token_counts[mode] += row_result.mode_token_counts.get(mode, 0) * weight
+            if weight > 0:
+                overall_loss_sums["target"] += row_result.total_loss_sum * weight
+                overall_token_counts["target"] += row_result.total_tokens * weight
+                for mode, value in row_result.mode_loss_sums.items():
+                    overall_loss_sums.setdefault(mode, 0.0)
+                    overall_token_counts.setdefault(mode, 0)
+                    overall_loss_sums[mode] += value * weight
+                    overall_token_counts[mode] += row_result.mode_token_counts.get(mode, 0) * weight
+                if max_columns > 0:
+                    column_losses, mask = _column_loss_values(row_result)
+                    limit = min(len(column_losses), max_columns, len(mask))
+                    for col_idx in range(limit):
+                        if not mask[col_idx]:
+                            continue
+                        column_loss_sums[col_idx] += column_losses[col_idx] * weight
+                        column_token_counts[col_idx] += weight
 
-        overall_metrics: dict[str, float | None] = {}
-        combined_keys = ["target"] + list(BATCH_MODES) + sorted(
-            key
-            for key in overall_loss_sums.keys()
-            if key not in BATCH_MODES and key != "target"
+        summary = EvalSummary(
+            loss_sums=overall_loss_sums,
+            token_counts=overall_token_counts,
+            column_loss_sums=column_loss_sums,
+            column_token_counts=column_token_counts,
+            source_label=source_label,
         )
-        for key in combined_keys:
-            count = overall_token_counts.get(key, 0)
-            if count > 0:
-                overall_metrics[key] = overall_loss_sums.get(key, 0.0) / count
-            else:
-                overall_metrics[key] = None
-
-        overall_line = format_metrics(overall_metrics)
-        print(color_text(f"Overall (weighted by rows): {overall_line}", Colors.CYAN))
 
     if was_training:
         model.train()
+    return summary
 
 def preprocess_runtime_args(args: Args) -> None:
     """Resolve checkpoint overrides and derived paths before runtime spins up."""
@@ -8467,7 +8594,7 @@ class Runtime:
                     if joined:
                         custom_text = joined
                 if custom_text:
-                    run_eval_layout(
+                    summary = run_eval_layout(
                         args=self.args,
                         dataset=dataset,
                         tokenizer=tokenizer,
@@ -8475,7 +8602,9 @@ class Runtime:
                         block_size=self.args.block_size,
                         start_pos=self.args.eval_start,
                         custom_text=custom_text,
+                        verbose=self.args.eval_verbose,
                     )
+                    _print_eval_summary("[eval custom]", self.args.layout, [summary])
                     return
                 rand_runs = max(0, int(getattr(self.args, "eval_random", 0)))
                 if rand_runs > 0:
@@ -8485,10 +8614,17 @@ class Runtime:
                     base_seed = max(0, int(getattr(self.args, "rng_seed", 0)))
                     rng = random if base_seed > 0 else random.Random()
                     window = max(1, total - (self.args.block_size + 1))
+                    summaries: list[EvalSummary] = []
                     for run_idx in range(rand_runs):
                         start_pos = rng.randint(0, window - 1)
-                        print(color_text(f"[eval random #{run_idx + 1}] offset {start_pos}", Colors.BLUE))
-                        run_eval_layout(
+                        if self.args.eval_verbose:
+                            print(
+                                color_text(
+                                    f"[eval random #{run_idx + 1}] offset {start_pos}",
+                                    Colors.BLUE,
+                                )
+                            )
+                        summary = run_eval_layout(
                             args=self.args,
                             dataset=dataset,
                             tokenizer=tokenizer,
@@ -8496,9 +8632,12 @@ class Runtime:
                             block_size=self.args.block_size,
                             start_pos=start_pos,
                             custom_text=None,
+                            verbose=self.args.eval_verbose,
                         )
+                        summaries.append(summary)
+                    _print_eval_summary("[eval random]", self.args.layout, summaries)
                     return
-                run_eval_layout(
+                summary = run_eval_layout(
                     args=self.args,
                     dataset=dataset,
                     tokenizer=tokenizer,
@@ -8506,7 +8645,9 @@ class Runtime:
                     block_size=self.args.block_size,
                     start_pos=self.args.eval_start,
                     custom_text=None,
+                    verbose=self.args.eval_verbose,
                 )
+                _print_eval_summary("[eval]", self.args.layout, [summary])
                 return
 
             if self.args.command == "profile":
