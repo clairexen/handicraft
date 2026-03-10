@@ -7322,14 +7322,28 @@ def _column_summary_lines(
     loss_sums: Sequence[float],
     token_counts: Sequence[int],
 ) -> list[str]:
-    lines: list[str] = []
-    for idx, (loss_sum, count) in enumerate(zip(loss_sums, token_counts)):
+    values: list[str] = []
+    for loss_sum, count in zip(loss_sums, token_counts):
         if count <= 0:
             continue
         avg = loss_sum / count
-        lines.append(f"  col{idx:03d}: {avg:.3f}")
-    if not lines:
-        lines.append("  (no supervised columns)")
+        values.append(f"{avg:.3f}")
+    if not values:
+        return ["  (no supervised columns)"]
+    chunk_size = 20
+    lines: list[str] = []
+    for chunk_idx in range(0, len(values), chunk_size):
+        chunk = values[chunk_idx : chunk_idx + chunk_size]
+        prefix = "  [" if chunk_idx == 0 else "    "
+        line = prefix
+        if chunk_idx == 0:
+            line += " "
+        line += ", ".join(chunk)
+        if chunk_idx + chunk_size < len(values):
+            line += ","
+        else:
+            line += " ]"
+        lines.append(line)
     return lines
 
 
@@ -7363,8 +7377,16 @@ def _print_eval_summary(
     metrics = _overall_metric_values(total_loss, total_counts)
     header = f"{label} layout '{layout_text}' across {len(summaries)} evaluation(s)"
     print(color_text(header, Colors.CYAN))
-    sources = ", ".join(summary.source_label for summary in summaries)
-    print(f"  sources: {sources}")
+    offsets: list[str] = []
+    for summary in summaries:
+        match = re.search(r"offset (\d+)", summary.source_label)
+        if match:
+            offsets.append(match.group(1))
+    if offsets:
+        print(f"  offsets: {', '.join(offsets)}")
+    else:
+        sources = ", ".join(summary.source_label for summary in summaries)
+        print(f"  sources: {sources}")
     print(color_text("Metric buckets:", Colors.CYAN))
     for line in _format_metric_map(metrics):
         print(line)
