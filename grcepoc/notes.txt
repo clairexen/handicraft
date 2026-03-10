@@ -24,7 +24,10 @@ the output token data.)
 
 The transformer stack itself is a rather "classical" GTP-2 like design,
 with LayerNorm's in the input paths to multi-head self-attention and MLP
-building blocks, using GELU activations, and RoPE.
+building blocks, using GELU activations.
+
+Both RoPE and CARPE (see [`carpe.txt`](carpe.txt)) are supported for
+positional encodings.
 
 ## Recurrent Path
 
