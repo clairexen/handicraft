@@ -16,7 +16,12 @@ Training uses **think-ahead blocks** of length `1 ≤ H ≤ N`, where `N` is the
 
 Except for these masks and the inter-loop self→next addition, the transformer runs the same computation as a plain `Ny` segment. The **lower-right triangle** of the span (positions introduced in later loops) still executes the full causal attention stack as if `H=1`; we only zero out their interface to the encoder-style block above/left of the triangle until the loop that activates that position. This preserves “normal” key/value entries for non-leading tokens so later positions can attend to them once they become active.
 
-To stabilize the recurrent structure created by looping and rolling latent continuation, the output of each loop iteration is passed through **RMSNorm with no affine parameters** before being fed into the next loop. This normalization constrains the magnitude of representations traveling through the recurrent pathway and helps prevent drift or amplification across successive iterations.
+To stabilize the recurrent structure, every loop iteration ends with two forms of normalization:
+
+* A **learned LayerNorm** on the self stream that feeds the next iteration. After we add the "next" contribution from position `t` into the self stream at `t+1`, we immediately apply this LayerNorm so the updated self activations remain well-scaled before the next attention pass.
+* A separate **RMSNorm without affine parameters** that governs the recurrent loop residual (the state coming out of the transformer stack before it is fed back in). This norm constrains the magnitude of representations traveling through the recurrent pathway and helps prevent drift or amplification across successive iterations.
+
+Importantly, the "next" stream feeding position `t+1` is sampled **before** the RMSNorm runs on position `t`, while the self stream at `t+1` receives the additive update **after** its own RMSNorm has been applied. This ordering preserves the raw prediction signal from position `t` while ensuring the destination position’s self vector stays normalized.
 
 During inference the model maintains a **rolling latent continuation**. After generating a span `[t, …, t+H−1]`, the next token is emitted from the first position. The latent state is then shifted forward by one position: the embedding of the emitted token initializes the new first position, while the next streams continue to seed subsequent positions through the additive self→next propagation rule. Additional loop iterations refine the updated span `[t+1, …, t+H]`. Because the emitted token is sampled from the same jointly refined state that produced the continuation, the latent future generally remains consistent with the generated output.
 
