@@ -106,6 +106,7 @@ class ModelGeometry:
     n_rope: int = 0         # Number of Q/K dims using RoPE (0 => full head width).
     n_grce: int = 64        # Narrow GRCE context dims.
     n_xctx: int = 1536      # Wide XCTX context dims.
+    n_query: int = 1        # Number of query vectors per head.
     use_carpe: bool = False
 
     @property
@@ -129,6 +130,7 @@ class Defaults:
     n_rope: int = MODEL_GEOMETRY_DEFAULTS.n_rope
     n_grce: int = MODEL_GEOMETRY_DEFAULTS.n_grce
     n_xctx: int = MODEL_GEOMETRY_DEFAULTS.n_xctx
+    n_query: int = MODEL_GEOMETRY_DEFAULTS.n_query
     use_carpe: bool = MODEL_GEOMETRY_DEFAULTS.use_carpe
     corpus: str | None = None
     steps: int = 100
@@ -1085,6 +1087,12 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         help="Number of attention heads per block (GPT-2 base uses 12).",
     )
     model_group.add_argument(
+        "--n-query",
+        type=int,
+        default=DEFAULTS.n_query,
+        help="Number of independent query projections per attention head.",
+    )
+    model_group.add_argument(
         "--n-width",
         type=int,
         default=DEFAULTS.n_width,
@@ -1902,6 +1910,7 @@ def args_to_model_geometry(args: Args):
         n_rope=args.n_rope,
         n_grce=args.n_grce,
         n_xctx=args.n_xctx,
+        n_query=getattr(args, "n_query", MODEL_GEOMETRY_DEFAULTS.n_query),
         use_carpe=getattr(args, "use_carpe", MODEL_GEOMETRY_DEFAULTS.use_carpe),
     )
 
@@ -2137,6 +2146,7 @@ def _build_geometry(config: GeometryLike, n_pos: int) -> list[tuple[str, str, in
         ("B", "block size", n_pos),
         ("L", "transform layers", config.n_layer),
         ("H", "attention heads", config.n_head),
+        ("Q", "queries per head", getattr(config, "n_query", 1)),
         ("E", "embedding width", config.n_width),
         ("G", "grce width", config.n_grce),
         ("X", "xctx width", config.n_xctx),
@@ -2153,6 +2163,7 @@ def _expected_sections(config: GeometryLike, n_pos: int) -> list[tuple[str, str,
     E = config.n_width
     G = config.n_grce
     X = config.n_xctx
+    Q = getattr(config, "n_query", 1)
     sections: list[tuple[str, str, list[dict]]] = []
 
     def eval_items(items):
@@ -2167,6 +2178,7 @@ def _expected_sections(config: GeometryLike, n_pos: int) -> list[tuple[str, str,
                     "E": config.n_width,
                     "G": config.n_grce,
                     "X": config.n_xctx,
+                    "Q": Q,
                 },
             )
         return items
@@ -2181,7 +2193,7 @@ def _expected_sections(config: GeometryLike, n_pos: int) -> list[tuple[str, str,
     transformer_items = eval_items([
         {
             "label": "attn qkv",
-            "formula": "3 * L * (E*E + E)",
+            "formula": "L * ((2+Q) * (E*E + E))",
         },
         {
             "label": "attn proj",
@@ -2356,8 +2368,9 @@ def _dominant_estimates(config: GeometryLike) -> list[tuple[str, int, str]]:
     G = config.n_grce
     X = config.n_xctx
     U = _get_inner_xctx_width(config)
+    Q = getattr(config, "n_query", 1)
     estimates = [
-        ("transformer", 12*L*E*E, "(12*L*E^2)"),
+        ("transformer", (11+Q)*L*E*E, "((11+Q)*L*E^2)"),
     ]
     if G > 0:
         estimates.append(
@@ -3236,6 +3249,8 @@ class CausalSelfAttention(nn.Module):
         if config.n_width % config.n_head != 0:
             raise ValueError("--n-width must be divisible by --n-head")
         self.n_head = config.n_head
+        self.n_query = max(1, int(getattr(config, "n_query", 1) or 1))
+        self.total_heads = self.n_head * self.n_query
         self.head_dim = config.n_width // config.n_head
         raw_rope = max(0, int(getattr(config, "n_rope", 0) or 0))
         self.raw_n_rope = raw_rope
@@ -3252,7 +3267,7 @@ class CausalSelfAttention(nn.Module):
             self.carpe_abs_dim = 0
             self.carpe_rho = None
         self.key = nn.Linear(config.n_width, config.n_width)
-        self.query = nn.Linear(config.n_width, config.n_width)
+        self.query = nn.Linear(config.n_width, config.n_width * self.n_query)
         self.value = nn.Linear(config.n_width, config.n_width)
         self.proj = nn.Linear(config.n_width, config.n_width)
         self.dropout = nn.Dropout(config.dropout)
@@ -3457,8 +3472,9 @@ class CausalSelfAttention(nn.Module):
         B, T, C = x.shape
         head_dim = self.head_dim
         key_states = self.key(x).view(B, T, self.n_head, head_dim)
-        query_states = self.query(x).view(B, T, self.n_head, head_dim)
         value_states = self.value(x).view(B, T, self.n_head, head_dim)
+        query_states = self.query(x).view(B, T, self.n_head, self.n_query, head_dim)
+        query_states = query_states.reshape(B, T, self.total_heads, head_dim)
         if rope_positions is None:
             base_positions = torch.arange(T, device=x.device, dtype=torch.long)
         else:
@@ -3497,9 +3513,17 @@ class CausalSelfAttention(nn.Module):
             value_even = value_states[..., ::2]
             key_even[..., -self.carpe_abs_dim :] += abs_tail
             value_even[..., -self.carpe_abs_dim :] += abs_tail
+        if self.n_query > 1:
+            key_attn = key_states.unsqueeze(3).expand(-1, -1, -1, self.n_query, -1)
+            value_attn = value_states.unsqueeze(3).expand(-1, -1, -1, self.n_query, -1)
+            key_attn = key_attn.reshape(B, T, self.total_heads, head_dim)
+            value_attn = value_attn.reshape(B, T, self.total_heads, head_dim)
+        else:
+            key_attn = key_states.reshape(B, T, self.total_heads, head_dim)
+            value_attn = value_states.reshape(B, T, self.total_heads, head_dim)
         q = query_states.transpose(1, 2)
-        k_local = key_states.transpose(1, 2)
-        v_local = value_states.transpose(1, 2)
+        k_local = key_attn.transpose(1, 2)
+        v_local = value_attn.transpose(1, 2)
 
         cache_keys: list[torch.Tensor] = []
         cache_values: list[torch.Tensor] = []
@@ -3517,6 +3541,9 @@ class CausalSelfAttention(nn.Module):
         if cache_keys:
             cat_keys = torch.cat(cache_keys, dim=2)
             cat_values = torch.cat(cache_values, dim=2)
+            if self.n_query > 1:
+                cat_keys = cat_keys.repeat_interleave(self.n_query, dim=1)
+                cat_values = cat_values.repeat_interleave(self.n_query, dim=1)
             all_k = torch.cat([cat_keys, k_local], dim=2)
             all_v = torch.cat([cat_values, v_local], dim=2)
             cache_len = cat_keys.size(2)
@@ -3629,24 +3656,38 @@ class CausalSelfAttention(nn.Module):
         B, T, C = x.shape
         head_dim = self.head_dim
         key_states = self.key(x).view(B, T, self.n_head, head_dim)
-        query_states = self.query(x).view(B, T, self.n_head, head_dim)
         value_states = self.value(x).view(B, T, self.n_head, head_dim)
+        query_states = self.query(x).view(B, T, self.n_head, self.n_query, head_dim)
+        query_states = query_states.reshape(B, T, self.total_heads, head_dim)
         if self.rope_dim:
             pos_value = cache.length if position_index is None else position_index
             positions = torch.tensor([pos_value], device=x.device, dtype=torch.long)
             cos, sin = self._rope_cos_sin_positions(positions, x.device, query_states.dtype)
             query_states = self._apply_rope(query_states, cos, sin)
             key_states = self._apply_rope(key_states, cos, sin)
+        if self.n_query > 1:
+            key_attn = key_states.unsqueeze(3).expand(-1, -1, -1, self.n_query, -1)
+            value_attn = value_states.unsqueeze(3).expand(-1, -1, -1, self.n_query, -1)
+            key_attn = key_attn.reshape(B, T, self.total_heads, head_dim)
+            value_attn = value_attn.reshape(B, T, self.total_heads, head_dim)
+        else:
+            key_attn = key_states.reshape(B, T, self.total_heads, head_dim)
+            value_attn = value_states.reshape(B, T, self.total_heads, head_dim)
         q = query_states.transpose(1, 2)
-        v = value_states.transpose(1, 2)
-        k_new = key_states.transpose(1, 2)
-        key_append = k_new.squeeze(2).unsqueeze(2)
-        value_append = v.squeeze(2).unsqueeze(2)
+        v = value_attn.transpose(1, 2)
+        k_new = key_attn.transpose(1, 2)
+        base_k = key_states.transpose(1, 2)
+        base_v = value_states.transpose(1, 2)
+        key_append = base_k.squeeze(2).unsqueeze(2)
+        value_append = base_v.squeeze(2).unsqueeze(2)
         if write_cache:
             cache.append(key_append, value_append)
             k, v = cache.tensors()
         else:
             k, v = key_append, value_append
+        if self.n_query > 1:
+            k = k.repeat_interleave(self.n_query, dim=1)
+            v = v.repeat_interleave(self.n_query, dim=1)
         att = (q @ k.transpose(-2, -1)) / math.sqrt(head_dim)
         if puncture_mask is not None:
             att = att.masked_fill(puncture_mask[:, None, None, :], float("-inf"))
@@ -5055,6 +5096,8 @@ def build_model_tag(config: GeometryLike) -> str:
         tag += f"_g{config.n_grce}"
     if config.n_xctx > 0:
         tag += f"_x{config.n_xctx}"
+    if getattr(config, "n_query", 1) != 1:
+        tag += f"_q{config.n_query}"
     if config.use_carpe:
         tag += "_carpe"
     return tag
@@ -7545,6 +7588,8 @@ def preprocess_runtime_args(args: Args) -> None:
                 saved["n_xctx"] = 0
         if "n_rope" not in saved:
             saved["n_rope"] = MODEL_GEOMETRY_DEFAULTS.n_rope
+        if "n_query" not in saved:
+            saved["n_query"] = MODEL_GEOMETRY_DEFAULTS.n_query
         if "use_carpe" not in saved:
             saved["use_carpe"] = MODEL_GEOMETRY_DEFAULTS.use_carpe
         config = ModelGeometry(**saved)
@@ -7561,6 +7606,7 @@ def preprocess_runtime_args(args: Args) -> None:
         args.n_rope = config.n_rope
         args.n_grce = config.n_grce
         args.n_xctx = config.n_xctx
+        args.n_query = config.n_query
         args.use_carpe = config.use_carpe
         args.vocab_size = config.vocab_size
         args.model_path_override = checkpoint_path
