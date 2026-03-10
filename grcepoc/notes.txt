@@ -703,16 +703,17 @@ the last step’s activations.
 The suffix `2Z`, `3Z`, … (`HZ`) enables SANE: Self-And-Next Encoder
 Transformers for Latent Think-Ahead Generation (see [`sane.txt`](sane.txt); the
 `N` in `Ny`/`NY` corresponds to the `N` parameter there, and the `H` in `HZ`
-corresponds to its span width). A segment such as `*[D4Y3Z]` randomly groups
-decode columns into spans of up to three tokens. Within each span only the
-first token is presented during the first loop iteration; the remaining
-positions are zeroed and masked. After every loop iteration the "next" stream
-from position `i` is added to the "self" stream of position `i+1`, so it takes
-`H` iterations before the final position participates in the encoder. If `H<N`
-the remaining loops jointly refine the entire span. Lowercase `z` hides the
-key/value tensors produced by non-leading positions once they wake up, making
-the segment externally indistinguishable from a plain decode pass, whereas
-uppercase `Z` leaves those caches visible to downstream segments.
+corresponds to its span width). A segment such as `*[D4Y3Z]` divides the row
+into consecutive three-token spans (the final span may be shorter if the row
+length is not a multiple of 3). Within each span only the first token is
+presented during the first loop iteration; the remaining positions are zeroed
+and masked. After every loop iteration the "next" stream from position `i` is
+added to the "self" stream of position `i+1`, so it takes `H` iterations before
+the final position participates in the encoder. If `H<N` the remaining loops
+jointly refine the entire span. Lowercase `z` hides the key/value tensors
+produced by non-leading positions once they wake up, making the segment
+externally indistinguishable from a plain decode pass, whereas uppercase `Z`
+leaves those caches visible to downstream segments.
 
 We also allow # instead of = for chaining sequences inside of a [...] block.
 The difference is that with # we drop the entire k/v-history at this point,
