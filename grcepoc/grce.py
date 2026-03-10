@@ -159,6 +159,7 @@ class Defaults:
     prompt_no_prefix: bool = False
     generate_with_decode: bool = False
     align_articles: bool = False
+    allow_oversize: bool = False
 
 DEFAULTS = Defaults()
 
@@ -1328,6 +1329,12 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         help="Keep gradients through the recurrent GRCE context even when spans trigger",
     )
     training_group.add_argument(
+        "--allow-oversize",
+        action="store_true",
+        default=DEFAULTS.allow_oversize,
+        help="Permit --block-size to exceed --n-pos when probing generalization",
+    )
+    training_group.add_argument(
         "--align-articles",
         action="store_true",
         default=DEFAULTS.align_articles,
@@ -1848,7 +1855,12 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
     if args.n_rope and args.n_rope > head_dim:
         parser.error("--n-rope must be <= per-head width (n_width / n_head)")
     if args.block_size > args.n_pos:
-        parser.error("--block-size must be <= --n-pos")
+        if not getattr(args, "allow_oversize", False):
+            parser.error("--block-size must be <= --n-pos (pass --allow-oversize to override)")
+        else:
+            print(
+                "Warning: allowing block_size to exceed n_pos; attention masks remain limited by n_pos"
+            )
     if args.log_row_details:
         args.log_step_details = True
 
@@ -2960,27 +2972,15 @@ class TextDataset:
         rng = rng or random
         windows: list[torch.Tensor] = []
         metadata: list[dict[str, int]] = []
-        align_token = self.article_separator_token_id if self.align_articles else None
         for row_idx in range(rows):
-            attempts = 0
-            while True:
-                start = rng.randint(0, total - 1)
-                chunk_start = start
-                chunk, _ = self._slice_with_wrap(tokens, None, chunk_start, seq_span)
-                if align_token is None:
-                    break
-                matches = (chunk == align_token).nonzero(as_tuple=False).flatten()
-                if matches.numel() == 0:
-                    break
-                shift = int(matches[0].item())
-                chunk_start = (chunk_start + shift) % total
-                chunk, _ = self._slice_with_wrap(tokens, None, chunk_start, seq_span)
-                matches = (chunk == align_token).nonzero(as_tuple=False).flatten()
-                if matches.numel() <= 1:
-                    break
-                attempts += 1
-                if attempts >= ARTICLE_ALIGN_RETRY_LIMIT:
-                    break
+            start = rng.randint(0, total - 1)
+            chunk, chunk_start = self._aligned_window(
+                tokens,
+                start,
+                seq_span,
+                rng=rng,
+                allow_resample=True,
+            )
             windows.append(chunk)
             end = chunk_start + seq_span - 1
             metadata.append(
@@ -2997,6 +2997,41 @@ class TextDataset:
         x = stacked[:, :-1].contiguous().to(device)
         y = stacked[:, 1:].contiguous().to(device)
         return x, y, metadata
+
+    def _aligned_window(
+        self,
+        tokens: torch.Tensor,
+        start: int,
+        needed: int,
+        *,
+        rng: random.Random | None,
+        allow_resample: bool,
+    ) -> tuple[torch.Tensor, int]:
+        total = int(tokens.numel())
+        if total <= 0:
+            raise ValueError("No tokens available for alignment")
+        align_token = self.article_separator_token_id if self.align_articles else None
+        current = start % total
+        attempts = 0
+        chunk, _ = self._slice_with_wrap(tokens, None, current, needed)
+        if align_token is None:
+            return chunk, current
+        while True:
+            matches = (chunk == align_token).nonzero(as_tuple=False).flatten()
+            if matches.numel() == 0:
+                return chunk, current
+            shift = int(matches[0].item())
+            adjusted = (current + shift) % total
+            chunk, _ = self._slice_with_wrap(tokens, None, adjusted, needed)
+            matches = (chunk == align_token).nonzero(as_tuple=False).flatten()
+            if matches.numel() <= 1 or not allow_resample:
+                return chunk, adjusted
+            attempts += 1
+            if attempts >= ARTICLE_ALIGN_RETRY_LIMIT:
+                return chunk, adjusted
+            rng_obj = rng or random
+            current = rng_obj.randint(0, total - 1)
+            chunk, _ = self._slice_with_wrap(tokens, None, current, needed)
 
     def _slice_with_wrap(
         self,
@@ -7085,6 +7120,7 @@ def _prepare_eval_tokens(
     token_length: int,
     start_pos: int,
     custom_text: str | None,
+    align_rng: random.Random | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, int, str, str]:
     if custom_text:
         provided = tokenizer.encode(custom_text)
@@ -7100,8 +7136,16 @@ def _prepare_eval_tokens(
         span = token_length + 1
         if span <= 1:
             raise ValueError("--block-size must be >= 1 for evaluation")
-        context_tokens = dataset.looped_slice("test", start_pos, span)
-        source_label = f"test split offset {start_pos}"
+        tokens = dataset._tokens_for_split("test")
+        chunk, adjusted = dataset._aligned_window(
+            tokens,
+            start_pos,
+            span,
+            rng=align_rng,
+            allow_resample=align_rng is not None,
+        )
+        context_tokens = chunk
+        source_label = f"test split offset {adjusted}"
     if context_tokens.numel() < 2:
         raise ValueError("Not enough tokens collected for evaluation")
     inputs = context_tokens[:-1]
@@ -7156,6 +7200,7 @@ def run_test_slice(
             token_length=max_positions,
             start_pos=start_pos,
             custom_text=custom_text,
+            align_rng=None,
         )
 
         print(color_text(f"Evaluating layout '{args.layout}' on {source_label}:", Colors.CYAN))
@@ -7448,6 +7493,7 @@ def run_eval_layout(
     *,
     custom_text: str | None = None,
     verbose: bool | None = None,
+    align_rng: random.Random | None = None,
 ) -> EvalSummary:
     """Evaluate the layout on a deterministic slice and print per-row metrics."""
 
@@ -7479,6 +7525,7 @@ def run_eval_layout(
             token_length=max_positions,
             start_pos=start_pos,
             custom_text=custom_text,
+            align_rng=align_rng,
         )
 
         if verbose_flag:
@@ -7599,7 +7646,18 @@ def preprocess_runtime_args(args: Args) -> None:
         if not getattr(args, "_block_size_defined", False):
             args.block_size = config.n_pos
         elif args.block_size > config.n_pos:
-            raise ValueError("--block-size cannot exceed checkpoint --n-pos")
+            if not getattr(args, "allow_oversize", False):
+                raise ValueError(
+                    "--block-size cannot exceed checkpoint --n-pos (use --allow-oversize)"
+                )
+            else:
+                print(
+                    color_text(
+                        f"Warning: block_size {args.block_size} exceeds checkpoint n_pos {config.n_pos};"
+                        " attention masks will be truncated to n_pos",
+                        Colors.YELLOW,
+                    )
+                )
         args.n_layer = config.n_layer
         args.n_head = config.n_head
         args.n_width = config.n_width
@@ -8671,6 +8729,7 @@ class Runtime:
                         start_pos=self.args.eval_start,
                         custom_text=custom_text,
                         verbose=self.args.eval_verbose,
+                        align_rng=None,
                     )
                     _print_eval_summary("[eval custom]", self.args.layout, [summary])
                     return
@@ -8701,6 +8760,7 @@ class Runtime:
                             start_pos=start_pos,
                             custom_text=None,
                             verbose=self.args.eval_verbose,
+                            align_rng=rng if self.args.align_articles else None,
                         )
                         summaries.append(summary)
                     _print_eval_summary("[eval random]", self.args.layout, summaries)
@@ -8714,6 +8774,7 @@ class Runtime:
                     start_pos=self.args.eval_start,
                     custom_text=None,
                     verbose=self.args.eval_verbose,
+                    align_rng=None,
                 )
                 _print_eval_summary("[eval]", self.args.layout, [summary])
                 return
