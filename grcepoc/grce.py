@@ -83,9 +83,9 @@ PROMPT_GOALS = [
 ]
 
 
-# CARPE parameterization defaults (see carpe.txt)
-CARPE_LOCALITY_SCALE = 30
-CARPE_RELATIVE_MAX = 100
+# CARPET parameterization defaults (see carpet.txt)
+CARPET_LOCALITY_SCALE = 30
+CARPET_RELATIVE_MAX = 100
 
 
 # -----------------------------------------------------------------------------
@@ -107,7 +107,7 @@ class ModelGeometry:
     n_grce: int = 64        # Narrow GRCE context dims.
     n_xctx: int = 1536      # Wide XCTX context dims.
     n_query: int = 1        # Number of query vectors per head.
-    use_carpe: bool = False
+    use_carpet: bool = False
 
     @property
     def block_size(self) -> int:
@@ -131,7 +131,7 @@ class Defaults:
     n_grce: int = MODEL_GEOMETRY_DEFAULTS.n_grce
     n_xctx: int = MODEL_GEOMETRY_DEFAULTS.n_xctx
     n_query: int = MODEL_GEOMETRY_DEFAULTS.n_query
-    use_carpe: bool = MODEL_GEOMETRY_DEFAULTS.use_carpe
+    use_carpet: bool = MODEL_GEOMETRY_DEFAULTS.use_carpe
     corpus: str | None = None
     steps: int = 100
     cycles: int = 100
@@ -1107,11 +1107,11 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         help="Number of Q/K features using Rotary Position Embedding (0 => full head width; must be even).",
     )
     model_group.add_argument(
-        "--use-carpe",
+        "--use-carpet",
         action="store_true",
-        default=DEFAULTS.use_carpe,
+        default=DEFAULTS.use_carpet,
         help=(
-            "Enable CARPE (coarse absolute + relative positional encoding) which splits n_rope into "
+            "Enable CARPET (coarse absolute + relative positional encoding) which splits n_rope into "
             "relative/absolute channels"
         ),
     )
@@ -1923,7 +1923,7 @@ def args_to_model_geometry(args: Args):
         n_grce=args.n_grce,
         n_xctx=args.n_xctx,
         n_query=getattr(args, "n_query", MODEL_GEOMETRY_DEFAULTS.n_query),
-        use_carpe=getattr(args, "use_carpe", MODEL_GEOMETRY_DEFAULTS.use_carpe),
+        use_carpet=getattr(args, "use_carpet", MODEL_GEOMETRY_DEFAULTS.use_carpet),
     )
 
 
@@ -2423,8 +2423,8 @@ def _standard_rope_rho(n_pos: int, rope_dim: int) -> float | None:
     return float(n_pos) ** (2.0 / float(rope_dim))
 
 
-def _carpe_dimension_counts(rho: float, n_pos: int) -> tuple[int, int, int]:
-    """Return (d_total, d_rel, d_abs) for CARPE at a specific ρ."""
+def _carpet_dimension_counts(rho: float, n_pos: int) -> tuple[int, int, int]:
+    """Return (d_total, d_rel, d_abs) for CARPET at a specific ρ."""
 
     if rho <= 1.0:
         return math.inf, math.inf, math.inf
@@ -2435,25 +2435,25 @@ def _carpe_dimension_counts(rho: float, n_pos: int) -> tuple[int, int, int]:
             return 0
         return math.ceil(math.log(value) / log_rho)
 
-    rel_pairs = 1 + ceil_log(float(CARPE_RELATIVE_MAX))
-    abs_ratio = max(float(n_pos) / float(CARPE_LOCALITY_SCALE), 1e-12)
+    rel_pairs = 1 + ceil_log(float(CARPET_RELATIVE_MAX))
+    abs_ratio = max(float(n_pos) / float(CARPET_LOCALITY_SCALE), 1e-12)
     abs_pairs = 1 + ceil_log(abs_ratio)
     d_rel = 2 * rel_pairs
     d_abs = 2 * abs_pairs
     return d_rel + d_abs, d_rel, d_abs
 
 
-def _carpe_optimal_rho(total_dims: int, n_pos: int) -> tuple[float, int, int] | None:
-    """Find the smallest ρ>1 so CARPE fits within ``total_dims`` dimensions."""
+def _carpet_optimal_rho(total_dims: int, n_pos: int) -> tuple[float, int, int] | None:
+    """Find the smallest ρ>1 so CARPET fits within ``total_dims`` dimensions."""
 
     if total_dims <= 0 or n_pos <= 0:
         return None
 
     high = 2.0
-    total, d_rel, d_abs = _carpe_dimension_counts(high, n_pos)
+    total, d_rel, d_abs = _carpet_dimension_counts(high, n_pos)
     while total > total_dims and high < 1e6:
         high *= 2.0
-        total, d_rel, d_abs = _carpe_dimension_counts(high, n_pos)
+        total, d_rel, d_abs = _carpet_dimension_counts(high, n_pos)
     if total > total_dims:
         return None
 
@@ -2462,7 +2462,7 @@ def _carpe_optimal_rho(total_dims: int, n_pos: int) -> tuple[float, int, int] | 
     best_counts = (total, d_rel, d_abs)
     for _ in range(64):
         mid = (low + high) / 2.0
-        dims_mid = _carpe_dimension_counts(mid, n_pos)
+        dims_mid = _carpet_dimension_counts(mid, n_pos)
         if dims_mid[0] <= total_dims:
             best_rho = mid
             best_counts = dims_mid
@@ -2472,56 +2472,56 @@ def _carpe_optimal_rho(total_dims: int, n_pos: int) -> tuple[float, int, int] | 
     return best_rho, best_counts[1], best_counts[2]
 
 
-class CarpeSetup(NamedTuple):
+class CarpetSetup(NamedTuple):
     rho: float
     rel_dim: int
     abs_dim: int
     total_dim: int
 
 
-def _resolve_carpe_setup(
+def _resolve_carpet_setup(
     config: GeometryLike, resolved_rope_dim: int | None = None
-) -> CarpeSetup | None:
-    """Return (rho, rel_dim, abs_dim, total_dim) for CARPE-enabled configs."""
+) -> CarpetSetup | None:
+    """Return (rho, rel_dim, abs_dim, total_dim) for CARPET-enabled configs."""
 
-    if not getattr(config, "use_carpe", False):
+    if not getattr(config, "use_carpet", False):
         return None
-    cache: CarpeSetup | None = getattr(config, "_carpe_setup_cache", None)
+    cache: CarpetSetup | None = getattr(config, "_carpet_setup_cache", None)
     total_dim = resolved_rope_dim or _resolved_rope_width(config)
     if cache is not None and cache.total_dim == total_dim:
         return cache
-    result = _carpe_optimal_rho(total_dim, config.n_pos)
+    result = _carpet_optimal_rho(total_dim, config.n_pos)
     if result is None:
         raise ValueError(
-            "CARPE configuration requires n_rope (or head width) large enough to host "
+            "CARPET configuration requires n_rope (or head width) large enough to host "
             "relative and absolute channels"
         )
     rho, d_rel, d_abs = result
-    setup = CarpeSetup(rho=rho, rel_dim=d_rel, abs_dim=d_abs, total_dim=total_dim)
-    setattr(config, "_carpe_setup_cache", setup)
+    setup = CarpetSetup(rho=rho, rel_dim=d_rel, abs_dim=d_abs, total_dim=total_dim)
+    setattr(config, "_carpet_setup_cache", setup)
     return setup
 
 
 def _print_rope_reports(config: GeometryLike, n_pos: int) -> None:
-    """Emit RoPE/CARPE ρ diagnostics for the size report."""
+    """Emit RoPE/CARPET ρ diagnostics for the size report."""
 
     rope_dim = _resolved_rope_width(config)
     standard_rho = _standard_rope_rho(n_pos, rope_dim)
-    carpe_stats = _carpe_optimal_rho(rope_dim, n_pos)
+    carpet_stats = _carpet_optimal_rho(rope_dim, n_pos)
     print(color_text("Positional Encoding", Colors.CYAN, bold=True))
     print(f"  resolved n_rope dims : {rope_dim}")
     if standard_rho is None:
         print("  roh (standard RoPE): n/a")
     else:
         print(f"  roh (standard RoPE, N={n_pos}): {standard_rho:.6f}")
-    if carpe_stats is None:
+    if carpet_stats is None:
         print(
-            f"  roh (CARPE, S={CARPE_LOCALITY_SCALE}, N_rel={CARPE_RELATIVE_MAX}, N_abs={n_pos}): n/a"
+            f"  roh (CARPET, S={CARPET_LOCALITY_SCALE}, N_rel={CARPET_RELATIVE_MAX}, N_abs={n_pos}): n/a"
         )
     else:
-        rho_value, d_rel, d_abs = carpe_stats
+        rho_value, d_rel, d_abs = carpet_stats
         print(
-            f"  roh (CARPE, S={CARPE_LOCALITY_SCALE}, N_rel={CARPE_RELATIVE_MAX}, N_abs={n_pos}): "
+            f"  roh (CARPET, S={CARPET_LOCALITY_SCALE}, N_rel={CARPET_RELATIVE_MAX}, N_abs={n_pos}): "
             f"{rho_value:.6f} (d_rel={d_rel}, d_abs={d_abs})"
         )
 
@@ -3291,16 +3291,16 @@ class CausalSelfAttention(nn.Module):
         self.raw_n_rope = raw_rope
         resolved_rope = self._resolve_rope_dim(raw_rope)
         self.total_rope_dim = resolved_rope
-        carpe_setup = _resolve_carpe_setup(config, resolved_rope)
-        self.carpe_setup = carpe_setup
-        if carpe_setup:
-            self.rope_dim = carpe_setup.rel_dim
-            self.carpe_abs_dim = carpe_setup.abs_dim
-            self.carpe_rho = carpe_setup.rho
+        carpet_setup = _resolve_carpet_setup(config, resolved_rope)
+        self.carpet_setup = carpet_setup
+        if carpet_setup:
+            self.rope_dim = carpet_setup.rel_dim
+            self.carpet_abs_dim = carpet_setup.abs_dim
+            self.carpet_rho = carpet_setup.rho
         else:
             self.rope_dim = resolved_rope
-            self.carpe_abs_dim = 0
-            self.carpe_rho = None
+            self.carpet_abs_dim = 0
+            self.carpet_rho = None
         self.key = nn.Linear(config.n_width, config.n_width)
         self.query = nn.Linear(config.n_width, config.n_width * self.n_query)
         self.value = nn.Linear(config.n_width, config.n_width)
@@ -3309,22 +3309,22 @@ class CausalSelfAttention(nn.Module):
         self.register_buffer(
             "tril", torch.tril(torch.ones(config.n_pos, config.n_pos))
         )
-        if self.carpe_abs_dim > 0:
-            abs_pairs = self.carpe_abs_dim // 2
+        if self.carpet_abs_dim > 0:
+            abs_pairs = self.carpet_abs_dim // 2
             abs_inv = torch.tensor(
-                [1.0 / (CARPE_LOCALITY_SCALE * (self.carpe_rho ** idx)) for idx in range(abs_pairs)],
+                [1.0 / (CARPET_LOCALITY_SCALE * (self.carpet_rho ** idx)) for idx in range(abs_pairs)],
                 dtype=torch.float32,
             )
         else:
             abs_inv = torch.empty(0)
-        self.register_buffer("carpe_abs_inv_freq", abs_inv, persistent=False)
-        if self.carpe_setup:
+        self.register_buffer("carpet_abs_inv_freq", abs_inv, persistent=False)
+        if self.carpet_setup:
             rel_pairs = max(0, self.rope_dim // 2)
             rel_inv = torch.tensor(
-                [1.0 / (self.carpe_rho ** idx) for idx in range(rel_pairs)],
+                [1.0 / (self.carpet_rho ** idx) for idx in range(rel_pairs)],
                 dtype=torch.float32,
             )
-            self.register_buffer("carpe_rel_inv_freq", rel_inv, persistent=False)
+            self.register_buffer("carpet_rel_inv_freq", rel_inv, persistent=False)
             self.register_buffer("rope_inv_freq", torch.empty(0), persistent=False)
             self.register_buffer("rope_cos_cached", torch.empty(0), persistent=False)
             self.register_buffer("rope_sin_cached", torch.empty(0), persistent=False)
@@ -3337,13 +3337,13 @@ class CausalSelfAttention(nn.Module):
             self.register_buffer("rope_inv_freq", inv_freq, persistent=False)
             self.register_buffer("rope_cos_cached", torch.empty(0), persistent=False)
             self.register_buffer("rope_sin_cached", torch.empty(0), persistent=False)
-            self.register_buffer("carpe_rel_inv_freq", torch.empty(0), persistent=False)
+            self.register_buffer("carpet_rel_inv_freq", torch.empty(0), persistent=False)
             self._build_rope_cache(base)
         else:
             self.register_buffer("rope_inv_freq", torch.empty(0), persistent=False)
             self.register_buffer("rope_cos_cached", torch.empty(0), persistent=False)
             self.register_buffer("rope_sin_cached", torch.empty(0), persistent=False)
-            self.register_buffer("carpe_rel_inv_freq", torch.empty(0), persistent=False)
+            self.register_buffer("carpet_rel_inv_freq", torch.empty(0), persistent=False)
 
     def _resolve_rope_dim(self, raw: int) -> int:
         head_dim = self.head_dim
@@ -3436,7 +3436,7 @@ class CausalSelfAttention(nn.Module):
         rotated = torch.stack((rotated_even, rotated_odd), dim=-1).reshape(*orig_shape[:-1], rope_dim)
         return torch.cat((rotated, other), dim=-1)
 
-    def _carpe_rel_cos_sin(
+    def _carpet_rel_cos_sin(
         self,
         positions: torch.Tensor,
         position_offsets: torch.Tensor | None,
@@ -3444,9 +3444,9 @@ class CausalSelfAttention(nn.Module):
         dtype: torch.dtype,
         batch_size: int,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        if self.carpe_setup is None:
-            raise RuntimeError("CARPE relative cos/sin requested but setup missing")
-        inv = self.carpe_rel_inv_freq.to(device=device, dtype=dtype)
+        if self.carpet_setup is None:
+            raise RuntimeError("CARPET relative cos/sin requested but setup missing")
+        inv = self.carpet_rel_inv_freq.to(device=device, dtype=dtype)
         base = positions.to(device=device, dtype=dtype)
         if position_offsets is None:
             phases = base.view(-1, 1) * inv
@@ -3462,7 +3462,7 @@ class CausalSelfAttention(nn.Module):
         sin = torch.sin(phases)
         return cos, sin
 
-    def _carpe_abs_tail(
+    def _carpet_abs_tail(
         self,
         positions: torch.Tensor,
         position_offsets: torch.Tensor | None,
@@ -3470,9 +3470,9 @@ class CausalSelfAttention(nn.Module):
         device: torch.device,
         dtype: torch.dtype,
     ) -> torch.Tensor:
-        if self.carpe_abs_dim <= 0:
-            raise RuntimeError("CARPE absolute tail requested but disabled")
-        inv = self.carpe_abs_inv_freq.to(device=device, dtype=dtype)
+        if self.carpet_abs_dim <= 0:
+            raise RuntimeError("CARPET absolute tail requested but disabled")
+        inv = self.carpet_abs_inv_freq.to(device=device, dtype=dtype)
         base = positions.to(device=device, dtype=dtype)
         if position_offsets is None:
             phases = base.view(1, -1, 1) * inv
@@ -3517,8 +3517,8 @@ class CausalSelfAttention(nn.Module):
             if base_positions.dim() != 1 or base_positions.size(0) != T:
                 raise ValueError("rope_positions must match sequence length")
         if self.rope_dim:
-            if self.carpe_setup:
-                cos, sin = self._carpe_rel_cos_sin(
+            if self.carpet_setup:
+                cos, sin = self._carpet_rel_cos_sin(
                     base_positions,
                     position_offsets,
                     x.device,
@@ -3535,8 +3535,8 @@ class CausalSelfAttention(nn.Module):
                 )
             query_states = self._apply_rope(query_states, cos, sin)
             key_states = self._apply_rope(key_states, cos, sin)
-        if self.carpe_abs_dim > 0:
-            abs_tail = self._carpe_abs_tail(
+        if self.carpet_abs_dim > 0:
+            abs_tail = self._carpet_abs_tail(
                 base_positions,
                 position_offsets,
                 x.size(0),
@@ -3546,8 +3546,8 @@ class CausalSelfAttention(nn.Module):
             abs_tail = abs_tail.unsqueeze(2)
             key_even = key_states[..., ::2]
             value_even = value_states[..., ::2]
-            key_even[..., -self.carpe_abs_dim :] += abs_tail
-            value_even[..., -self.carpe_abs_dim :] += abs_tail
+            key_even[..., -self.carpet_abs_dim :] += abs_tail
+            value_even[..., -self.carpet_abs_dim :] += abs_tail
         if self.n_query > 1:
             key_attn = key_states.unsqueeze(3).expand(-1, -1, -1, self.n_query, -1)
             value_attn = value_states.unsqueeze(3).expand(-1, -1, -1, self.n_query, -1)
@@ -4032,18 +4032,18 @@ class TransformerStackCore(nn.Module):
         self.ln_f = nn.LayerNorm(config.n_width)
         self.loop_ln = nn.LayerNorm(config.n_width)
         self.head = nn.Linear(self.embedding_dim, config.vocab_size, bias=False)
-        self.carpe_setup = _resolve_carpe_setup(config)
-        self.carpe_abs_dim = self.carpe_setup.abs_dim if self.carpe_setup else 0
-        if self.carpe_abs_dim > 0:
-            abs_pairs = self.carpe_setup.abs_dim // 2
+        self.carpet_setup = _resolve_carpet_setup(config)
+        self.carpet_abs_dim = self.carpet_setup.abs_dim if self.carpet_setup else 0
+        if self.carpet_abs_dim > 0:
+            abs_pairs = self.carpet_setup.abs_dim // 2
             inv_values = [
-                1.0 / (CARPE_LOCALITY_SCALE * (self.carpe_setup.rho ** idx))
+                1.0 / (CARPET_LOCALITY_SCALE * (self.carpet_setup.rho ** idx))
                 for idx in range(abs_pairs)
             ]
             abs_inv = torch.tensor(inv_values, dtype=torch.float32)
         else:
             abs_inv = torch.empty(0)
-        self.register_buffer("carpe_abs_inv_freq", abs_inv, persistent=False)
+        self.register_buffer("carpet_abs_inv_freq", abs_inv, persistent=False)
 
     def expand_to_even(self, tensor: torch.Tensor) -> torch.Tensor:
         """Place half-width embedding features into the even data-path slots."""
@@ -4120,8 +4120,8 @@ class TransformerStackCore(nn.Module):
                         continue
                     layer_kv_sources[layer_idx].append(kv_pair)
         current = x
-        if self.carpe_abs_dim > 0:
-            abs_features = self._carpe_absolute_features(
+        if self.carpet_abs_dim > 0:
+            abs_features = self._carpet_absolute_features(
                 rope_positions_tensor,
                 position_offsets_tensor,
                 rows,
@@ -4129,7 +4129,7 @@ class TransformerStackCore(nn.Module):
                 x.device,
             )
             even_tail = current[..., ::2]
-            even_tail[..., -self.carpe_abs_dim :] += abs_features
+            even_tail[..., -self.carpet_abs_dim :] += abs_features
         repeats = max(1, int(layer_repeat))
         samples: list[torch.Tensor | None] = [None] * len(self.blocks)
         kv_outputs: list[tuple[torch.Tensor, torch.Tensor] | None] = [None] * len(self.blocks)
@@ -4178,7 +4178,7 @@ class TransformerStackCore(nn.Module):
             finalized_samples.append(tensor)
         return current, finalized_samples, kv_outputs
 
-    def _carpe_absolute_features(
+    def _carpet_absolute_features(
         self,
         positions: torch.Tensor,
         position_offsets: torch.Tensor | None,
@@ -4186,9 +4186,9 @@ class TransformerStackCore(nn.Module):
         dtype: torch.dtype,
         device: torch.device,
     ) -> torch.Tensor:
-        if self.carpe_abs_dim <= 0:
-            raise RuntimeError("CARPE absolute features requested but CARPE disabled")
-        inv = self.carpe_abs_inv_freq.to(device=device, dtype=dtype)
+        if self.carpet_abs_dim <= 0:
+            raise RuntimeError("CARPET absolute features requested but CARPET disabled")
+        inv = self.carpet_abs_inv_freq.to(device=device, dtype=dtype)
         base = positions.to(device=device, dtype=dtype).view(1, -1, 1)
         phases = base
         if position_offsets is not None:
@@ -5133,8 +5133,8 @@ def build_model_tag(config: GeometryLike) -> str:
         tag += f"_x{config.n_xctx}"
     if getattr(config, "n_query", 1) != 1:
         tag += f"_q{config.n_query}"
-    if config.use_carpe:
-        tag += "_carpe"
+    if config.use_carpet:
+        tag += "_carpet"
     return tag
 
 
@@ -7637,8 +7637,8 @@ def preprocess_runtime_args(args: Args) -> None:
             saved["n_rope"] = MODEL_GEOMETRY_DEFAULTS.n_rope
         if "n_query" not in saved:
             saved["n_query"] = MODEL_GEOMETRY_DEFAULTS.n_query
-        if "use_carpe" not in saved:
-            saved["use_carpe"] = MODEL_GEOMETRY_DEFAULTS.use_carpe
+        if "use_carpet" not in saved:
+            saved["use_carpet"] = MODEL_GEOMETRY_DEFAULTS.use_carpe
         config = ModelGeometry(**saved)
         args.checkpoint_payload_override = payload
         args.tokenizer_json_override = payload.get("tokenizer_json")
@@ -7665,7 +7665,7 @@ def preprocess_runtime_args(args: Args) -> None:
         args.n_grce = config.n_grce
         args.n_xctx = config.n_xctx
         args.n_query = config.n_query
-        args.use_carpe = config.use_carpe
+        args.use_carpet = config.use_carpe
         args.vocab_size = config.vocab_size
         args.model_path_override = checkpoint_path
         args.log_path_override = checkpoint_path.with_suffix(".log")
@@ -7680,7 +7680,7 @@ def preprocess_runtime_args(args: Args) -> None:
         n_rope=args.n_rope,
         n_grce=args.n_grce,
         n_xctx=args.n_xctx,
-        use_carpe=args.use_carpe,
+        use_carpet=args.use_carpet,
     )
     tag = build_model_tag(inferred)
     for extra_tag in args.tag:

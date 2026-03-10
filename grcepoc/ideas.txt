@@ -3,7 +3,7 @@
 These used to be in `notes.txt` but it's more "AI-friendly" to have future work in another
 file so every spec paragraph in `notes.txt` is in sync with the current implementation.
 
-(see also carpe.txt for the proposal of Coarse Absolute and Relative Positional Encoding)
+(see also carpet.txt for the proposal of Coarse Absolute and Relative Positional Encoding)
 
 
 ### Future/Next GRCE/XCTX Experiment

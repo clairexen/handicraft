@@ -1,25 +1,25 @@
-## CARPE: Coarse Absolute and Relative Positional Encoding for Robust Long-Context Transformers
+## CARPET: Coarse Absolute and Relative Positional Encoding for Robust Long-Context Transformers
 
-**CARPE** combines local RoPE-based relative positioning with a coarse absolute
+**CARPET** combines local RoPE-based relative positioning with a coarse absolute
 sinusoidal phase channel, trained with structured positional dropout to improve
 long-context disambiguation.
 
 ### Abstract
 
-We propose **CARPE (Coarse Absolute and Relative Positional Encoding)**, a
-positional encoding scheme that separates **local relative addressing** from
-**global positional disambiguation** in transformer attention. Standard Rotary
-Position Embedding (RoPE) provides precise relative offsets for nearby tokens
-but becomes unreliable for distinguishing similar content across large
-contexts. CARPE augments RoPE with a **low-resolution absolute sinusoidal phase
-channel** whose highest frequency corresponds to a fixed locality scale (e.g.,
-32 tokens) and whose lower frequencies extend to the full context length. These
-absolute features are injected both into the **token input representation** and
-into a small **key/value subspace that does not overlap with the RoPE
-dimensions**, allowing attention to query coarse regions and preserve
-positional provenance while RoPE continues to encode local relational geometry.
-RoPE may optionally operate on a reduced ring size to reinforce its role as a
-local relative encoding.
+We propose **CARPET (Coarse Absolute and Relative Positional Encoding for
+Transformers)**, a positional encoding scheme that separates **local relative
+addressing** from **global positional disambiguation** in transformer
+attention. Standard Rotary Position Embedding (RoPE) provides precise relative
+offsets for nearby tokens but becomes unreliable for distinguishing similar
+content across large contexts. CARPET augments RoPE with a **low-resolution
+absolute sinusoidal phase channel** whose highest frequency corresponds to a
+fixed locality scale (e.g., 32 tokens) and whose lower frequencies extend to
+the full context length. These absolute features are injected both into the
+**token input representation** and into a small **key/value subspace that does
+not overlap with the RoPE dimensions**, allowing attention to query coarse
+regions and preserve positional provenance while RoPE continues to encode local
+relational geometry.  RoPE may optionally operate on a reduced ring size to
+reinforce its role as a local relative encoding.
 
 Training employs **structured positional dropout** to encourage the model to
 utilize both mechanisms. RoPE frequency components overlapping with the
@@ -35,7 +35,7 @@ system in which RoPE captures local structure while the absolute phase channel
 provides coarse global addressing for long-context retrieval and
 disambiguation.
 
-CARPE is particularly well suited to **looped or recurrent transformer
+CARPET is particularly well suited to **looped or recurrent transformer
 architectures** that repeatedly refine their key/value state across multiple
 passes. In such models, higher-layer reasoning from earlier passes can annotate
 or modify the memory state that later tokens attend to. The presence of a
@@ -45,7 +45,7 @@ broader advantage of looping architectures: they can propagate structural or
 positional signals through internal representations rather than through
 additional natural-language tokens. In contrast, chain-of-thought prompting
 must express intermediate information linguistically and rely on lower layers
-to reinterpret it. CARPE therefore highlights a setting where looping models
+to reinterpret it. CARPET therefore highlights a setting where looping models
 can transmit higher-level structural knowledge to future attention computations
 in a way that token-level reasoning alone cannot.
 
@@ -74,7 +74,7 @@ solve for their dimensionalities based on **N_rel**, **N_abs**, and **S**.
 In standard RoPE mode grce.py uses n_rope RoPE dimensions and N=n_pos. The
 default value of n_rope is the full head dimension n_width / n_head.
 
-In CARPE mode grce.py automatically splits n_rope into d_rel + d_abs <= n_rope.
+In CARPET mode grce.py automatically splits n_rope into d_rel + d_abs <= n_rope.
 So n_rope, despite it's name, stays the total number of head dimensions that
 participate in positional encoding. Conceptionally we set S=30, N_rel=100, and
 N_abs=n_pos, and then pick the smallest ρ > 1 so that d_rel + d_abs <= n_rope.
@@ -256,7 +256,7 @@ model to practice addressing and revisiting distant memory regions.
 
 ### Summary
 
-CARPE constructs a dual coordinate system:
+CARPET constructs a dual coordinate system:
 
 * **RoPE** encodes precise local relative geometry
 * **Absolute sinusoidal phase** provides coarse global addressing
