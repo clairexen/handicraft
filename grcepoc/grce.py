@@ -132,7 +132,7 @@ class Defaults:
     n_grce: int = MODEL_GEOMETRY_DEFAULTS.n_grce
     n_xctx: int = MODEL_GEOMETRY_DEFAULTS.n_xctx
     n_query: int = MODEL_GEOMETRY_DEFAULTS.n_query
-    use_carpet: bool = MODEL_GEOMETRY_DEFAULTS.use_carpe
+    use_carpet: bool = MODEL_GEOMETRY_DEFAULTS.use_carpet
     use_gmlp: bool = MODEL_GEOMETRY_DEFAULTS.use_gmlp
     corpus: str | None = None
     steps: int = 100
@@ -7668,7 +7668,7 @@ def preprocess_runtime_args(args: Args) -> None:
         if "n_query" not in saved:
             saved["n_query"] = MODEL_GEOMETRY_DEFAULTS.n_query
         if "use_carpet" not in saved:
-            saved["use_carpet"] = MODEL_GEOMETRY_DEFAULTS.use_carpe
+            saved["use_carpet"] = MODEL_GEOMETRY_DEFAULTS.use_carpet
         if "use_gmlp" not in saved:
             saved["use_gmlp"] = MODEL_GEOMETRY_DEFAULTS.use_gmlp
         config = ModelGeometry(**saved)
@@ -7697,7 +7697,7 @@ def preprocess_runtime_args(args: Args) -> None:
         args.n_grce = config.n_grce
         args.n_xctx = config.n_xctx
         args.n_query = config.n_query
-        args.use_carpet = config.use_carpe
+        args.use_carpet = config.use_carpet
         args.use_gmlp = getattr(config, "use_gmlp", MODEL_GEOMETRY_DEFAULTS.use_gmlp)
         args.vocab_size = config.vocab_size
         args.model_path_override = checkpoint_path
