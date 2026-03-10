@@ -2211,7 +2211,7 @@ def _expected_sections(config: GeometryLike, n_pos: int) -> list[tuple[str, str,
     ])
     sections.append(("embeddings", "Embeddings", global_items))
 
-    transformer_items = eval_items([
+    transformer_defs = [
         {
             "label": "attn qkv",
             "formula": "L * ((2+Q) * (E*E + E))",
@@ -2228,14 +2228,15 @@ def _expected_sections(config: GeometryLike, n_pos: int) -> list[tuple[str, str,
             "label": "ffn fc2",
             "formula": "L * (4*E*E + E)",
         },
-    ])
+    ]
     if getattr(config, "use_gmlp", False):
-        transformer_items.append(
+        transformer_defs.append(
             {
                 "label": "ffn gate",
                 "formula": "L * (4*E*E + 4*E)",
             }
         )
+    transformer_items = eval_items(transformer_defs)
     sections.append(("transformer", "Transformer", transformer_items))
 
     if G > 0:
