@@ -156,6 +156,7 @@ class Defaults:
     no_detach_ctx: bool = False
     prompt_no_prefix: bool = False
     generate_with_decode: bool = False
+    align_articles: bool = False
 
 DEFAULTS = Defaults()
 
@@ -1317,6 +1318,15 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         "--no-detach-ctx",
         action="store_true",
         help="Keep gradients through the recurrent GRCE context even when spans trigger",
+    )
+    training_group.add_argument(
+        "--align-articles",
+        action="store_true",
+        default=DEFAULTS.align_articles,
+        help=(
+            "When sampling random corpus windows, align them to the <|----|> article separator token"
+            " and resample if multiple separators remain"
+        ),
     )
     training_group.add_argument(
         "--rng-seed",
@@ -2873,6 +2883,9 @@ def load_cached_tokens(split: str, cache_path: pathlib.Path) -> torch.Tensor:
     return tokens.long()
 
 
+ARTICLE_ALIGN_RETRY_LIMIT = 16
+
+
 @dataclass
 class TextDataset:
     """Stores train/test tensors and samples random spans from each corpus."""
@@ -2883,6 +2896,8 @@ class TextDataset:
     test_text: str | None
     train_path: pathlib.Path
     test_path: pathlib.Path
+    article_separator_token_id: int | None = None
+    align_articles: bool = False
 
     def state_dict(self) -> dict[str, int]:
         """Compat shim for legacy checkpoints; no rolling state is tracked now."""
@@ -2926,14 +2941,32 @@ class TextDataset:
         rng = rng or random
         windows: list[torch.Tensor] = []
         metadata: list[dict[str, int]] = []
+        align_token = self.article_separator_token_id if self.align_articles else None
         for row_idx in range(rows):
-            start = rng.randint(0, total - 1)
-            chunk, _ = self._slice_with_wrap(tokens, None, start, seq_span)
+            attempts = 0
+            while True:
+                start = rng.randint(0, total - 1)
+                chunk_start = start
+                chunk, _ = self._slice_with_wrap(tokens, None, chunk_start, seq_span)
+                if align_token is None:
+                    break
+                matches = (chunk == align_token).nonzero(as_tuple=False).flatten()
+                if matches.numel() == 0:
+                    break
+                shift = int(matches[0].item())
+                chunk_start = (chunk_start + shift) % total
+                chunk, _ = self._slice_with_wrap(tokens, None, chunk_start, seq_span)
+                matches = (chunk == align_token).nonzero(as_tuple=False).flatten()
+                if matches.numel() <= 1:
+                    break
+                attempts += 1
+                if attempts >= ARTICLE_ALIGN_RETRY_LIMIT:
+                    break
             windows.append(chunk)
-            end = start + seq_span - 1
+            end = chunk_start + seq_span - 1
             metadata.append(
                 {
-                    "token_start": start,
+                    "token_start": chunk_start,
                     "token_end": end % total,
                     "token_span": seq_span,
                     "wrapped": 1 if end >= total else 0,
@@ -7421,6 +7454,7 @@ class Runtime:
         self.newline_token_id: int | None = None
         self.boundary_blocklist: Sequence[int] | None = None
         self.default_prompt_boundary: bool = False
+        self.article_separator_token_id: int | None = None
         self.model_path: pathlib.Path | None = None
         self.log_path: pathlib.Path | None = None
         self.tokenizer_json: str | None = None
@@ -7505,6 +7539,11 @@ class Runtime:
         if newline_tokens:
             newline_token_id = newline_tokens[0]
 
+        article_token_id = None
+        article_tokens = tokenizer.encode_ids("<|----|>")
+        if len(article_tokens) == 1:
+            article_token_id = article_tokens[0]
+
         enforce_boundary_guard = not self.args.no_boundary
         boundary_blocklist = (
             tokenizer.leading_alpha_token_ids if enforce_boundary_guard else None
@@ -7519,6 +7558,7 @@ class Runtime:
         self.newline_token_id = newline_token_id
         self.boundary_blocklist = boundary_blocklist
         self.default_prompt_boundary = default_prompt_boundary
+        self.article_separator_token_id = article_token_id
         self.tokenizer_json = tokenizer_json
 
         return (
@@ -7683,6 +7723,8 @@ class Runtime:
             test_text=None,
             train_path=train_cache,
             test_path=test_cache,
+            article_separator_token_id=self.article_separator_token_id,
+            align_articles=bool(getattr(self.args, "align_articles", False)),
         )
         self.dataset_cache[name] = dataset
         return dataset

@@ -929,7 +929,7 @@ embedding names that correspond to special tokens below.
 Before we start, familiarize yourself with the project. Read notes.txt,
 AGENTS.md, and explore grce.py. Summarize any differences between notes.txt
 and the implementation in grce.py. Then propose in a few lines a possible
-architectural improvement, and/or clean-ups in the code base.
+architectural improvement and/or clean-ups in the code base.
 
 ----
 
