@@ -4437,17 +4437,29 @@ class TransformerGRCE(nn.Module):
         )
         if should_detach and state_detach_enabled and grce_state is not None:
             grce_state = grce_state.detach()
-        messages: list[torch.Tensor] = []
+        selected: list[torch.Tensor] = []
         for layer_idx in range(self.n_layers):
             layer_sample = samples[layer_idx]
-            if layer_sample.size(1) <= column_index:
-                layer_sample = layer_sample[:, -1:, :]
-            layer_sample = layer_sample[:, column_index if column_index < layer_sample.size(1) else -1, :]
-            if should_detach:
-                layer_sample = layer_sample.detach()
-            reduced = self.sample_norms[layer_idx](layer_sample)
-            messages.append(self.sample_projections[layer_idx](reduced))
-        fused = torch.stack(messages, dim=0).sum(dim=0)
+            if layer_sample.size(1) == 0:
+                raise RuntimeError("Layer sample tensor has zero length")
+            idx = min(column_index, layer_sample.size(1) - 1)
+            selected.append(layer_sample[:, idx, :])
+        layer_stack = torch.stack(selected, dim=0)
+        if should_detach:
+            layer_stack = layer_stack.detach()
+
+        eps = self.sample_norms[0].eps if self.sample_norms else 1e-5
+        weight = torch.stack([norm.weight for norm in self.sample_norms], dim=0)
+        bias = torch.stack([norm.bias for norm in self.sample_norms], dim=0)
+        mean = layer_stack.mean(dim=-1, keepdim=True)
+        var = layer_stack.var(dim=-1, unbiased=False, keepdim=True)
+        normalized = (layer_stack - mean) * torch.rsqrt(var + eps)
+        normed = normalized * weight.unsqueeze(1) + bias.unsqueeze(1)
+
+        proj_weight = torch.stack([linear.weight for linear in self.sample_projections], dim=0)
+        proj_bias = torch.stack([linear.bias for linear in self.sample_projections], dim=0)
+        projected = torch.matmul(normed, proj_weight.transpose(-1, -2)) + proj_bias.unsqueeze(1)
+        fused = projected.sum(dim=0)
         combined = fused + grce_state
         mixed = self.mix_norm(self.dropout(combined))
         mlp_hidden = F.gelu(self.mlp_up(mixed))
@@ -4549,19 +4561,34 @@ class TransformerXCTX(nn.Module):
         )
         if should_detach and state_detach_enabled and xctx_state is not None:
             xctx_state = xctx_state.detach()
-        messages: list[torch.Tensor] = []
+        selected: list[torch.Tensor] = []
         for idx in range(self.n_layers):
             layer_sample = samples[idx]
-            if layer_sample.size(1) <= column_index:
-                layer_sample = layer_sample[:, -1:, :]
-            layer_sample = layer_sample[:, column_index if column_index < layer_sample.size(1) else -1, :]
-            if should_detach:
-                layer_sample = layer_sample.detach()
-            centered = layer_sample - layer_sample.mean(dim=-1, keepdim=True)
-            reduced = self.sample_linear[idx](centered)
-            normed = self.sample_norms[idx](reduced)
-            messages.append(self.expand_linear[idx](normed))
-        fused = torch.stack(messages, dim=0).sum(dim=0)
+            if layer_sample.size(1) == 0:
+                raise RuntimeError("Layer sample tensor has zero length")
+            col_idx = min(column_index, layer_sample.size(1) - 1)
+            selected.append(layer_sample[:, col_idx, :])
+        layer_stack = torch.stack(selected, dim=0)
+        if should_detach:
+            layer_stack = layer_stack.detach()
+        centered = layer_stack - layer_stack.mean(dim=-1, keepdim=True)
+
+        lin_weight = torch.stack([linear.weight for linear in self.sample_linear], dim=0)
+        lin_bias = torch.stack([linear.bias for linear in self.sample_linear], dim=0)
+        reduced = torch.matmul(centered, lin_weight.transpose(-1, -2)) + lin_bias.unsqueeze(1)
+
+        eps = self.sample_norms[0].eps if self.sample_norms else 1e-5
+        norm_weight = torch.stack([norm.weight for norm in self.sample_norms], dim=0)
+        norm_bias = torch.stack([norm.bias for norm in self.sample_norms], dim=0)
+        mean = reduced.mean(dim=-1, keepdim=True)
+        var = reduced.var(dim=-1, unbiased=False, keepdim=True)
+        normalized = (reduced - mean) * torch.rsqrt(var + eps)
+        normed = normalized * norm_weight.unsqueeze(1) + norm_bias.unsqueeze(1)
+
+        expand_weight = torch.stack([linear.weight for linear in self.expand_linear], dim=0)
+        expand_bias = torch.stack([linear.bias for linear in self.expand_linear], dim=0)
+        expanded = torch.matmul(normed, expand_weight.transpose(-1, -2)) + expand_bias.unsqueeze(1)
+        fused = expanded.sum(dim=0)
         combined = self.dropout(xctx_state + fused)
         squeezed = self.mix_norm(self.mix_down(combined))
         mlp = F.gelu(self.mix_up(squeezed))
