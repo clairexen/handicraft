@@ -7052,6 +7052,7 @@ def _evaluate_row_block(
     base_targets = base_targets[:, :pos_total]
     expanded_inputs = _expand_think_sequences(base_inputs, row.segments)
     expanded_targets = _expand_think_sequences(base_targets, row.segments)
+    row_count = expanded_inputs.size(0)
     token_components = _token_embeddings_with_offsets(
         model,
         expanded_inputs,
