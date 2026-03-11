@@ -4666,17 +4666,22 @@ class TransformerStackColumn:
         column_position: int | None = None,
         layer_repeat: int = 1,
         layer_top_only: bool = False,
+        use_context: bool = True,
     ) -> tuple[
         torch.Tensor,
         list[torch.Tensor],
         list[tuple[torch.Tensor, torch.Tensor]],
     ]:
-        grce_biases = self._collect_biases(grce_bias_list_in, column_index)
-        xctx_biases = self._collect_biases(xctx_bias_list_in, column_index)
-        if self.grce is not None and grce_state is not None:
-            grce_biases.append(self.grce.bias_forward(grce_state))
-        if self.xctx is not None and xctx_state is not None:
-            xctx_biases.append(self.xctx.bias_forward(xctx_state))
+        if use_context:
+            grce_biases = self._collect_biases(grce_bias_list_in, column_index)
+            xctx_biases = self._collect_biases(xctx_bias_list_in, column_index)
+            if self.grce is not None and grce_state is not None:
+                grce_biases.append(self.grce.bias_forward(grce_state))
+            if self.xctx is not None and xctx_state is not None:
+                xctx_biases.append(self.xctx.bias_forward(xctx_state))
+        else:
+            grce_biases = []
+            xctx_biases = []
         rope_positions = None
         if column_position is not None:
             rope_positions = torch.tensor(
@@ -4785,6 +4790,7 @@ class TransformerStackSequence(nn.Module):
         layer_top_only: bool = False,
         think_last_only: bool = False,
         capture_layer_outputs: bool = False,
+        use_context: bool = True,
     ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None, list, list[torch.Tensor] | None]:
         if mode not in {"forward", "encode", "decode", "reverse", "noattn"}:
             raise ValueError(f"Unknown TransformerStackSequence mode: {mode}")
@@ -4820,6 +4826,7 @@ class TransformerStackSequence(nn.Module):
                 layer_top_only=layer_top_only,
                 think_last_only=think_last_only,
                 capture_layer_outputs=capture_layer_outputs,
+                use_context=use_context,
             )
         column_positions_tensor = None
         if column_positions is not None:
@@ -4915,6 +4922,7 @@ class TransformerStackSequence(nn.Module):
                 column_position=column_position,
                 layer_repeat=layer_repeat,
                 layer_top_only=layer_top_only,
+                use_context=use_context,
             )
             outputs.append(column_output)
             if captured_layers is not None:
@@ -4944,7 +4952,7 @@ class TransformerStackSequence(nn.Module):
                 if self.kv_rebalance and not think_last_only:
                     kv_history = kv_cache_list_balance(kv_history)
             detach_samples = detach_samples_span > 0 and (col % detach_samples_span) == 0
-            if self.grce is not None and grce_state is not None:
+            if use_context and self.grce is not None and grce_state is not None:
                 if detach_grce_span > 0 and (col % detach_grce_span) == 0:
                     grce_state = grce_state.detach()
                 grce_state = self.grce.sample_forward(
@@ -4955,7 +4963,7 @@ class TransformerStackSequence(nn.Module):
                     detach_ctx_enabled=context_detach_enabled,
                     detach_span_override=context_detach_span,
                 )
-            if self.xctx is not None and xctx_state is not None:
+            if use_context and self.xctx is not None and xctx_state is not None:
                 if detach_xctx_span > 0 and (col % detach_xctx_span) == 0:
                     xctx_state = xctx_state.detach()
                 xctx_state = self.xctx.sample_forward(
@@ -5037,6 +5045,7 @@ class TransformerStackSequence(nn.Module):
         layer_top_only: bool,
         think_last_only: bool,
         capture_layer_outputs: bool,
+        use_context: bool = True,
     ) -> tuple[
         torch.Tensor,
         torch.Tensor | None,
@@ -5050,11 +5059,11 @@ class TransformerStackSequence(nn.Module):
             rope_positions = column_positions.to(device=x.device, dtype=torch.long)
             if rope_positions.dim() != 1 or rope_positions.size(0) != cols:
                 raise ValueError("column_positions must match sequence columns")
-        grid_grce_biases = list(grce_bias_list_in or [])
-        grid_xctx_biases = list(xctx_bias_list_in or [])
-        if self.grce is not None and grce_state is not None:
+        grid_grce_biases = [] if not use_context else list(grce_bias_list_in or [])
+        grid_xctx_biases = [] if not use_context else list(xctx_bias_list_in or [])
+        if use_context and self.grce is not None and grce_state is not None:
             grid_grce_biases.append(self.grce.bias_forward(grce_state))
-        if self.xctx is not None and xctx_state is not None:
+        if use_context and self.xctx is not None and xctx_state is not None:
             grid_xctx_biases.append(self.xctx.bias_forward(xctx_state))
         output, samples, kv_pairs = self.core.forward_grid(
             x,
@@ -5079,7 +5088,7 @@ class TransformerStackSequence(nn.Module):
         for col in range(cols):
             if detach_samples_span > 0:
                 detach_samples = (col % detach_samples_span) == 0
-            if self.grce is not None and grce_state is not None:
+            if use_context and self.grce is not None and grce_state is not None:
                 if detach_grce_span > 0 and (col % detach_grce_span) == 0:
                     grce_state = grce_state.detach()
                 grce_state = self.grce.sample_forward(
@@ -5090,7 +5099,7 @@ class TransformerStackSequence(nn.Module):
                     detach_ctx_enabled=context_detach_enabled,
                     detach_span_override=context_detach_span,
                 )
-            if self.xctx is not None and xctx_state is not None:
+            if use_context and self.xctx is not None and xctx_state is not None:
                 if detach_xctx_span > 0 and (col % detach_xctx_span) == 0:
                     xctx_state = xctx_state.detach()
                 xctx_state = self.xctx.sample_forward(
@@ -5575,14 +5584,19 @@ def _run_microbatch_pass(
                     layer_top_only=layer_top_only,
                     think_last_only=think_last_only,
                     capture_layer_outputs=capture_layers,
+                    use_context=bool(getattr(segment, "context_enabled", True)),
                 )
                 if not getattr(segment, "context_enabled", True):
-                    if model.grce is not None:
-                        grce_state = model.grce.initial_state(row_count, chunk_output.device, chunk_output.dtype)
+                    if model.stack_sequence.grce is not None:
+                        grce_state = model.stack_sequence.grce.initial_state(
+                            row_count, chunk_output.device, chunk_output.dtype
+                        )
                     else:
                         grce_state = None
-                    if model.xctx is not None:
-                        xctx_state = model.xctx.initial_state(row_count, chunk_output.device, chunk_output.dtype)
+                    if model.stack_sequence.xctx is not None:
+                        xctx_state = model.stack_sequence.xctx.initial_state(
+                            row_count, chunk_output.device, chunk_output.dtype
+                        )
                     else:
                         xctx_state = None
                 logits = model.core.head(
@@ -7173,14 +7187,19 @@ def _evaluate_row_block(
             layer_top_only=layer_top_only,
             think_last_only=think_last_only,
             capture_layer_outputs=capture_layers,
+            use_context=bool(segment.context_enabled),
         )
         if not segment.context_enabled:
-            if model.grce is not None:
-                grce_state = model.grce.initial_state(row_count, chunk_output.device, chunk_output.dtype)
+            if model.stack_sequence.grce is not None:
+                grce_state = model.stack_sequence.grce.initial_state(
+                    row_count, chunk_output.device, chunk_output.dtype
+                )
             else:
                 grce_state = None
-            if model.xctx is not None:
-                xctx_state = model.xctx.initial_state(row_count, chunk_output.device, chunk_output.dtype)
+            if model.stack_sequence.xctx is not None:
+                xctx_state = model.stack_sequence.xctx.initial_state(
+                    row_count, chunk_output.device, chunk_output.dtype
+                )
             else:
                 xctx_state = None
         target_ids[:, start:end] = chunk_target
