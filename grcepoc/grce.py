@@ -5577,8 +5577,14 @@ def _run_microbatch_pass(
                     capture_layer_outputs=capture_layers,
                 )
                 if not getattr(segment, "context_enabled", True):
-                    grce_state = prev_grce_state
-                    xctx_state = prev_xctx_state
+                    if model.grce is not None:
+                        grce_state = model.grce.initial_state(row_count, chunk_output.device, chunk_output.dtype)
+                    else:
+                        grce_state = None
+                    if model.xctx is not None:
+                        xctx_state = model.xctx.initial_state(row_count, chunk_output.device, chunk_output.dtype)
+                    else:
+                        xctx_state = None
                 logits = model.core.head(
                     model.core.output_features(model.core.ln_f(chunk_output))
                 )
@@ -7169,8 +7175,14 @@ def _evaluate_row_block(
             capture_layer_outputs=capture_layers,
         )
         if not segment.context_enabled:
-            grce_state = prev_grce_state
-            xctx_state = prev_xctx_state
+            if model.grce is not None:
+                grce_state = model.grce.initial_state(row_count, chunk_output.device, chunk_output.dtype)
+            else:
+                grce_state = None
+            if model.xctx is not None:
+                xctx_state = model.xctx.initial_state(row_count, chunk_output.device, chunk_output.dtype)
+            else:
+                xctx_state = None
         target_ids[:, start:end] = chunk_target
         logits = model.core.head(model.core.output_features(model.core.ln_f(chunk_output)))
         logits_buffer.append(logits)
