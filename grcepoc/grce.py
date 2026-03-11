@@ -2218,7 +2218,7 @@ def _expected_sections(config: GeometryLike, n_pos: int) -> list[tuple[str, str,
         },
         {
             "label": "attn proj",
-            "formula": "L * (E*E + E)",
+            "formula": "L * (E*(E*Q) + E)",
         },
         {
             "label": "ffn fc1",
@@ -3328,7 +3328,8 @@ class CausalSelfAttention(nn.Module):
         self.key = nn.Linear(config.n_width, config.n_width)
         self.query = nn.Linear(config.n_width, config.n_width * self.n_query)
         self.value = nn.Linear(config.n_width, config.n_width)
-        self.proj = nn.Linear(config.n_width, config.n_width)
+        proj_in = config.n_width * self.n_query
+        self.proj = nn.Linear(proj_in, config.n_width)
         self.dropout = nn.Dropout(config.dropout)
         self.register_buffer(
             "tril", torch.tril(torch.ones(config.n_pos, config.n_pos))
@@ -3694,7 +3695,8 @@ class CausalSelfAttention(nn.Module):
         if ext_coeff is not None:
             attn_output = attn_output + ext_coeff.unsqueeze(-1) * ext_T
 
-        y = attn_output.transpose(1, 2).contiguous().view(B, T, C)
+        attn_output = attn_output.transpose(1, 2).contiguous()
+        y = attn_output.view(B, T, self.total_heads * head_dim)
         if disable_rows is not None and disable_rows.any():
             row_mask = (~disable_rows).view(-1, 1, 1).to(y.dtype)
             y = y * row_mask
@@ -3753,7 +3755,7 @@ class CausalSelfAttention(nn.Module):
         att = F.softmax(att, dim=-1)
         att = self.dropout(att)
         y = att @ v
-        y = y.transpose(1, 2).contiguous().view(B, T, C)
+        y = y.transpose(1, 2).contiguous().view(B, T, self.total_heads * head_dim)
         if disable_rows is not None and disable_rows.any():
             row_mask = (~disable_rows).view(-1, 1, 1).to(y.dtype)
             y = y * row_mask

@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 SAMPLE_SECS = float(os.environ.get("SAMPLE_SECS", "5"))
 MINUTES_IDLE = int(os.environ.get("MINUTES_IDLE", "10"))
 
-CPU_UTIL_LIMIT = float(os.environ.get("CPU_UTIL_LIMIT", "5.0"))  # percent
+CPU_UTIL_LIMIT = float(os.environ.get("CPU_UTIL_LIMIT", "8.0"))  # percent
 GPU_UTIL_LIMIT = float(os.environ.get("GPU_UTIL_LIMIT", "5.0"))  # percent
 
 LOG_PATH = os.environ.get("LOG_PATH", "/root/rpwd.log")
