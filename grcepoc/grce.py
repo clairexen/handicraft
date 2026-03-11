@@ -4420,7 +4420,7 @@ class TransformerGRCE(nn.Module):
         self,
         grce_state: torch.Tensor,
         samples: Sequence[torch.Tensor],
-        position: int,
+        column_index: int,
         *,
         detach_samples: bool = False,
         detach_ctx_enabled: bool | None = None,
@@ -4439,7 +4439,10 @@ class TransformerGRCE(nn.Module):
             grce_state = grce_state.detach()
         messages: list[torch.Tensor] = []
         for layer_idx in range(self.n_layers):
-            layer_sample = samples[layer_idx][:, -1, :]
+            layer_sample = samples[layer_idx]
+            if layer_sample.size(1) <= column_index:
+                layer_sample = layer_sample[:, -1:, :]
+            layer_sample = layer_sample[:, column_index if column_index < layer_sample.size(1) else -1, :]
             if should_detach:
                 layer_sample = layer_sample.detach()
             reduced = self.sample_norms[layer_idx](layer_sample)
@@ -4529,7 +4532,7 @@ class TransformerXCTX(nn.Module):
         self,
         xctx_state: torch.Tensor,
         samples: Sequence[torch.Tensor],
-        position: int,
+        column_index: int,
         *,
         detach_samples: bool = False,
         detach_ctx_enabled: bool | None = None,
@@ -4548,7 +4551,10 @@ class TransformerXCTX(nn.Module):
             xctx_state = xctx_state.detach()
         messages: list[torch.Tensor] = []
         for idx in range(self.n_layers):
-            layer_sample = samples[idx][:, -1, :]
+            layer_sample = samples[idx]
+            if layer_sample.size(1) <= column_index:
+                layer_sample = layer_sample[:, -1:, :]
+            layer_sample = layer_sample[:, column_index if column_index < layer_sample.size(1) else -1, :]
             if should_detach:
                 layer_sample = layer_sample.detach()
             centered = layer_sample - layer_sample.mean(dim=-1, keepdim=True)
@@ -5046,13 +5052,12 @@ class TransformerStackSequence(nn.Module):
         for col in range(cols):
             if detach_samples_span > 0:
                 detach_samples = (col % detach_samples_span) == 0
-            slice_samples = [sample[:, : col + 1, :] for sample in samples[: self.n_layers]]
             if self.grce is not None and grce_state is not None:
                 if detach_grce_span > 0 and (col % detach_grce_span) == 0:
                     grce_state = grce_state.detach()
                 grce_state = self.grce.sample_forward(
                     grce_state,
-                    slice_samples,
+                    samples,
                     col,
                     detach_samples=detach_samples,
                     detach_ctx_enabled=context_detach_enabled,
@@ -5063,7 +5068,7 @@ class TransformerStackSequence(nn.Module):
                     xctx_state = xctx_state.detach()
                 xctx_state = self.xctx.sample_forward(
                     xctx_state,
-                    slice_samples,
+                    samples,
                     col,
                     detach_samples=detach_samples,
                     detach_ctx_enabled=context_detach_enabled,
