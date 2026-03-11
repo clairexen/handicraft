@@ -3299,7 +3299,37 @@ def _module_list_param_count(modules: nn.ModuleList) -> int:
     return sum(_module_param_count(m) for m in modules)
 
 
-class CausalSelfAttention(nn.Module):
+class CarpetAbsoluteCacheMixin:
+    """Shared helpers for CARPET absolute cache tables."""
+
+    def _build_carpet_abs_cache(self, max_seq: int) -> None:
+        dim = getattr(self, "carpet_abs_dim", 0)
+        if dim <= 0 or max_seq <= 0:
+            return
+        inv = getattr(self, "carpet_abs_inv_freq")
+        device = inv.device
+        if inv.numel() == 0:
+            features = torch.empty(max_seq, 0, device=device)
+        else:
+            pos = torch.arange(max_seq, dtype=torch.float32, device=device)
+            phases = pos.view(-1, 1) * inv
+            cos = torch.cos(phases)
+            sin = torch.sin(phases)
+            features = torch.cat([cos, sin], dim=-1)
+        setattr(self, "carpet_abs_features_cached", features)
+
+    def _ensure_carpet_abs_cache(self, needed: int) -> None:
+        dim = getattr(self, "carpet_abs_dim", 0)
+        if dim <= 0:
+            return
+        cache = getattr(self, "carpet_abs_features_cached")
+        cached = cache.size(0)
+        if needed <= cached:
+            return
+        self._build_carpet_abs_cache(needed)
+
+
+class CausalSelfAttention(CarpetAbsoluteCacheMixin, nn.Module):
     """GPT-style attention block used inside :class:`Block`."""
 
     def __init__(self, args: Args) -> None:
@@ -3370,6 +3400,10 @@ class CausalSelfAttention(nn.Module):
             self.register_buffer("rope_sin_cached", torch.empty(0), persistent=False)
             self.register_buffer("carpet_rel_inv_freq", torch.empty(0), persistent=False)
 
+        self.register_buffer("carpet_rel_cos_cached", torch.empty(0), persistent=False)
+        self.register_buffer("carpet_rel_sin_cached", torch.empty(0), persistent=False)
+        self.register_buffer("carpet_abs_features_cached", torch.empty(0), persistent=False)
+
     def _resolve_rope_dim(self, raw: int) -> int:
         head_dim = self.head_dim
         if raw > 0:
@@ -3398,6 +3432,30 @@ class CausalSelfAttention(nn.Module):
         if needed <= cached:
             return
         self._build_rope_cache(needed)
+
+    def _build_carpet_rel_cache(self, max_seq: int) -> None:
+        if self.carpet_setup is None or max_seq <= 0:
+            return
+        inv = self.carpet_rel_inv_freq
+        device = inv.device
+        if inv.numel() == 0:
+            cos = torch.empty(max_seq, 0, device=device)
+            sin = torch.empty(max_seq, 0, device=device)
+        else:
+            pos = torch.arange(max_seq, dtype=torch.float32, device=device)
+            phases = torch.outer(pos, inv)
+            cos = torch.cos(phases)
+            sin = torch.sin(phases)
+        self.carpet_rel_cos_cached = cos
+        self.carpet_rel_sin_cached = sin
+
+    def _ensure_carpet_rel_cache(self, needed: int) -> None:
+        if self.carpet_setup is None:
+            return
+        cached = self.carpet_rel_cos_cached.size(0)
+        if needed <= cached:
+            return
+        self._build_carpet_rel_cache(needed)
 
     def _rope_cos_sin_positions(
         self,
@@ -3471,20 +3529,38 @@ class CausalSelfAttention(nn.Module):
     ) -> tuple[torch.Tensor, torch.Tensor]:
         if self.carpet_setup is None:
             raise RuntimeError("CARPET relative cos/sin requested but setup missing")
-        inv = self.carpet_rel_inv_freq.to(device=device, dtype=dtype)
-        base = positions.to(device=device, dtype=dtype)
+        base = positions.to(dtype=torch.long)
+        width = self.rope_dim // 2
+        if base.numel() == 0:
+            if position_offsets is None:
+                empty = torch.empty(0, width, device=device, dtype=dtype)
+            else:
+                empty = torch.empty(batch_size, 0, width, device=device, dtype=dtype)
+            return empty, empty
         if position_offsets is None:
-            phases = base.view(-1, 1) * inv
-            cos = torch.cos(phases)
-            sin = torch.sin(phases)
+            needed = int(base.max().item()) + 1
+            self._ensure_carpet_rel_cache(needed)
+            cache_device = self.carpet_rel_cos_cached.device
+            index = base.to(device=cache_device, dtype=torch.long)
+            cos = self.carpet_rel_cos_cached.index_select(0, index).to(device=device, dtype=dtype)
+            sin = self.carpet_rel_sin_cached.index_select(0, index).to(device=device, dtype=dtype)
             return cos, sin
-        offsets = position_offsets.to(device=device, dtype=dtype)
+        offsets = position_offsets.to(device=base.device, dtype=torch.long)
         if offsets.dim() != 1 or offsets.size(0) != batch_size:
             raise ValueError("position_offsets must be 1D with batch_size entries")
         grid = base.view(1, -1) + offsets.view(-1, 1)
-        phases = grid.unsqueeze(-1) * inv
-        cos = torch.cos(phases)
-        sin = torch.sin(phases)
+        flat = grid.reshape(-1)
+        if flat.numel() == 0:
+            empty = torch.empty(batch_size, 0, self.rope_dim // 2, device=device, dtype=dtype)
+            return empty, empty
+        needed = int(flat.max().item()) + 1
+        self._ensure_carpet_rel_cache(needed)
+        cache_device = self.carpet_rel_cos_cached.device
+        index = flat.to(device=cache_device, dtype=torch.long)
+        cos = self.carpet_rel_cos_cached.index_select(0, index).to(device=device, dtype=dtype)
+        sin = self.carpet_rel_sin_cached.index_select(0, index).to(device=device, dtype=dtype)
+        cos = cos.view(batch_size, base.size(0), -1)
+        sin = sin.view(batch_size, base.size(0), -1)
         return cos, sin
 
     def _carpet_abs_tail(
@@ -3497,22 +3573,31 @@ class CausalSelfAttention(nn.Module):
     ) -> torch.Tensor:
         if self.carpet_abs_dim <= 0:
             raise RuntimeError("CARPET absolute tail requested but disabled")
-        inv = self.carpet_abs_inv_freq.to(device=device, dtype=dtype)
-        base = positions.to(device=device, dtype=dtype)
+        base = positions.to(dtype=torch.long)
+        if base.numel() == 0:
+            empty = torch.empty(batch_size, 0, self.carpet_abs_dim, device=device, dtype=dtype)
+            return empty
         if position_offsets is None:
-            phases = base.view(1, -1, 1) * inv
-            cos = torch.cos(phases)
-            sin = torch.sin(phases)
-            features = torch.cat([cos, sin], dim=-1)
-            return features.expand(batch_size, -1, -1)
-        offsets = position_offsets.to(device=device, dtype=dtype)
+            needed = int(base.max().item()) + 1
+            self._ensure_carpet_abs_cache(needed)
+            cache_device = self.carpet_abs_features_cached.device
+            index = base.to(device=cache_device, dtype=torch.long)
+            features = self.carpet_abs_features_cached.index_select(0, index).to(device=device, dtype=dtype)
+            return features.unsqueeze(0).expand(batch_size, -1, -1)
+        offsets = position_offsets.to(device=base.device, dtype=torch.long)
         if offsets.dim() != 1 or offsets.size(0) != batch_size:
             raise ValueError("position_offsets must be 1D with batch_size entries")
         grid = base.view(1, -1) + offsets.view(-1, 1)
-        phases = grid.unsqueeze(-1) * inv
-        cos = torch.cos(phases)
-        sin = torch.sin(phases)
-        return torch.cat([cos, sin], dim=-1)
+        flat = grid.reshape(-1)
+        if flat.numel() == 0:
+            empty = torch.empty(batch_size, 0, self.carpet_abs_dim, device=device, dtype=dtype)
+            return empty
+        needed = int(flat.max().item()) + 1
+        self._ensure_carpet_abs_cache(needed)
+        cache_device = self.carpet_abs_features_cached.device
+        index = flat.to(device=cache_device, dtype=torch.long)
+        features = self.carpet_abs_features_cached.index_select(0, index).to(device=device, dtype=dtype)
+        return features.view(batch_size, base.size(0), -1)
 
     def forward(
         self,
@@ -4039,7 +4124,7 @@ class RMSNorm(nn.Module):
         return self.scale * tensor * inv
 
 
-class TransformerStackCore(nn.Module):
+class TransformerStackCore(CarpetAbsoluteCacheMixin, nn.Module):
     """Shared Transformer backbone used by both grid and sequence modes."""
 
     def __init__(self, args: Args) -> None:
@@ -4075,6 +4160,7 @@ class TransformerStackCore(nn.Module):
         else:
             abs_inv = torch.empty(0)
         self.register_buffer("carpet_abs_inv_freq", abs_inv, persistent=False)
+        self.register_buffer("carpet_abs_features_cached", torch.empty(0), persistent=False)
 
     def expand_to_even(self, tensor: torch.Tensor) -> torch.Tensor:
         """Place half-width embedding features into the even data-path slots."""
@@ -4219,16 +4305,33 @@ class TransformerStackCore(nn.Module):
     ) -> torch.Tensor:
         if self.carpet_abs_dim <= 0:
             raise RuntimeError("CARPET absolute features requested but CARPET disabled")
-        inv = self.carpet_abs_inv_freq.to(device=device, dtype=dtype)
-        base = positions.to(device=device, dtype=dtype).view(1, -1, 1)
-        phases = base
-        if position_offsets is not None:
-            offsets = position_offsets.to(device=device, dtype=dtype).view(rows, 1, 1)
-            phases = base + offsets
-        features = torch.cat([torch.cos(phases * inv), torch.sin(phases * inv)], dim=-1)
-        if features.size(0) == 1 and rows > 1 and position_offsets is None:
-            features = features.expand(rows, -1, -1)
-        return features
+        base = positions.to(dtype=torch.long)
+        if base.numel() == 0:
+            return torch.empty(rows, 0, self.carpet_abs_dim, device=device, dtype=dtype)
+        if position_offsets is None:
+            needed = int(base.max().item()) + 1
+            self._ensure_carpet_abs_cache(needed)
+            cache_device = self.carpet_abs_features_cached.device
+            index = base.to(device=cache_device, dtype=torch.long)
+            features = self.carpet_abs_features_cached.index_select(0, index).to(device=device, dtype=dtype)
+            if rows > 1:
+                features = features.unsqueeze(0).expand(rows, -1, -1)
+            else:
+                features = features.unsqueeze(0)
+            return features
+        offsets = position_offsets.to(device=base.device, dtype=torch.long)
+        if offsets.dim() != 1 or offsets.size(0) != rows:
+            raise ValueError("position_offsets must match row count")
+        grid = base.view(1, -1) + offsets.view(-1, 1)
+        flat = grid.reshape(-1)
+        if flat.numel() == 0:
+            return torch.empty(rows, 0, self.carpet_abs_dim, device=device, dtype=dtype)
+        needed = int(flat.max().item()) + 1
+        self._ensure_carpet_abs_cache(needed)
+        cache_device = self.carpet_abs_features_cached.device
+        index = flat.to(device=cache_device, dtype=torch.long)
+        features = self.carpet_abs_features_cached.index_select(0, index).to(device=device, dtype=dtype)
+        return features.view(rows, base.size(0), -1)
 
 
 class TransformerStackGrid(nn.Module):
