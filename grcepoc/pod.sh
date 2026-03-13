@@ -105,11 +105,11 @@ rsync_push() {
 rsync_pull() {
     mkdir -p "$LOCAL_MODEL_DIR"
     local rc=0
-    if ! rsync "${RSYNC_COMMON[@]}" -e "$(join_cmd "${RSYNC_SSH[@]}")" "${REMOTE_HOST}:${REMOTE_DIR}/model/" "$LOCAL_MODEL_DIR/"; then
+    if ! rsync "${RSYNC_COMMON[@]}" --exclude='*.pt_' -e "$(join_cmd "${RSYNC_SSH[@]}")" "${REMOTE_HOST}:${REMOTE_DIR}/model/" "$LOCAL_MODEL_DIR/"; then
         rc=$?
         if [[ $rc -eq 23 ]]; then
             echo "Warning: rsync reported partial transfer (code 23); retrying once..." >&2
-            if ! rsync "${RSYNC_COMMON[@]}" -e "$(join_cmd "${RSYNC_SSH[@]}")" "${REMOTE_HOST}:${REMOTE_DIR}/model/" "$LOCAL_MODEL_DIR/"; then
+            if ! rsync "${RSYNC_COMMON[@]}" --exclude='*.pt_' -e "$(join_cmd "${RSYNC_SSH[@]}")" "${REMOTE_HOST}:${REMOTE_DIR}/model/" "$LOCAL_MODEL_DIR/"; then
                 rc=$?
                 if [[ $rc -eq 23 ]]; then
                     echo "Warning: rsync still reports code 23; continuing despite partial transfer." >&2
