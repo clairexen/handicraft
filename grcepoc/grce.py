@@ -1459,6 +1459,11 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         help="Collapse the test loss group down to a single column in the live log",
     )
     logging_group.add_argument(
+        "--log-all",
+        action="store_true",
+        help="Force log/ANSI files to update even for read-only commands (eval, size, etc.)",
+    )
+    logging_group.add_argument(
         "--timeout",
         type=float,
         default=0.0,
@@ -7009,6 +7014,7 @@ class RowEvalResult:
     source_ids: torch.Tensor
     attention_maps: dict[int, dict[int, torch.Tensor]] | None = None
     block_attentions: list["BlockAttention"] | None = None
+    sampled_rows: int = 1
 
 
 @dataclass
@@ -7038,8 +7044,6 @@ def _evaluate_row_block(
     capture_columns: set[int] | None = None,
 ) -> RowEvalResult:
     rows, available_tokens = base_inputs.shape
-    if rows != 1:
-        raise ValueError("Evaluation currently expects a single row batch")
     cols_total = row.total_columns()
     pos_total = row.total_positions()
     if cols_total <= 0 or pos_total <= 0:
@@ -7095,7 +7099,7 @@ def _evaluate_row_block(
         modifiers.detach_kv_cache if modifiers else False
     )
     context_detach_override = False if (modifiers and modifiers.no_detach_ctx) else None
-    control_ids = torch.zeros((1, cols_total), dtype=torch.long, device=device)
+    control_ids = torch.zeros((row_count, cols_total), dtype=torch.long, device=device)
     target_ids = torch.zeros_like(expanded_targets)
     for segment in row.segments:
         segment_start = cursor
@@ -7140,13 +7144,13 @@ def _evaluate_row_block(
         think_slice = _segment_think_slice(
             model.core,
             segment,
-            1,
+            row_count,
             token_slice.device,
         )
         loop_slice = _segment_loop_slice(
             model.core,
             segment,
-            1,
+            row_count,
             token_slice.size(1),
             token_slice.device,
         )
@@ -7191,15 +7195,16 @@ def _evaluate_row_block(
             use_context=bool(segment.context_enabled),
         )
         if not segment.context_enabled:
+            batch_rows = chunk_output.size(0)
             if model.stack_sequence.grce is not None:
                 grce_state = model.stack_sequence.grce.initial_state(
-                    row_count, chunk_output.device, chunk_output.dtype
+                    batch_rows, chunk_output.device, chunk_output.dtype
                 )
             else:
                 grce_state = None
             if model.stack_sequence.xctx is not None:
                 xctx_state = model.stack_sequence.xctx.initial_state(
-                    row_count, chunk_output.device, chunk_output.dtype
+                    batch_rows, chunk_output.device, chunk_output.dtype
                 )
             else:
                 xctx_state = None
@@ -7309,6 +7314,7 @@ def _evaluate_row_block(
         source_ids=expanded_inputs,
         attention_maps=attention_storage if capture_columns else None,
         block_attentions=block_attentions,
+        sampled_rows=row_count,
     )
 
 
@@ -7359,6 +7365,50 @@ def _prepare_eval_tokens(
     eval_block_size = inputs.numel()
     pretty_text = tokenizer.decode_pretty(args, context_tokens)
     return context_tokens, inputs, targets, eval_block_size, source_label, pretty_text
+
+
+def _prepare_eval_batch_tokens(
+    args: Args,
+    dataset: TextDataset,
+    tokenizer: GPT2TokenizerWrapper,
+    *,
+    token_length: int,
+    start_positions: Sequence[int],
+    align_rng: random.Random | None = None,
+) -> tuple[torch.Tensor, torch.Tensor, str, str]:
+    if not start_positions:
+        raise ValueError("Random evaluation batch requires at least one start position")
+    input_chunks: list[torch.Tensor] = []
+    target_chunks: list[torch.Tensor] = []
+    labels: list[str] = []
+    previews: list[str] = []
+    for pos in start_positions:
+        (
+            _,
+            inputs,
+            targets,
+            _,
+            source_label,
+            pretty_text,
+        ) = _prepare_eval_tokens(
+            args,
+            dataset,
+            tokenizer,
+            token_length=token_length,
+            start_pos=pos,
+            custom_text=None,
+            align_rng=align_rng,
+        )
+        input_chunks.append(inputs)
+        target_chunks.append(targets)
+        labels.append(source_label)
+        if len(previews) < 3:
+            previews.append(pretty_text)
+    stacked_inputs = torch.stack(input_chunks)
+    stacked_targets = torch.stack(target_chunks)
+    source_label = ", ".join(labels)
+    pretty_preview = "\n---\n".join(previews)
+    return stacked_inputs, stacked_targets, source_label, pretty_preview
 
 
 def run_test_slice(
@@ -7601,7 +7651,13 @@ def _column_loss_values(
     log_probs = torch.log_softmax(row_result.logits, dim=-1)
     targets = row_result.target_ids.unsqueeze(-1)
     gathered = torch.gather(log_probs, dim=-1, index=targets).squeeze(-1)
-    losses = (-gathered).squeeze(0).detach().cpu().tolist()
+    if gathered.dim() == 2:
+        reduced = gathered
+    elif gathered.dim() == 1:
+        reduced = gathered.unsqueeze(0)
+    else:
+        raise ValueError("Unexpected logits shape for column loss computation")
+    losses = (-reduced).mean(dim=0).detach().cpu().tolist()
     mask = row_result.supervision_mask.detach().cpu().tolist()
     return losses, mask
 
@@ -7694,6 +7750,11 @@ def run_eval_layout(
     custom_text: str | None = None,
     verbose: bool | None = None,
     align_rng: random.Random | None = None,
+    batch_inputs: torch.Tensor | None = None,
+    batch_targets: torch.Tensor | None = None,
+    batch_label: str | None = None,
+    batch_pretty: str | None = None,
+    use_sampled_weight: bool = False,
 ) -> EvalSummary:
     """Evaluate the layout on a deterministic slice and print per-row metrics."""
 
@@ -7711,29 +7772,38 @@ def run_eval_layout(
         max_positions = max((row.total_positions() for row in layout.rows), default=0)
         if max_positions <= 0:
             raise ValueError("Layout does not contain any token positions to evaluate")
-        (
-            context_tokens,
-            inputs,
-            targets,
-            eval_block_size,
-            source_label,
-            pretty_text,
-        ) = _prepare_eval_tokens(
-            args,
-            dataset,
-            tokenizer,
-            token_length=max_positions,
-            start_pos=start_pos,
-            custom_text=custom_text,
-            align_rng=align_rng,
-        )
+        if batch_inputs is not None and batch_targets is not None:
+            inputs_tensor = batch_inputs
+            targets_tensor = batch_targets
+            source_label = batch_label or "random batch"
+            pretty_text = batch_pretty or ""
+            eval_block_size = inputs_tensor.size(-1)
+        else:
+            (
+                context_tokens,
+                inputs,
+                targets,
+                eval_block_size,
+                source_label,
+                pretty_text,
+            ) = _prepare_eval_tokens(
+                args,
+                dataset,
+                tokenizer,
+                token_length=max_positions,
+                start_pos=start_pos,
+                custom_text=custom_text,
+                align_rng=align_rng,
+            )
+            inputs_tensor = inputs.unsqueeze(0)
+            targets_tensor = targets.unsqueeze(0)
 
-        if verbose_flag:
+        if verbose_flag and pretty_text:
             print(color_text(f"Evaluating layout '{args.layout}' on {source_label}:", Colors.CYAN))
             print(pretty_text)
 
-        xb_base = inputs.unsqueeze(0).to(model_device)
-        yb_base = targets.unsqueeze(0).to(model_device)
+        xb_base = inputs_tensor.to(model_device)
+        yb_base = targets_tensor.to(model_device)
 
         overall_loss_sums = {mode: 0.0 for mode in BATCH_MODES}
         overall_token_counts = {mode: 0 for mode in BATCH_MODES}
@@ -7764,7 +7834,10 @@ def run_eval_layout(
                     f"Row block #{row_idx}: {row_desc} (rows={row.rows}) -> {inline_metrics}"
                 )
 
+            sampled_rows = max(0, int(row_result.sampled_rows))
             weight = max(0, int(row.rows))
+            if use_sampled_weight:
+                weight = sampled_rows
             if weight > 0:
                 overall_loss_sums["target"] += row_result.total_loss_sum * weight
                 overall_token_counts["target"] += row_result.total_tokens * weight
@@ -8666,14 +8739,18 @@ class Runtime:
 
             cmdline = " ".join(shlex.quote(arg) for arg in sys.argv)
             timestamp = datetime.now(timezone.utc).isoformat()
-            log_file = log_path.open("a", encoding="utf-8")
-            log_file.write(f"\n[{timestamp}] {cmdline}\n")
-            log_file.flush()
-            if not self.args.no_ansi:
-                ansi_path = log_path.with_suffix(".ansi")
-                ansi_file = ansi_path.open("a", encoding="utf-8")
-                ansi_file.write(f"\n[{timestamp}] {cmdline}\n")
-                ansi_file.flush()
+            log_mode = self.args.command in {"train", "report", "test", "profile", "try"}
+            log_mode = log_mode or bool(getattr(self.args, "log_all", False))
+            log_file = None
+            if log_mode:
+                log_file = log_path.open("a", encoding="utf-8")
+                log_file.write(f"\n[{timestamp}] {cmdline}\n")
+                log_file.flush()
+                if not self.args.no_ansi:
+                    ansi_path = log_path.with_suffix(".ansi")
+                    ansi_file = ansi_path.open("a", encoding="utf-8")
+                    ansi_file.write(f"\n[{timestamp}] {cmdline}\n")
+                    ansi_file.flush()
 
             stdout_streams = [(orig_stdout, False), (log_file, True)]
             stderr_streams = [(orig_stderr, False), (log_file, True)]
@@ -8945,26 +9022,54 @@ class Runtime:
                     base_seed = max(0, int(getattr(self.args, "rng_seed", 0)))
                     rng = random if base_seed > 0 else random.Random()
                     window = max(1, total - (self.args.block_size + 1))
+                    batch_cap = max(1, int(self.args.batch_size))
+                    layout_probe = BatchLayout(
+                        self.args.layout,
+                        batch_size=self.args.batch_size,
+                        block_size=self.args.block_size,
+                    )
+                    _log_layout_warnings(self.args, layout_probe)
+                    max_positions = max(
+                        (row.total_positions() for row in layout_probe.rows), default=0
+                    )
+                    if max_positions <= 0:
+                        raise ValueError("Layout does not contain any token positions to evaluate")
+                    offsets = [rng.randint(0, window - 1) for _ in range(rand_runs)]
                     summaries: list[EvalSummary] = []
-                    for run_idx in range(rand_runs):
-                        start_pos = rng.randint(0, window - 1)
+                    total_batches = (rand_runs + batch_cap - 1) // batch_cap
+                    for batch_idx in range(total_batches):
+                        start_idx = batch_idx * batch_cap
+                        batch_offsets = offsets[start_idx : start_idx + batch_cap]
                         if self.args.eval_verbose or True:
                             print(
                                 color_text(
-                                    f"[eval random #{run_idx + 1}/{rand_runs} - {100.0*(run_idx+1) / rand_runs:.2f}%]",
+                                    f"[eval random batch {batch_idx + 1}/{total_batches} - {100.0*(batch_idx + 1) / total_batches:.2f}%]",
                                     Colors.BLUE,
                                 )
                             )
+                        batch_inputs, batch_targets, batch_label, batch_pretty = _prepare_eval_batch_tokens(
+                            self.args,
+                            dataset,
+                            tokenizer,
+                            token_length=max_positions,
+                            start_positions=batch_offsets,
+                            align_rng=rng if self.args.align_articles else None,
+                        )
                         summary = run_eval_layout(
                             args=self.args,
                             dataset=dataset,
                             tokenizer=tokenizer,
                             model=model,
                             block_size=self.args.block_size,
-                            start_pos=start_pos,
+                            start_pos=0,
                             custom_text=None,
                             verbose=self.args.eval_verbose,
-                            align_rng=rng if self.args.align_articles else None,
+                            align_rng=None,
+                            batch_inputs=batch_inputs,
+                            batch_targets=batch_targets,
+                            batch_label=batch_label,
+                            batch_pretty=batch_pretty,
+                            use_sampled_weight=True,
                         )
                         summaries.append(summary)
                     _print_eval_summary("[eval random]", self.args.layout, summaries)
