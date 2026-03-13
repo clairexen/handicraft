@@ -13,8 +13,11 @@ we also perform
 	self(state_at_pos(i+1)) += alpha .* next(delta_i)      ... in "decode" or "encode" mode
 	netxt(state_at_pos(i-1)) += beta .* self(delta_i)      ... in "reverse" or "encode" mode
 
-For a first proof-of-concept implementation it is sufficient to only implement the SANE alpha and beta channels within a "Grid".
+(For a first proof-of-concept implementation in grce.py we only implement the SANE alpha and beta channels within a "Grid".)
 
+These SANE alpha (forward in time) and beta (backwards in time) channels create semantically meaningful high-bandwith pathways between positions.
+
+For training useful alpha and beta channels we train encoder-style transformers on text with blacked out tokens, and let the encoder predict the missing tokens based on it surroundings, with a looping encoder block.
 
 
 

@@ -632,6 +632,7 @@ Modifiers for the [...] block can be inserted directly before the [ char:
 	C   freeze transformer parameters so only the context/recurrent channels learn
 	H   "hide" the loss values from this block from per-type metric buckets
 	h   halt RoPE for this block (all positions share phase zero)
+	S   disable SANE alpha and beta channels
 
 In this context "transformer parameters" include everything that shapes the
 encode/decode (E/D) stack, while "recurrent parameters" cover the GRCE/XCTX
@@ -675,6 +676,16 @@ used without `B`, the usual top-layer output loss is skipped entirely and only
 the input-stream reconstruction losses remain. Use these sparingly (typically a
 single column per batch) to encourage embeddings that stay meaningful through
 the stack and to keep even/odd parity lanes well separated for looping.
+
+Adding the `P` modifyier to an `e`/`E` mode string adds a random "drop" position
+within the encoder grid, that is not the first or last position. Adding `2P`
+will select two non-consecutive non-first and non-last positions, and so
+forth. "drop" positions receive the [|find-self|] in their "self" input stream,
+instead of an input token embedding or [|predict-next|] or [|predict-prev|].
+We constrain the "self" output stream to the missing input token, and leave
+the "next" output stream unconstrained. The `S` modifier for disabling the
+SANE alpha and beta channels is also supported as modifier to the `E`, `D`,
+and `R` modes.
 
 Both probes use the LM head and cross-entropy objective: for `B` we feed the
 odd stream into the head (identical to the default loss), while `b` feeds the
@@ -815,6 +826,10 @@ embedding names that correspond to special tokens below.
   add [|predict-prev|] to all positions in "reverse" sequences.
   And we add [|predict-next|] to only the last position in an
   "encode" sequence, because the other positions are unconstrained.
+
+[|find-self|]
+  added to a "drop" position insteat of an input token embedding
+  or [|predict-next|] or [|predict-prev|].
 
 [|think:1/2|] [|think:2/2|]
   additional "think" embeddings for think2x mode, in think2x

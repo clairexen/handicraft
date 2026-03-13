@@ -400,6 +400,7 @@ class SegmentSpec:
     suppress_default_metric: bool = False
     loss_input_stream: bool = False
     loss_output_stream: bool = False
+    drop_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -439,6 +440,7 @@ class SegmentLayout:
     suppress_default_metric: bool = False
     loss_input_stream: bool = False
     loss_output_stream: bool = False
+    drop_count: int = 0
 
     def token_columns(self) -> int:
         if self.think_factor <= 1:
@@ -586,6 +588,7 @@ def _parse_segment_spec(text: str, connector: str | None) -> SegmentSpec:
     hide_typed_metrics = False
     bias_input_loss = False
     bias_output_loss = False
+    drop_count = 0
     while mode_token:
         tail = mode_token[-1]
         if tail == "h":
@@ -600,6 +603,19 @@ def _parse_segment_spec(text: str, connector: str | None) -> SegmentSpec:
             else:
                 bias_output_loss = True
             mode_token = mode_token[:-1]
+            continue
+        if tail == "P":
+            if drop_count:
+                raise LayoutParseError("Drop modifier specified multiple times")
+            idx_end = len(mode_token) - 1
+            idx_start = idx_end
+            while idx_start > 0 and mode_token[idx_start - 1].isdigit():
+                idx_start -= 1
+            count_text = mode_token[idx_start:idx_end]
+            drop_count = int(count_text) if count_text else 1
+            if drop_count <= 0:
+                raise LayoutParseError("Drop modifier requires a positive count")
+            mode_token = mode_token[:idx_start]
             continue
         break
     if hide_typed_metrics and not mode_token:
@@ -617,6 +633,8 @@ def _parse_segment_spec(text: str, connector: str | None) -> SegmentSpec:
         mode_key = "f"
     if mode_key not in _MODE_ALIASES:
         raise LayoutParseError(f"Unsupported mode '{mode_token}'")
+    if drop_count and mode_key != "e":
+        raise LayoutParseError("Drop modifier 'P' is only supported for encode segments")
     if think_factor > 1:
         if mode_key != "f":
             raise LayoutParseError("Think multipliers are only valid for forward segments")
@@ -655,6 +673,7 @@ def _parse_segment_spec(text: str, connector: str | None) -> SegmentSpec:
         suppress_default_metric=suppress_default,
         loss_input_stream=bias_input_loss,
         loss_output_stream=bias_output_loss,
+        drop_count=drop_count,
     )
 
 
@@ -915,6 +934,7 @@ class BatchLayout:
                     suppress_default_metric=getattr(spec, "suppress_default_metric", False),
                     loss_input_stream=getattr(spec, "loss_input_stream", False),
                     loss_output_stream=getattr(spec, "loss_output_stream", False),
+                    drop_count=max(0, int(getattr(spec, "drop_count", 0) or 0)),
                 )
             )
         max_cols = sum(segment.columns for segment in segments)
@@ -957,12 +977,17 @@ class BatchLayout:
                     bias_suffix += "B"
                 if getattr(segment, "loss_input_stream", False):
                     bias_suffix += "b"
+                drop_suffix = ""
+                drop_count = getattr(segment, "drop_count", 0)
+                if drop_count:
+                    prefix = f"{drop_count}" if drop_count > 1 else ""
+                    drop_suffix = f"{prefix}P"
                 metric_suffix = ""
                 extra = getattr(segment, "extra_metrics", ())
                 if extra:
                     prefix = ">>" if getattr(segment, "suppress_default_metric", False) else ">"
                     metric_suffix = prefix + ">".join(extra)
-                bit = f"{segment.columns}{letter}{hide_suffix}{layer_suffix}{think_suffix}{bias_suffix}{metric_suffix}"
+                bit = f"{segment.columns}{letter}{hide_suffix}{layer_suffix}{think_suffix}{bias_suffix}{drop_suffix}{metric_suffix}"
                 if idx > 0:
                     connector = segment.connector or "="
                     bit = connector + bit
@@ -994,6 +1019,7 @@ class BatchLayout:
                             suppress_default_metric=seg.suppress_default_metric,
                             loss_input_stream=seg.loss_input_stream,
                             loss_output_stream=seg.loss_output_stream,
+                            drop_count=seg.drop_count,
                         )
                         for seg in group.segments
                     ]
@@ -2024,22 +2050,24 @@ def upgrade_state_dict(state: dict[str, torch.Tensor]) -> dict[str, torch.Tensor
     """Upgrade legacy checkpoints that used older feed-forward key names."""
 
     needs_upgrade = any(".ff.net." in key for key in state)
+    upgraded: dict[str, torch.Tensor]
     if not needs_upgrade:
-        return state
-    upgraded: dict[str, torch.Tensor] = {}
-    for key, value in state.items():
-        new_key = key
-        marker = ".ff.net."
-        if marker in key:
-            prefix, suffix = key.split(marker, 1)
-            if suffix.startswith("0."):
-                new_key = f"{prefix}.ff.fc1.{suffix[2:]}"
-            elif suffix.startswith("2."):
-                new_key = f"{prefix}.ff.fc2.{suffix[2:]}"
-            else:
-                continue
-        upgraded[new_key] = value
-    return upgraded
+        upgraded = dict(state)
+    else:
+        upgraded = {}
+        for key, value in state.items():
+            new_key = key
+            marker = ".ff.net."
+            if marker in key:
+                prefix, suffix = key.split(marker, 1)
+                if suffix.startswith("0."):
+                    new_key = f"{prefix}.ff.fc1.{suffix[2:]}"
+                elif suffix.startswith("2."):
+                    new_key = f"{prefix}.ff.fc2.{suffix[2:]}"
+                else:
+                    continue
+            upgraded[new_key] = value
+    return _upgrade_control_embedding_rows(upgraded)
 
 
 class Tee:
@@ -3286,6 +3314,27 @@ def _strip_sane_parameters(state: Mapping[str, torch.Tensor]) -> Mapping[str, to
     return _strip_state_entries(state, predicate=lambda key: ".sane_" in key)
 
 
+def _upgrade_control_embedding_rows(
+    state: dict[str, torch.Tensor],
+    *,
+    expected_rows: int = 4,
+) -> dict[str, torch.Tensor]:
+    if expected_rows <= 0:
+        return state
+    upgraded = dict(state)
+    for key, value in state.items():
+        if not isinstance(value, torch.Tensor):
+            continue
+        if not key.endswith("control_emb.weight"):
+            continue
+        rows, dim = value.shape
+        if rows >= expected_rows:
+            continue
+        pad = value.new_zeros(expected_rows - rows, dim)
+        upgraded[key] = torch.cat([value, pad], dim=0)
+    return upgraded
+
+
 def _load_checkpoint_state(
     model: nn.Module, state: Mapping[str, torch.Tensor], *, allow_partial: bool
 ) -> dict[str, object]:
@@ -4524,7 +4573,7 @@ class TransformerStackCore(CarpetAbsoluteCacheMixin, nn.Module):
             raise ValueError("n_width must be even so embeddings can occupy even/odd slots")
         self.embedding_dim = config.n_width // 2
         self.tok_emb = nn.Embedding(config.vocab_size, self.embedding_dim)
-        self.control_emb = nn.Embedding(3, self.embedding_dim, padding_idx=0)
+        self.control_emb = nn.Embedding(4, self.embedding_dim, padding_idx=0)
         self.think_emb = ThinkEmbeddingLibrary(self.embedding_dim, think_spans=(2, 3, 4))
         self.loop_embeddings = nn.ParameterDict(
             {
@@ -6005,6 +6054,21 @@ def _run_microbatch_pass(
                     token_source = token_components
                     chunk_target = yb[:, start:end]
                 token_slice = token_source[:, start:end, :]
+                drop_mask_tensor: torch.Tensor | None = None
+                if mode == "encode":
+                    drop_count = getattr(segment, "drop_count", 0)
+                    if drop_count > 0:
+                        drop_positions = _sample_drop_positions(cols, drop_count, rng)
+                        drop_mask_tensor = torch.zeros(cols, dtype=torch.bool, device=token_slice.device)
+                        drop_mask_tensor[drop_positions] = True
+                        token_slice = token_slice.clone()
+                        token_slice[:, drop_mask_tensor, ::2] = 0
+                        control_slice = control_slice.clone()
+                        control_slice[:, drop_mask_tensor] = CONTROL_FIND_SELF
+                        control_ids[:, start:end][:, drop_mask_tensor] = CONTROL_FIND_SELF
+                        control_embed = model.core.expand_to_even(
+                            model.core.control_emb(control_slice)
+                        )
                 think_index, think_count, think_mask = _segment_think_metadata(
                     segment,
                     cols,
@@ -6088,6 +6152,13 @@ def _run_microbatch_pass(
                         use_next_stream=use_next_stream,
                     )
                 )
+                eval_targets = chunk_target
+                last_only = mode == "encode" and drop_mask_tensor is None
+                if drop_mask_tensor is not None:
+                    eval_targets = chunk_target.clone()
+                    eval_targets[:, :] = LOSS_IGNORE_INDEX
+                    eval_targets[:, drop_mask_tensor] = xb[:, start:end][:, drop_mask_tensor]
+                    eval_targets[:, -1:] = chunk_target[:, -1:]
                 use_standard_loss = not (
                     getattr(segment, "loss_input_stream", False)
                     or getattr(segment, "loss_output_stream", False)
@@ -6100,14 +6171,14 @@ def _run_microbatch_pass(
                         row_token_counts,
                     ) = loss_sum_token_count_with_rows(
                         logits,
-                        chunk_target,
-                        last_only=(mode == "encode"),
+                        eval_targets,
+                        last_only=last_only,
                     )
                 else:
                     loss_sum = None
                     token_count = _count_supervised_tokens(
-                        chunk_target,
-                        last_only=(mode == "encode"),
+                        eval_targets,
+                        last_only=last_only,
                     )
                     row_loss_sums = None
                     row_token_counts = None
@@ -6118,8 +6189,9 @@ def _run_microbatch_pass(
                     output_loss = _layer_output_stream_loss(
                         model,
                         layer_outputs,
-                        chunk_target,
-                        last_only=(mode == "encode"),
+                        eval_targets,
+                        last_only=last_only,
+                        use_next_stream=use_next_stream,
                     )
                     if output_loss is not None:
                         bias_terms.append(output_loss)
@@ -6130,6 +6202,7 @@ def _run_microbatch_pass(
                         model,
                         layer_outputs,
                         token_slice,
+                        use_next_stream=use_next_stream,
                     )
                     if input_loss is not None:
                         bias_terms.append(input_loss)
@@ -6435,6 +6508,7 @@ def _loss_sum_token_count_internal(
 CONTROL_NONE = 0
 CONTROL_PREDICT_NEXT = 1
 CONTROL_PREDICT_PREV = 2
+CONTROL_FIND_SELF = 3
 
 
 def _token_embeddings_with_offsets(
@@ -6554,6 +6628,31 @@ def _segment_loop_slice(
     tiled = loop_vector.view(1, 1, -1)
     even = core.expand_to_even(tiled)
     return even.expand(row_count, cols, -1)
+
+
+def _sample_drop_positions(cols: int, drop_count: int, rng: random.Random) -> list[int]:
+    if drop_count <= 0:
+        return []
+    if cols <= 2:
+        raise ValueError("Drop modifier requires at least three columns in the encoder segment")
+    interior = list(range(1, cols - 1))
+    if not interior:
+        raise ValueError("Drop modifier requires interior columns to target")
+    max_drop = (len(interior) + 1) // 2
+    if drop_count > max_drop:
+        raise ValueError(
+            f"Drop modifier requests {drop_count} positions but at most {max_drop} are available"
+        )
+    available = interior[:]
+    selected: list[int] = []
+    while len(selected) < drop_count:
+        candidates = [pos for pos in available if all(abs(pos - chosen) > 1 for chosen in selected)]
+        if not candidates:
+            raise ValueError("Unable to place non-consecutive drop positions within the segment")
+        pos = rng.choice(candidates)
+        selected.append(pos)
+        available = [p for p in available if abs(p - pos) > 1]
+    return sorted(selected)
 
 
 def _segment_think_metadata(
@@ -7538,6 +7637,7 @@ def _evaluate_row_block(
     base_targets: torch.Tensor,
     *,
     capture_columns: set[int] | None = None,
+    drop_rng: random.Random | None = None,
 ) -> RowEvalResult:
     rows, available_tokens = base_inputs.shape
     cols_total = row.total_columns()
@@ -7596,6 +7696,7 @@ def _evaluate_row_block(
     )
     context_detach_override = False if (modifiers and modifiers.no_detach_ctx) else None
     control_ids = torch.zeros((row_count, cols_total), dtype=torch.long, device=device)
+    drop_rng = drop_rng or random.Random(getattr(args, "rng_seed", 0) or 0)
     target_ids = torch.zeros_like(expanded_targets)
     for segment in row.segments:
         segment_start = cursor
@@ -7616,7 +7717,17 @@ def _evaluate_row_block(
         elif segment.mode == "encode" and end > start:
             control_ids[:, start:end] = CONTROL_NONE
             control_ids[:, end - 1 : end] = CONTROL_PREDICT_NEXT
-        control_slice = control_ids[:, start:end]
+        control_slice = control_ids[:, start:end].clone()
+        drop_mask_tensor: torch.Tensor | None = None
+        if segment.mode == "encode" and getattr(segment, "drop_count", 0) > 0:
+            drop_positions = _sample_drop_positions(cols, segment.drop_count, drop_rng)
+            drop_mask_tensor = torch.zeros(cols, dtype=torch.bool, device=device)
+            drop_mask_tensor[drop_positions] = True
+            token_slice = token_slice.clone()
+            token_slice[:, drop_mask_tensor, ::2] = 0
+            control_slice = control_slice.clone()
+            control_slice[:, drop_mask_tensor] = CONTROL_FIND_SELF
+            control_ids[:, start:end][:, drop_mask_tensor] = CONTROL_FIND_SELF
         control_embed = model.core.expand_to_even(model.core.control_emb(control_slice))
         if segment.mode == "reverse":
             token_source = future_token_components
@@ -7706,13 +7817,23 @@ def _evaluate_row_block(
                 )
             else:
                 xctx_state = None
-        target_ids[:, start:end] = chunk_target
         head_features = model.core.ln_f(chunk_output)
         use_next_stream = segment.mode != "reverse"
         logits = model.core.head(
             model.core.output_features(head_features, use_next_stream=use_next_stream)
         )
         logits_buffer.append(logits)
+        last_only = segment.mode == "encode" and drop_mask_tensor is None
+        eval_targets = chunk_target
+        if drop_mask_tensor is not None:
+            eval_targets = chunk_target.clone()
+            eval_targets[:, drop_mask_tensor] = expanded_inputs[:, start:end][:, drop_mask_tensor]
+            ignore_mask = torch.ones(cols, dtype=torch.bool, device=device)
+            ignore_mask[drop_mask_tensor] = False
+            if cols > 0:
+                ignore_mask[-1] = False
+            eval_targets[:, ignore_mask] = LOSS_IGNORE_INDEX
+        target_ids[:, start:end] = eval_targets
         use_standard_loss = not (
             getattr(segment, "loss_input_stream", False)
             or getattr(segment, "loss_output_stream", False)
@@ -7721,13 +7842,13 @@ def _evaluate_row_block(
             loss_sum, token_count = loss_sum_and_token_count(
                 logits,
                 eval_targets,
-                last_only=(segment.mode == "encode"),
+                last_only=last_only,
             )
         else:
             loss_sum = None
             token_count = _count_supervised_tokens(
                 eval_targets,
-                last_only=(segment.mode == "encode"),
+                last_only=last_only,
             )
         extra_losses: list[torch.Tensor] = []
         if getattr(segment, "loss_output_stream", False):
@@ -7737,8 +7858,8 @@ def _evaluate_row_block(
                 model,
                 layer_outputs,
                 eval_targets,
-                last_only=(segment.mode == "encode"),
-                use_next_stream=(segment.mode != "reverse"),
+                last_only=last_only,
+                use_next_stream=use_next_stream,
             )
             if output_loss is not None:
                 extra_losses.append(output_loss)
@@ -7749,7 +7870,7 @@ def _evaluate_row_block(
                 model,
                 layer_outputs,
                 token_slice,
-                use_next_stream=(segment.mode != "reverse"),
+                use_next_stream=use_next_stream,
             )
             if input_loss is not None:
                 extra_losses.append(input_loss)
@@ -7778,7 +7899,8 @@ def _evaluate_row_block(
         for local_idx in range(cols):
             idx = cursor + local_idx
             if segment.mode == "encode" and local_idx < cols - 1:
-                supervision_mask[idx] = False
+                if drop_mask_tensor is None or not bool(drop_mask_tensor[local_idx]):
+                    supervision_mask[idx] = False
             elif think_mask is not None and bool(think_mask[local_idx]):
                 supervision_mask[idx] = False
         if chunk_capture is not None and segment.mode in {"decode", "reverse", "encode"}:
@@ -7967,6 +8089,7 @@ def run_test_slice(
         yb_base = targets.unsqueeze(0).to(model_device)
         vocab_size = model.config.vocab_size
 
+        eval_drop_rng = random.Random(getattr(args, "rng_seed", 0) or 0)
         for row_idx, row in enumerate(layout.rows, start=1):
             row_desc = _row_description(layout, row)
             print(color_text(f"Row block #{row_idx}: {row_desc}", Colors.YELLOW))
@@ -7984,6 +8107,7 @@ def run_test_slice(
                     xb_base,
                     yb_base,
                     capture_columns=capture_columns,
+                    drop_rng=eval_drop_rng,
                 )
             except ValueError as exc:
                 print(color_text(f"  (error evaluating row: {exc})", Colors.RED))
@@ -8317,6 +8441,7 @@ def run_eval_layout(
         column_loss_sums = [0.0] * max_columns
         column_token_counts = [0] * max_columns
 
+        eval_drop_rng = random.Random(getattr(args, "rng_seed", 0) or 0)
         for row_idx, row in enumerate(layout.rows, start=1):
             row_desc = _row_description(layout, row)
             try:
@@ -8326,6 +8451,7 @@ def run_eval_layout(
                     row,
                     xb_base,
                     yb_base,
+                    drop_rng=eval_drop_rng,
                 )
             except ValueError as exc:
                 print(color_text(f"Row block #{row_idx}: {row_desc} -> error: {exc}", Colors.RED))
