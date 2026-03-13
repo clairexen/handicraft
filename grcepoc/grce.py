@@ -4577,10 +4577,20 @@ class TransformerStackCore(CarpetAbsoluteCacheMixin, nn.Module):
 
         return _expand_tensor_to_parity(tensor, self.config.n_width, parity=0)
 
-    def output_features(self, tensor: torch.Tensor) -> torch.Tensor:
-        """Extract the odd data-path slots that feed into the LM head."""
+    def output_features(self, tensor: torch.Tensor, *, use_next_stream: bool = True) -> torch.Tensor:
+        """Extract either the next-stream (odd) or self-stream (even) slots."""
 
-        return _select_parity_features(tensor, parity=1)
+        parity = 1 if use_next_stream else 0
+        return _select_parity_features(tensor, parity=parity)
+
+    @staticmethod
+    def swap_self_next_streams(tensor: torch.Tensor) -> torch.Tensor:
+        even = tensor[..., ::2]
+        odd = tensor[..., 1::2]
+        swapped = torch.empty_like(tensor)
+        swapped[..., ::2] = odd
+        swapped[..., 1::2] = even
+        return swapped
 
     def _sane_stage_params(self, stage: str) -> tuple[torch.Tensor, torch.Tensor]:
         if stage == "attn":
@@ -5719,7 +5729,11 @@ class GRCEGPT(nn.Module):
             hidden = decode_output
         else:
             raise ValueError(f"Unknown forward_autoreg mode: {mode}")
-        logits = self.core.head(self.core.output_features(self.core.ln_f(hidden)))
+        head_features = self.core.ln_f(hidden)
+        use_next_stream = mode != "reverse"
+        logits = self.core.head(
+            self.core.output_features(head_features, use_next_stream=use_next_stream)
+        )
         return logits, None, context_info
 
     @contextmanager
@@ -6022,6 +6036,8 @@ def _run_microbatch_pass(
                     think_slice=think_slice,
                     loop_slice=loop_slice,
                 )
+                if mode == "reverse":
+                    chunk_input = model.core.swap_self_next_streams(chunk_input)
                 kv_sources = kv_chain if kv_chain else None
                 prev_grce_state = grce_state
                 prev_xctx_state = xctx_state
@@ -6064,8 +6080,13 @@ def _run_microbatch_pass(
                         )
                     else:
                         xctx_state = None
+                head_features = model.core.ln_f(chunk_output)
+                use_next_stream = mode != "reverse"
                 logits = model.core.head(
-                    model.core.output_features(model.core.ln_f(chunk_output))
+                    model.core.output_features(
+                        head_features,
+                        use_next_stream=use_next_stream,
+                    )
                 )
                 use_standard_loss = not (
                     getattr(segment, "loss_input_stream", False)
@@ -6556,11 +6577,17 @@ def _layer_output_stream_loss(
     targets: torch.Tensor,
     *,
     last_only: bool,
+    use_next_stream: bool = True,
 ) -> torch.Tensor | None:
     total_loss: torch.Tensor | None = None
     layer_count = 0
     for tensor in layer_outputs:
-        logits = model.core.head(model.core.output_features(model.core.ln_f(tensor)))
+        logits = model.core.head(
+            model.core.output_features(
+                model.core.ln_f(tensor),
+                use_next_stream=use_next_stream,
+            )
+        )
         loss_sum, token_count = loss_sum_and_token_count(logits, targets, last_only=last_only)
         if token_count <= 0:
             continue
@@ -6575,6 +6602,8 @@ def _layer_input_stream_loss(
     model: "GRCEGPT",
     layer_outputs: Sequence[torch.Tensor],
     token_slice: torch.Tensor,
+    *,
+    use_next_stream: bool = True,
 ) -> torch.Tensor | None:
     if not layer_outputs:
         return None
@@ -6582,7 +6611,12 @@ def _layer_input_stream_loss(
     accumulated: torch.Tensor | None = None
     layer_count = 0
     for tensor in layer_outputs:
-        logits = model.core.head(model.core.output_features(model.core.ln_f(tensor)))
+        logits = model.core.head(
+            model.core.output_features(
+                model.core.ln_f(tensor),
+                use_next_stream=use_next_stream,
+            )
+        )
         per_token = F.cross_entropy(
             logits.reshape(-1, logits.size(-1)),
             target_ids.reshape(-1),
@@ -7623,6 +7657,8 @@ def _evaluate_row_block(
             think_slice=think_slice,
             loop_slice=loop_slice,
         )
+        if segment.mode == "reverse":
+            chunk_input = model.core.swap_self_next_streams(chunk_input)
         chunk_capture = None
         if base_capture is not None:
             chunk_capture = base_capture.subset(cursor, cols)
@@ -7671,7 +7707,11 @@ def _evaluate_row_block(
             else:
                 xctx_state = None
         target_ids[:, start:end] = chunk_target
-        logits = model.core.head(model.core.output_features(model.core.ln_f(chunk_output)))
+        head_features = model.core.ln_f(chunk_output)
+        use_next_stream = segment.mode != "reverse"
+        logits = model.core.head(
+            model.core.output_features(head_features, use_next_stream=use_next_stream)
+        )
         logits_buffer.append(logits)
         use_standard_loss = not (
             getattr(segment, "loss_input_stream", False)
@@ -7698,6 +7738,7 @@ def _evaluate_row_block(
                 layer_outputs,
                 eval_targets,
                 last_only=(segment.mode == "encode"),
+                use_next_stream=(segment.mode != "reverse"),
             )
             if output_loss is not None:
                 extra_losses.append(output_loss)
@@ -7708,6 +7749,7 @@ def _evaluate_row_block(
                 model,
                 layer_outputs,
                 token_slice,
+                use_next_stream=(segment.mode != "reverse"),
             )
             if input_loss is not None:
                 extra_losses.append(input_loss)

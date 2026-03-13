@@ -299,8 +299,9 @@ only: sum_i(V_i*exp(x_i - M_k)) / S_k.
 With mode="decode" we perform standard masked causal self-attention and train
 the stack to predict the next token. With mode="reverse" we apply the
 transpose of that mask (each token attends to future positions but not the
-past), swap the x/y roles so the model predicts the *previous* token, and add
-the `[|predict-prev|]` embedding to every column instead of `[|predict-next|]`.
+past), inject embeddings into the **next** stream while sampling from the
+**self** stream so the model predicts the *previous* token, and add the
+`[|predict-prev|]` embedding to every column instead of `[|predict-next|]`.
 Mode="encode" allows every position to attend to every other position (only
 the final column is supervised) and mode="noattn" uses purely self-attention.
 External KV caches and `qh_query_callback` are available in every mode.
