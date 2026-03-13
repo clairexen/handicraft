@@ -119,6 +119,7 @@ class ModelGeometry:
     use_carpet3: bool = False
     use_gmlp: bool = False
     use_rope_xl: bool = False
+    use_sane: bool = False
 
     @property
     def block_size(self) -> int:
@@ -147,6 +148,7 @@ class Defaults:
     use_carpet3: bool = MODEL_GEOMETRY_DEFAULTS.use_carpet3
     use_gmlp: bool = MODEL_GEOMETRY_DEFAULTS.use_gmlp
     use_rope_xl: bool = MODEL_GEOMETRY_DEFAULTS.use_rope_xl
+    use_sane: bool = MODEL_GEOMETRY_DEFAULTS.use_sane
     corpus: str | None = None
     steps: int = 100
     cycles: int = 100
@@ -1164,6 +1166,14 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         ),
     )
     model_group.add_argument(
+        "--use-sane",
+        action="store_true",
+        default=DEFAULTS.use_sane,
+        help=(
+            "Enable the Self-And-Next Encoder (SANE) grid hooks that propagate residuals between positions"
+        ),
+    )
+    model_group.add_argument(
         "--n-grce",
         type=int,
         default=DEFAULTS.n_grce,
@@ -1916,6 +1926,8 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
             raise ValueError("CARPET2/3 requires --n-pos 1024 and --n-rope 64")
     if use_rope_xl and (args.n_pos % 2 != 0):
         raise ValueError("--use-rope-xl requires an even --n-pos")
+    if getattr(args, "use_sane", False) and (args.n_width % 2 != 0):
+        raise ValueError("--use-sane requires an even --n-width")
     args.checkpoint_dirty = False
 
     # --------------------------------------------------------
@@ -1958,6 +1970,7 @@ def args_to_model_geometry(args: Args):
         use_carpet3=getattr(args, "use_carpet3", MODEL_GEOMETRY_DEFAULTS.use_carpet3),
         use_gmlp=getattr(args, "use_gmlp", MODEL_GEOMETRY_DEFAULTS.use_gmlp),
         use_rope_xl=getattr(args, "use_rope_xl", MODEL_GEOMETRY_DEFAULTS.use_rope_xl),
+        use_sane=getattr(args, "use_sane", MODEL_GEOMETRY_DEFAULTS.use_sane),
     )
 
 
@@ -3249,7 +3262,28 @@ def _partial_state_dict_load(
         "missing_examples": missing_examples,
         "resized_examples": resized_examples,
         "incompatible_examples": incompatible_examples,
-    }
+}
+
+
+def _strip_state_entries(
+    state: Mapping[str, torch.Tensor],
+    *,
+    predicate: Callable[[str], bool],
+) -> Mapping[str, torch.Tensor]:
+    if not hasattr(state, "items"):
+        return state
+    filtered = [(key, value) for key, value in state.items() if not predicate(key)]
+    if len(filtered) == len(state):
+        return state
+    state_type = type(state)
+    try:
+        return state_type(filtered)
+    except Exception:  # pragma: no cover - fallback for exotic OrderedDicts
+        return dict(filtered)
+
+
+def _strip_sane_parameters(state: Mapping[str, torch.Tensor]) -> Mapping[str, torch.Tensor]:
+    return _strip_state_entries(state, predicate=lambda key: ".sane_" in key)
 
 
 def _load_checkpoint_state(
@@ -4274,6 +4308,7 @@ class Block(nn.Module):
         attention_capture: AttentionCapture | None = None,
         rope_positions: torch.Tensor | None = None,
         position_offsets: torch.Tensor | None = None,
+        sane_hook=None,
     ) -> tuple[torch.Tensor, torch.Tensor | None, tuple[torch.Tensor, torch.Tensor] | None]:
         attn_input = self._apply_xctx_bias(x, xctx_bias, self.xctx_attn_gain)
         attn_norm = self.ln1(attn_input)
@@ -4295,11 +4330,15 @@ class Block(nn.Module):
             mask = (~attention_disabled_rows).view(-1, 1, 1).to(attn_output.dtype)
             attn_output = attn_output * mask
         x = x + attn_output
+        if sane_hook is not None:
+            sane_hook(layer_idx, "attn", attn_output, x)
         ff_input = self._apply_xctx_bias(x, xctx_bias, self.xctx_mlp_gain)
         pre_ff = self.ln2(ff_input)
         pre_ff = self._apply_grce_bias(pre_ff, grce_bias, self.grce_mlp_ld)
         ff_out, mask = self.ff(pre_ff, record_mask=record_mask)
         x = x + ff_out
+        if sane_hook is not None:
+            sane_hook(layer_idx, "mlp", ff_out, x)
         return x, mask, kv_pair
 
     def forward_incremental(
@@ -4500,6 +4539,8 @@ class TransformerStackCore(CarpetAbsoluteCacheMixin, nn.Module):
         self.head = nn.Linear(self.embedding_dim, config.vocab_size, bias=False)
         self.use_carpet2 = bool(getattr(config, "use_carpet2", False))
         self.use_carpet3 = bool(getattr(config, "use_carpet3", False))
+        self.use_rope_xl = bool(getattr(config, "use_rope_xl", False))
+        self.use_sane = bool(getattr(config, "use_sane", False))
         if self.use_carpet2 or self.use_carpet3:
             self.carpet_setup = None
             self.carpet_abs_dim = 0
@@ -4522,6 +4563,14 @@ class TransformerStackCore(CarpetAbsoluteCacheMixin, nn.Module):
         if self.use_carpet3 and self.carpet_abs_dim > 0:
             self.carpet3_k_scale = nn.Parameter(torch.ones(self.n_head, self.carpet_abs_dim))
             self.carpet3_v_scale = nn.Parameter(torch.ones(self.n_head, self.carpet_abs_dim))
+        self.rope_xl_half_window = float(config.n_pos) / 2.0 if self.use_rope_xl else 0.0
+        self.sane_stream_width = config.n_width // 2 if self.use_sane else 0
+        if self.use_sane:
+            half = self.sane_stream_width
+            self.sane_alpha_attn = nn.Parameter(torch.zeros(config.n_layer, half))
+            self.sane_beta_attn = nn.Parameter(torch.zeros(config.n_layer, half))
+            self.sane_alpha_mlp = nn.Parameter(torch.zeros(config.n_layer, half))
+            self.sane_beta_mlp = nn.Parameter(torch.zeros(config.n_layer, half))
 
     def expand_to_even(self, tensor: torch.Tensor) -> torch.Tensor:
         """Place half-width embedding features into the even data-path slots."""
@@ -4532,6 +4581,41 @@ class TransformerStackCore(CarpetAbsoluteCacheMixin, nn.Module):
         """Extract the odd data-path slots that feed into the LM head."""
 
         return _select_parity_features(tensor, parity=1)
+
+    def _sane_stage_params(self, stage: str) -> tuple[torch.Tensor, torch.Tensor]:
+        if stage == "attn":
+            return self.sane_alpha_attn, self.sane_beta_attn
+        if stage == "mlp":
+            return self.sane_alpha_mlp, self.sane_beta_mlp
+        raise ValueError(f"Unknown SANE stage: {stage}")
+
+    def _apply_sane_propagation(
+        self,
+        *,
+        delta: torch.Tensor,
+        tensor: torch.Tensor,
+        layer_idx: int,
+        stage: str,
+        mode: str,
+    ) -> None:
+        if not self.use_sane or delta is None:
+            return
+        if tensor.size(1) <= 1:
+            return
+        alpha_table, beta_table = self._sane_stage_params(stage)
+        half = self.sane_stream_width
+        if half <= 0:
+            return
+        alpha = alpha_table[layer_idx].view(1, 1, half)
+        beta = beta_table[layer_idx].view(1, 1, half)
+        next_stream = delta[..., 1::2]
+        self_stream = delta[..., ::2]
+        if mode in {"decode", "encode"}:
+            addition = next_stream[:, :-1, :] * alpha
+            tensor[:, 1:, ::2] += addition
+        if mode in {"reverse", "encode"}:
+            addition = self_stream[:, 1:, :] * beta
+            tensor[:, :-1, 1::2] += addition
 
     def loop_embedding(self, repeat: int) -> torch.Tensor | None:
         key = str(int(repeat))
@@ -4611,6 +4695,17 @@ class TransformerStackCore(CarpetAbsoluteCacheMixin, nn.Module):
         repeats = max(1, int(layer_repeat))
         samples: list[torch.Tensor | None] = [None] * len(self.blocks)
         kv_outputs: list[tuple[torch.Tensor, torch.Tensor] | None] = [None] * len(self.blocks)
+        sane_enabled = self.use_sane and mode in {"decode", "reverse", "encode"}
+        sane_hook = None
+        if sane_enabled:
+            def sane_hook(layer_idx: int, stage: str, delta: torch.Tensor, tensor: torch.Tensor) -> None:
+                self._apply_sane_propagation(
+                    delta=delta,
+                    tensor=tensor,
+                    layer_idx=layer_idx,
+                    stage=stage,
+                    mode=mode,
+                )
         for rep_idx in range(repeats):
             for layer_idx, block in enumerate(self.blocks):
                 layer_xctx_bias = None
@@ -4632,6 +4727,7 @@ class TransformerStackCore(CarpetAbsoluteCacheMixin, nn.Module):
                     attention_capture=attention_capture,
                     rope_positions=rope_positions_tensor,
                     position_offsets=position_offsets_tensor,
+                    sane_hook=sane_hook,
                 )
                 samples[layer_idx] = current
                 if kv_pair is None:
@@ -5679,6 +5775,8 @@ def build_model_tag(config: GeometryLike) -> str:
         tag += "_gmlp"
     if getattr(config, "use_rope_xl", False):
         tag += "_ropex"
+    if getattr(config, "use_sane", False):
+        tag += "_sane"
     return tag
 
 
@@ -8924,10 +9022,16 @@ class Runtime:
         if isinstance(payload, dict) and "model" in payload:
             metadata = dict(payload)
             source_state = upgrade_state_dict(payload["model"])
+            src_cfg = payload.get("config")
+            source_use_sane = bool(src_cfg.get("use_sane", False)) if isinstance(src_cfg, dict) else False
         else:
             metadata = {}
             state_dict = payload if isinstance(payload, dict) else payload
             source_state = upgrade_state_dict(state_dict)
+            source_use_sane = False
+        target_use_sane = bool(getattr(self.args, "use_sane", False))
+        if source_use_sane and not target_use_sane:
+            source_state = _strip_sane_parameters(source_state)
         load_summary = _load_checkpoint_state(
             model,
             source_state,
@@ -9247,15 +9351,23 @@ class Runtime:
                     weights_only=False,  # checkpoints also store dataset offsets/counters
                 )
             if payload is not None:
+                saved_config = payload.get("config") if isinstance(payload, dict) else None
+                source_use_sane = bool(saved_config.get("use_sane", False)) if isinstance(saved_config, dict) else False
+                target_use_sane = bool(getattr(self.args, "use_sane", False))
+                allow_partial_load = self.args.allow_shape_mismatch_load or (
+                    target_use_sane and not source_use_sane
+                )
                 load_summary: dict[str, object] | None = None
                 if isinstance(payload, dict) and "model" in payload:
                     self.args.completed_cycles = int(payload.get("completed_cycles", 0) or 0)
                     upgraded = upgrade_state_dict(payload["model"])
+                    if source_use_sane and not target_use_sane:
+                        upgraded = _strip_sane_parameters(upgraded)
                     payload["model"] = upgraded
                     load_summary = _load_checkpoint_state(
                         model,
                         upgraded,
-                        allow_partial=self.args.allow_shape_mismatch_load,
+                        allow_partial=allow_partial_load,
                     )
                     if load_summary["success"]:
                         if self.args.checkpoint_optimizer:
@@ -9276,8 +9388,12 @@ class Runtime:
                 else:
                     load_summary = _load_checkpoint_state(
                         model,
-                        upgrade_state_dict(payload),
-                        allow_partial=self.args.allow_shape_mismatch_load,
+                        upgrade_state_dict(
+                            _strip_sane_parameters(payload)
+                            if (source_use_sane and not target_use_sane and hasattr(payload, "items"))
+                            else payload
+                        ),
+                        allow_partial=allow_partial_load,
                     )
                     if not load_summary["success"]:
                         optimizer_state = None
