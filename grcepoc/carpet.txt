@@ -311,3 +311,20 @@ factor as the RoPE frequencies.
 
 CARPET3 also adds a per-K/V-head learned alpha and beta, that scale the
 amplitude of the added abs position in K and V respectively.
+
+## RoPE-XL
+
+**RoPE-XL** (--use-rope-xl) is a modification of Rotary Positional Embeddings that preserves the standard RoPE behavior for short relative distances but smoothly compresses larger separations so that very long contexts remain distinguishable without phase wraparound.
+
+Let Δ = p₂ − p₁ be the relative position between two tokens and let N be the original RoPE context length parameter. Define S = N/2. RoPE-XL leaves relative offsets unchanged for |Δ| < S, and smoothly compresses larger magnitudes according to
+
+	Δ' = Δ                                     if |Δ| < S
+	Δ' = sign(Δ) * (3S − 2S * sqrt(S / |Δ|))   otherwise
+
+This mapping is continuous and differentiable at |Δ| = S. In particular,
+
+	|Δ| = S      →  S
+	|Δ| = N      →  ≈ 0.793 N
+	|Δ| → ∞      →  1.5 N
+
+Thus RoPE-XL keeps the exact RoPE geometry for short ranges (|Δ| < N/2) while smoothly compressing larger separations into the bounded interval [−1.5 N, 1.5 N]. The smooth transition avoids the slope discontinuity of earlier compression schemes and produces a gradual reduction in effective positional distance as |Δ| grows.

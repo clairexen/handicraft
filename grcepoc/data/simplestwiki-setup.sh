@@ -1,7 +1,7 @@
 #!/bin/bash
 
 set -vx
-vocab=600
+for vocab in 600 30000; do
 
 if [ ! -f simplestwiki_tokens_test_${vocab}.pt ]; then
 	../.venv/bin/python ../corpus.py tokens --tokenizer vocab_${vocab}.json \
@@ -12,3 +12,5 @@ if [ ! -f simplestwiki_tokens_train_${vocab}.pt ]; then
 	../.venv/bin/python ../corpus.py tokens --tokenizer vocab_${vocab}.json \
 			--input simplestwiki-train.txt.gz --output simplestwiki_tokens_train_${vocab}.pt
 fi
+
+done

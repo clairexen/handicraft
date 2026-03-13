@@ -118,6 +118,7 @@ class ModelGeometry:
     use_carpet2: bool = False
     use_carpet3: bool = False
     use_gmlp: bool = False
+    use_rope_xl: bool = False
 
     @property
     def block_size(self) -> int:
@@ -145,6 +146,7 @@ class Defaults:
     use_carpet2: bool = MODEL_GEOMETRY_DEFAULTS.use_carpet2
     use_carpet3: bool = MODEL_GEOMETRY_DEFAULTS.use_carpet3
     use_gmlp: bool = MODEL_GEOMETRY_DEFAULTS.use_gmlp
+    use_rope_xl: bool = MODEL_GEOMETRY_DEFAULTS.use_rope_xl
     corpus: str | None = None
     steps: int = 100
     cycles: int = 100
@@ -1153,6 +1155,15 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         help="Use gated MLP feed-forward blocks (adds a second 4x projection as a multiplicative gate)",
     )
     model_group.add_argument(
+        "--use-rope-xl",
+        action="store_true",
+        default=DEFAULTS.use_rope_xl,
+        help=(
+            "Enable the RoPE-XL mapping that compresses relative offsets beyond N/2 into a capped range; "
+            "requires even --n-pos and conflicts with CARPET variants"
+        ),
+    )
+    model_group.add_argument(
         "--n-grce",
         type=int,
         default=DEFAULTS.n_grce,
@@ -1730,32 +1741,16 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     create_parser.set_defaults(command="create")
-    create_import_group = create_parser.add_argument_group("Checkpoint import tweaks")
-    create_import_group.add_argument(
-        "--import-model",
-        dest="create_import_model",
+    import_parser = subparsers.add_parser(
+        "import",
+        help="Convert an existing checkpoint to the configured geometry",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    import_parser.set_defaults(command="import")
+    import_parser.add_argument(
+        "import_source",
         type=pathlib.Path,
-        help="Initialize from another checkpoint when creating a new model",
-    )
-    create_import_group.add_argument(
-        "--trim-model",
-        dest="create_trim_model",
-        action="store_true",
-        help="Allow importing into a smaller model by dropping overflow",
-    )
-    create_import_group.add_argument(
-        "--drop-layers",
-        dest="create_drop_layers",
-        type=str,
-        default="",
-        help="Comma-separated layer numbers (1-indexed) to remove during import",
-    )
-    create_import_group.add_argument(
-        "--add-layers",
-        dest="create_add_layers",
-        type=str,
-        default="",
-        help="Comma-separated layer numbers (1-indexed) to insert during import",
+        help="Path to the checkpoint .pt file to import",
     )
 
     corpus_parser = subparsers.add_parser(
@@ -1835,7 +1830,7 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         parser.print_help()
         parser.exit(
             1,
-            "\nPlease specify a command (train, report, test, size, corpus, create, or prompts).\n",
+            "\nPlease specify a command (train, try, report, test, eval, profile, size, corpus, create, import, or prompts).\n",
         )
 
 
@@ -1912,12 +1907,15 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
     use_carpet = bool(getattr(args, "use_carpet", False))
     use_carpet2 = bool(getattr(args, "use_carpet2", False))
     use_carpet3 = bool(getattr(args, "use_carpet3", False))
-    enabled_variants = sum((use_carpet, use_carpet2, use_carpet3))
+    use_rope_xl = bool(getattr(args, "use_rope_xl", False))
+    enabled_variants = sum((use_carpet, use_carpet2, use_carpet3, use_rope_xl))
     if enabled_variants > 1:
-        raise ValueError("--use-carpet, --use-carpet2, and --use-carpet3 are mutually exclusive")
+        raise ValueError("--use-carpet, --use-carpet2, --use-carpet3, and --use-rope-xl are mutually exclusive")
     if use_carpet2 or use_carpet3:
         if args.n_pos != 1024 or args.n_rope != 64:
             raise ValueError("CARPET2/3 requires --n-pos 1024 and --n-rope 64")
+    if use_rope_xl and (args.n_pos % 2 != 0):
+        raise ValueError("--use-rope-xl requires an even --n-pos")
     args.checkpoint_dirty = False
 
     # --------------------------------------------------------
@@ -1934,28 +1932,6 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
 
     # --------------------------------------------------------
     # Parse "create" sub-command args
-
-    if args.command == "create":
-        def parse_layer_list(value: str, flag: str) -> list[int]:
-            if not value:
-                return []
-            try:
-                entries = [int(part) for part in value.split(",") if part]
-            except ValueError as exc:
-                raise ValueError(f"{flag} must be a comma-separated list of integers") from exc
-            return entries
-
-        args.create_args = Args(
-            import_model=args.create_import_model,
-            trim_model=args.create_trim_model,
-            drop_layers=parse_layer_list(args.create_drop_layers, "--drop-layers"),
-            add_layers=parse_layer_list(args.create_add_layers, "--add-layers"),
-        )
-
-        if (args.create_args.drop_layers or args.create_args.add_layers) and not args.create_args.import_model:
-            raise ValueError("--drop-layers/--add-layers are only valid with --import-model")
-        if args.create_args.trim_model and not args.create_args.import_model:
-            raise ValueError("--trim-model is only valid with --import-model")
 
     return args
 
@@ -1981,6 +1957,7 @@ def args_to_model_geometry(args: Args):
         use_carpet2=getattr(args, "use_carpet2", MODEL_GEOMETRY_DEFAULTS.use_carpet2),
         use_carpet3=getattr(args, "use_carpet3", MODEL_GEOMETRY_DEFAULTS.use_carpet3),
         use_gmlp=getattr(args, "use_gmlp", MODEL_GEOMETRY_DEFAULTS.use_gmlp),
+        use_rope_xl=getattr(args, "use_rope_xl", MODEL_GEOMETRY_DEFAULTS.use_rope_xl),
     )
 
 
@@ -3419,15 +3396,19 @@ class CausalSelfAttention(CarpetAbsoluteCacheMixin, nn.Module):
         self.total_rope_dim = resolved_rope
         self.use_carpet2 = bool(getattr(config, "use_carpet2", False))
         self.use_carpet3 = bool(getattr(config, "use_carpet3", False))
+        self.use_rope_xl = bool(getattr(config, "use_rope_xl", False))
         if (self.use_carpet2 or self.use_carpet3) and getattr(config, "use_carpet", False):
             raise ValueError("CARPET variants are mutually exclusive")
         if self.use_carpet2 and self.use_carpet3:
             raise ValueError("--use-carpet2 and --use-carpet3 cannot be combined")
-        carpet_setup = None if (self.use_carpet2 or self.use_carpet3) else _resolve_carpet_setup(config, resolved_rope)
+        if self.use_rope_xl and (self.use_carpet2 or self.use_carpet3 or getattr(config, "use_carpet", False)):
+            raise ValueError("RoPE-XL cannot be combined with CARPET variants")
+        carpet_setup = None if (self.use_carpet2 or self.use_carpet3 or self.use_rope_xl) else _resolve_carpet_setup(config, resolved_rope)
         self.carpet_setup = carpet_setup
         self.carpet_rho = None
         self.rope_dim = resolved_rope
         self.carpet_abs_dim = 0
+        self.rope_xl_half_window = float(config.n_pos) / 2.0 if self.use_rope_xl else 0.0
         if self.use_carpet2 or self.use_carpet3:
             if resolved_rope <= 0:
                 raise ValueError("CARPET2/3 requires --n-rope to be set")
@@ -3601,12 +3582,34 @@ class CausalSelfAttention(CarpetAbsoluteCacheMixin, nn.Module):
         if positions.numel() == 0:
             empty = torch.empty(0, self.rope_dim // 2, device=device, dtype=dtype)
             return empty, empty
+        if self.use_rope_xl:
+            mapped = self._rope_xl_map_positions(
+                positions.to(device=device, dtype=torch.float32)
+            )
+            inv = self.rope_inv_freq.to(device=device, dtype=torch.float32)
+            freqs = torch.outer(mapped, inv)
+            cos = torch.cos(freqs).to(dtype=dtype)
+            sin = torch.sin(freqs).to(dtype=dtype)
+            return cos, sin
         max_pos = int(positions.max().item()) + 1
         self._ensure_rope_cache(max_pos)
         index = positions.to(device=self.rope_cos_cached.device, dtype=torch.long)
         cos = self.rope_cos_cached.index_select(0, index).to(device=device, dtype=dtype)
         sin = self.rope_sin_cached.index_select(0, index).to(device=device, dtype=dtype)
         return cos, sin
+
+    def _rope_xl_map_positions(self, positions: torch.Tensor) -> torch.Tensor:
+        half = self.rope_xl_half_window
+        if half <= 0:
+            return positions
+        abs_vals = positions.abs()
+        mask = abs_vals <= half
+        denom = abs_vals.clamp_min(1e-9)
+        half_tensor = positions.new_full((), half)
+        ratio = half_tensor / denom
+        scaled = (3.0 * half_tensor) - (2.0 * half_tensor * torch.sqrt(ratio))
+        mapped = torch.where(mask, abs_vals, scaled)
+        return mapped * positions.sign()
 
     def _rope_cos_sin_with_offsets(
         self,
@@ -5674,6 +5677,8 @@ def build_model_tag(config: GeometryLike) -> str:
         tag += "_carpet3"
     if getattr(config, "use_gmlp", False):
         tag += "_gmlp"
+    if getattr(config, "use_rope_xl", False):
+        tag += "_ropex"
     return tag
 
 
@@ -8901,6 +8906,53 @@ class Runtime:
         )
         return 0
 
+    def cli_import(
+        self,
+        *,
+        model: GRCEGPT,
+        model_path: pathlib.Path,
+        tokenizer_json: str,
+        device: torch.device,
+    ) -> int:
+        source_path: pathlib.Path | None = getattr(self.args, "import_source", None)
+        if source_path is None:
+            raise ValueError("import command requires a source checkpoint path")
+        if not source_path.exists():
+            raise FileNotFoundError(f"Import checkpoint {source_path} not found")
+        payload = torch.load(source_path, map_location=device, weights_only=False)
+        metadata: dict[str, Any]
+        if isinstance(payload, dict) and "model" in payload:
+            metadata = dict(payload)
+            source_state = upgrade_state_dict(payload["model"])
+        else:
+            metadata = {}
+            state_dict = payload if isinstance(payload, dict) else payload
+            source_state = upgrade_state_dict(state_dict)
+        load_summary = _load_checkpoint_state(
+            model,
+            source_state,
+            allow_partial=True,
+        )
+        if not load_summary.get("success", False):
+            _log_partial_checkpoint_warning(load_summary)
+        reused = int(load_summary.get("reused", 0))
+        total = int(load_summary.get("total", 0))
+        metadata.pop("optimizer", None)
+        metadata["model"] = model.state_dict()
+        metadata["config"] = asdict(args_to_model_geometry(self.args))
+        metadata["tokenizer_json"] = tokenizer_json or metadata.get("tokenizer_json")
+        atomic_torch_save(metadata, model_path)
+        print(
+            color_text(
+                (
+                    f"Imported checkpoint from {source_path} -> {model_path}; "
+                    f"reused {reused}/{total} tensors"
+                ),
+                Colors.GREEN,
+            )
+        )
+        return 0
+
     def _print_corpus_listing(self, corpua: Sequence[dict[str, int]]) -> None:
         if not corpua:
             print(color_text("No corpora registered in checkpoint", Colors.YELLOW))
@@ -8998,10 +9050,10 @@ class Runtime:
                 )
                 return 1
 
-            if self.args.command != "create" and self.args.tokenizer:
+            if self.args.command not in {"create", "import"} and self.args.tokenizer:
                 print(
                     color_text(
-                        "--tokenizer is only supported with the 'create' command; remove it and rerun.",
+                        "--tokenizer is only supported with the 'create' or 'import' commands; remove it and rerun.",
                         Colors.RED,
                         bold=True,
                     )
@@ -9024,7 +9076,7 @@ class Runtime:
             ):
                 self.args.tokenizer_json_override = payload.get("tokenizer_json")
 
-            tokenizer_needed = self.args.command not in {"create", "corpus", "size"}
+            tokenizer_needed = self.args.command not in {"create", "import", "corpus", "size"}
             if tokenizer_needed and not self.args.tokenizer_json_override:
                 print(
                     color_text(
@@ -9046,7 +9098,7 @@ class Runtime:
                 return self.cli_json_export(model_path, payload if isinstance(payload, dict) else None)
 
             needs_dataset = self.args.command in dataset_commands
-            if self.args.command == "create":
+            if self.args.command in {"create", "import"}:
                 (
                     tokenizer,
                     newline_token_id,
@@ -9189,10 +9241,6 @@ class Runtime:
             payload = getattr(self.args, "checkpoint_payload_override", None)
             optimizer_state = None
             if payload is None and model_path.exists():
-                if self.args.command == "create" and self.args.create_args.import_model:
-                    raise ValueError(
-                        "--import-model can only be used when no existing checkpoint is present"
-                    )
                 payload = torch.load(
                     model_path,
                     map_location=device,
@@ -9243,66 +9291,15 @@ class Runtime:
                         Colors.YELLOW,
                     )
                 )
-            elif self.args.command == "create" and self.args.create_args.import_model:
-                import_timer = Timer().start()
-                if not self.args.create_args.import_model.exists():
-                    raise FileNotFoundError(
-                        f"Import checkpoint {self.args.create_args.import_model} not found"
-                    )
-                source_state, meta = load_checkpoint_payload(self.args.create_args.import_model, device)
-                src_config = meta.get("config")
-                if src_config is None:
-                    raise ValueError(
-                        "Imported checkpoint lacks config metadata; re-save it with the new format"
-                    )
-                if src_config.get("n_head") != config.n_head:
-                    raise ValueError("Cannot import from a checkpoint with a different --n-head value")
-                src_layers = src_config.get("n_layer")
-                if src_layers is None:
-                    src_layers = count_layers_from_state(source_state)
-                print(color_text(f"Importing weights from {self.args.create_args.import_model}", Colors.GREEN))
-                mapping = build_layer_mapping(
-                    src_layers,
-                    config.n_layer,
-                    self.args.create_args.drop_layers,
-                    self.args.create_args.add_layers,
-                    allow_trim=self.args.create_args.trim_model,
+            if self.args.command == "import":
+                if tokenizer_json is None:
+                    raise RuntimeError("Tokenizer JSON is required for the import command")
+                return self.cli_import(
+                    model=model,
+                    model_path=model_path,
+                    tokenizer_json=tokenizer_json,
+                    device=device,
                 )
-                apply_imported_state(
-                    model,
-                    source_state,
-                    allow_trim=self.args.create_args.trim_model,
-                    mapping=mapping,
-                )
-                train_step_index = int(meta.get("train_step_index", 0) or 0)
-                total_train_wall = float(meta.get("train_wall_seconds", 0.0))
-                total_train_tokens = int(meta.get("total_train_tokens", 0) or 0)
-                loss_history = []
-                write_timer = Timer().start()
-                atomic_torch_save(
-                    {
-                        "model": model.state_dict(),
-                        "train_step_index": train_step_index,
-                        "total_steps": train_step_index,
-                        "loss_history": loss_history,
-                        "config": asdict(args_to_model_geometry(self.args)),
-                        "train_wall_seconds": total_train_wall,
-                        "total_train_tokens": total_train_tokens,
-                        "prompts": prompt_registry.serialize() if prompt_registry else None,
-                        "tokenizer_json": tokenizer_json,
-                        "completed_cycles": int(meta.get("completed_cycles", 0)),
-                        "corpua": self.corpua,
-                    },
-                    model_path,
-                )
-                print(
-                    color_text(
-                        f"[import] total steps: {train_step_index}; time spent (wall/cpu/gpu): {import_timer.stop()}; writing model: {write_timer.stop()}",
-                        Colors.CYAN,
-                    )
-                )
-                return
-
             if getattr(self.args, "_cycles_is_delta", False):
                 delta = int(getattr(self.args, "_cycles_delta", 0))
                 base_cycles = int(getattr(self.args, "completed_cycles", 0))
