@@ -264,3 +264,30 @@ CARPET constructs a dual coordinate system:
 Structured dropout and randomized phase placement prevent reliance on a single
 positional mechanism and encourage robust long‑context retrieval and
 disambiguation.
+
+---------------------------------------------------------
+
+## CARPET2
+
+The --use-carpet2 behavior in grce.py is as following: This is an experiment and
+only defined for N=1024 and dims=64. And we assume S=32.
+
+Let p be a position (token index). Its effective absolute position is:
+
+	p_abs = p                          abs(p) < N
+	p_abs = 1.5*N - 0.5*N*N / p        otherwise
+
+Let p1 and p2 be two positions (token indices). Their effective relative
+position is:
+
+	p_rel = p2-p1                           abs(p2-p1) < S
+	p_rel = 1.5*S - 0.5*S*S / (p2-p1)       otherwise
+
+We allocate d_abs = d_rel = dims/2 dimensions to abs and rel addressing respectively.
+
+We run RoPE on a N=32 ring with m_rel = d_rel/2 frequencies on the lowest d_rel
+dimensions, except that we use p_rel as the effective relative position.
+
+For the abs position on the higher d_abs dimensions we use the same m_rel
+frequencies as for RoPE, but divided by 32. And instead of rotating pairs in Q we
+simply add the absolute position to all K/V.

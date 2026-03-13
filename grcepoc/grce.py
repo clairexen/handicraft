@@ -224,6 +224,8 @@ from contextlib import contextmanager, nullcontext
 import random
 from typing import Iterator, List, Sequence
 
+global_runtime_args: Args | None = None
+
 
 _MODE_ALIASES: dict[str, str] = {
     "e": "encode",
@@ -1878,6 +1880,7 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         args.log_step_details = True
 
     args.prompt = normalize_prompt(args.prompt)
+    args.checkpoint_dirty = False
 
     # --------------------------------------------------------
     # Add non-inverted option names and values for --no-* options
@@ -6299,6 +6302,8 @@ def atomic_torch_save(payload: dict, target_path: pathlib.Path) -> None:
     target_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(payload, tmp_path)
     tmp_path.replace(target_path)
+    if hasattr(global_runtime_args, "checkpoint_dirty"):
+        global_runtime_args.checkpoint_dirty = True
 
 
 def _jsonify_checkpoint_value(value: Any) -> Any:
@@ -8739,8 +8744,9 @@ class Runtime:
 
             cmdline = " ".join(shlex.quote(arg) for arg in sys.argv)
             timestamp = datetime.now(timezone.utc).isoformat()
-            log_mode = self.args.command in {"train", "report", "test", "profile", "try"}
-            log_mode = log_mode or bool(getattr(self.args, "log_all", False))
+            log_mode = bool(getattr(self.args, "log_all", False))
+            if not log_mode and getattr(global_runtime_args, "checkpoint_dirty", False):
+                log_mode = True
             log_file = None
             if log_mode:
                 log_file = log_path.open("a", encoding="utf-8")
