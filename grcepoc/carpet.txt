@@ -270,18 +270,19 @@ disambiguation.
 ## CARPET2
 
 The --use-carpet2 behavior in grce.py is as following: This is an experiment and
-only defined for N=1024 and dims=64. And we assume S=32.
+only defined for N=1024 and dims=64. And we assume S=32. (Using --use-carpet2
+will produce an error for any other n_pos or n_rope.)
 
 Let p be a position (token index). Its effective absolute position is:
 
-	p_abs = p                          abs(p) < N
-	p_abs = 1.5*N - 0.5*N*N / p        otherwise
+	p_abs = p                                         abs(p) < N
+	p_abs = sign(p)*(1.5*N - 0.5*N*N / abs(p))        otherwise
 
 Let p1 and p2 be two positions (token indices). Their effective relative
 position is:
 
-	p_rel = p2-p1                           abs(p2-p1) < S
-	p_rel = 1.5*S - 0.5*S*S / (p2-p1)       otherwise
+	p_rel = p2-p1                                           abs(p2-p1) < S
+	p_rel = sign(p2-p1)*(1.5*S - 0.5*S*S / abs(p2-p1))      otherwise
 
 We allocate d_abs = d_rel = dims/2 dimensions to abs and rel addressing respectively.
 
@@ -291,3 +292,22 @@ dimensions, except that we use p_rel as the effective relative position.
 For the abs position on the higher d_abs dimensions we use the same m_rel
 frequencies as for RoPE, but divided by 32. And instead of rotating pairs in Q we
 simply add the absolute position to all K/V.
+
+## CARPET3
+
+The --use-carpet3 behavior in grce.py is as following: This is an experiment and
+only defined for N=1024 and dims=64. And we assume S=32. (Using --use-carpet3
+will produce an error for any other n_pos or n_rope.)
+
+We use d_rel = 48 and d_abs = 16. We set S = N = 1024 for p_abs and p_rel.
+
+The 48 RoPE dimensions simply implement RoPE on 24 frequencies with N=1024
+(except for the use of p_rel instead of the actual relative position for
+larger-than-N values).
+
+The longest abs period relates to N in the same way the shortest RoPE
+period relates to 1. The other abs frequencies spaced by the same geometric
+factor as the RoPE frequencies.
+
+CARPET3 also adds a per-K/V-head learned alpha and beta, that scale the
+amplitude of the added abs position in K and V respectively.

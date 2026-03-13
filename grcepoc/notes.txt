@@ -984,22 +984,58 @@ for mode in short long; do python -c "import pstats; pstats.Stats('model_pod1/pr
 
 ---------------------------------------------------------------------------
 
+Layout mixes for --small training on G4090:
+s-tilted:
+  --layout "(128[64D]|(64[128D]|(32[256D]|(16[512D]|8[1024D]|32[64E=64D2Y=64D3Y=64D4Y]))))"
+untilted:
+  --layout "(128[64D]|64[128D]|32[256D]|16[512D]|8[1024D]|32[64E=64D2Y=64D3Y=64D4Y])"
+
+---------------------------------------------------------------------------
+
 Current experiment:
+
+----
+
+python grce.py --pt model/wp_en_small_RoPE48_GMLP_Q4_ED4Y.pt --small --use-gmlp --n-query 4 --n-rope 48 create
+python grce.py --pt model/wp_en_small_RoPE48_GMLP_Q4_ED4Y.pt corpus --add wikipedia-en-000{0,1,2,3,4,5,6,7}
+python grce.py --pt model/wp_en_small_RoPE48_GMLP_Q4_ED4Y.pt --cycles 10 \
+  --layout "(128[64D]|64[128D]|32[256D]|16[512D]|8[1024D]|32[64E=64D2Y=64D3Y=64D4Y])" \
+  --lr-warmup-steps 100 --align-articles --generate-with-decode train --json
+
+python grce.py --pt model/wp_en_small_CARPET_GMLP_Q4_ED4Y.pt --small --use-carpet --n-rope 64 --use-gmlp --n-query 4 create
+python grce.py --pt model/wp_en_small_CARPET_GMLP_Q4_ED4Y.pt corpus --add wikipedia-en-000{0,1,2,3,4,5,6,7}
+python grce.py --pt model/wp_en_small_CARPET_GMLP_Q4_ED4Y.pt --cycles 10 \
+  --layout "(128[64D]|64[128D]|32[256D]|16[512D]|8[1024D]|32[64E=64D2Y=64D3Y=64D4Y])" \
+  --lr-warmup-steps 100 --align-articles --generate-with-decode train --json
+
+python grce.py --pt model/wp_en_small_CARPET2_GMLP_Q4_ED4Y.pt --small --use-carpet2 --n-rope 64 --use-gmlp --n-query 4 create
+python grce.py --pt model/wp_en_small_CARPET2_GMLP_Q4_ED4Y.pt corpus --add wikipedia-en-000{0,1,2,3,4,5,6,7}
+python grce.py --pt model/wp_en_small_CARPET2_GMLP_Q4_ED4Y.pt --cycles 10 \
+  --layout "(128[64D]|64[128D]|32[256D]|16[512D]|8[1024D]|32[64E=64D2Y=64D3Y=64D4Y])" \
+  --lr-warmup-steps 100 --align-articles --generate-with-decode train --json
+
+# --
 
 python grce.py --pt model/wp_en_small_RoPE_GMLP_Q4_ED4Y.pt --small --use-gmlp --n-query 4 create
 python grce.py --pt model/wp_en_small_RoPE_GMLP_Q4_ED4Y.pt corpus --add wikipedia-en-000{0,1,2,3,4,5,6,7}
 python grce.py --pt model/wp_en_small_RoPE_GMLP_Q4_ED4Y.pt --cycles 300 \
-  --lr-warmup-steps 100 --lr-cosine-steps 200 --align-articles --generate-with-decode \
-  --layout "(128[64D]|(64[128D]|(32[256D]|(16[512D]|8[1024D]|32[64E=64D2Y=64D3Y=64D4Y]))))" train --json
+  --layout "(128[64D]|64[128D]|32[256D]|16[512D]|8[1024D]|32[64E=64D2Y=64D3Y=64D4Y])" \
+  --lr-warmup-steps 100 --lr-cosine-steps 200 --align-articles --generate-with-decode train --json
 
-python grce.py --pt model/wp_en_small_CARPET_GMLP_Q4_ED4Y.pt --small --use-carpet --use-gmlp --n-query 4 create
-python grce.py --pt model/wp_en_small_CARPET_GMLP_Q4_ED4Y.pt corpus --add wikipedia-en-000{0,1,2,3,4,5,6,7}
-python grce.py --pt model/wp_en_small_CARPET_GMLP_Q4_ED4Y.pt --cycles 300 \
-  --lr-warmup-steps 100 --lr-cosine-steps 200 --align-articles --generate-with-decode \
-  --layout "(128[64D]|(64[128D]|(32[256D]|(16[512D]|8[1024D]|32[64E=64D2Y=64D3Y=64D4Y]))))" train --json
+python grce.py --pt model/wp_en_small_CARPET3_GMLP_Q4_ED4Y.pt --small --use-carpet3 --n-rope 64 --use-gmlp --n-query 4 create
+python grce.py --pt model/wp_en_small_CARPET3_GMLP_Q4_ED4Y.pt corpus --add wikipedia-en-000{0,1,2,3,4,5,6,7}
+python grce.py --pt model/wp_en_small_CARPET3_GMLP_Q4_ED4Y.pt --cycles 300 \
+  --layout "(128[64D]|64[128D]|32[256D]|16[512D]|8[1024D]|32[64E=64D2Y=64D3Y=64D4Y])" \
+  --lr-warmup-steps 100 --lr-cosine-steps 200 --align-articles --generate-with-decode train --json
 
-python grce.py --pt model/wp_en_small_CARPET_GMLP_Q4_ED4Y.pt --batch-size 32 --layout '1[1024D]' eval --rand 10000 > eval_carpet.txt
-python grce.py --pt model/wp_en_small_RoPE_GMLP_Q4_ED4Y.pt --batch-size 32 --layout '1[1024D]' eval --rand 10000 > eval_rope.txt
+# python grce.py --pt model/wp_en_small_RoPE_GMLP_Q4_ED4Y.pt --batch-size 32 --layout '1[1024D]' eval --rand 10000 > model/eval_rope.txt
+# python grce.py --pt model/wp_en_small_CARPET3_GMLP_Q4_ED4Y.pt --batch-size 32 --layout '1[1024D]' eval --rand 10000 > model/eval_carpet3.txt
+
+
+
+
+
+
 
 --
 
@@ -1032,6 +1068,31 @@ python grce.py --pt model/wp_en_small_CARPET_GMLP_Q4_ED4Y_xlonger.pt --cycles 10
 
 python grce.py --pt model/wp_en_small_CARPET_GMLP_Q4_ED4Y_xlonger.pt --batch-size 32 --layout '1[1024D]' eval --rand 10000 > eval3_carpet.txt
 python grce.py --pt model/wp_en_small_RoPE_GMLP_Q4_ED4Y_xlonger.pt --batch-size 32 --layout '1[1024D]' eval --rand 10000 > eval3_rope.txt
+
+--
+
+python grce.py --pt model/wp_en_small_CARPET3_GMLP_Q4_ED4Y.pt --small --use-carpet3 --use-gmlp --n-query 4 --n-rope 64 create
+python grce.py --pt model/wp_en_small_CARPET3_GMLP_Q4_ED4Y.pt corpus --add wikipedia-en-000{0,1,2,3,4,5,6,7}
+python grce.py --pt model/wp_en_small_CARPET3_GMLP_Q4_ED4Y.pt --cycles 300 \
+  --lr-warmup-steps 100 --lr-cosine-steps 200 --align-articles --generate-with-decode \
+  --layout "(128[64D]|(64[128D]|(32[256D]|(16[512D]|8[1024D]|32[64E=64D2Y=64D3Y=64D4Y]))))" train --json
+
+python grce.py --pt model/wp_en_small_CARPET3_GMLP_Q4_ED4Y.pt --batch-size 32 --layout '1[1024D]' eval --rand 10000 > eval_carpet2.txt
+
+cp model/wp_en_small_CARPET3_GMLP_Q4_ED4Y.pt model/wp_en_small_CARPET3_GMLP_Q4_ED4Y_longer.pt
+python grce.py --pt model/wp_en_small_CARPET3_GMLP_Q4_ED4Y_longer.pt reset
+python grce.py --pt model/wp_en_small_CARPET3_GMLP_Q4_ED4Y_longer.pt --cycles 50 \
+  --lr-warmup-steps 100 --lr-cosine-steps 200 --align-articles --generate-with-decode \
+  --layout "(128[64D]|64[128D]|32[256D]|16[512D]|8[1024D]|32[64E=64D2Y=64D3Y=64D4Y])" train --json
+
+python grce.py --pt model/wp_en_small_CARPET3_GMLP_Q4_ED4Y_longer.pt --batch-size 32 --layout '1[1024D]' eval --rand 10000 > eval2_carpet2.txt
+
+cp model/wp_en_small_CARPET3_GMLP_Q4_ED4Y_longer.pt model/wp_en_small_CARPET3_GMLP_Q4_ED4Y_xlonger.pt
+python grce.py --pt model/wp_en_small_CARPET3_GMLP_Q4_ED4Y_xlonger.pt reset
+python grce.py --pt model/wp_en_small_CARPET3_GMLP_Q4_ED4Y_xlonger.pt --cycles 100 \
+  --lr-warmup-steps 100 --lr-cosine-steps 200 --align-articles --generate-with-decode --layout "8[1024D]" train --json
+
+python grce.py --pt model/wp_en_small_CARPET3_GMLP_Q4_ED4Y_xlonger.pt --batch-size 32 --layout '1[1024D]' eval --rand 10000 > eval3_carpet2.txt
 
 ----
 
