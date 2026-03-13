@@ -2,6 +2,35 @@
 
 This proposal introduces **SANE (Self-And-Next Encoder)** transformers, a looping transformer architecture that constructs and iteratively refines a short latent continuation of future tokens. The model state is divided into two interleaved streams within the hidden dimension: the **self stream** (even dimensions), representing the current position, and the **next stream** (odd dimensions), representing a prediction of the following position. Token embeddings are injected only into the self stream, while the next stream is initialized to zero. After each transformer pass the model produces a refined self representation and a next representation that acts as a latent proposal for the subsequent position.
 
+The transformer adds function outputs to its state vector twice per layer: at the end of attention and then again at the end of the MLP. For each of these two points in each layer we learn an "alpha" vector of per-self-feature scalars and a "beta" vector of per-next-feature scalars.
+
+Whenever we update
+
+	state_at_pos(i) += delta_i
+
+we also perform
+
+	self(state_at_pos(i+1)) += alpha .* next(delta_i)      ... in "decode" or "encode" mode
+	netxt(state_at_pos(i-1)) += beta .* self(delta_i)      ... in "reverse" or "encode" mode
+
+For a first proof-of-concept implementation it is sufficient to only implement the SANE alpha and beta channels within a "Grid".
+
+
+
+
+
+
+
+
+
+
+
+
+
+----------------------------------------------------------
+
+
+
 Instead of repeatedly refining a single token position `N` times, loop iterations expand into a **multi-position encoder span**, that we call **think-ahead blocks**. The first loop processes the current token at position `t`. In later loops additional positions are introduced so that after `H <= N` iterations the model operates on a span `[t, t+1, …, t+H−1]`. All H positions form an encoder-style transformer block and therefore attend to each other, allowing the model to jointly refine representations of the current token and several predicted future tokens. When `H < N` the model spends additional `N-H` loop iterations on the H-wide encoder, refining the predicted multi-position sequence.
 
 The **current next → future self propagation rule** is applied between loop iterations and forwards data from each position to the next: After applying RMSNorm without affine parameters to the loop outputs, we extract the "next" stream produced at position `t`, apply a learned LayerNorm, then add it to the "self" stream at position `t+1`. This creates a high-bandwith path from one position to the next, with the semantic role of aligning the future "self" with the current "next".

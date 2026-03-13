@@ -1013,9 +1013,9 @@ python grce.py --pt model/wp_en_XS_GMLP_Q4_ED4Y.pt --cycles 300 \
 
 cp model/wp_en_XS_GMLP_Q4_ED4Y.pt model/wp_en_XS_GMLP_Q4_ED4Y_simplestwiki_F.pt
 python grce.py --pt model/wp_en_XS_GMLP_Q4_ED4Y_simplestwiki_F.pt reset
-python grce.py --pt model/wp_en_XS_GMLP_Q4_ED4Y_simplestwiki_F.pt corpus --set simplestwiki
+python grce.py --pt model/wp_en_XS_GMLP_Q4_ED4Y_simplestwiki_F.pt corpus --set --reuse 100 simplestwiki
 
-python grce.py --pt model/wp_en_XS_GMLP_Q4_ED4Ysimplestwiki_F.pt --cycles 300 --layout "8C[1000D=24f]" \
+python grce.py --pt model/wp_en_XS_GMLP_Q4_ED4Y_simplestwiki_F.pt --cycles 100 --layout "32C[64E=64D=64f]" \
   --lr-warmup-steps 100 --lr-cosine-steps 200 --align-articles train --json
 
 ----
