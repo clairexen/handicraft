@@ -1034,6 +1034,12 @@ Current experiments:
 python grce.py --pt model/wp_en_XS_GMLP_Q4_ED4Y_simplestwiki_F.pt --cycles 100 --layout "32C[64E=64D=64f]" \
   --lr-warmup-steps 100 --lr-cosine-steps 200 --align-articles train --json
 
+cp model/wp_en_XS_GMLP_Q4_ED4Y.pt model/wp_en_XS_GMLP_Q4_ED4Y_wikipedia_F.pt
+python grce.py --pt model/wp_en_XS_GMLP_Q4_ED4Y_wikipedia_F.pt reset
+
+python grce.py --pt model/wp_en_XS_GMLP_Q4_ED4Y_wikipedia_F.pt --cycles 100 --layout "32C[64E=64D=64f]" \
+  --lr-warmup-steps 100 --lr-cosine-steps 200 --align-articles train --json
+
 ----
 
 ## SANE experiment
