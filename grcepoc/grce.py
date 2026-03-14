@@ -3250,6 +3250,12 @@ class TextDataset:
 # GRCE Model Components
 # -----------------------------------------------------------------------------
 
+CONTROL_NONE = 0
+CONTROL_PREDICT_NEXT = 1
+CONTROL_PREDICT_PREV = 2
+CONTROL_FIND_SELF = 3
+CONTROL_EMBEDDING_ROWS = 4
+
 
 def _expand_tensor_to_parity(
     tensor: torch.Tensor, full_dim: int, parity: int
@@ -6586,13 +6592,6 @@ def _loss_sum_token_count_internal(
     row_loss_sums = (per_token * valid_mask).sum(dim=1)
     row_token_counts = valid_mask.sum(dim=1)
     return loss_sum, token_count, row_loss_sums, row_token_counts
-
-
-CONTROL_NONE = 0
-CONTROL_PREDICT_NEXT = 1
-CONTROL_PREDICT_PREV = 2
-CONTROL_FIND_SELF = 3
-CONTROL_EMBEDDING_ROWS = 4
 
 
 def _token_embeddings_with_offsets(
