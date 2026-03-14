@@ -3,6 +3,7 @@
 /data/*-test.txt.gz
 /data/*-train.txt.gz
 /data/dolma-cccc-filtered-[0-9][0-9][0-9][0-9].json.gz
+/data/gsm8k-*.jsonl.gz
 /.venv/
 /.backup/
 /model/
