@@ -48,7 +48,7 @@ SSH_OPTS=("${SSH_ARGS[@]:2}")
 SSH_OPTS+=("-o" "StrictHostKeyChecking=no" "-o" "UserKnownHostsFile=/dev/null")
 RSYNC_SSH=("$SSH_BIN" "${SSH_OPTS[@]}")
 RSYNC_COMMON=(-avz --no-perms --no-owner --no-group)
-LOCAL_MODEL_DIR="$ROOT_DIR/model_pod$((LINE_INDEX + 1))"
+LOCAL_MODEL_DIR="$ROOT_DIR/model"
 POD_NAME="grce_pod$((LINE_INDEX + 1))"
 
 join_cmd() {
