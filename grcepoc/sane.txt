@@ -1,4 +1,6 @@
-**SANE: Self-And-Next Encoder Transformers for Latent Think-Ahead Generation**
+## SANE: Self-And-Next Encoder Transformers for Latent Think-Ahead Generation
+
+### Self-And-Next Encoding
 
 This proposal introduces **SANE (Self-And-Next Encoder)** transformers, a looping transformer architecture that constructs and iteratively refines a short latent continuation of future tokens. The model state is divided into two interleaved streams within the hidden dimension: the **self stream** (even dimensions), representing the current position, and the **next stream** (odd dimensions), representing a prediction of the following position. Token embeddings are injected only into the self stream, while the next stream is initialized to zero. After each transformer pass the model produces a refined self representation and a next representation that acts as a latent proposal for the subsequent position.
 
@@ -19,7 +21,19 @@ For training useful alpha and beta channels we train encoder-style transformers 
 
 (For a first proof-of-concept implementation in grce.py we only implement the SANE alpha and beta channels within a "Grid".)
 
+### Multi-Token Looped Decoder
 
+Let's call `x in [0...X-1]` the X-axis, the "time-axis", indexed by the token index `x`.
+Let's call `y in [0...Y-1]` the Y-axis, the "loop-axis", indexed by the loop iteration `y`.
+Let's further call `z in [0...Z-1]` the Z-axis, the "depth" of the current thought, indexed by the token offset `z`.
+
+(A multi-token looped decoder with Z=1 is simply a regular single-token looped decoder.)
+
+A multi-token looped decoder predicts a span of Z tokens, instead of simply the next token, spreading the computation for such a multi-token prediction accross Z parallel transformers ("z-span") that loop as encoder-style block with unmasked internal attention. Only the transformer at the z=0 position in a z-span can be attendet to by later x-positions in the multi-token looped decoder.
+
+The position z=0 within a z-span is fed the input token for the current-x position. The other positions are initialized with the [|find-self|] embedding in their "self" input stream. Within the z-span both the SANE alpha and beta channels are active between the z-positions. Only the transformers at the z=0 position participate in the chain of SANE alpha channels propagating state from one x-position to the next.
+
+After Y iterations we constrain the "next" output stream at z=0 to predict the token at position x+1. For the positions z>0 we constrain the "self" output stream to predict the token at position x+z. (So Z=2 is still only thinkinging abut the next token, but using two interacting transformer loops. Starting with Z=3 the z-span is actually performing multi-token thinking.)
 
 
 
