@@ -7,7 +7,8 @@ import ast
 import json
 import math
 import pathlib
-from typing import Dict, List, Tuple
+import sys
+from typing import Dict, List, Sequence, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -152,7 +153,25 @@ class MetricExpression:
         raise ValueError("unsupported expression node")
 
 
-def parse_args() -> argparse.Namespace:
+def _preprocess_cli_args(argv: Sequence[str]) -> List[str]:
+    """Treat positional args that precede plotting/list flags as --json values."""
+
+    if not argv:
+        return []
+    processed = [argv[0]]
+    saw_plot_command = False
+    for token in argv[1:]:
+        option = token.split("=", 1)[0]
+        if option == "--list" or option.startswith("--plot-"):
+            saw_plot_command = True
+        if (not saw_plot_command) and (not token.startswith("-")):
+            processed.extend(["--json", token])
+            continue
+        processed.append(token)
+    return processed
+
+
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--json",
@@ -274,7 +293,9 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Drop NaN-aligned samples so lines connect between observed points",
     )
-    return parser.parse_args()
+    if argv is None:
+        argv = _preprocess_cli_args(sys.argv)[1:]
+    return parser.parse_args(list(argv))
 
 
 def load_checkpoint_json(json_path: pathlib.Path) -> Tuple[str, List[Dict[str, float]]]:
