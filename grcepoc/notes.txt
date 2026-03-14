@@ -27,7 +27,7 @@ with LayerNorm's in the input paths to multi-head self-attention and MLP
 building blocks, using GELU activations, and RoPE.
 
 With optional support for GMLP and multiple query sub-heads per K/V head, as
-well as optional support for RoPE-XL and RoPE-VR as described in ropexlvr/readme.txt.
+well as optional support for RoPE-XL and RoPE-VR as described in ropexlvr/README.md.
 
 ## Recurrent Path
 
@@ -1000,10 +1000,10 @@ for mode in short long; do python -c "import pstats; pstats.Stats('model_pod1/pr
 
 ---------------------------------------------------------------------------
 
-Layout mix for --small training on G4090 ("small-tilted"):
+Layout mix for --small training on G4090 ("small-tilted", slightly faster than "balanced"):
   --layout "(128[64D]|(64[128D]|(32[256D]|(16[512D]|8[1024D]|32[64E=64D2Y=64D3Y=64D4Y]))))"
 
-Layout mix for --small training on G4090 ("balanced"):
+Layout mix for --small training on G4090 ("balanced", est. 15s/cycle, <1.5h training time):
   --layout "(128[64D]|64[128D]|32[256D]|16[512D]|8[1024D]|32[64E=64D2Y=64D3Y=64D4Y])"
 
 Layout mix for non-small training on G4090 ("balanced"):

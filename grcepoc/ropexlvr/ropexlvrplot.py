@@ -43,6 +43,7 @@ rope_losses = np.array(load_column_losses('eval_rope.txt'))
 ropexl_losses = np.array(load_column_losses('eval_ropexl.txt'))
 ropevr_losses = np.array(load_column_losses('eval_ropevr.txt'))
 ropevrall_losses = np.array(load_column_losses('eval_ropevrall.txt'))
+ropevrxl_losses = np.array(load_column_losses('eval_ropevrxl.txt'))
 
 columns = np.arange(1, len(rope_losses) + 1)
 
@@ -52,21 +53,24 @@ if smooth_factor:
     ropexl_losses = ropexl_losses.reshape(-1, smooth_factor).mean(axis=1)
     ropevr_losses = ropevr_losses.reshape(-1, smooth_factor).mean(axis=1)
     ropevrall_losses = ropevrall_losses.reshape(-1, smooth_factor).mean(axis=1)
+    ropevrxl_losses = ropevrxl_losses.reshape(-1, smooth_factor).mean(axis=1)
     columns = columns.reshape(-1, smooth_factor).mean(axis=1)
 
 plt.figure(figsize=(12, 5))
-if False:
+if True:
     plt.title("Loss per column: RoPE-XL/RoPE-VR vs RoPE")
     plt.plot(columns, rope_losses, label="RoPE", color="#000", linestyle="--")
     plt.plot(columns, ropexl_losses, label="RoPE-XL", color="blue")
     plt.plot(columns, ropevr_losses, label="RoPE-VR", color="red")
     plt.plot(columns, ropevrall_losses, label="RoPE-VR-ALL", color="magenta")
+    plt.plot(columns, ropevrxl_losses, label="RoPE-VR-XL", color="green")
 else:
     plt.title("Loss per column: RoPE-XL/RoPE-VR relative to RoPE")
     plt.plot(columns, rope_losses - rope_losses, label="RoPE", color="#000", linestyle="--")
     plt.plot(columns, ropexl_losses - rope_losses, label="RoPE-XL", color="blue")
     plt.plot(columns, ropevr_losses - rope_losses, label="RoPE-VR", color="red")
     plt.plot(columns, ropevrall_losses - rope_losses, label="RoPE-VR-ALL", color="magenta")
+    plt.plot(columns, ropevrxl_losses - rope_losses, label="RoPE-VR-XL", color="green")
 plt.xlabel("Columns")
 plt.ylabel("Loss Value (nats)")
 plt.legend()

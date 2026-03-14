@@ -4,17 +4,20 @@
 
 Let Δ = p₂ − p₁ be the relative position between two tokens and let N be the original RoPE context length parameter. Define S = N/2. RoPE-XL leaves relative offsets unchanged for |Δ| < S, and smoothly compresses larger magnitudes according to
 
+```
 	Δ' = Δ                                     if |Δ| < S
 	Δ' = sign(Δ) * (3S − 2S * sqrt(S / |Δ|))   otherwise
+```
 
 This mapping is continuous and differentiable at |Δ| = S. In particular,
 
+```
 	|Δ| = S      →  S
 	|Δ| = N      →  ≈ 0.793 N
 	|Δ| → ∞      →  1.5 N
+```
 
 Thus RoPE-XL keeps the exact RoPE geometry for short ranges (|Δ| < N/2) while smoothly compressing larger separations into the bounded interval [−1.5 N, 1.5 N]. The smooth transition avoids the slope discontinuity of earlier compression schemes and produces a gradual reduction in effective positional distance as |Δ| grows.
-
 
 ## RoPE-VR (RoPE with Value Rotation)
 
@@ -26,10 +29,9 @@ This allows **relative position information to be forwarded through the network*
 
 The non-rotated heads act as standard content channels, while the rotated-value heads transport phase-tagged representations that can carry relative-position pointers across layers. Splitting this behavior at the K/V-head level allows clean specialization and avoids forcing a single value projection to serve both rotated and unrotated roles.
 
-----
-
 ## RoPE-XL and RoPE-VR experiments
 
+```
 python grce.py --pt model/wp_en_XS_ROPEXL_GMLP_Q4_ED4Y.pt --small --use-rope-xl --use-gmlp --n-query 4 create
 python grce.py --pt model/wp_en_XS_ROPEXL_GMLP_Q4_ED4Y.pt corpus --add wikipedia-en-000{0,1,2,3,4,5,6,7}
 
@@ -70,4 +72,5 @@ python grce.py --pt model/wp_en_XS_GMLP_Q4_ED4Y.pt --batch-size 32 --layout '1[7
 python grce.py --pt model/wp_en_XS_ROPEXL_GMLP_Q4_ED4Y.pt --batch-size 32 --layout '1[700D=700D=600D]' eval --rand 10000 > model/eval_ropexl.txt
 python grce.py --pt model/wp_en_XS_ROPEVR_GMLP_Q4_ED4Y.pt --batch-size 32 --layout '1[700D=700D=600D]' eval --rand 10000 > model/eval_ropevr.txt
 python grce.py --pt model/wp_en_XS_ROPEVRALL_GMLP_Q4_ED4Y.pt --batch-size 32 --layout '1[700D=700D=600D]' eval --rand 10000 > model/eval_ropevrall.txt
-python grce.py --pt model/wp_en_XS_ROPEVRXL_GMLP_Q4_ED4Y.pt --batch-size 32 --layout '1[700D=700D=600D]' eval --rand 10000 > model/eval_ropevrall.txt
+python grce.py --pt model/wp_en_XS_ROPEVRXL_GMLP_Q4_ED4Y.pt --batch-size 32 --layout '1[700D=700D=600D]' eval --rand 10000 > model/eval_ropevrxl.txt
+```
