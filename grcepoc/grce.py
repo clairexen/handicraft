@@ -7918,6 +7918,8 @@ def preprocess_runtime_args(args: Args) -> None:
                 "Checkpoint lacks config metadata; re-save it with the latest format."
             )
         saved = dict(saved_config)
+        for legacy_key in ("use_carpet", "use_carpet2", "use_carpet3"):
+            saved.pop(legacy_key, None)
         if "n_pos" not in saved:
             if "block_size" in saved:
                 saved["n_pos"] = saved.pop("block_size")
