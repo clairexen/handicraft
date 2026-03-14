@@ -120,6 +120,7 @@ class ModelGeometry:
     use_gmlp: bool = False
     use_rope_xl: bool = False
     use_rope_vr: bool = False
+    use_rope_vr_all: bool = False
     use_sane: bool = False
 
     @property
@@ -150,6 +151,7 @@ class Defaults:
     use_gmlp: bool = MODEL_GEOMETRY_DEFAULTS.use_gmlp
     use_rope_xl: bool = MODEL_GEOMETRY_DEFAULTS.use_rope_xl
     use_rope_vr: bool = MODEL_GEOMETRY_DEFAULTS.use_rope_vr
+    use_rope_vr_all: bool = MODEL_GEOMETRY_DEFAULTS.use_rope_vr_all
     use_sane: bool = MODEL_GEOMETRY_DEFAULTS.use_sane
     corpus: str | None = None
     steps: int = 100
@@ -1234,6 +1236,12 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         ),
     )
     model_group.add_argument(
+        "--use-rope-vr-all",
+        action="store_true",
+        default=DEFAULTS.use_rope_vr_all,
+        help="Rotate value vectors for every attention head instead of only half",
+    )
+    model_group.add_argument(
         "--use-sane",
         action="store_true",
         default=DEFAULTS.use_sane,
@@ -1987,6 +1995,7 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
     use_carpet3 = bool(getattr(args, "use_carpet3", False))
     use_rope_xl = bool(getattr(args, "use_rope_xl", False))
     use_rope_vr = bool(getattr(args, "use_rope_vr", False))
+    use_rope_vr_all = bool(getattr(args, "use_rope_vr_all", False))
     enabled_variants = sum((use_carpet, use_carpet2, use_carpet3, use_rope_xl))
     if enabled_variants > 1:
         raise ValueError("--use-carpet, --use-carpet2, --use-carpet3, and --use-rope-xl are mutually exclusive")
@@ -1995,11 +2004,16 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
             raise ValueError("CARPET2/3 requires --n-pos 1024 and --n-rope 64")
     if use_rope_xl and (args.n_pos % 2 != 0):
         raise ValueError("--use-rope-xl requires an even --n-pos")
+    if use_rope_vr and use_rope_vr_all:
+        raise ValueError("--use-rope-vr and --use-rope-vr-all are mutually exclusive")
     if use_rope_vr:
         if args.n_head % 2 != 0:
             raise ValueError("--use-rope-vr requires an even --n-head")
         if use_carpet or use_carpet2 or use_carpet3 or getattr(args, "use_carpet", False):
             raise ValueError("--use-rope-vr cannot be combined with CARPET variants")
+    if use_rope_vr_all:
+        if use_carpet or use_carpet2 or use_carpet3 or getattr(args, "use_carpet", False):
+            raise ValueError("--use-rope-vr-all cannot be combined with CARPET variants")
     if getattr(args, "use_sane", False) and (args.n_width % 2 != 0):
         raise ValueError("--use-sane requires an even --n-width")
     args.checkpoint_dirty = False
@@ -2045,6 +2059,7 @@ def args_to_model_geometry(args: Args):
         use_gmlp=getattr(args, "use_gmlp", MODEL_GEOMETRY_DEFAULTS.use_gmlp),
         use_rope_xl=getattr(args, "use_rope_xl", MODEL_GEOMETRY_DEFAULTS.use_rope_xl),
         use_rope_vr=getattr(args, "use_rope_vr", MODEL_GEOMETRY_DEFAULTS.use_rope_vr),
+        use_rope_vr_all=getattr(args, "use_rope_vr_all", MODEL_GEOMETRY_DEFAULTS.use_rope_vr_all),
         use_sane=getattr(args, "use_sane", MODEL_GEOMETRY_DEFAULTS.use_sane),
     )
 
@@ -3545,16 +3560,21 @@ class CausalSelfAttention(CarpetAbsoluteCacheMixin, nn.Module):
         self.use_carpet3 = bool(getattr(config, "use_carpet3", False))
         self.use_rope_xl = bool(getattr(config, "use_rope_xl", False))
         self.use_rope_vr = bool(getattr(config, "use_rope_vr", False))
+        self.use_rope_vr_all = bool(getattr(config, "use_rope_vr_all", False))
         if (self.use_carpet2 or self.use_carpet3) and getattr(config, "use_carpet", False):
             raise ValueError("CARPET variants are mutually exclusive")
         if self.use_carpet2 and self.use_carpet3:
             raise ValueError("--use-carpet2 and --use-carpet3 cannot be combined")
         if self.use_rope_xl and (self.use_carpet2 or self.use_carpet3 or getattr(config, "use_carpet", False)):
             raise ValueError("RoPE-XL cannot be combined with CARPET variants")
-        if self.use_rope_vr and (self.use_carpet2 or self.use_carpet3 or getattr(config, "use_carpet", False)):
+        if (self.use_rope_vr or self.use_rope_vr_all) and (
+            self.use_carpet2 or self.use_carpet3 or getattr(config, "use_carpet", False)
+        ):
             raise ValueError("RoPE-VR cannot be combined with CARPET variants")
         if self.use_rope_vr and (self.n_head % 2 != 0):
             raise ValueError("RoPE-VR requires an even --n-head value")
+        if self.use_rope_vr and self.use_rope_vr_all:
+            raise ValueError("use_rope_vr and use_rope_vr_all cannot both be enabled")
         carpet_setup = None if (self.use_carpet2 or self.use_carpet3 or self.use_rope_xl) else _resolve_carpet_setup(config, resolved_rope)
         self.carpet_setup = carpet_setup
         self.carpet_rho = None
@@ -3587,7 +3607,12 @@ class CausalSelfAttention(CarpetAbsoluteCacheMixin, nn.Module):
         proj_in = config.n_width * self.n_query
         self.proj = nn.Linear(proj_in, config.n_width)
         self.dropout = nn.Dropout(config.dropout)
-        self.vr_head_count = (self.n_head // 2) if self.use_rope_vr else 0
+        if self.use_rope_vr_all:
+            self.vr_head_count = self.n_head
+        elif self.use_rope_vr:
+            self.vr_head_count = self.n_head // 2
+        else:
+            self.vr_head_count = 0
         self.register_buffer(
             "tril", torch.tril(torch.ones(config.n_pos, config.n_pos))
         )
@@ -4042,7 +4067,7 @@ class CausalSelfAttention(CarpetAbsoluteCacheMixin, nn.Module):
                 )
             query_states = self._apply_rope(query_states, cos, sin)
             key_states = self._apply_rope(key_states, cos, sin)
-            if self.use_rope_vr and self.vr_head_count > 0:
+            if self.vr_head_count > 0:
                 vr_slice = value_states[:, :, : self.vr_head_count, :]
                 rotated_values = self._apply_rope(vr_slice, cos, sin)
                 value_states = torch.cat(
@@ -5924,6 +5949,8 @@ def build_model_tag(config: GeometryLike) -> str:
         tag += "_ropex"
     if getattr(config, "use_rope_vr", False):
         tag += "_ropevr"
+    if getattr(config, "use_rope_vr_all", False):
+        tag += "_ropevrall"
     if getattr(config, "use_sane", False):
         tag += "_sane"
     return tag
