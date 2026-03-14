@@ -6,8 +6,6 @@ See [`notes.txt`](notes.txt) for the full specification and [`grce.py`](grce.py)
 
 This repo extends a tiny picoGPT-style language model with two recurrent context channels: a lightweight low-bandwidth “role/focus” state alongside the usual token stream (GRCE) plus a high-bandwidth “short-term memory” channel for pushing information forward in time (XCTX) in parallel to multi-head attention, which still looks backward. “GPT+GRCE+XCTX” is pronounced “GPT with grace and extended context”.
 
-For position encoding both RoPE and CARPET (see [`carpet.txt`](carpet.txt)) are supported for comparison.
-
 The additions provide a few concrete benefits:
 
 - The low-bandwidth GRCE path gives the model an explicit “what am I doing here?” signal that improves stability, debuggability, and interpretability. You can inspect the role/focus state to understand why a column behaves the way it does.

@@ -24,10 +24,10 @@ the output token data.)
 
 The transformer stack itself is a rather "classical" GTP-2 like design,
 with LayerNorm's in the input paths to multi-head self-attention and MLP
-building blocks, using GELU activations.
+building blocks, using GELU activations, and RoPE.
 
-Both RoPE and CARPET (see [`carpet.txt`](carpet.txt)) are supported for
-positional encodings.
+With optional support for GMLP and multiple query sub-heads per K/V head, as
+well as optional support for RoPE-XL and RoPE-VR as described in ropexlvr/readme.txt.
 
 ## Recurrent Path
 
@@ -991,8 +991,8 @@ other FIXMEs, and let me know if you find duplicate articles.)
 ---------------------------------------------------------------------------
 
 # on pod
-python -m cProfile -o model/profile_short.out grce.py --pt model/wp_en_small_CARPET_GMLP_Q4_ED4Y.pt --layout "128[64D]" --steps 20 try
-python -m cProfile -o model/profile_long.out grce.py --pt model/wp_en_small_CARPET_GMLP_Q4_ED4Y.pt --layout "8[1024D]" --steps 20 try
+python -m cProfile -o model/profile_short.out grce.py --pt model/wp_en_small_GMLP_Q4_ED4Y.pt --layout "128[64D]" --steps 20 try
+python -m cProfile -o model/profile_long.out grce.py --pt model/wp_en_small_GMLP_Q4_ED4Y.pt --layout "8[1024D]" --steps 20 try
 
 # local
 for mode in short long; do python -c "import pstats; pstats.Stats('model_pod1/profile_$mode.out'). `
