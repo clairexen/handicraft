@@ -1031,13 +1031,13 @@ Current experiments:
 : python grce.py --pt model/wp_en_XS_GMLP_Q4_ED4Y_simplestwiki_F.pt reset
 : python grce.py --pt model/wp_en_XS_GMLP_Q4_ED4Y_simplestwiki_F.pt corpus --set --reuse 100 simplestwiki
 
-python grce.py --pt model/wp_en_XS_GMLP_Q4_ED4Y_simplestwiki_F.pt --cycles 100 --layout "32C[64E=64D=64f]" \
+python grce.py --pt model/wp_en_XS_GMLP_Q4_ED4Y_simplestwiki_F.pt --cycles 30 --layout "32C[64E=64D=64f]" \
   --lr-warmup-steps 100 --lr-cosine-steps 200 --align-articles train --json
 
 : cp model/wp_en_XS_GMLP_Q4_ED4Y.pt model/wp_en_XS_GMLP_Q4_ED4Y_wikipedia_F.pt
 : python grce.py --pt model/wp_en_XS_GMLP_Q4_ED4Y_wikipedia_F.pt reset
 
-python grce.py --pt model/wp_en_XS_GMLP_Q4_ED4Y_wikipedia_F.pt --cycles 100 --layout "32C[64E=64D=64f]" \
+python grce.py --pt model/wp_en_XS_GMLP_Q4_ED4Y_wikipedia_F.pt --cycles 30 --layout "32C[64E=64D=64f]" \
   --lr-warmup-steps 100 --lr-cosine-steps 200 --align-articles train --json
 
 ----
@@ -1070,14 +1070,23 @@ python grce.py --pt model/wp_en_GMLP_Q4_ED4Y.pt --cycles 5000 \
   `8[64E=64D2Y=64D3Y=64D4Y],8[64E=64D2Y=64D3Y=64D4Y],8[64E=64D2Y=64D3Y=64D4Y],8[64E=64D2Y=64D3Y=64D4Y])" \
   --lr-warmup-steps 100 --lr-cosine-steps 200 --generate-with-decode --align-articles train --json
 
+## retrain on target language by training recurrent channels only, learning how to "self-steer"
+
+cp model/wp_en_GMLP_Q4_ED4Y.pt model/wp_en_GMLP_Q4_ED4Y_simplestwiki_F.pt
+python grce.py --pt model/wp_en_GMLP_Q4_ED4Y_simplestwiki_F.pt reset
+python grce.py --pt model/wp_en_GMLP_Q4_ED4Y_simplestwiki_F.pt corpus --set --reuse 100 simplestwiki
+
+python grce.py --pt model/wp_en_GMLP_Q4_ED4Y_simplestwiki_F.pt --cycles 30 --layout "32C[64E=64D=64f]" \
+  --lr-warmup-steps 100 --lr-cosine-steps 200 --align-articles train --json
+
 ----
 
 ## Continue...
 
-python grce.py --pt model/wp_en_XS_GMLP_Q4_ED4Y_simplestwiki_F.pt --cycles 100 --layout "32C[64E=64D=64f]" \
+python grce.py --pt model/wp_en_XS_GMLP_Q4_ED4Y_simplestwiki_F.pt --cycles 30 --layout "32C[64E=64D=64f]" \
   --lr-warmup-steps 100 --lr-cosine-steps 200 --align-articles train --json
 
-python grce.py --pt model/wp_en_XS_GMLP_Q4_ED4Y_wikipedia_F.pt --cycles 100 --layout "32C[64E=64D=64f]" \
+python grce.py --pt model/wp_en_XS_GMLP_Q4_ED4Y_wikipedia_F.pt --cycles 30 --layout "32C[64E=64D=64f]" \
   --lr-warmup-steps 100 --lr-cosine-steps 200 --align-articles train --json
 
 python grce.py --pt model/wp_en_GMLP_Q4_ED4Y.pt --cycles 5000 \

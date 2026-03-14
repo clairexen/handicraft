@@ -336,6 +336,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Drop NaN-aligned samples so lines connect between observed points",
     )
+    parser.add_argument(
+        "--gliding",
+        action="store_true",
+        help="Apply --mean/--median/--filter as sliding windows instead of disjoint buckets",
+    )
     if argv is None:
         argv = sys.argv
     processed = _preprocess_cli_args(argv, parser)
@@ -527,31 +532,29 @@ def _apply_filter_groups(
     x_values: List[float],
     y_values: List[float],
     group_size: int,
+    *,
+    gliding: bool,
 ) -> Tuple[List[float], List[float]]:
     if group_size <= 0 or not y_values:
         return x_values, y_values
+    windows = _valid_index_windows(y_values, group_size, gliding=gliding)
+    if not windows:
+        return x_values, y_values
     filtered_y = list(y_values)
-    total = len(filtered_y)
-    start = 0
-    while start < total:
-        end = start
-        non_nan_entries: List[tuple[float, int]] = []
-        while end < total and len(non_nan_entries) < group_size:
-            value = filtered_y[end]
-            if not math.isnan(value):
-                non_nan_entries.append((value, end))
-            end += 1
-        if len(non_nan_entries) < group_size:
-            break
-        drop = int(len(non_nan_entries) * 0.25)
-        if drop > 0:
-            sorted_entries = sorted(non_nan_entries, key=lambda item: item[0])
-            drop_indices = {
-                idx for _, idx in sorted_entries[:drop] + sorted_entries[-drop:]
-            }
-            for idx in drop_indices:
-                filtered_y[idx] = float("nan")
-        start = end
+    drop_indices: set[int] = set()
+    drop = int(group_size * 0.25)
+    if drop <= 0:
+        return list(x_values), filtered_y
+    for window in windows:
+        block_entries = [(filtered_y[idx], idx) for idx in window]
+        block_entries = [entry for entry in block_entries if not math.isnan(entry[0])]
+        if len(block_entries) < group_size:
+            continue
+        sorted_entries = sorted(block_entries, key=lambda item: item[0])
+        for _, idx in sorted_entries[:drop] + sorted_entries[-drop:]:
+            drop_indices.add(idx)
+    for idx in drop_indices:
+        filtered_y[idx] = float("nan")
     return list(x_values), filtered_y
 
 
@@ -559,27 +562,21 @@ def _apply_median_groups(
     x_values: List[float],
     y_values: List[float],
     group_size: int,
+    *,
+    gliding: bool,
 ) -> Tuple[List[float], List[float]]:
     if group_size <= 0 or not y_values:
         return x_values, y_values
+    windows = _valid_index_windows(y_values, group_size, gliding=gliding)
+    if not windows:
+        return x_values, y_values
     result_x: List[float] = []
     result_y: List[float] = []
-    total = len(y_values)
-    start = 0
-    while start < total:
-        end = start
-        valid_indices: List[int] = []
-        while end < total and len(valid_indices) < group_size:
-            if not math.isnan(y_values[end]):
-                valid_indices.append(end)
-            end += 1
-        if len(valid_indices) < group_size:
-            break
-        block_x = [x_values[idx] for idx in valid_indices]
-        block_y = [y_values[idx] for idx in valid_indices]
+    for window in windows:
+        block_x = [x_values[idx] for idx in window]
+        block_y = [y_values[idx] for idx in window]
         result_x.append(float(np.median(block_x)))
         result_y.append(float(np.median(block_y)))
-        start = end
     return result_x, result_y
 
 
@@ -587,28 +584,40 @@ def _apply_mean_groups(
     x_values: List[float],
     y_values: List[float],
     group_size: int,
+    *,
+    gliding: bool,
 ) -> Tuple[List[float], List[float]]:
     if group_size <= 0 or not y_values:
         return x_values, y_values
+    windows = _valid_index_windows(y_values, group_size, gliding=gliding)
+    if not windows:
+        return x_values, y_values
     result_x: List[float] = []
     result_y: List[float] = []
-    total = len(y_values)
-    start = 0
-    while start < total:
-        end = start
-        valid_indices: List[int] = []
-        while end < total and len(valid_indices) < group_size:
-            if not math.isnan(y_values[end]):
-                valid_indices.append(end)
-            end += 1
-        if len(valid_indices) < group_size:
-            break
-        block_x = [x_values[idx] for idx in valid_indices]
-        block_y = [y_values[idx] for idx in valid_indices]
+    for window in windows:
+        block_x = [x_values[idx] for idx in window]
+        block_y = [y_values[idx] for idx in window]
         result_x.append(float(np.mean(block_x)))
         result_y.append(float(np.mean(block_y)))
-        start = end
     return result_x, result_y
+
+
+def _valid_index_windows(
+    y_values: List[float], group_size: int, *, gliding: bool
+) -> List[List[int]]:
+    valid_indices = [idx for idx, value in enumerate(y_values) if not math.isnan(value)]
+    if len(valid_indices) < group_size or group_size <= 0:
+        return []
+    windows: List[List[int]] = []
+    if gliding:
+        step_range = range(0, len(valid_indices) - group_size + 1)
+    else:
+        step_range = range(0, len(valid_indices) - group_size + 1, group_size)
+    for start in step_range:
+        block = valid_indices[start : start + group_size]
+        if len(block) == group_size:
+            windows.append(block)
+    return windows
 
 
 def _remove_nan_pairs(
@@ -683,6 +692,7 @@ def plot_metric_traces(
     value_filter: int = 0,
     group_median: int = 0,
     group_mean: int = 0,
+    gliding: bool = False,
     stack_sources: bool = False,
     fill_sign: bool = False,
     sparse: bool = False,
@@ -730,11 +740,17 @@ def plot_metric_traces(
                 x_series = x_values
                 y_series = y_values
                 if value_filter > 0:
-                    x_series, y_series = _apply_filter_groups(x_series, y_series, value_filter)
+                    x_series, y_series = _apply_filter_groups(
+                        x_series, y_series, value_filter, gliding=gliding
+                    )
                 if group_median > 0:
-                    x_series, y_series = _apply_median_groups(x_series, y_series, group_median)
+                    x_series, y_series = _apply_median_groups(
+                        x_series, y_series, group_median, gliding=gliding
+                    )
                 if group_mean > 0:
-                    x_series, y_series = _apply_mean_groups(x_series, y_series, group_mean)
+                    x_series, y_series = _apply_mean_groups(
+                        x_series, y_series, group_mean, gliding=gliding
+                    )
                 if interpolate:
                     x_series, y_series = _remove_nan_pairs(x_series, y_series)
                 if x_field == "step" and step_period > 1:
@@ -970,6 +986,7 @@ def main() -> None:
             value_filter=args.filter,
             group_median=args.median,
             group_mean=args.mean,
+            gliding=args.gliding,
             stack_sources=args.stack_sources,
             fill_sign=args.plot_fill_sign,
             sparse=args.sparse,
@@ -993,6 +1010,7 @@ def main() -> None:
             value_filter=args.filter,
             group_median=args.median,
             group_mean=args.mean,
+            gliding=args.gliding,
             stack_sources=args.stack_sources,
             fill_sign=args.plot_fill_sign,
             sparse=args.sparse,
@@ -1016,6 +1034,7 @@ def main() -> None:
             value_filter=args.filter,
             group_median=args.median,
             group_mean=args.mean,
+            gliding=args.gliding,
             stack_sources=args.stack_sources,
             fill_sign=args.plot_fill_sign,
             sparse=args.sparse,
