@@ -1040,6 +1040,32 @@ python grce.py --pt model/wp_en_XS_GMLP_Q4_ED4Y_simplestwiki_F.pt --cycles 30 --
 python grce.py --pt model/wp_en_XS_GMLP_Q4_ED4Y_wikipedia_F.pt --cycles 30 --layout "32C[64E=64D=64f]" \
   --lr-warmup-steps 100 --lr-cosine-steps 200 --align-articles train --json
 
+## retrain transformer and recurrent channels on GSM8K
+
+: cp model/wp_en_XS_GMLP_Q4_ED4Y.pt model/wp_en_XS_GMLP_Q4_ED4Y_gsm8k_DF.pt
+: python grce.py --pt model/wp_en_XS_GMLP_Q4_ED4Y_gsm8k_DF.pt reset
+: python grce.py --pt model/wp_en_XS_GMLP_Q4_ED4Y_gsm8k_DF.pt corpus --set --reuse 100 gsm8k
+
+python grce.py --pt model/wp_en_XS_GMLP_Q4_ED4Y_gsm8k_DF.pt --cycles 30 --layout "24[96E=64D=64f]" \
+  --lr-warmup-steps 100 --lr-cosine-steps 200 train --json
+
+## retrain transformer only on GSM8K
+
+: cp model/wp_en_XS_GMLP_Q4_ED4Y.pt model/wp_en_XS_GMLP_Q4_ED4Y_gsm8k_D.pt
+: python grce.py --pt model/wp_en_XS_GMLP_Q4_ED4Y_gsm8k_D.pt reset
+: python grce.py --pt model/wp_en_XS_GMLP_Q4_ED4Y_gsm8k_D.pt corpus --set --reuse 100 gsm8k
+
+: python grce.py --pt model/wp_en_XS_GMLP_Q4_ED4Y_gsm8k_D.pt --cycles 30 --layout "24[96E=128D]" \
+  --lr-warmup-steps 100 --lr-cosine-steps 200 train --json
+
+## and then run another retrain cycle on recurrent channels only
+
+: cp model/wp_en_XS_GMLP_Q4_ED4Y_gsm8k_D.pt model/wp_en_XS_GMLP_Q4_ED4Y_gsm8k_D_F.pt
+: python grce.py --pt model/wp_en_XS_GMLP_Q4_ED4Y_gsm8k_D_F.pt reset
+
+python grce.py --pt model/wp_en_XS_GMLP_Q4_ED4Y_gsm8k_D_F.pt --cycles 30 --layout "24C[96E=64D=64f]" \
+  --lr-warmup-steps 100 --lr-cosine-steps 200 train --json
+
 ----
 
 ## SANE experiment

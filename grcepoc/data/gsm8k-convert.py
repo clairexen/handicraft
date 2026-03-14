@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import gzip
 import json
+import statistics
 import sys
 from pathlib import Path
 from typing import Iterable
@@ -44,7 +45,40 @@ def main(argv: list[str] | None = None) -> int:
         default=Path("-"),
         help="Optional output file (default: stdout)",
     )
+    parser.add_argument(
+        "--count",
+        action="store_true",
+        help="Print dataset statistics (article count + token stats) instead of formatted entries",
+    )
     args = parser.parse_args(argv)
+
+    lengths: list[int] = []
+    if args.count:
+        for record in iter_records(args.input):
+            question = record.get("question")
+            answer = record.get("answer")
+            if not isinstance(question, str) or not isinstance(answer, str):
+                continue
+            combined = f"{question}\n\n{answer}"
+            lengths.append(len(combined.lower().split()))
+        if not lengths:
+            print("No valid records found.")
+            return 0
+        article_count = len(lengths)
+        stats_min = min(lengths)
+        stats_max = max(lengths)
+        stats_mean = statistics.fmean(lengths)
+        stats_median = statistics.median(lengths)
+        print(f"articles: {article_count}")
+        print(
+            f"tokens - min: {stats_min}, max: {stats_max}, mean: {stats_mean:.2f}, median: {stats_median}"
+        )
+        thresholds = [64, 96, 128, 192, 256]
+        for threshold in thresholds:
+            below = sum(1 for length in lengths if length < threshold)
+            pct = (below / article_count) * 100.0
+            print(f"< {threshold} tokens: {pct:.2f}%")
+        return 0
 
     if args.output == Path("-"):
         output_handle = sys.stdout
