@@ -401,6 +401,7 @@ class SegmentSpec:
     loss_input_stream: bool = False
     loss_output_stream: bool = False
     drop_count: int = 0
+    disable_sane: bool = False
 
 
 @dataclass(frozen=True)
@@ -411,6 +412,7 @@ class RowModifiers:
     train_transformer_only: bool = False
     train_recurrent_only: bool = False
     halt_rope: bool = False
+    disable_sane: bool = False
     raw: str = ""
 
     def render(self) -> str:
@@ -441,6 +443,7 @@ class SegmentLayout:
     loss_input_stream: bool = False
     loss_output_stream: bool = False
     drop_count: int = 0
+    disable_sane: bool = False
 
     def token_columns(self) -> int:
         if self.think_factor <= 1:
@@ -524,15 +527,26 @@ def _split_segments(body: str) -> list[tuple[str, str | None]]:
     parts: list[tuple[str, str | None]] = []
     start = 0
     connector: str | None = None
+    depth = 0
     for index, ch in enumerate(body):
-        if ch in "[]()":
-            raise LayoutParseError("Unexpected bracket in segment string")
+        if ch == "[":
+            depth += 1
+        elif ch == "]":
+            depth -= 1
+            if depth < 0:
+                raise LayoutParseError("Unbalanced ']' in segment string")
+        elif ch == ",":
+            continue
+        if depth > 0:
+            continue
         if ch in "=#":
             token = body[start:index].strip()
             if token:
                 parts.append((token, connector))
             connector = ch
             start = index + 1
+    if depth != 0:
+        raise LayoutParseError("Unbalanced '[' in segment string")
     token = body[start:].strip()
     if token:
         parts.append((token, connector))
@@ -589,6 +603,7 @@ def _parse_segment_spec(text: str, connector: str | None) -> SegmentSpec:
     bias_input_loss = False
     bias_output_loss = False
     drop_count = 0
+    disable_sane = False
     while mode_token:
         tail = mode_token[-1]
         if tail == "h":
@@ -617,6 +632,10 @@ def _parse_segment_spec(text: str, connector: str | None) -> SegmentSpec:
                 raise LayoutParseError("Drop modifier requires a positive count")
             mode_token = mode_token[:idx_start]
             continue
+        if tail == "S":
+            disable_sane = True
+            mode_token = mode_token[:-1]
+            continue
         break
     if hide_typed_metrics and not mode_token:
         raise LayoutParseError("Hide-metric modifier requires a base mode")
@@ -635,6 +654,8 @@ def _parse_segment_spec(text: str, connector: str | None) -> SegmentSpec:
         raise LayoutParseError(f"Unsupported mode '{mode_token}'")
     if drop_count and mode_key != "e":
         raise LayoutParseError("Drop modifier 'P' is only supported for encode segments")
+    if disable_sane and mode_key not in {"e", "d", "r"}:
+        raise LayoutParseError("'S' modifier only valid for encode/decode/reverse segments")
     if think_factor > 1:
         if mode_key != "f":
             raise LayoutParseError("Think multipliers are only valid for forward segments")
@@ -674,6 +695,7 @@ def _parse_segment_spec(text: str, connector: str | None) -> SegmentSpec:
         loss_input_stream=bias_input_loss,
         loss_output_stream=bias_output_loss,
         drop_count=drop_count,
+        disable_sane=disable_sane,
     )
 
 
@@ -703,6 +725,7 @@ def _parse_row_modifiers(text: str) -> RowModifiers | None:
     train_transformer_only = False
     train_recurrent_only = False
     halt_rope = False
+    disable_sane = False
     raw_parts: list[str] = []
     while idx < len(text):
         ch = text[idx]
@@ -745,6 +768,11 @@ def _parse_row_modifiers(text: str) -> RowModifiers | None:
             raw_parts.append("h")
             idx += 1
             continue
+        if ch == "S":
+            disable_sane = True
+            raw_parts.append("S")
+            idx += 1
+            continue
         raise LayoutParseError(f"Unknown row modifier '{ch}' in '{text}'")
     raw = "".join(raw_parts)
     return RowModifiers(
@@ -754,6 +782,7 @@ def _parse_row_modifiers(text: str) -> RowModifiers | None:
         train_transformer_only=train_transformer_only,
         train_recurrent_only=train_recurrent_only,
         halt_rope=halt_rope,
+        disable_sane=disable_sane,
         raw=raw,
     )
 
@@ -935,6 +964,7 @@ class BatchLayout:
                     loss_input_stream=getattr(spec, "loss_input_stream", False),
                     loss_output_stream=getattr(spec, "loss_output_stream", False),
                     drop_count=max(0, int(getattr(spec, "drop_count", 0) or 0)),
+                    disable_sane=bool(getattr(spec, "disable_sane", False)),
                 )
             )
         max_cols = sum(segment.columns for segment in segments)
@@ -982,12 +1012,13 @@ class BatchLayout:
                 if drop_count:
                     prefix = f"{drop_count}" if drop_count > 1 else ""
                     drop_suffix = f"{prefix}P"
+                sane_suffix = "S" if getattr(segment, "disable_sane", False) else ""
                 metric_suffix = ""
                 extra = getattr(segment, "extra_metrics", ())
                 if extra:
                     prefix = ">>" if getattr(segment, "suppress_default_metric", False) else ">"
                     metric_suffix = prefix + ">".join(extra)
-                bit = f"{segment.columns}{letter}{hide_suffix}{layer_suffix}{think_suffix}{bias_suffix}{drop_suffix}{metric_suffix}"
+                bit = f"{segment.columns}{letter}{hide_suffix}{layer_suffix}{think_suffix}{bias_suffix}{drop_suffix}{sane_suffix}{metric_suffix}"
                 if idx > 0:
                     connector = segment.connector or "="
                     bit = connector + bit
@@ -1020,6 +1051,7 @@ class BatchLayout:
                             loss_input_stream=seg.loss_input_stream,
                             loss_output_stream=seg.loss_output_stream,
                             drop_count=seg.drop_count,
+                            disable_sane=seg.disable_sane,
                         )
                         for seg in group.segments
                     ]
@@ -3335,6 +3367,15 @@ def _upgrade_control_embedding_rows(
     return upgraded
 
 
+def _control_embedding_rows(state: Mapping[str, torch.Tensor]) -> int | None:
+    if not hasattr(state, "get"):
+        return None
+    weight = state.get("core.control_emb.weight")
+    if isinstance(weight, torch.Tensor):
+        return weight.shape[0]
+    return None
+
+
 def _load_checkpoint_state(
     model: nn.Module, state: Mapping[str, torch.Tensor], *, allow_partial: bool
 ) -> dict[str, object]:
@@ -4573,7 +4614,7 @@ class TransformerStackCore(CarpetAbsoluteCacheMixin, nn.Module):
             raise ValueError("n_width must be even so embeddings can occupy even/odd slots")
         self.embedding_dim = config.n_width // 2
         self.tok_emb = nn.Embedding(config.vocab_size, self.embedding_dim)
-        self.control_emb = nn.Embedding(4, self.embedding_dim, padding_idx=0)
+        self.control_emb = nn.Embedding(CONTROL_EMBEDDING_ROWS, self.embedding_dim, padding_idx=0)
         self.think_emb = ThinkEmbeddingLibrary(self.embedding_dim, think_spans=(2, 3, 4))
         self.loop_embeddings = nn.ParameterDict(
             {
@@ -4696,6 +4737,7 @@ class TransformerStackCore(CarpetAbsoluteCacheMixin, nn.Module):
         attention_capture: AttentionCapture | None = None,
         layer_repeat: int = 1,
         layer_top_only: bool = False,
+        enable_sane: bool | None = None,
     ) -> tuple[torch.Tensor, list[torch.Tensor], list[tuple[torch.Tensor, torch.Tensor]]]:
         rows, cols, _ = x.shape
         rope_positions_tensor = None
@@ -4755,6 +4797,8 @@ class TransformerStackCore(CarpetAbsoluteCacheMixin, nn.Module):
         samples: list[torch.Tensor | None] = [None] * len(self.blocks)
         kv_outputs: list[tuple[torch.Tensor, torch.Tensor] | None] = [None] * len(self.blocks)
         sane_enabled = self.use_sane and mode in {"decode", "reverse", "encode"}
+        if enable_sane is not None:
+            sane_enabled = bool(enable_sane)
         sane_hook = None
         if sane_enabled:
             def sane_hook(layer_idx: int, stage: str, delta: torch.Tensor, tensor: torch.Tensor) -> None:
@@ -5307,6 +5351,7 @@ class TransformerStackSequence(nn.Module):
         think_last_only: bool = False,
         capture_layer_outputs: bool = False,
         use_context: bool = True,
+        disable_sane: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None, list, list[torch.Tensor] | None]:
         if mode not in {"forward", "encode", "decode", "reverse", "noattn"}:
             raise ValueError(f"Unknown TransformerStackSequence mode: {mode}")
@@ -5343,6 +5388,7 @@ class TransformerStackSequence(nn.Module):
                 think_last_only=think_last_only,
                 capture_layer_outputs=capture_layer_outputs,
                 use_context=use_context,
+                disable_sane=disable_sane,
             )
         column_positions_tensor = None
         if column_positions is not None:
@@ -5562,6 +5608,7 @@ class TransformerStackSequence(nn.Module):
         think_last_only: bool,
         capture_layer_outputs: bool,
         use_context: bool = True,
+        disable_sane: bool = False,
     ) -> tuple[
         torch.Tensor,
         torch.Tensor | None,
@@ -5581,6 +5628,7 @@ class TransformerStackSequence(nn.Module):
             grid_grce_biases.append(self.grce.bias_forward(grce_state))
         if use_context and self.xctx is not None and xctx_state is not None:
             grid_xctx_biases.append(self.xctx.bias_forward(xctx_state))
+        sane_override = False if disable_sane else None
         output, samples, kv_pairs = self.core.forward_grid(
             x,
             xctx_bias_list_in=grid_xctx_biases,
@@ -5592,6 +5640,7 @@ class TransformerStackSequence(nn.Module):
             attention_capture=attention_capture,
             layer_repeat=layer_repeat,
             layer_top_only=layer_top_only,
+            enable_sane=sane_override,
         )
         kv_out = kv_pairs
         layer_outputs = samples if capture_layer_outputs else None
@@ -5953,6 +6002,7 @@ def _run_microbatch_pass(
             modifiers.detach_kv_cache if modifiers else False
         )
         context_detach_override = False if (modifiers and modifiers.no_detach_ctx) else None
+        row_disable_sane = bool(modifiers and getattr(modifiers, "disable_sane", False))
         layout_text = row_serializer([group]) if row_serializer else ""
         training_scope = nullcontext()
         if torch.is_grad_enabled():
@@ -6113,6 +6163,7 @@ def _run_microbatch_pass(
                     getattr(segment, "loss_input_stream", False)
                     or getattr(segment, "loss_output_stream", False)
                 )
+                segment_disable_sane = row_disable_sane or getattr(segment, "disable_sane", False)
                 chunk_output, grce_state, xctx_state, kv_out, layer_outputs = model.stack_sequence.forward(
                     chunk_input,
                     grce_in=grce_state,
@@ -6130,6 +6181,7 @@ def _run_microbatch_pass(
                     think_last_only=think_last_only,
                     capture_layer_outputs=capture_layers,
                     use_context=bool(getattr(segment, "context_enabled", True)),
+                    disable_sane=segment_disable_sane,
                 )
                 if not getattr(segment, "context_enabled", True):
                     if model.stack_sequence.grce is not None:
@@ -6509,6 +6561,7 @@ CONTROL_NONE = 0
 CONTROL_PREDICT_NEXT = 1
 CONTROL_PREDICT_PREV = 2
 CONTROL_FIND_SELF = 3
+CONTROL_EMBEDDING_ROWS = 4
 
 
 def _token_embeddings_with_offsets(
@@ -7695,6 +7748,7 @@ def _evaluate_row_block(
         modifiers.detach_kv_cache if modifiers else False
     )
     context_detach_override = False if (modifiers and modifiers.no_detach_ctx) else None
+    row_disable_sane = bool(modifiers and getattr(modifiers, "disable_sane", False))
     control_ids = torch.zeros((row_count, cols_total), dtype=torch.long, device=device)
     drop_rng = drop_rng or random.Random(getattr(args, "rng_seed", 0) or 0)
     target_ids = torch.zeros_like(expanded_targets)
@@ -7784,6 +7838,7 @@ def _evaluate_row_block(
             getattr(segment, "loss_input_stream", False)
             or getattr(segment, "loss_output_stream", False)
         )
+        segment_disable_sane = row_disable_sane or getattr(segment, "disable_sane", False)
         chunk_output, grce_state, xctx_state, kv_out, layer_outputs = model.stack_sequence.forward(
             chunk_input,
             grce_in=grce_state,
@@ -7802,6 +7857,7 @@ def _evaluate_row_block(
             think_last_only=think_last_only,
             capture_layer_outputs=capture_layers,
             use_context=bool(segment.context_enabled),
+            disable_sane=segment_disable_sane,
         )
         if not segment.context_enabled:
             batch_rows = chunk_output.size(0)
@@ -9518,6 +9574,7 @@ class Runtime:
                     map_location=device,
                     weights_only=False,  # checkpoints also store dataset offsets/counters
                 )
+            control_emb_expanded = False
             if payload is not None:
                 saved_config = payload.get("config") if isinstance(payload, dict) else None
                 source_use_sane = bool(saved_config.get("use_sane", False)) if isinstance(saved_config, dict) else False
@@ -9528,7 +9585,12 @@ class Runtime:
                 load_summary: dict[str, object] | None = None
                 if isinstance(payload, dict) and "model" in payload:
                     self.args.completed_cycles = int(payload.get("completed_cycles", 0) or 0)
+                    before_rows = _control_embedding_rows(payload.get("model", {}))
                     upgraded = upgrade_state_dict(payload["model"])
+                    control_emb_expanded = bool(
+                        isinstance(before_rows, int)
+                        and before_rows < CONTROL_EMBEDDING_ROWS
+                    )
                     if source_use_sane and not target_use_sane:
                         upgraded = _strip_sane_parameters(upgraded)
                     payload["model"] = upgraded
@@ -9540,6 +9602,8 @@ class Runtime:
                     if load_summary["success"]:
                         if self.args.checkpoint_optimizer:
                             optimizer_state = payload.get("optimizer")
+                            if control_emb_expanded:
+                                optimizer_state = None
                     else:
                         optimizer_state = None
                         _log_partial_checkpoint_warning(load_summary)
@@ -9554,13 +9618,17 @@ class Runtime:
                     if "tokenizer_json" in payload:
                         self.args.tokenizer_json_override = payload.get("tokenizer_json")
                 else:
+                    before_rows = _control_embedding_rows(payload) if hasattr(payload, "get") else None
+                    upgraded_payload = upgrade_state_dict(
+                        _strip_sane_parameters(payload)
+                        if (source_use_sane and not target_use_sane and hasattr(payload, "items"))
+                        else payload
+                    )
+                    if isinstance(before_rows, int) and before_rows < CONTROL_EMBEDDING_ROWS:
+                        control_emb_expanded = True
                     load_summary = _load_checkpoint_state(
                         model,
-                        upgrade_state_dict(
-                            _strip_sane_parameters(payload)
-                            if (source_use_sane and not target_use_sane and hasattr(payload, "items"))
-                            else payload
-                        ),
+                        upgraded_payload,
                         allow_partial=allow_partial_load,
                     )
                     if not load_summary["success"]:

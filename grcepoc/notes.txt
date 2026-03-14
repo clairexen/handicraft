@@ -1045,6 +1045,13 @@ python grce.py --pt model/wp_en_XS_SANE_GMLP_Q4_ED4Y.pt --cycles 300 \
   --layout "(128[64D]|64[128D]|32[256D]|16[512D]|8[1024D]|32[64E=64D2Y=64D3Y=64D4Y])" \
   --lr-warmup-steps 100 --lr-cosine-steps 200 --generate-with-decode --align-articles train --json
 
+cp model/wp_en_XS_SANE_GMLP_Q4_ED4Y.pt model/wp_en_XS_SANE_GMLP_Q4_ED4Y_retrain.pt
+python grce.py --pt model/wp_en_XS_SANE_GMLP_Q4_ED4Y_retrain.pt reset
+
+python grce.py --pt model/wp_en_XS_SANE_GMLP_Q4_ED4Y_retrain.pt --cycles 200 \
+  --layout "(32[64E8P4Y=64D4Y]|16[128E16P4Y=128D4Y])" \
+  --lr-warmup-steps 100 --lr-cosine-steps 200 --generate-with-decode --align-articles train --json
+
 ----
 
 ## RoPE-XL experiment
