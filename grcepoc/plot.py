@@ -153,18 +153,55 @@ class MetricExpression:
         raise ValueError("unsupported expression node")
 
 
-def _preprocess_cli_args(argv: Sequence[str]) -> List[str]:
-    """Treat positional args that precede plotting/list flags as --json values."""
+def _option_arg_counts(parser: argparse.ArgumentParser) -> Dict[str, int]:
+    counts: Dict[str, int] = {}
+    for action in parser._actions:
+        if not action.option_strings:
+            continue
+        nargs = action.nargs
+        if nargs in {None, 1}:
+            count = 1
+        elif isinstance(nargs, int):
+            count = max(0, nargs)
+        elif nargs == "?":
+            count = 1
+        else:
+            # '*', '+', or custom sequences consume variable args; treat as 0 here.
+            count = 0
+        for opt in action.option_strings:
+            counts[opt] = count
+    return counts
+
+
+def _preprocess_cli_args(
+    argv: Sequence[str], parser: argparse.ArgumentParser
+) -> List[str]:
+    """Treat positional args before plotting/list flags as implicit --json inputs."""
 
     if not argv:
         return []
     processed = [argv[0]]
     saw_plot_command = False
+    arg_counts = _option_arg_counts(parser)
+    pending_arg_count = 0
     for token in argv[1:]:
+        if pending_arg_count > 0:
+            processed.append(token)
+            pending_arg_count -= 1
+            continue
         option = token.split("=", 1)[0]
         if option == "--list" or option.startswith("--plot-"):
             saw_plot_command = True
-        if (not saw_plot_command) and (not token.startswith("-")):
+        if token.startswith("-"):
+            processed.append(token)
+            if option in arg_counts and arg_counts[option] > 0 and "=" not in token:
+                if option.startswith("--plot-"):
+                    # variable-length plot options consume args until next flag; no forced skip here
+                    pass
+                else:
+                    pending_arg_count = arg_counts[option]
+            continue
+        if not saw_plot_command:
             processed.extend(["--json", token])
             continue
         processed.append(token)
@@ -223,6 +260,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=int,
         default=0,
         help="Grow each block until it contains N non-NaN samples, then replace it with its median",
+    )
+    parser.add_argument(
+        "--mean",
+        type=int,
+        default=0,
+        help="Grow each block until it contains N non-NaN samples, then replace it with its mean",
     )
     parser.add_argument(
         "--plot-steps",
@@ -294,8 +337,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Drop NaN-aligned samples so lines connect between observed points",
     )
     if argv is None:
-        argv = _preprocess_cli_args(sys.argv)[1:]
-    return parser.parse_args(list(argv))
+        argv = sys.argv
+    processed = _preprocess_cli_args(argv, parser)
+    return parser.parse_args(processed[1:])
 
 
 def load_checkpoint_json(json_path: pathlib.Path) -> Tuple[str, List[Dict[str, float]]]:
@@ -539,6 +583,34 @@ def _apply_median_groups(
     return result_x, result_y
 
 
+def _apply_mean_groups(
+    x_values: List[float],
+    y_values: List[float],
+    group_size: int,
+) -> Tuple[List[float], List[float]]:
+    if group_size <= 0 or not y_values:
+        return x_values, y_values
+    result_x: List[float] = []
+    result_y: List[float] = []
+    total = len(y_values)
+    start = 0
+    while start < total:
+        end = start
+        valid_indices: List[int] = []
+        while end < total and len(valid_indices) < group_size:
+            if not math.isnan(y_values[end]):
+                valid_indices.append(end)
+            end += 1
+        if len(valid_indices) < group_size:
+            break
+        block_x = [x_values[idx] for idx in valid_indices]
+        block_y = [y_values[idx] for idx in valid_indices]
+        result_x.append(float(np.mean(block_x)))
+        result_y.append(float(np.mean(block_y)))
+        start = end
+    return result_x, result_y
+
+
 def _remove_nan_pairs(
     x_values: List[float],
     y_values: List[float],
@@ -610,6 +682,7 @@ def plot_metric_traces(
     scatter: bool = False,
     value_filter: int = 0,
     group_median: int = 0,
+    group_mean: int = 0,
     stack_sources: bool = False,
     fill_sign: bool = False,
     sparse: bool = False,
@@ -660,6 +733,8 @@ def plot_metric_traces(
                     x_series, y_series = _apply_filter_groups(x_series, y_series, value_filter)
                 if group_median > 0:
                     x_series, y_series = _apply_median_groups(x_series, y_series, group_median)
+                if group_mean > 0:
+                    x_series, y_series = _apply_mean_groups(x_series, y_series, group_mean)
                 if interpolate:
                     x_series, y_series = _remove_nan_pairs(x_series, y_series)
                 if x_field == "step" and step_period > 1:
@@ -894,6 +969,7 @@ def main() -> None:
             scatter=args.scatter,
             value_filter=args.filter,
             group_median=args.median,
+            group_mean=args.mean,
             stack_sources=args.stack_sources,
             fill_sign=args.plot_fill_sign,
             sparse=args.sparse,
@@ -916,6 +992,7 @@ def main() -> None:
             scatter=args.scatter,
             value_filter=args.filter,
             group_median=args.median,
+            group_mean=args.mean,
             stack_sources=args.stack_sources,
             fill_sign=args.plot_fill_sign,
             sparse=args.sparse,
@@ -938,6 +1015,7 @@ def main() -> None:
             scatter=args.scatter,
             value_filter=args.filter,
             group_median=args.median,
+            group_mean=args.mean,
             stack_sources=args.stack_sources,
             fill_sign=args.plot_fill_sign,
             sparse=args.sparse,
