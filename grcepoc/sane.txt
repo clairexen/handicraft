@@ -8,69 +8,56 @@ The transformer adds function outputs to its state vector twice per layer: at th
 
 Whenever we update
 
-	state_at_pos(i) += delta_i
+	state_at_pos(t) += update_t
 
 we also perform
 
-	self(state_at_pos(i+1)) += alpha .* next(delta_i)     ... in "decode" or "encode" mode
-	next(state_at_pos(i-1)) += beta .* self(delta_i)      ... in "reverse" or "encode" mode
+	self(state_at_pos(t+1)) += alpha .* next(update_t)     ... in "decode" or "encode" mode
+	next(state_at_pos(t-1)) += beta .* self(update_t)      ... in "reverse" or "encode" mode
 
-These SANE alpha (forward in time) and beta (backwards in time) channels create semantically meaningful high-bandwith pathways between positions. The alpha channel enables the "next" stream at position i to steer the "self" stream at position i+1, and the beta channel enables the "self" stream at position i to steer the "next" stream at position i-1.
+These SANE alpha (forward in time) and beta (backwards in time) channels create semantically meaningful high-bandwith pathways between positions. The alpha channel enables the "next" stream at position t to steer the "self" stream at position t+1, and the beta channel enables the "self" stream at position t to steer the "next" stream at position t-1.
 
-For training useful alpha and beta channels we train encoder-style transformers on text with blacked out tokens, and let the encoder predict the missing tokens based on it surroundings, with a looping "encode" grid.
+The alpha and beta couplings are meaningful for any grid regime (decoder `D`, encoder `E`, or reverse `R`). However, the concrete training loop described in this document is intrinsically left-to-right, so the current proof-of-concept focuses on `D` grids. Implementations should therefore reject `E` or `R` grids whenever they request multi-token lookahead (`X>1` or `Z>1`).
 
-(For a first proof-of-concept implementation in grce.py we only implement the SANE alpha and beta channels within a "Grid".)
+(For a first proof-of-concept implementation in grce.py we only implement the SANE alpha and beta channels within a `D` "Grid".)
 
-### Multi-Token Looped Decoder
+
+### Multi-Token Looped Decoder (MTLD)
+
+Instead of simply predicting the token t+1 from token t, the MTLD uses an encoder-like Z positions wide block of parallel Y-looping transformers (connected via unmasked attention and SANE alpha and beta channels) to create an internal representation of the next Z-1 tokens (t+1 ... t+Z-1), modelling and predicting a space of possible continuation sequences of length Z-1.
+
+The SANE alpha and beta channels create high bandwidth channels between neighbouring positions, and the "sliding window" approach described below preserves most of the internal state from one token to the next.
+
+The hope is that this architecture will enable smaller transformers to think ahead, without having to create, store, and manipulate a deep and complex model of the immediate future within a single transformer instance.
+
+Note on looping: We pass the transformer state vector through RMSNorm(elementwise_affine=False) at the end of each loop iteration.
+
+
+#### Mode of operation / inference
+
+We operate on an encoder-like block of Z parallel Y-looping transforers. The looping transformer at position z=0 is fed the previous token (at index t) and the [|predict-next|] embedding on the "self" stream, and after Y loop iterations we obtain the token t+1 from the "next" output stream at position z=0. The inputs to the looping transformers at positions z>0 are fed the [|find-self|] embedding in the "self" stream.
+
+After predicting a token in this way, we do not throw away the entire state. Instead we shift the transformer state one position to the left, shifting away the previous firty position, that just predicted a token, and creating a new most-right last position (initialized with [|find-self|] in the "self" stream). We then (re-)add the embedding for the emitted token and [|predict-next|] to the new first position. Then we loop Y times on that new configuration, and so forth.
+
+
+#### Training
+
+We are constuctring a "Grid" (in notex.txt/grce.py lingo) to train and evaluate "SANE" thinking within `D` regime of th grid concept specifically (left-to-right-decoder without GRCE/XCTX recurrent context).
 
 Let's call `x in [0...X-1]` the X-axis, the "time-axis", indexed by the token index `x`.
 Let's call `y in [0...Y-1]` the Y-axis, the "loop-axis", indexed by the loop iteration `y`.
 Let's further call `z in [0...Z-1]` the Z-axis, the "depth" of the current thought, indexed by the token offset `z`.
 
-(A multi-token looped decoder with Z=1 is simply a regular single-token looped decoder.)
+An MTLD with X=1 and Z=1 is simply a regular single-token Y-looped decoder. Thus the grid layout language `64D4Y` is identical to `64D1X4Y1Z`. Let further be `t in [0..T-1]` the (input) token axis. The numner T=64 in `64D4Y` denotes the number of input tokens.
 
-A multi-token looped decoder predicts a span of Z tokens, instead of simply the next token, spreading the computation for such a multi-token prediction accross Z parallel transformers ("z-span") that loop as encoder-style block with unmasked internal attention. Only the transformer at the z=0 position in a z-span can be attendet to by later x-positions in the multi-token looped decoder.
+We maintain spans of Z=4 columns but truncate the last such span so it only contains the first column (z=0). This guarantees that the last column in our grid has the properties we'd expect of the final decoder column and avoids ragged tensor shapes near the boundary. Let's use N to capture the number of columns in our grid. Then N=(T-1)*Z+1. Let's use the grid `65D 3X 2Y 4Z` (thus N=64*4+1=257) as an example going forward. Thus the column index `i in [0...N-1]` can be written as `i = t*Z+z`.
 
-The position z=0 within a z-span is fed the input token for the current-x position. The other positions are initialized with the [|find-self|] embedding in their "self" input stream. Within the z-span both the SANE alpha and beta channels are active between the z-positions. Only the transformers at the z=0 position participate in the chain of SANE alpha channels propagating state from one x-position to the next.
+So we have 64 full-width encoder-style spans indexed by `k in [0...K-1]`, each 4 columns wide, spanning a total of 64*4=256 columns, plus a single regular decoder column in a trimmed last span at span index `k=K`.
 
-After Y iterations we constrain the "next" output stream at z=0 to predict the token at position x+1. For the positions z>0 we constrain the "self" output stream to predict the token at position x+z. (So Z=2 is still only thinkinging abut the next token, but using two interacting transformer loops. Starting with Z=3 the z-span is actually performing multi-token thinking.)
+Because we have X=3 and Y=2 in our example we have a total of X*Y=6 total loop iteratrions during training. Inference does not have a direct analogue to X because generation can, in principle, continue indefinitely; X simply captures how many autoregressive steps we choose to unroll while training. Y-looping is trivial so we only detail the three X-loops here. Let's start with x=0:
 
+On every z=0 position we initialize the transformer state with the embedding for the input token `t` and the [|predict-next|] embedding in the "self" stream at the position `i`, and we constrain the output at position `i` to contain the embedding of the token `t+1` in the "next" stream output. That other positions z>0 receive only the [|find-self|] encoding in their "self" stream and are constrained to the token `t+z` in their "self output stream.
 
+After Y=2 iterations we enter the `x=1` region. For the z<=x positions we (re-)add the token embedding `t+z` and [|predict-next|] to the self input stream at position i and constrain the output after Y=2 more itrations to carry the token embedding `t+z+1` in their "next" output. The z>x positions are simply left as they are (keep looping) and are again constrained to carry the token embedding of `t+z` in their output streams, and so forth.
 
-
-
-
-
-
-
-----------------------------------------------------------
-# IGNORE EVERYTHING IN THIS FILE AFTER THIS LINE
-
-
-
-Instead of repeatedly refining a single token position `N` times, loop iterations expand into a **multi-position encoder span**, that we call **think-ahead blocks**. The first loop processes the current token at position `t`. In later loops additional positions are introduced so that after `H <= N` iterations the model operates on a span `[t, t+1, …, t+H−1]`. All H positions form an encoder-style transformer block and therefore attend to each other, allowing the model to jointly refine representations of the current token and several predicted future tokens. When `H < N` the model spends additional `N-H` loop iterations on the H-wide encoder, refining the predicted multi-position sequence.
-
-The **current next → future self propagation rule** is applied between loop iterations and forwards data from each position to the next: After applying RMSNorm without affine parameters to the loop outputs, we extract the "next" stream produced at position `t`, apply a learned LayerNorm, then add it to the "self" stream at position `t+1`. This creates a high-bandwith path from one position to the next, with the semantic role of aligning the future "self" with the current "next".
-
-Each of the positions `t+i` with 0 < i < H operate as regular (H=1) looped decode column for the first `i` loop iterations. After `i` loop iterations next→self propagation reaches position `t+i` and the role of the column switches from single decode column to the last column in an `i+1` wide encoder span. At this point we discard (zero-out) the output from the previous loop iteration. Then we propagate "next" from position `t+i-1` into "self" at position `t+1`. (If absolute position encoding or other auxiliary per-position information is expected by the network, we also add those embeddings to the new state vector at position `t+1`.)
-
-The only changes required to an existing looping transformer implementation is next→self propagation between loops, and a slightly modified attention masks for each loop iteration: Once a position has "joined" the encoder, it can be seen by the previous positions in the encoder. So we must never block attention between two positions from the same encoder. (We further add a mode in which only the K/V values from the first positions within a SANE span can be seen by positions past that span, but this is optional.)
-
-During inference the model maintains a **rolling latent continuation**. After looping `N` times and generating a span `[t, …, t+H−1]`, the next token is emitted from the first position. The latent state is then shifted forward by one position: the embedding of the emitted token re-initializes the "self" stream of the new first position. (The "next" stream of the new first position is propagated to "self" at the second position as usual. After that the "next" data at the first position may be zeroed out. -- Tests pending.) Another round of `N` loop iterations refine the updated span `[t+1, …, t+H]`. Because the emitted token is sampled from the same jointly refined state that produced the continuation, the latent future generally remains consistent with the generated output.
-
-A central motivation for SANE is the creation of a **high-bandwidth latent channel between adjacent positions**. Conventional autoregressive transformers transmit information from one token to the next only through the discrete token itself. In SANE, the next stream provides a direct continuous pathway from one position’s representation to the self stream of the next. This enables internal reasoning state, planning signals, and intermediate computations to propagate forward without needing to be encoded into tokens. Accross the `H` token positions the model has an `H` times larger state space, and `(H-1)/H` of that state space is preserved from one output token to the next.
-
-The resulting architecture combines transformer attention with a persistent forward-flowing latent state and an iterative refinement mechanism. The model maintains and updates a short internal continuation of upcoming tokens while generating text, producing a rolling planning horizon reminiscent of incremental human language production. By preserving internal computation across token boundaries and allowing future tokens to influence each other before emission, SANE transformers may improve generation stability, local coherence, and the ability to sustain multi-step reasoning.
-
-
-## Implementation notes (see grce.py and notes.txt)
-
-Two layout suffixes control how much of the span’s key/value state is exposed:
-* `z` (lowercase) hides the encoder-style K/V tensors generated by the non-leading positions when they wake up. Downstream segments therefore only see standard caches produced by the leading token of the span, matching the behavior of classic decode passes.
-* `Z` (uppercase) keeps those K/V entries visible once they exist, allowing later segments to attend directly to the latent predictions.
-
-The two variants differ only in the attention mask applied to later segments, which determines whether the non-leading positions’ caches become part of the observable context.
-
-(Currently z/Z must be combined with y/Y and must not be combined with x/X. However, a future extension will use x/X to model rolling latent continuation in training.)
-
-**Only the key/value tensors produced in the final loop iteration**—the one that generates the final prediction—are committed to the attention **KV cache**. Intermediate loop iterations therefore remain internal refinement steps and do not expand the external context memory.
+With regards to attention a transformer with a position with k_2 and z_2 attents to all other transformers at k_1 and z_1 when either `k_1 < k_2 and z_1=0` or `k_1 == k_2`.
