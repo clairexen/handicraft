@@ -3650,6 +3650,8 @@ class CausalSelfAttention(nn.Module):
         attention_capture: AttentionCapture | None = None,
         rope_positions: torch.Tensor | None = None,
         position_offsets: torch.Tensor | None = None,
+        sane_group_ids: torch.Tensor | None = None,
+        sane_z_indices: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
         B, T, C = x.shape
         head_dim = self.head_dim
@@ -3733,6 +3735,26 @@ class CausalSelfAttention(nn.Module):
         elif attn_mode == "noattn":
             eye = torch.eye(T, dtype=torch.bool, device=x.device)
             block_mask = ~eye
+        if (
+            block_mask is not None
+            and attn_mode == "decode"
+            and sane_group_ids is not None
+            and sane_z_indices is not None
+            and cache_len == 0
+            and sane_group_ids.numel() == T
+            and sane_z_indices.numel() == T
+        ):
+            groups = sane_group_ids.to(x.device, dtype=torch.long)
+            z_idx = sane_z_indices.to(x.device, dtype=torch.long)
+            allowed = torch.zeros(T, T, dtype=torch.bool, device=x.device)
+            col_index = torch.arange(T, device=x.device)
+            for j in range(T):
+                cond = col_index <= j
+                same_group = groups == groups[j]
+                earlier_zero = (groups < groups[j]) & (z_idx == 0)
+                cond = cond & (same_group | earlier_zero)
+                allowed[j, cond] = True
+            block_mask = ~allowed
         if block_mask is not None:
             if cache_len > 0:
                 prefix = torch.zeros(T, cache_len, dtype=torch.bool, device=x.device)
@@ -3952,6 +3974,8 @@ class Block(nn.Module):
         rope_positions: torch.Tensor | None = None,
         position_offsets: torch.Tensor | None = None,
         sane_hook=None,
+        sane_group_ids: torch.Tensor | None = None,
+        sane_z_indices: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor | None, tuple[torch.Tensor, torch.Tensor] | None]:
         attn_input = self._apply_xctx_bias(x, xctx_bias, self.xctx_attn_gain)
         attn_norm = self.ln1(attn_input)
@@ -3968,6 +3992,8 @@ class Block(nn.Module):
             rope_positions=rope_positions,
             position_offsets=position_offsets,
             attention_capture=attention_capture,
+            sane_group_ids=sane_group_ids,
+            sane_z_indices=sane_z_indices,
         )
         if attention_disabled_rows is not None and attention_disabled_rows.any():
             mask = (~attention_disabled_rows).view(-1, 1, 1).to(attn_output.dtype)
@@ -4290,6 +4316,7 @@ class TransformerStackCore(nn.Module):
         enable_sane: bool | None = None,
         sane_first_columns: torch.Tensor | None = None,
         sane_group_ids: torch.Tensor | None = None,
+        sane_z_indices: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, list[torch.Tensor], list[tuple[torch.Tensor, torch.Tensor]]]:
         rows, cols, _ = x.shape
         rope_positions_tensor = None
@@ -4375,6 +4402,8 @@ class TransformerStackCore(nn.Module):
                     rope_positions=rope_positions_tensor,
                     position_offsets=position_offsets_tensor,
                     sane_hook=sane_hook,
+                    sane_group_ids=sane_group_ids,
+                    sane_z_indices=sane_z_indices,
                 )
                 samples[layer_idx] = current
                 if kv_pair is None:
@@ -4854,6 +4883,7 @@ class TransformerStackSequence(nn.Module):
         column_positions: torch.Tensor | None = None,
         sane_first_columns: torch.Tensor | None = None,
         sane_group_ids: torch.Tensor | None = None,
+        sane_z_indices: torch.Tensor | None = None,
         layer_repeat: int = 1,
         layer_top_only: bool = False,
         think_last_only: bool = False,
@@ -4893,6 +4923,7 @@ class TransformerStackSequence(nn.Module):
                 column_positions=column_positions,
                 sane_first_columns=sane_first_columns,
                 sane_group_ids=sane_group_ids,
+                sane_z_indices=sane_z_indices,
                 layer_repeat=layer_repeat,
                 layer_top_only=layer_top_only,
                 think_last_only=think_last_only,
@@ -5115,6 +5146,7 @@ class TransformerStackSequence(nn.Module):
         column_positions: torch.Tensor | None,
         sane_first_columns: torch.Tensor | None,
         sane_group_ids: torch.Tensor | None,
+        sane_z_indices: torch.Tensor | None,
         layer_repeat: int,
         layer_top_only: bool,
         think_last_only: bool,
@@ -5155,6 +5187,7 @@ class TransformerStackSequence(nn.Module):
             enable_sane=sane_override,
             sane_first_columns=sane_first_columns,
             sane_group_ids=sane_group_ids,
+            sane_z_indices=sane_z_indices,
         )
         kv_out = kv_pairs
         layer_outputs = samples if capture_layer_outputs else None
@@ -5666,6 +5699,7 @@ def _run_microbatch_pass(
                     )
                     sane_first_columns = (column_z == 0).nonzero(as_tuple=False).squeeze(-1)
                     sane_group_ids = column_local
+                    sane_z_indices = column_z
                     column_base_offsets = column_local + base_start
                     column_offsets = column_base_offsets + column_z
                     next_offsets = column_offsets + 1
@@ -5735,6 +5769,7 @@ def _run_microbatch_pass(
                             column_positions=segment_positions,
                             sane_first_columns=sane_first_columns,
                             sane_group_ids=sane_group_ids,
+                            sane_z_indices=sane_z_indices,
                             think_step_index=think_index,
                             think_step_count=think_count,
                             layer_repeat=layer_repeat,
@@ -5968,6 +6003,7 @@ def _run_microbatch_pass(
                     column_positions=segment_positions,
                     sane_first_columns=None,
                     sane_group_ids=None,
+                    sane_z_indices=None,
                     think_step_index=think_index,
                     think_step_count=think_count,
                     layer_repeat=layer_repeat,
