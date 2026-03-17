@@ -5818,8 +5818,6 @@ def _run_microbatch_pass(
                                         pass_idx,
                                         z_value,
                                     )
-                                    if os.environ.get("GRCE_DEBUG_EXTRA"):
-                                        print("[debug sane metric]", metric_name, per_loss, tok_count)
                                     _accumulate_metric(
                                         mode_loss_sums,
                                         mode_token_counts,
@@ -6069,8 +6067,6 @@ def _run_microbatch_pass(
                                     0,
                                     0,
                                 )
-                                if os.environ.get("GRCE_DEBUG_EXTRA"):
-                                    print("[debug plain metric]", metric_name, per_loss, tok_count)
                                 _accumulate_metric(
                                     mode_loss_sums,
                                     mode_token_counts,
@@ -6995,8 +6991,6 @@ def train_model(
                 merged = dict(previous_metrics)
                 merged.update(live_metrics)
                 setattr(args, "_latest_train_extra_metrics", merged)
-                if os.environ.get("GRCE_DEBUG_EXTRA"):
-                    print("[debug extra metrics]", merged)
             step_base_tokens = base_tokens
             if total_tokens <= 0:
                 raise RuntimeError("No tokens processed in training step")
@@ -7860,8 +7854,6 @@ def _evaluate_row_block(
                             0,
                             0,
                         )
-                        if os.environ.get("GRCE_DEBUG_EXTRA"):
-                            print("[debug plain metric]", metric_name, per_loss, tok_count)
                         if metric_name not in mode_loss_sums:
                             mode_loss_sums[metric_name] = 0.0
                             mode_token_counts[metric_name] = 0
