@@ -26,7 +26,7 @@ The alpha and beta couplings are meaningful for any grid regime (decoder `D`, en
 
 ### Multi-Token Looped Decoder (MTLD)
 
-Instead of simply predicting the token t+1 from token t, the MTLD uses an encoder-like Z positions wide block of parallel Y-looping transformers (connected via unmasked attention and SANE alpha and beta channels) to create an internal representation of the next Z-1 tokens (t+1 ... t+Z-1), modelling and predicting a space of possible continuation sequences of length Z-1.
+Instead of simply predicting the token t+1 from token t, the MTLD uses an encoder-like Z positions wide block of parallel Y-looping transformers (connected via unmasked attention and SANE alpha and beta channels) to create an internal representation of the next Z-1 tokens (t+1 ... t+Z-1), modelling and predicting a space of possible continuation sequences of length Z-1. During the initial `x=0` pass we still feed only the *current* token t into the first column at `z=0`; the remaining columns are seeded with [|find-self|] so they must infer their respective futures internally. Token t+1 is therefore predicted twice at this stage: the decoder column at `z=0` produces it on its "next" stream, and the encoder-style column at `z=1` emits the same token on its "self" stream so downstream logic can reuse the latent future state without swapping parity lanes.
 
 The SANE alpha and beta channels create high bandwidth channels between neighbouring positions, and the "sliding window" approach described below preserves most of the internal state from one token to the next.
 
@@ -58,7 +58,7 @@ So we have 64 full-width encoder-style spans indexed by `k in [0...K-1]`, each 4
 
 Because we have X=3 and Y=2 in our example we have a total of X*Y=6 total loop iteratrions during training. Inference does not have a direct analogue to X because generation can, in principle, continue indefinitely; X simply captures how many autoregressive steps we choose to unroll while training. Y-looping is trivial so we only detail the three X-loops here. Let's start with x=0:
 
-On every z=0 position we initialize the transformer state with the embedding for the input token `t` and the [|predict-next|] embedding in the "self" stream at the position `i`, and we constrain the output at position `i` to contain the embedding of the token `t+1` in the "next" stream output. That other positions z>0 receive only the [|find-self|] encoding in their "self" stream and are constrained to the token `t+z` in their "self output stream.
+On every z=0 position we initialize the transformer state with the embedding for the input token `t` and the [|predict-next|] embedding in the "self" stream at the position `i`, and we constrain the output at position `i` to contain the embedding of the token `t+1` in the "next" stream output. During this first `x=0` pass the other positions `z>0` receive only the [|find-self|] encoding in their "self" stream; after looping they are constrained to emit token `t+z` on their self stream, so `z=1` redundantly carries token `t+1` alongside the `z=0` next-stream prediction.
 
 After Y=2 iterations we enter the `x=1` region. For the z<=x positions we (re-)add the token embedding `t+z` and [|predict-next|] to the self input stream at position i and constrain the output after Y=2 more itrations to carry the token embedding `t+z+1` in their "next" output. The z>x positions are simply left as they are (keep looping) and are again constrained to carry the token embedding of `t+z` in their output streams, and so forth.
 
