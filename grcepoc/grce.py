@@ -377,6 +377,8 @@ class SegmentSpec:
     context_enabled: bool = True
     connector: str | None = None
     think_factor: int = 1
+    sane_x: int = 1
+    sane_x_last_only: bool = False
     layer_repeat: int = 1
     layer_top_only: bool = False
     think_last_only: bool = False
@@ -388,6 +390,7 @@ class SegmentSpec:
     loss_output_stream: bool = False
     drop_count: int = 0
     disable_sane: bool = False
+    sane_z: int = 1
 
 
 @dataclass(frozen=True)
@@ -430,8 +433,14 @@ class SegmentLayout:
     loss_output_stream: bool = False
     drop_count: int = 0
     disable_sane: bool = False
+    token_columns_override: int | None = None
+    sane_z: int = 1
+    sane_x: int = 1
+    sane_x_last_only: bool = False
 
     def token_columns(self) -> int:
+        if self.token_columns_override is not None:
+            return self.token_columns_override
         if self.think_factor <= 1:
             return self.columns
         return (self.columns // self.think_factor)
@@ -559,11 +568,17 @@ def _parse_segment_spec(text: str, connector: str | None) -> SegmentSpec:
         mode_token = mode_with_metrics[:gt_index]
     else:
         mode_token = mode_with_metrics
+    if not mode_token:
+        raise LayoutParseError("Missing mode in segment")
+    base_mode_char = mode_token[0].lower()
     think_factor = 1
     think_last_only = False
+    sane_x = 1
+    sane_x_last_only = False
+    sane_z = 1
     layer_repeat = 1
     layer_top_only = False
-    suffix_pattern = re.compile(r"(\d+)([xXyY])$")
+    suffix_pattern = re.compile(r"(\d+)([xXyYzZ])$")
     while True:
         match = suffix_pattern.search(mode_token)
         if not match:
@@ -572,19 +587,43 @@ def _parse_segment_spec(text: str, connector: str | None) -> SegmentSpec:
         marker = match.group(2)
         mode_token = mode_token[: match.start()]
         if marker in {"x", "X"}:
-            if count not in (2, 3, 4):
-                raise LayoutParseError("Think modifiers only support 2x/3x/4x")
-            if think_factor != 1:
-                raise LayoutParseError("Think modifier specified multiple times")
-            think_factor = count
-            think_last_only = marker.isupper()
-        else:
+            if base_mode_char in {"f", "t"}:
+                if count not in (2, 3, 4):
+                    raise LayoutParseError("Think modifiers only support 2x/3x/4x")
+                if think_factor != 1:
+                    raise LayoutParseError("Think modifier specified multiple times")
+                think_factor = count
+                think_last_only = marker.isupper()
+            elif base_mode_char == "d":
+                if count not in (2, 3, 4):
+                    raise LayoutParseError("Think modifiers only support 2x/3x/4x")
+                if sane_x != 1:
+                    raise LayoutParseError("Think modifier specified multiple times")
+                sane_x = count
+                sane_x_last_only = marker.isupper()
+            else:
+                raise LayoutParseError(
+                    "Think modifiers are only supported for forward/think or decode segments"
+                )
+            continue
+        if marker in {"z", "Z"}:
+            if base_mode_char != "d":
+                raise LayoutParseError("Z modifiers are only supported for decode segments")
+            if count <= 0:
+                raise LayoutParseError("Z modifiers require a positive integer")
+            if sane_z != 1:
+                raise LayoutParseError("Z modifier specified multiple times")
+            sane_z = count
+            continue
+        if marker in {"y", "Y"}:
             if count <= 0:
                 raise LayoutParseError("Layer repeat modifiers require a positive integer")
             if layer_repeat != 1:
                 raise LayoutParseError("Layer repeat modifier specified multiple times")
             layer_repeat = count
             layer_top_only = marker.isupper()
+            continue
+        raise LayoutParseError(f"Unsupported suffix modifier '{marker}' in segment '{text}'")
     hide_typed_metrics = False
     bias_input_loss = False
     bias_output_loss = False
@@ -671,6 +710,8 @@ def _parse_segment_spec(text: str, connector: str | None) -> SegmentSpec:
         context_enabled,
         connector,
         think_factor=think_factor,
+        sane_x=sane_x,
+        sane_x_last_only=sane_x_last_only,
         think_last_only=think_last_only,
         layer_repeat=layer_repeat,
         layer_top_only=layer_top_only,
@@ -682,6 +723,7 @@ def _parse_segment_spec(text: str, connector: str | None) -> SegmentSpec:
         loss_output_stream=bias_output_loss,
         drop_count=drop_count,
         disable_sane=disable_sane,
+        sane_z=sane_z,
     )
 
 
@@ -933,6 +975,17 @@ class BatchLayout:
             think_factor = max(1, int(getattr(spec, "think_factor", 1) or 1))
             if think_factor > 1:
                 columns = (columns // think_factor) * think_factor
+            sane_z = max(1, int(getattr(spec, "sane_z", 1) or 1))
+            sane_x = max(1, int(getattr(spec, "sane_x", 1) or 1))
+            sane_x_last_only = bool(getattr(spec, "sane_x_last_only", False))
+            token_columns_override = None
+            if getattr(spec, "mode", "") == "decode" and sane_z > 1:
+                base_columns = columns
+                token_columns_override = base_columns
+                if base_columns <= 0:
+                    columns = 0
+                else:
+                    columns = (base_columns - 1) * sane_z + 1
             segments.append(
                 SegmentLayout(
                     spec.mode,
@@ -951,6 +1004,10 @@ class BatchLayout:
                     loss_output_stream=getattr(spec, "loss_output_stream", False),
                     drop_count=max(0, int(getattr(spec, "drop_count", 0) or 0)),
                     disable_sane=bool(getattr(spec, "disable_sane", False)),
+                    token_columns_override=token_columns_override,
+                    sane_z=sane_z,
+                    sane_x=sane_x,
+                    sane_x_last_only=sane_x_last_only,
                 )
             )
         max_cols = sum(segment.columns for segment in segments)
@@ -984,6 +1041,10 @@ class BatchLayout:
                 if getattr(segment, "think_factor", 1) and segment.think_factor > 1:
                     suffix_letter = "X" if getattr(segment, "think_last_only", False) else "x"
                     think_suffix = f"{segment.think_factor}{suffix_letter}"
+                decode_think_suffix = ""
+                if segment.mode == "decode" and getattr(segment, "sane_x", 1) > 1:
+                    suffix_letter = "X" if getattr(segment, "sane_x_last_only", False) else "x"
+                    decode_think_suffix = f"{segment.sane_x}{suffix_letter}"
                 layer_suffix = ""
                 if getattr(segment, "layer_repeat", 1) and segment.layer_repeat > 1:
                     suffix_letter = "Y" if getattr(segment, "layer_top_only", False) else "y"
@@ -998,13 +1059,16 @@ class BatchLayout:
                 if drop_count:
                     prefix = f"{drop_count}" if drop_count > 1 else ""
                     drop_suffix = f"{prefix}P"
+                depth_suffix = ""
+                if getattr(segment, "sane_z", 1) and segment.sane_z > 1:
+                    depth_suffix = f"{segment.sane_z}Z"
                 sane_suffix = "S" if getattr(segment, "disable_sane", False) else ""
                 metric_suffix = ""
                 extra = getattr(segment, "extra_metrics", ())
                 if extra:
                     prefix = ">>" if getattr(segment, "suppress_default_metric", False) else ">"
                     metric_suffix = prefix + ">".join(extra)
-                bit = f"{segment.columns}{letter}{hide_suffix}{layer_suffix}{think_suffix}{bias_suffix}{drop_suffix}{sane_suffix}{metric_suffix}"
+                bit = f"{segment.columns}{letter}{hide_suffix}{layer_suffix}{think_suffix}{decode_think_suffix}{bias_suffix}{drop_suffix}{depth_suffix}{sane_suffix}{metric_suffix}"
                 if idx > 0:
                     connector = segment.connector or "="
                     bit = connector + bit
@@ -2959,12 +3023,15 @@ class TextDataset:
         device: torch.device,
         *,
         rng: random.Random | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor, list[dict[str, int]]]:
+        future_margin: int = 0,
+    ) -> tuple[torch.Tensor, torch.Tensor, list[dict[str, int]], torch.Tensor]:
         if columns <= 0 or rows <= 0:
             raise ValueError("Row sampling requires positive columns and rows")
+        if future_margin < 0:
+            raise ValueError("future_margin must be non-negative")
         tokens = self._tokens_for_split(split)
         total = int(tokens.numel())
-        seq_span = columns + 1
+        seq_span = columns + 1 + future_margin
         if seq_span <= 1:
             raise ValueError("Row sampling span must exceed 1 token")
         if total <= 0:
@@ -2998,9 +3065,12 @@ class TextDataset:
                 }
             )
         stacked = torch.stack(windows)
-        x = stacked[:, :-1].contiguous().to(device)
-        y = stacked[:, 1:].contiguous().to(device)
-        return x, y, metadata
+        x = stacked[:, :columns].contiguous().to(device)
+        y = stacked[:, 1 : columns + 1].contiguous().to(device)
+        future = torch.empty(rows, 0, dtype=x.dtype, device=device)
+        if future_margin > 0:
+            future = stacked[:, columns + 1 :].contiguous().to(device)
+        return x, y, metadata, future
 
     def _aligned_window(
         self,
@@ -5309,6 +5379,29 @@ def _log_layout_warnings(args: Args, layout: BatchLayout) -> None:
         args._layout_warning_cache = cache
 
 
+def _row_future_margin(row: BlockLayout) -> int:
+    margin = 0
+    for segment in row.segments:
+        if segment.mode != "decode":
+            continue
+        depth = max(1, int(getattr(segment, "sane_z", 1) or 1))
+        margin = max(margin, max(0, depth - 2))
+    return margin
+
+
+def _sane_column_plan(base_tokens: int, depth: int) -> list[tuple[int, int]]:
+    if base_tokens <= 0:
+        return []
+    depth = max(1, depth)
+    plan: list[tuple[int, int]] = []
+    span = max(0, base_tokens - 1)
+    for idx in range(span):
+        for z in range(depth):
+            plan.append((idx, z))
+    plan.append((base_tokens - 1, 0))
+    return plan
+
+
 def _run_microbatch_pass(
     args: Args,
     model: GRCEGPT,
@@ -5371,17 +5464,22 @@ def _run_microbatch_pass(
                 )
         with training_scope:
             try:
-                xb_base, yb_base, metadata = dataset.sample_row_batch(
+                future_margin = _row_future_margin(group)
+                xb_base, yb_base, metadata, future_tokens = dataset.sample_row_batch(
                     split,
                     pos_total,
                     row_count,
                     device,
                     rng=rng,
+                    future_margin=future_margin,
                 )
             except ValueError as exc:
                 raise ValueError(
                     f"Unable to sample {row_count} rows with {pos_total} tokens from the corpus"
                 ) from exc
+            yb_extended = yb_base if future_tokens.size(1) == 0 else torch.cat(
+                [yb_base, future_tokens], dim=1
+            )
             xb = _expand_think_sequences(xb_base, group.segments)
             yb = _expand_think_sequences(yb_base, group.segments)
             pos_offsets = None
@@ -5402,6 +5500,7 @@ def _run_microbatch_pass(
                 column_positions = torch.zeros_like(column_positions)
             control_ids = torch.zeros((row_count, cols_total), dtype=torch.long, device=device)
             cursor = 0
+            pos_cursor = 0
             kv_chain: list[list[tuple[torch.Tensor, torch.Tensor]] | None] = []
             grce_state = None
             xctx_state = None
@@ -5423,7 +5522,9 @@ def _run_microbatch_pass(
                 )
             for segment in group.segments:
                 cols = int(segment.columns)
+                base_tokens = int(segment.token_columns())
                 if cols <= 0:
+                    pos_cursor += base_tokens
                     continue
                 mode = segment.mode
                 connector = getattr(segment, "connector", None)
@@ -5431,6 +5532,197 @@ def _run_microbatch_pass(
                     kv_chain = []
                 start = cursor
                 end = cursor + cols
+                sane_depth = max(1, int(getattr(segment, "sane_z", 1) or 1))
+                sane_passes = max(1, int(getattr(segment, "sane_x", 1) or 1))
+                use_sane_decode = mode == "decode" and sane_depth > 1
+                if use_sane_decode:
+                    if getattr(segment, "loss_input_stream", False) or getattr(segment, "loss_output_stream", False):
+                        raise ValueError("SANE decode segments do not support b/B modifiers yet")
+                    if base_tokens <= 0:
+                        pos_cursor += base_tokens
+                        cursor += cols
+                        continue
+                    plan = _sane_column_plan(base_tokens, sane_depth)
+                    if len(plan) != cols:
+                        raise ValueError("SANE decode plan does not match allocated columns")
+                    base_start = pos_cursor
+                    full_tokens = torch.cat([xb_base[:, :1], yb_extended], dim=1)
+                    full_embeddings = model.core.expand_to_even(
+                        model.core.tok_emb(full_tokens)
+                    )
+                    column_local = torch.tensor(
+                        [idx for idx, _ in plan], device=device, dtype=torch.long
+                    )
+                    column_z = torch.tensor(
+                        [z for _, z in plan], device=device, dtype=torch.long
+                    )
+                    column_base_offsets = column_local + base_start
+                    column_offsets = column_base_offsets + column_z
+                    next_offsets = column_offsets + 1
+                    seq_len = full_tokens.size(1)
+                    if torch.any(column_offsets >= seq_len) or torch.any(next_offsets >= seq_len):
+                        raise ValueError("SANE decode segment requires unavailable tokens")
+                    embedding_index = column_offsets.view(1, -1, 1).expand(
+                        row_count, -1, full_embeddings.size(-1)
+                    )
+                    column_embeddings = torch.gather(full_embeddings, 1, embedding_index)
+
+                    def _gather_token_ids(offsets: torch.Tensor) -> torch.Tensor:
+                        index = offsets.view(1, -1).expand(row_count, -1)
+                        return torch.gather(full_tokens, 1, index)
+
+                    self_token_ids = _gather_token_ids(column_offsets)
+                    next_token_ids = _gather_token_ids(next_offsets)
+                    state_tensor = token_components.new_zeros(
+                        row_count, cols, token_components.size(-1)
+                    )
+                    kv_final: list[tuple[torch.Tensor, torch.Tensor]] | None = None
+                    segment_loss: torch.Tensor | None = None
+                    segment_tokens = 0
+                    row_loss_sums_seg: torch.Tensor | None = None
+                    row_token_counts_seg: torch.Tensor | None = None
+                    for pass_idx in range(sane_passes):
+                        chunk_base = state_tensor.clone()
+                        injection_mask = column_z <= pass_idx
+                        if torch.any(injection_mask):
+                            chunk_base[:, injection_mask, :] = (
+                                chunk_base[:, injection_mask, :] + column_embeddings[:, injection_mask, :]
+                            )
+                        control_values = torch.where(
+                            injection_mask,
+                            torch.full_like(column_z, CONTROL_PREDICT_NEXT),
+                            torch.full_like(column_z, CONTROL_FIND_SELF),
+                        )
+                        control_slice = control_values.view(1, -1).expand(row_count, -1)
+                        control_embed = model.core.expand_to_even(
+                            model.core.control_emb(control_slice)
+                        )
+                        chunk_input = _compose_chunk_embeddings(
+                            model.core.drop,
+                            chunk_base,
+                            control_slice=control_embed,
+                        )
+                        kv_sources = kv_chain if kv_chain else None
+                        segment_positions = column_positions[start:end]
+                        layer_repeat = max(1, int(getattr(segment, "layer_repeat", 1) or 1))
+                        layer_top_only = bool(getattr(segment, "layer_top_only", False))
+                        segment_disable_sane = row_disable_sane or getattr(segment, "disable_sane", False)
+                        think_index = torch.full(
+                            (cols,), pass_idx + 1, device=device, dtype=torch.long
+                        )
+                        think_count = torch.full(
+                            (cols,), sane_passes, device=device, dtype=torch.long
+                        )
+                        chunk_output, grce_state, xctx_state, kv_out, layer_outputs = model.stack_sequence.forward(
+                            chunk_input,
+                            grce_in=grce_state,
+                            xctx_in=xctx_state,
+                            kv_cache_list_in=kv_sources,
+                            mode=mode,
+                            detach_internal_kv_cache=row_detach_kv_cache,
+                            context_detach_span=detach_span_override,
+                            context_detach_enabled=context_detach_override,
+                            column_positions=segment_positions,
+                            think_step_index=think_index,
+                            think_step_count=think_count,
+                            layer_repeat=layer_repeat,
+                            layer_top_only=layer_top_only,
+                            think_last_only=bool(getattr(segment, "sane_x_last_only", False)),
+                            capture_layer_outputs=False,
+                            use_context=bool(getattr(segment, "context_enabled", True)),
+                            disable_sane=segment_disable_sane,
+                        )
+                        kv_final = kv_out
+                        state_tensor = model.core.loop_ln(chunk_output)
+                        head_features = model.core.ln_f(chunk_output)
+                        next_logits = model.core.head(
+                            model.core.output_features(head_features, use_next_stream=True)
+                        )
+                        self_logits = model.core.head(
+                            model.core.output_features(head_features, use_next_stream=False)
+                        )
+                        next_targets = torch.full(
+                            (row_count, cols),
+                            LOSS_IGNORE_INDEX,
+                            dtype=xb_base.dtype,
+                            device=xb_base.device,
+                        )
+                        self_targets = next_targets.clone()
+                        retain_mask = ~injection_mask
+                        if torch.any(injection_mask):
+                            next_targets[:, injection_mask] = next_token_ids[:, injection_mask]
+                        if torch.any(retain_mask):
+                            self_targets[:, retain_mask] = self_token_ids[:, retain_mask]
+                        pass_loss: torch.Tensor | None = None
+                        pass_tokens = 0
+                        row_loss_combined: torch.Tensor | None = None
+                        row_tokens_combined: torch.Tensor | None = None
+                        if torch.any(injection_mask):
+                            loss_val, tok_count, row_loss, row_tokens = loss_sum_token_count_with_rows(
+                                next_logits,
+                                next_targets,
+                                last_only=False,
+                            )
+                            if tok_count > 0:
+                                pass_loss = loss_val
+                                pass_tokens += tok_count
+                                row_loss_combined = row_loss
+                                row_tokens_combined = row_tokens
+                        if torch.any(retain_mask):
+                            loss_val, tok_count, row_loss, row_tokens = loss_sum_token_count_with_rows(
+                                self_logits,
+                                self_targets,
+                                last_only=False,
+                            )
+                            if tok_count > 0:
+                                pass_loss = loss_val if pass_loss is None else pass_loss + loss_val
+                                pass_tokens += tok_count
+                                if row_loss is not None:
+                                    if row_loss_combined is None:
+                                        row_loss_combined = row_loss
+                                        row_tokens_combined = row_tokens
+                                    else:
+                                        row_loss_combined = row_loss_combined + row_loss
+                                        row_tokens_combined = row_tokens_combined + row_tokens
+                        if pass_loss is None or pass_tokens <= 0:
+                            continue
+                        segment_loss = pass_loss if segment_loss is None else segment_loss + pass_loss
+                        segment_tokens += pass_tokens
+                        metric_key = segment.metric_mode or mode
+                        loss_value = float(pass_loss.detach().item())
+                        if (
+                            collect_mode_metrics
+                            and not getattr(segment, "hide_typed_metrics", False)
+                            and not getattr(segment, "suppress_default_metric", False)
+                        ):
+                            if metric_key not in mode_loss_sums:
+                                mode_loss_sums[metric_key] = 0.0
+                                mode_token_counts[metric_key] = 0
+                            mode_loss_sums[metric_key] += loss_value
+                            mode_token_counts[metric_key] += pass_tokens
+                        for tag in getattr(segment, "extra_metrics", ()):
+                            if tag not in mode_loss_sums:
+                                mode_loss_sums[tag] = 0.0
+                                mode_token_counts[tag] = 0
+                            mode_loss_sums[tag] += loss_value
+                            mode_token_counts[tag] += pass_tokens
+                        if row_loss_combined is not None and row_tokens_combined is not None:
+                            loss_values = row_loss_combined.detach().cpu().tolist()
+                            token_values = row_tokens_combined.detach().cpu().tolist()
+                            for idx, entry in enumerate(row_entries):
+                                if idx >= len(loss_values):
+                                    break
+                                entry["loss_sum"] = entry.get("loss_sum", 0.0) + float(loss_values[idx])
+                                entry["token_count"] = (
+                                    int(entry.get("token_count", 0)) + int(token_values[idx])
+                                )
+                    if segment_loss is not None:
+                        total_loss_sum = segment_loss if total_loss_sum is None else total_loss_sum + segment_loss
+                    total_tokens += segment_tokens
+                    kv_chain.append(kv_final)
+                    cursor += cols
+                    pos_cursor += base_tokens
+                    continue
                 if mode == "reverse":
                     control_ids[:, start:end] = CONTROL_PREDICT_PREV
                 elif mode in {"decode", "forward", "noattn"}:
@@ -5630,17 +5922,18 @@ def _run_microbatch_pass(
                             mode_token_counts[tag] = 0
                         mode_loss_sums[tag] += loss_value
                         mode_token_counts[tag] += token_count
-                    if row_loss_sums is not None and row_token_counts is not None:
-                        loss_values = row_loss_sums.detach().cpu().tolist()
-                        token_values = row_token_counts.detach().cpu().tolist()
-                        for idx, entry in enumerate(row_entries):
-                            if idx >= len(loss_values):
-                                break
-                            entry["loss_sum"] = entry.get("loss_sum", 0.0) + float(loss_values[idx])
-                            entry["token_count"] = (
-                                int(entry.get("token_count", 0)) + int(token_values[idx])
-                            )
+                if row_loss_sums is not None and row_token_counts is not None:
+                    loss_values = row_loss_sums.detach().cpu().tolist()
+                    token_values = row_token_counts.detach().cpu().tolist()
+                    for idx, entry in enumerate(row_entries):
+                        if idx >= len(loss_values):
+                            break
+                        entry["loss_sum"] = entry.get("loss_sum", 0.0) + float(loss_values[idx])
+                        entry["token_count"] = (
+                            int(entry.get("token_count", 0)) + int(token_values[idx])
+                        )
                 kv_chain.append(kv_out)
+                pos_cursor += base_tokens
                 cursor += cols
             row_details.extend(row_entries)
     result = LayoutPassResult(
@@ -7317,6 +7610,7 @@ def _evaluate_row_block(
                     )
                 )
         cursor += cols
+        pos_cursor += base_tokens
     if cursor != cols_total:
         raise ValueError("Layout columns do not match the evaluated token span")
     if not logits_buffer:
