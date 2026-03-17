@@ -998,7 +998,7 @@ known-good pod:
 
 root@693526fd5504:~# uptime
  13:38:03 up 51 days,  3:07,  0 users,  load average: 0.73, 1.27, 1.75
-root@693526fd5504:~# cat /proc/cpuinfo
+root@693526fd5504:~# head -n20 /proc/cpuinfo
 processor	: 0
 vendor_id	: AuthenticAMD
 cpu family	: 25
@@ -1012,6 +1012,7 @@ physical id	: 0
 siblings	: 32
 core id		: 0
 cpu cores	: 16
+...
 
 ---------------------------------------------------------------------------
 
@@ -1147,3 +1148,13 @@ python grce.py --pt model/wp_en_GMLP_Q4_ED4Y.pt --cycles 5000 \
   --layout "(128[64D]|64[128D]|16[256D],16[256D]|8[512D],8[512D]|2[1024D],2[1024D],2[1024D],2[1024D]|`
   `8[64E=64D2Y=64D3Y=64D4Y],8[64E=64D2Y=64D3Y=64D4Y],8[64E=64D2Y=64D3Y=64D4Y],8[64E=64D2Y=64D3Y=64D4Y])" \
   --lr-warmup-steps 100 --lr-cosine-steps 200 --generate-with-decode --align-articles train --json
+
+========================================================================
+
+## SANE Base Model:
+
+python grce.py --pt model/wp_en_small_SANE_GMLP_Q4_base.pt --small --use-sane --use-gmlp --n-query 4 create
+python grce.py --pt model/wp_en_small_SANE_GMLP_Q4_base.pt corpus --add wikipedia-en-000{0,1,2,3,4,5,6,7}
+python grce.py --pt model/wp_en_small_SANE_GMLP_Q4_base.pt --cycles 300 --layout '16[64E2Y=64D4Y=64D4Z3X2Y]' \
+  --lr-warmup-steps 100 --lr-cosine-steps 200 --generate-with-decode --align-articles train --json
+

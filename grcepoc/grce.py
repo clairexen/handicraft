@@ -6258,8 +6258,24 @@ def _expand_think_sequences(
             continue
         factor = max(1, int(getattr(segment, "think_factor", 1) or 1))
         if factor <= 1:
-            expanded[:, step_cursor : step_cursor + steps] = tokens[:, base_cursor : base_cursor + steps]
-            base_cursor += steps
+            token_cols = int(segment.token_columns())
+            if token_cols <= 0:
+                expanded[:, step_cursor : step_cursor + steps] = 0
+            elif token_cols == steps:
+                expanded[:, step_cursor : step_cursor + steps] = tokens[
+                    :, base_cursor : base_cursor + token_cols
+                ]
+            elif token_cols > steps:
+                slice_end = base_cursor + steps
+                expanded[:, step_cursor : step_cursor + steps] = tokens[:, base_cursor:slice_end]
+            else:  # token_cols < steps
+                slice_end = base_cursor + token_cols
+                expanded[:, step_cursor : step_cursor + steps] = 0
+                if token_cols > 0:
+                    expanded[:, step_cursor : step_cursor + token_cols] = tokens[
+                        :, base_cursor:slice_end
+                    ]
+            base_cursor += token_cols
             step_cursor += steps
             continue
         token_cols = steps // factor
