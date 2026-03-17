@@ -1155,7 +1155,7 @@ python grce.py --pt model/wp_en_GMLP_Q4_ED4Y.pt --cycles 5000 \
 
 python grce.py --pt model/wp_en_small_SANE_GMLP_Q4_base.pt --small --use-sane --use-gmlp --n-query 4 create
 python grce.py --pt model/wp_en_small_SANE_GMLP_Q4_base.pt corpus --add wikipedia-en-000{0,1,2,3,4,5,6,7}
-python grce.py --pt model/wp_en_small_SANE_GMLP_Q4_base.pt --cycles 300 \
+python grce.py --pt model/wp_en_small_SANE_GMLP_Q4_base.pt --cycles 700 \
   --layout '16[ 64E 2Y = 64D 4Y = 64D 3X 2Y 4Z >> S$$ ]'  \
   --lr-warmup-steps 100 --lr-cosine-steps 200 --generate-with-decode --align-articles train --json
 
