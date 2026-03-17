@@ -32,7 +32,7 @@ The SANE alpha and beta channels create high bandwidth channels between neighbou
 
 The hope is that this architecture will enable smaller transformers to think ahead, without having to create, store, and manipulate a deep and complex model of the immediate future within a single transformer instance.
 
-Note on looping: We pass the transformer state vector through RMSNorm(elementwise_affine=False) at the end of each loop iteration.
+Note on looping: We pass the transformer state vector through RMSNorm(elementwise_affine=False) at the end of each loop iteration. )The `loop_ln` block inside grce.py is reserved for the traditional X-axis "thinking" passes in forward (`F`) rows and should not activate during SANE spans; in the SANE path we apply the RMSNorm-style normalization described here instead.)
 
 
 #### Mode of operation / inference

@@ -2733,6 +2733,19 @@ class RMSNorm(nn.Module):
         return x * scale * self.weight
 
 
+class RMSNormNoAffine(nn.Module):
+    """Parameter-free RMSNorm for SANE loop iterations."""
+
+    def __init__(self, dim: int, eps: float = 1e-6) -> None:
+        super().__init__()
+        self.eps = float(eps)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        rms = x.pow(2).mean(dim=-1, keepdim=True)
+        scale = torch.rsqrt(rms + self.eps)
+        return x * scale
+
+
 class LayerDampening(nn.Module):
     """
     LD: Layer-Dampening
@@ -4205,6 +4218,7 @@ class TransformerStackCore(nn.Module):
         self.blocks = nn.ModuleList([Block(config) for _ in range(config.n_layer)])
         self.ln_f = nn.LayerNorm(config.n_width)
         self.loop_ln = nn.LayerNorm(config.n_width)
+        self.sane_loop_norm = RMSNormNoAffine(config.n_width)
         self.head = nn.Linear(self.embedding_dim, config.vocab_size, bias=False)
         self.use_rope_xl = bool(getattr(config, "use_rope_xl", False))
         self.use_sane = bool(getattr(config, "use_sane", False))
@@ -5780,7 +5794,7 @@ def _run_microbatch_pass(
                             disable_sane=segment_disable_sane,
                         )
                         kv_final = kv_out
-                        state_tensor = model.core.loop_ln(chunk_output)
+                        state_tensor = model.core.sane_loop_norm(chunk_output)
                         head_features = model.core.ln_f(chunk_output)
                         next_logits = model.core.head(
                             model.core.output_features(head_features, use_next_stream=True)
