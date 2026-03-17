@@ -4227,6 +4227,7 @@ class TransformerStackCore(nn.Module):
         stage: str,
         mode: str,
         sane_first_columns: torch.Tensor | None,
+        sane_group_ids: torch.Tensor | None,
     ) -> None:
         if not self.use_sane or delta is None:
             return
@@ -4249,8 +4250,21 @@ class TransformerStackCore(nn.Module):
                 dst = indices[1:]
                 addition = next_stream[:, src, :] * alpha
                 tensor[:, dst, ::2] += addition
+        apply_beta = False
+        group_mask = None
         if mode in {"reverse", "encode"}:
+            apply_beta = True
+        elif mode == "decode" and sane_group_ids is not None:
+            apply_beta = True
+            group_ids = sane_group_ids.to(delta.device)
+            if group_ids.numel() >= 2:
+                group_mask = (group_ids[1:] == group_ids[:-1]).view(1, -1, 1)
+            else:
+                group_mask = None
+        if apply_beta:
             addition = self_stream[:, 1:, :] * beta
+            if group_mask is not None:
+                addition = addition * group_mask.to(addition.dtype)
             tensor[:, :-1, 1::2] += addition
 
     def loop_embedding(self, repeat: int) -> torch.Tensor | None:
@@ -4275,6 +4289,7 @@ class TransformerStackCore(nn.Module):
         layer_top_only: bool = False,
         enable_sane: bool | None = None,
         sane_first_columns: torch.Tensor | None = None,
+        sane_group_ids: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, list[torch.Tensor], list[tuple[torch.Tensor, torch.Tensor]]]:
         rows, cols, _ = x.shape
         rope_positions_tensor = None
@@ -4336,6 +4351,7 @@ class TransformerStackCore(nn.Module):
                     stage=stage,
                     mode=mode,
                     sane_first_columns=sane_first_columns,
+                    sane_group_ids=sane_group_ids,
                 )
         for rep_idx in range(repeats):
             for layer_idx, block in enumerate(self.blocks):
@@ -4837,6 +4853,7 @@ class TransformerStackSequence(nn.Module):
         think_step_count: torch.Tensor | None = None,
         column_positions: torch.Tensor | None = None,
         sane_first_columns: torch.Tensor | None = None,
+        sane_group_ids: torch.Tensor | None = None,
         layer_repeat: int = 1,
         layer_top_only: bool = False,
         think_last_only: bool = False,
@@ -4875,6 +4892,7 @@ class TransformerStackSequence(nn.Module):
                 attention_capture=attention_capture,
                 column_positions=column_positions,
                 sane_first_columns=sane_first_columns,
+                sane_group_ids=sane_group_ids,
                 layer_repeat=layer_repeat,
                 layer_top_only=layer_top_only,
                 think_last_only=think_last_only,
@@ -5096,6 +5114,7 @@ class TransformerStackSequence(nn.Module):
         attention_capture: AttentionCapture | None,
         column_positions: torch.Tensor | None,
         sane_first_columns: torch.Tensor | None,
+        sane_group_ids: torch.Tensor | None,
         layer_repeat: int,
         layer_top_only: bool,
         think_last_only: bool,
@@ -5135,6 +5154,7 @@ class TransformerStackSequence(nn.Module):
             layer_top_only=layer_top_only,
             enable_sane=sane_override,
             sane_first_columns=sane_first_columns,
+            sane_group_ids=sane_group_ids,
         )
         kv_out = kv_pairs
         layer_outputs = samples if capture_layer_outputs else None
@@ -5645,6 +5665,7 @@ def _run_microbatch_pass(
                         [z for _, z in plan], device=device, dtype=torch.long
                     )
                     sane_first_columns = (column_z == 0).nonzero(as_tuple=False).squeeze(-1)
+                    sane_group_ids = column_local
                     column_base_offsets = column_local + base_start
                     column_offsets = column_base_offsets + column_z
                     next_offsets = column_offsets + 1
@@ -5713,6 +5734,7 @@ def _run_microbatch_pass(
                             context_detach_enabled=context_detach_override,
                             column_positions=segment_positions,
                             sane_first_columns=sane_first_columns,
+                            sane_group_ids=sane_group_ids,
                             think_step_index=think_index,
                             think_step_count=think_count,
                             layer_repeat=layer_repeat,
@@ -5945,6 +5967,7 @@ def _run_microbatch_pass(
                     context_detach_enabled=context_detach_override,
                     column_positions=segment_positions,
                     sane_first_columns=None,
+                    sane_group_ids=None,
                     think_step_index=think_index,
                     think_step_count=think_count,
                     layer_repeat=layer_repeat,
