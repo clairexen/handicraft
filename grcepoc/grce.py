@@ -3762,10 +3762,9 @@ class CausalSelfAttention(nn.Module):
             allowed = torch.zeros(T, T, dtype=torch.bool, device=x.device)
             col_index = torch.arange(T, device=x.device)
             for j in range(T):
-                cond = col_index <= j
                 same_group = groups == groups[j]
                 earlier_zero = (groups < groups[j]) & (z_idx == 0)
-                cond = cond & (same_group | earlier_zero)
+                cond = same_group | earlier_zero
                 allowed[j, cond] = True
             block_mask = ~allowed
         if block_mask is not None:
