@@ -5417,6 +5417,7 @@ def _combine_eval_stats(stats_list: Sequence[EvalBatchStats]) -> EvalBatchStats:
 class LayoutPassResult:
     total_loss_sum: torch.Tensor | None
     total_tokens: int
+    base_tokens: int
     mode_loss_sums: dict[str, float]
     mode_token_counts: dict[str, int]
 
@@ -5479,6 +5480,7 @@ def _run_microbatch_pass(
     total_loss_sum: torch.Tensor | None = None
     total_tokens = 0
     row_details: list[dict[str, object]] = []
+    base_token_total = 0
     for group in rows:
         row_count = int(group.rows)
         if row_count <= 0:
@@ -5530,6 +5532,7 @@ def _run_microbatch_pass(
                     rng=rng,
                     future_margin=future_margin,
                 )
+                base_token_total += int(xb_base.numel())
             except ValueError as exc:
                 raise ValueError(
                     f"Unable to sample {row_count} rows with {pos_total} tokens from the corpus"
@@ -6075,6 +6078,7 @@ def _run_microbatch_pass(
     result = LayoutPassResult(
         total_loss_sum,
         total_tokens,
+        base_token_total,
         dict(mode_loss_sums),
         dict(mode_token_counts),
     )
@@ -6090,13 +6094,14 @@ def train_layout_batch(
     grad_hook: Callable[[int, int], None] | None = None,
     position_shift: int = 0,
     rng: random.Random | None = None,
-) -> tuple[torch.Tensor, int, list[tuple[int, float, float, str]], dict[str, object]]:
+) -> tuple[torch.Tensor, int, int, list[tuple[int, float, float, str]], dict[str, object]]:
     step_span = layout.total_token_span()
     if step_span <= 0:
         raise ValueError("Layout produced zero tokens for training step")
     window_rng = rng if rng is not None else random
     total_loss_sum: torch.Tensor | None = None
     total_tokens = 0
+    total_base_tokens = 0
     micro_logs: list[tuple[int, float, float, str]] = []
     detail_entries: list[dict[str, object]] = []
     layout_text = layout.serialize()
@@ -6162,6 +6167,7 @@ def train_layout_batch(
             else total_loss_sum + result.total_loss_sum
         )
         total_tokens += result.total_tokens
+        total_base_tokens += result.base_tokens
         if collect_metrics:
             for key, value in result.mode_loss_sums.items():
                 aggregated_mode_loss_sums[key] = aggregated_mode_loss_sums.get(key, 0.0) + value
@@ -6179,7 +6185,8 @@ def train_layout_batch(
             if count > 0:
                 averages[key] = total / count
         meta_entry["extra_metrics"] = averages
-    return total_loss_sum, total_tokens, micro_logs, meta_entry
+    meta_entry["base_tokens"] = total_base_tokens
+    return total_loss_sum, total_tokens, total_base_tokens, micro_logs, meta_entry
 
 
 def evaluate_layout_batch(
@@ -6927,6 +6934,7 @@ def train_model(
         _log_layout_warnings(args, layout)
         current_step_index = train_step_index + 1
         step_wall_start = time.time()
+        step_base_tokens = 0
         try:
             current_lr = _scheduled_lr(
                 args.lr_base,
@@ -6955,7 +6963,7 @@ def train_model(
                 headroom = max(0, args.n_pos - args.block_size)
                 if headroom > 0:
                     position_shift = random.randint(0, headroom)
-            total_loss_sum, total_tokens, micro_logs, window_detail = train_layout_batch(
+            total_loss_sum, total_tokens, base_tokens, micro_logs, window_detail = train_layout_batch(
                 args,
                 model,
                 dataset,
@@ -6972,6 +6980,7 @@ def train_model(
                 setattr(args, "_latest_train_extra_metrics", merged)
                 if os.environ.get("GRCE_DEBUG_EXTRA"):
                     print("[debug extra metrics]", merged)
+            step_base_tokens = base_tokens
             if total_tokens <= 0:
                 raise RuntimeError("No tokens processed in training step")
             opt_start = time.time()
@@ -6983,7 +6992,7 @@ def train_model(
             optimizer.step()
             opt_duration = time.time() - opt_start
             total_loss = total_loss_sum / float(total_tokens)
-            train_tokens_used += total_tokens
+            train_tokens_used += step_base_tokens
         except torch.OutOfMemoryError as oom_err:
             oom_retries += 1
             line_parts: List[str] = []
@@ -7281,7 +7290,7 @@ def train_model(
             "test_loss": float(eval_metrics["test"].metrics.get("target", 0.0) or 0.0),
             "train_wall_seconds": float(total_wall_seconds),
             "unix_time": float(eval_now),
-            "train_tokens": total_tokens,
+            "train_tokens": step_base_tokens,
             "total_train_tokens": int(current_total_train_tokens),
         }
         record["corpus"] = args.corpus
@@ -7354,7 +7363,7 @@ def run_profile_mode(
             headroom = max(0, n_pos - block_size)
             if headroom > 0:
                 position_shift = random.randint(0, headroom)
-        total_loss_sum, total_tokens, _, _ = train_layout_batch(
+        total_loss_sum, total_tokens, _, _, _ = train_layout_batch(
             args,
             model,
             dataset,
