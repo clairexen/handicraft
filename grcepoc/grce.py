@@ -446,6 +446,36 @@ class SegmentLayout:
         return (self.columns // self.think_factor)
 
 
+def _metric_template_has_coords(template: str) -> bool:
+    return "$" in template
+
+
+def _format_metric_template(
+    template: str,
+    x_value: int | None,
+    z_value: int | None,
+) -> str:
+    replacements = [x_value, z_value]
+    result = template
+    for value in replacements:
+        idx = result.find("$")
+        if idx == -1:
+            break
+        replacement = str(int(value)) if value is not None else "0"
+        result = result[:idx] + replacement + result[idx + 1 :]
+    return result
+
+
+def _segment_metric_coordinate_names(segment: SegmentLayout, template: str) -> list[str]:
+    x_count = max(1, int(getattr(segment, "sane_x", 1) or 1))
+    z_count = max(1, int(getattr(segment, "sane_z", 1) or 1))
+    names: list[str] = []
+    for x in range(x_count):
+        for z in range(z_count):
+            names.append(_format_metric_template(template, x, z))
+    return names
+
+
 @dataclass
 class BlockLayout:
     rows: int
@@ -917,7 +947,14 @@ class BatchLayout:
         extra_names: set[str] = set()
         for row in self.rows:
             for segment in row.segments:
-                extra_names.update(getattr(segment, "extra_metrics", ()))
+                templates = getattr(segment, "extra_metrics", ())
+                for template in templates:
+                    if _metric_template_has_coords(template):
+                        extra_names.update(
+                            _segment_metric_coordinate_names(segment, template)
+                        )
+                    else:
+                        extra_names.add(template)
         self.extra_metric_names = sorted(extra_names)
 
     def micro_token_spans(self) -> list[int]:
@@ -1300,7 +1337,7 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         "--tiny",
         action="store_true",
         help=(
-            "Shortcut for --vocab-size 600 --batch-size 12 --n-pos 10 --block-size 10 --n-layer 3 --n-head 2 "
+            "Shortcut for --vocab-size 600 --batch-size 12 --n-pos 10 --n-layer 3 --n-head 2 "
             "--n-width 8 --n-grce 4 --n-xctx 9 --steps 2 --eval-interval 1"
         ),
     )
@@ -3471,6 +3508,24 @@ class CausalSelfAttention(nn.Module):
             raise ValueError("Per-head width must be even when using default RoPE span")
         return max(0, head_dim)
 
+    def _ensure_tril_capacity(self, size: int, device: torch.device) -> torch.Tensor:
+        if size <= 0:
+            return self.tril
+        tril = self.tril
+        current = tril.size(0)
+        target = int(size)
+        if current >= target and tril.device == device:
+            return tril
+        if current >= target and tril.device != device:
+            tril = tril.to(device)
+            self.tril = tril
+            return tril
+        new_size = max(target, current * 2 if current > 0 else target)
+        dtype = tril.dtype
+        tril = torch.tril(torch.ones(new_size, new_size, dtype=dtype, device=device))
+        self.tril = tril
+        return tril
+
     def _build_rope_cache(self, max_seq: int) -> None:
         if self.rope_dim <= 0:
             return
@@ -3663,9 +3718,11 @@ class CausalSelfAttention(nn.Module):
         if attn_mode not in {"encode", "decode", "reverse", "noattn"}:
             raise ValueError(f"Unknown attention mode: {attn_mode}")
         if attn_mode == "decode" and not full_attention:
-            block_mask = self.tril[:T, :T] == 0
+            tril = self._ensure_tril_capacity(T, x.device)
+            block_mask = tril[:T, :T] == 0
         elif attn_mode == "reverse" and not full_attention:
-            block_mask = self.tril[:T, :T].transpose(0, 1) == 0
+            tril = self._ensure_tril_capacity(T, x.device)
+            block_mask = tril[:T, :T].transpose(0, 1) == 0
         elif attn_mode == "noattn":
             eye = torch.eye(T, dtype=torch.bool, device=x.device)
             block_mask = ~eye
@@ -5532,6 +5589,13 @@ def _run_microbatch_pass(
                     kv_chain = []
                 start = cursor
                 end = cursor + cols
+                extra_metric_templates = list(getattr(segment, "extra_metrics", ()))
+                coord_metric_templates = [
+                    name for name in extra_metric_templates if _metric_template_has_coords(name)
+                ]
+                plain_metric_templates = [
+                    name for name in extra_metric_templates if not _metric_template_has_coords(name)
+                ]
                 sane_depth = max(1, int(getattr(segment, "sane_z", 1) or 1))
                 sane_passes = max(1, int(getattr(segment, "sane_x", 1) or 1))
                 use_sane_decode = mode == "decode" and sane_depth > 1
@@ -5695,17 +5759,55 @@ def _run_microbatch_pass(
                             and not getattr(segment, "hide_typed_metrics", False)
                             and not getattr(segment, "suppress_default_metric", False)
                         ):
-                            if metric_key not in mode_loss_sums:
-                                mode_loss_sums[metric_key] = 0.0
-                                mode_token_counts[metric_key] = 0
-                            mode_loss_sums[metric_key] += loss_value
-                            mode_token_counts[metric_key] += pass_tokens
-                        for tag in getattr(segment, "extra_metrics", ()):
-                            if tag not in mode_loss_sums:
-                                mode_loss_sums[tag] = 0.0
-                                mode_token_counts[tag] = 0
-                            mode_loss_sums[tag] += loss_value
-                            mode_token_counts[tag] += pass_tokens
+                            _accumulate_metric(
+                                mode_loss_sums,
+                                mode_token_counts,
+                                metric_key,
+                                loss_value,
+                                pass_tokens,
+                            )
+                        for tag in plain_metric_templates:
+                            _accumulate_metric(
+                                mode_loss_sums,
+                                mode_token_counts,
+                                tag,
+                                loss_value,
+                                pass_tokens,
+                            )
+                        if coord_metric_templates:
+                            per_column_losses = chunk_output.new_zeros(cols)
+                            per_column_tokens = chunk_output.new_zeros(cols)
+                            if torch.any(injection_mask):
+                                loss_vec, token_vec = _column_loss_stats(next_logits, next_targets)
+                                per_column_losses += loss_vec
+                                per_column_tokens += token_vec
+                            if torch.any(retain_mask):
+                                loss_vec, token_vec = _column_loss_stats(self_logits, self_targets)
+                                per_column_losses += loss_vec
+                                per_column_tokens += token_vec
+                            loss_list = per_column_losses.detach().cpu().tolist()
+                            token_list = [int(val) for val in per_column_tokens.detach().cpu().tolist()]
+                            column_z_list = [int(val) for val in column_z.detach().cpu().tolist()]
+                            for col_idx, tok_count in enumerate(token_list):
+                                if tok_count <= 0:
+                                    continue
+                                per_loss = float(loss_list[col_idx])
+                                z_value = column_z_list[col_idx]
+                                for template in coord_metric_templates:
+                                    metric_name = _format_metric_template(
+                                        template,
+                                        pass_idx,
+                                        z_value,
+                                    )
+                                    if os.environ.get("GRCE_DEBUG_EXTRA"):
+                                        print("[debug sane metric]", metric_name, per_loss, tok_count)
+                                    _accumulate_metric(
+                                        mode_loss_sums,
+                                        mode_token_counts,
+                                        metric_name,
+                                        per_loss,
+                                        tok_count,
+                                    )
                         if row_loss_combined is not None and row_tokens_combined is not None:
                             loss_values = row_loss_combined.detach().cpu().tolist()
                             token_values = row_tokens_combined.detach().cpu().tolist()
@@ -5801,6 +5903,13 @@ def _run_microbatch_pass(
                     or getattr(segment, "loss_output_stream", False)
                 )
                 segment_disable_sane = row_disable_sane or getattr(segment, "disable_sane", False)
+                extra_metric_templates = list(getattr(segment, "extra_metrics", ()))
+                coord_metric_templates = [
+                    name for name in extra_metric_templates if _metric_template_has_coords(name)
+                ]
+                plain_metric_templates = [
+                    name for name in extra_metric_templates if not _metric_template_has_coords(name)
+                ]
                 chunk_output, grce_state, xctx_state, kv_out, layer_outputs = model.stack_sequence.forward(
                     chunk_input,
                     grce_in=grce_state,
@@ -5911,17 +6020,44 @@ def _run_microbatch_pass(
                         and not getattr(segment, "hide_typed_metrics", False)
                         and not getattr(segment, "suppress_default_metric", False)
                     ):
-                        if metric_key not in mode_loss_sums:
-                            mode_loss_sums[metric_key] = 0.0
-                            mode_token_counts[metric_key] = 0
-                        mode_loss_sums[metric_key] += loss_value
-                        mode_token_counts[metric_key] += token_count
-                    for tag in getattr(segment, "extra_metrics", ()):
-                        if tag not in mode_loss_sums:
-                            mode_loss_sums[tag] = 0.0
-                            mode_token_counts[tag] = 0
-                        mode_loss_sums[tag] += loss_value
-                        mode_token_counts[tag] += token_count
+                        _accumulate_metric(
+                            mode_loss_sums,
+                            mode_token_counts,
+                            metric_key,
+                            loss_value,
+                            token_count,
+                        )
+                    for tag in plain_metric_templates:
+                        _accumulate_metric(
+                            mode_loss_sums,
+                            mode_token_counts,
+                            tag,
+                            loss_value,
+                            token_count,
+                        )
+                    if coord_metric_templates:
+                        col_losses, col_tokens = _column_loss_stats(logits, eval_targets)
+                        loss_list = col_losses.detach().cpu().tolist()
+                        token_list = [int(val) for val in col_tokens.detach().cpu().tolist()]
+                        for col_idx, tok_count in enumerate(token_list):
+                            if tok_count <= 0:
+                                continue
+                            per_loss = float(loss_list[col_idx])
+                            for template in coord_metric_templates:
+                                metric_name = _format_metric_template(
+                                    template,
+                                    0,
+                                    0,
+                                )
+                                if os.environ.get("GRCE_DEBUG_EXTRA"):
+                                    print("[debug plain metric]", metric_name, per_loss, tok_count)
+                                _accumulate_metric(
+                                    mode_loss_sums,
+                                    mode_token_counts,
+                                    metric_name,
+                                    per_loss,
+                                    tok_count,
+                                )
                 if row_loss_sums is not None and row_token_counts is not None:
                     loss_values = row_loss_sums.detach().cpu().tolist()
                     token_values = row_token_counts.detach().cpu().tolist()
@@ -5965,6 +6101,9 @@ def train_layout_batch(
     detail_entries: list[dict[str, object]] = []
     layout_text = layout.serialize()
     last_rows_text = ""
+    collect_metrics = bool(layout.extra_metric_names)
+    aggregated_mode_loss_sums: dict[str, float] = {}
+    aggregated_mode_token_counts: dict[str, int] = {}
     for index, batch in enumerate(layout.micro_batches, start=1):
         micro_span = sum(row.token_span() for row in batch)
         if micro_span <= 0:
@@ -5987,11 +6126,19 @@ def train_layout_batch(
                 "train",
                 batch,
                 device,
-                collect_mode_metrics=False,
+                collect_mode_metrics=collect_metrics,
                 position_shift=position_shift,
                 rng=window_rng,
                 row_serializer=layout.serialize_rows,
             )
+            latest_metrics = getattr(args, "_latest_train_extra_metrics", {})
+            if layout.extra_metric_names:
+                for key in layout.extra_metric_names:
+                    loss_sum = result.mode_loss_sums.get(key)
+                    token_count = result.mode_token_counts.get(key, 0)
+                    if loss_sum is not None and token_count > 0:
+                        latest_metrics[key] = float(loss_sum / token_count)
+            setattr(args, "_latest_train_extra_metrics", latest_metrics)
         except torch.OutOfMemoryError as exc:
             if not hasattr(exc, "microbatch_detail"):
                 exc.microbatch_detail = micro_detail
@@ -6015,11 +6162,23 @@ def train_layout_batch(
             else total_loss_sum + result.total_loss_sum
         )
         total_tokens += result.total_tokens
+        if collect_metrics:
+            for key, value in result.mode_loss_sums.items():
+                aggregated_mode_loss_sums[key] = aggregated_mode_loss_sums.get(key, 0.0) + value
+            for key, value in result.mode_token_counts.items():
+                aggregated_mode_token_counts[key] = aggregated_mode_token_counts.get(key, 0) + value
     if total_loss_sum is None:
         raise RuntimeError(
             f"Layout batch produced no tokens (last rows: {last_rows_text or '<none>'})"
         )
     meta_entry: dict[str, object] = {"rows": detail_entries}
+    if collect_metrics:
+        averages: dict[str, float] = {}
+        for key, total in aggregated_mode_loss_sums.items():
+            count = aggregated_mode_token_counts.get(key, 0)
+            if count > 0:
+                averages[key] = total / count
+        meta_entry["extra_metrics"] = averages
     return total_loss_sum, total_tokens, micro_logs, meta_entry
 
 
@@ -6435,6 +6594,44 @@ def _count_supervised_tokens(targets: torch.Tensor, *, last_only: bool) -> int:
     return int(mask.sum().item())
 
 
+def _column_loss_stats(
+    logits: torch.Tensor,
+    targets: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    if logits.numel() == 0:
+        shape = (targets.size(1),)
+        return (
+            logits.new_zeros(shape),
+            logits.new_zeros(shape),
+        )
+    per_token = F.cross_entropy(
+        logits.reshape(-1, logits.size(-1)),
+        targets.reshape(-1),
+        reduction="none",
+        ignore_index=LOSS_IGNORE_INDEX,
+    ).view(targets.size(0), targets.size(1))
+    mask = (targets != LOSS_IGNORE_INDEX).to(per_token.dtype)
+    loss_per_col = (per_token * mask).sum(dim=0)
+    token_per_col = mask.sum(dim=0)
+    return loss_per_col, token_per_col
+
+
+def _accumulate_metric(
+    sums: dict[str, float],
+    counts: dict[str, int],
+    name: str,
+    loss_value: float,
+    token_count: int,
+) -> None:
+    if token_count <= 0:
+        return
+    if name not in sums:
+        sums[name] = 0.0
+        counts[name] = 0
+    sums[name] += loss_value
+    counts[name] += token_count
+
+
 def _kv_column_length(kv_pairs: Sequence[tuple[torch.Tensor, torch.Tensor] | None]) -> int:
     for pair in kv_pairs:
         if pair is None:
@@ -6661,6 +6858,8 @@ def train_model(
     run_total_steps = max(1, args.steps * args.cycles)
     current_lr = args.lr_base
 
+    setattr(args, "_latest_train_extra_metrics", {})
+
     header_probe = BatchLayout(
         args.layout,
         batch_size=batch_size,
@@ -6765,6 +6964,14 @@ def train_model(
                 grad_hook=_record_micro_grad if need_grad_tracking else None,
                 position_shift=position_shift,
             )
+            live_metrics = window_detail.get("extra_metrics")
+            if isinstance(live_metrics, dict):
+                previous_metrics = getattr(args, "_latest_train_extra_metrics", {})
+                merged = dict(previous_metrics)
+                merged.update(live_metrics)
+                setattr(args, "_latest_train_extra_metrics", merged)
+                if os.environ.get("GRCE_DEBUG_EXTRA"):
+                    print("[debug extra metrics]", merged)
             if total_tokens <= 0:
                 raise RuntimeError("No tokens processed in training step")
             opt_start = time.time()
@@ -6995,6 +7202,11 @@ def train_model(
 
         def metric_value_text(dataset_split: str, key: str) -> str:
             value = eval_metrics[dataset_split].metrics.get(key)
+            if value is None and dataset_split == "test":
+                value = eval_metrics["train"].metrics.get(key)
+            if value is None:
+                latest_extra_metrics = getattr(args, "_latest_train_extra_metrics", {})
+                value = latest_extra_metrics.get(key)
             return "****" if value is None else f"{value:.2f}"
 
         detail_keys = ROW_METRIC_LOG_KEYS
@@ -7019,8 +7231,13 @@ def train_model(
             if not keys:
                 return ""
             parts = []
+            live_train_metrics = getattr(args, "_latest_train_extra_metrics", {})
             for key in keys:
-                parts.append(metric_value_text("test", key))
+                live_value = live_train_metrics.get(key)
+                if live_value is not None:
+                    parts.append(f"{live_value:.2f}")
+                else:
+                    parts.append(metric_value_text("test", key))
             return " ".join(parts)
 
         newly_observed_extra_metrics = set(layout.extra_metric_names)
@@ -7486,6 +7703,13 @@ def _evaluate_row_block(
             or getattr(segment, "loss_output_stream", False)
         )
         segment_disable_sane = row_disable_sane or getattr(segment, "disable_sane", False)
+        extra_metric_templates = list(getattr(segment, "extra_metrics", ()))
+        coord_metric_templates = [
+            name for name in extra_metric_templates if _metric_template_has_coords(name)
+        ]
+        plain_metric_templates = [
+            name for name in extra_metric_templates if not _metric_template_has_coords(name)
+        ]
         chunk_output, grce_state, xctx_state, kv_out, layer_outputs = model.stack_sequence.forward(
             chunk_input,
             grce_in=grce_state,
@@ -7590,12 +7814,33 @@ def _evaluate_row_block(
                     mode_token_counts[metric_key] = 0
                 mode_loss_sums[metric_key] += loss_value
                 mode_token_counts[metric_key] += token_count
-            for tag in getattr(segment, "extra_metrics", ()):
+            for tag in plain_metric_templates:
                 if tag not in mode_loss_sums:
                     mode_loss_sums[tag] = 0.0
                     mode_token_counts[tag] = 0
                 mode_loss_sums[tag] += loss_value
                 mode_token_counts[tag] += token_count
+            if coord_metric_templates:
+                col_losses, col_tokens = _column_loss_stats(logits, eval_targets)
+                loss_list = col_losses.detach().cpu().tolist()
+                token_list = [int(val) for val in col_tokens.detach().cpu().tolist()]
+                for col_idx, tok_count in enumerate(token_list):
+                    if tok_count <= 0:
+                        continue
+                    per_loss = float(loss_list[col_idx])
+                    for template in coord_metric_templates:
+                        metric_name = _format_metric_template(
+                            template,
+                            0,
+                            0,
+                        )
+                        if os.environ.get("GRCE_DEBUG_EXTRA"):
+                            print("[debug plain metric]", metric_name, per_loss, tok_count)
+                        if metric_name not in mode_loss_sums:
+                            mode_loss_sums[metric_name] = 0.0
+                            mode_token_counts[metric_name] = 0
+                        mode_loss_sums[metric_name] += per_loss
+                        mode_token_counts[metric_name] += tok_count
             total_loss += loss_value
             total_tokens += token_count
         kv_chain.append(kv_out)
@@ -8290,6 +8535,7 @@ def preprocess_runtime_args(args: Args) -> None:
         n_grce=args.n_grce,
         n_xctx=args.n_xctx,
         use_gmlp=getattr(args, "use_gmlp", MODEL_GEOMETRY_DEFAULTS.use_gmlp),
+        use_sane=getattr(args, "use_sane", MODEL_GEOMETRY_DEFAULTS.use_sane),
     )
     tag = build_model_tag(inferred)
     for extra_tag in args.tag:
