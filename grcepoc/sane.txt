@@ -17,6 +17,8 @@ we also perform
 
 These SANE alpha (forward in time) and beta (backwards in time) channels create semantically meaningful high-bandwith pathways between positions. The alpha channel enables the "next" stream at position t to steer the "self" stream at position t+1, and the beta channel enables the "self" stream at position t to steer the "next" stream at position t-1.
 
+For clarity: the MTLD grid acts like a decoder when we look at how *spans* interact. Each Z-wide span may only attend to earlier spans, and only the alpha channel delivers information from one span into the next. Inside a span, however, the Z positions behave like an encoder strip. Every column can attend to every other column in the same span (regardless of direction), and both alpha and beta propagation operate so features can shuttle forward or backward across the offsets. This reflects the desire to let the latent future positions collaborate freely without compromising the overall left-to-right autoregressive discipline across spans.
+
 The alpha and beta couplings are meaningful for any grid regime (decoder `D`, encoder `E`, or reverse `R`). However, the concrete training loop described in this document is intrinsically left-to-right, so the current proof-of-concept focuses on `D` grids. Implementations should therefore reject `E` or `R` grids whenever they request multi-token lookahead (`X>1` or `Z>1`).
 
 (For a first proof-of-concept implementation in grce.py we only implement the SANE alpha and beta channels within a `D` "Grid".)
@@ -59,6 +61,8 @@ Because we have X=3 and Y=2 in our example we have a total of X*Y=6 total loop i
 On every z=0 position we initialize the transformer state with the embedding for the input token `t` and the [|predict-next|] embedding in the "self" stream at the position `i`, and we constrain the output at position `i` to contain the embedding of the token `t+1` in the "next" stream output. That other positions z>0 receive only the [|find-self|] encoding in their "self" stream and are constrained to the token `t+z` in their "self output stream.
 
 After Y=2 iterations we enter the `x=1` region. For the z<=x positions we (re-)add the token embedding `t+z` and [|predict-next|] to the self input stream at position i and constrain the output after Y=2 more itrations to carry the token embedding `t+z+1` in their "next" output. The z>x positions are simply left as they are (keep looping) and are again constrained to carry the token embedding of `t+z` in their output streams, and so forth.
+
+This encoder-like intra-span coupling is intentionally stronger than what we ultimately want to ship. When X>0 we can leak ground-truth information backwards: on the second iteration (x=1) the freshly injected z=1 column can send its correct self token to z=0 via attention/beta, telling the decoder what it needs to predict. On x=2 that leakage can travel from z=2 back to z=0, then through the alpha bridge into the next span (k+1), revealing its upcoming target as well. We keep this loosened behavior for the proof-of-concept so we can verify the machinery is wired up correctly; once that is confirmed we will tighten the spec to block these retrograde channels during training.
 
 With regards to attention a transformer with a position with k_2 and z_2 attents to all other transformers at k_1 and z_1 when either `k_1 < k_2 and z_1=0` or `k_1 == k_2`.
 
