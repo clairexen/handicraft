@@ -3354,16 +3354,23 @@ def _load_checkpoint_state(
 
     total = len(model.state_dict())
     try:
-        model.load_state_dict(state)
+        filtered_state = {
+            key: value
+            for key, value in state.items()
+            if not key.endswith("attn.tril")
+        }
+        missing_keys, unexpected_keys = model.load_state_dict(filtered_state, strict=False)
+        if unexpected_keys:
+            print(color_text(f"Warning: unexpected keys during load: {unexpected_keys}", Colors.YELLOW))
         return {
             "success": True,
             "partial": False,
             "total": total,
-            "reused": total,
-            "missing": 0,
+            "reused": total - len(missing_keys),
+            "missing": len(missing_keys),
             "resized": 0,
             "incompatible": 0,
-            "unused": 0,
+            "unused": len(unexpected_keys),
             "error": None,
         }
     except RuntimeError as err:
@@ -7222,11 +7229,6 @@ def train_model(
 
         def metric_value_text(dataset_split: str, key: str) -> str:
             value = eval_metrics[dataset_split].metrics.get(key)
-            if value is None and dataset_split == "test":
-                value = eval_metrics["train"].metrics.get(key)
-            if value is None:
-                latest_extra_metrics = getattr(args, "_latest_train_extra_metrics", {})
-                value = latest_extra_metrics.get(key)
             return "****" if value is None else f"{value:.2f}"
 
         detail_keys = ROW_METRIC_LOG_KEYS
