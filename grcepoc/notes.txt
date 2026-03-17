@@ -718,14 +718,18 @@ the last step’s activations.
 The suffix `2Z`, `3Z`, … enables a SANE multi-token decoder span. Each
 `NZ` modifier expands every logical column into a Z-wide encoder-style strip of
 parallel looping transformers that model offsets `t ... t+Z-1` simultaneously.
-Column `z=0` still consumes the real token embedding (plus [|predict-next|] on
-its self stream) and is supervised on the "next" stream, while columns `z>0`
-receive [|find-self|] on their self stream and are constrained to emit the
-embedding of token `t+z` on their self stream. SANE alpha/beta couplings link
-neighbouring offsets so that each `z` column can steer the next/previous one as
-described in sane.txt. When a token is emitted we slide the internal state one
-column to the left, reusing the partially-thought futures and appending a fresh
-`z=Z-1` column initialized with [|find-self|].
+During the first `x=0` pass column `z=0` consumes the real token embedding
+(plus [|predict-next|] on its self stream) and is supervised on the "next"
+stream, while columns `z>0` receive [|find-self|] on their self stream and are
+constrained to emit the embedding of token `t+z` on their self stream. On later
+passes, whenever `z <= x` we re-inject the ground-truth token `t+z` (plus
+[|predict-next|]) into that column and require it to predict `t+z+1` on its next
+stream; columns with `z > x` retain the earlier self-stream supervision so they
+keep refining their latent futures. SANE alpha/beta couplings link neighbouring
+offsets so that each `z` column can steer the next/previous one as described in
+sane.txt. When a token is emitted we slide the internal state one column to the
+left, reusing the partially-thought futures and appending a fresh `z=Z-1`
+column initialized with [|find-self|].
 
 `Z=1` leaves the grid identical to a standard looped decoder, but larger `Z`
 values let the model reason about several future tokens before one is
@@ -1158,4 +1162,3 @@ python grce.py --pt model/wp_en_small_SANE_GMLP_Q4_base.pt corpus --add wikipedi
 python grce.py --pt model/wp_en_small_SANE_GMLP_Q4_base.pt --cycles 700 \
   --layout '16[ 64E 2Y = 64D 4Y = 64D 3X 2Y 4Z >> S$$ ]'  \
   --lr-warmup-steps 100 --lr-cosine-steps 200 --generate-with-decode --align-articles train --json
-
