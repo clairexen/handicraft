@@ -391,6 +391,7 @@ class SegmentSpec:
     drop_count: int = 0
     disable_sane: bool = False
     sane_z: int = 1
+    sane_z_strict: bool = False
 
 
 @dataclass(frozen=True)
@@ -437,6 +438,7 @@ class SegmentLayout:
     sane_z: int = 1
     sane_x: int = 1
     sane_x_last_only: bool = False
+    sane_z_strict: bool = False
 
     def token_columns(self) -> int:
         if self.token_columns_override is not None:
@@ -606,6 +608,7 @@ def _parse_segment_spec(text: str, connector: str | None) -> SegmentSpec:
     sane_x = 1
     sane_x_last_only = False
     sane_z = 1
+    sane_z_strict = False
     layer_repeat = 1
     layer_top_only = False
     suffix_pattern = re.compile(r"(\d+)([xXyYzZ])$")
@@ -644,6 +647,7 @@ def _parse_segment_spec(text: str, connector: str | None) -> SegmentSpec:
             if sane_z != 1:
                 raise LayoutParseError("Z modifier specified multiple times")
             sane_z = count
+            sane_z_strict = marker.isupper()
             continue
         if marker in {"y", "Y"}:
             if count <= 0:
@@ -754,6 +758,7 @@ def _parse_segment_spec(text: str, connector: str | None) -> SegmentSpec:
         drop_count=drop_count,
         disable_sane=disable_sane,
         sane_z=sane_z,
+        sane_z_strict=sane_z_strict,
     )
 
 
@@ -1015,6 +1020,7 @@ class BatchLayout:
             sane_z = max(1, int(getattr(spec, "sane_z", 1) or 1))
             sane_x = max(1, int(getattr(spec, "sane_x", 1) or 1))
             sane_x_last_only = bool(getattr(spec, "sane_x_last_only", False))
+            sane_z_strict = bool(getattr(spec, "sane_z_strict", False))
             token_columns_override = None
             if getattr(spec, "mode", "") == "decode" and sane_z > 1:
                 base_columns = columns
@@ -1045,6 +1051,7 @@ class BatchLayout:
                     sane_z=sane_z,
                     sane_x=sane_x,
                     sane_x_last_only=sane_x_last_only,
+                    sane_z_strict=sane_z_strict,
                 )
             )
         max_cols = sum(segment.columns for segment in segments)
@@ -1098,7 +1105,8 @@ class BatchLayout:
                     drop_suffix = f"{prefix}P"
                 depth_suffix = ""
                 if getattr(segment, "sane_z", 1) and segment.sane_z > 1:
-                    depth_suffix = f"{segment.sane_z}Z"
+                    suffix_letter = "Z" if getattr(segment, "sane_z_strict", False) else "z"
+                    depth_suffix = f"{segment.sane_z}{suffix_letter}"
                 sane_suffix = "S" if getattr(segment, "disable_sane", False) else ""
                 metric_suffix = ""
                 extra = getattr(segment, "extra_metrics", ())
@@ -3665,6 +3673,7 @@ class CausalSelfAttention(nn.Module):
         position_offsets: torch.Tensor | None = None,
         sane_group_ids: torch.Tensor | None = None,
         sane_z_indices: torch.Tensor | None = None,
+        sane_active_mask: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
         B, T, C = x.shape
         head_dim = self.head_dim
@@ -3737,11 +3746,13 @@ class CausalSelfAttention(nn.Module):
         scores = (q @ all_k.transpose(-2, -1)) / math.sqrt(head_dim)
 
         block_mask: torch.Tensor | None = None
+        base_allowed: torch.Tensor | None = None
         if attn_mode not in {"encode", "decode", "reverse", "noattn"}:
             raise ValueError(f"Unknown attention mode: {attn_mode}")
         if attn_mode == "decode" and not full_attention:
             tril = self._ensure_tril_capacity(T, x.device)
             block_mask = tril[:T, :T] == 0
+            base_allowed = tril[:T, :T] == 1
         elif attn_mode == "reverse" and not full_attention:
             tril = self._ensure_tril_capacity(T, x.device)
             block_mask = tril[:T, :T].transpose(0, 1) == 0
@@ -3766,6 +3777,17 @@ class CausalSelfAttention(nn.Module):
                 earlier_zero = (groups < groups[j]) & (z_idx == 0)
                 cond = same_group | earlier_zero
                 allowed[j, cond] = True
+            if sane_active_mask is not None:
+                active_vec = sane_active_mask.to(x.device, dtype=torch.bool)
+                if active_vec.dim() != 1 or active_vec.size(0) != T:
+                    raise ValueError("sane_active_mask must match sequence length")
+                row_mask = active_vec.view(-1, 1)
+                col_mask = active_vec.view(1, -1)
+                both_active = row_mask & col_mask
+                if base_allowed is None:
+                    tril = self._ensure_tril_capacity(T, x.device)
+                    base_allowed = tril[:T, :T] == 1
+                allowed = torch.where(both_active, allowed, base_allowed)
             block_mask = ~allowed
         if block_mask is not None:
             if cache_len > 0:
@@ -3988,6 +4010,7 @@ class Block(nn.Module):
         sane_hook=None,
         sane_group_ids: torch.Tensor | None = None,
         sane_z_indices: torch.Tensor | None = None,
+        sane_active_mask: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor | None, tuple[torch.Tensor, torch.Tensor] | None]:
         attn_input = self._apply_xctx_bias(x, xctx_bias, self.xctx_attn_gain)
         attn_norm = self.ln1(attn_input)
@@ -4006,6 +4029,7 @@ class Block(nn.Module):
             attention_capture=attention_capture,
             sane_group_ids=sane_group_ids,
             sane_z_indices=sane_z_indices,
+            sane_active_mask=sane_active_mask,
         )
         if attention_disabled_rows is not None and attention_disabled_rows.any():
             mask = (~attention_disabled_rows).view(-1, 1, 1).to(attn_output.dtype)
@@ -4267,6 +4291,7 @@ class TransformerStackCore(nn.Module):
         mode: str,
         sane_first_columns: torch.Tensor | None,
         sane_group_ids: torch.Tensor | None,
+        sane_active_mask: torch.Tensor | None,
     ) -> None:
         if not self.use_sane or delta is None:
             return
@@ -4300,10 +4325,19 @@ class TransformerStackCore(nn.Module):
                 group_mask = (group_ids[1:] == group_ids[:-1]).view(1, -1, 1)
             else:
                 group_mask = None
+        edge_active_mask = None
+        if sane_active_mask is not None:
+            active_vec = sane_active_mask.to(delta.device, dtype=torch.bool)
+            if active_vec.dim() != 1 or active_vec.size(0) != tensor.size(1):
+                raise ValueError("sane_active_mask must match column count")
+            if active_vec.numel() >= 2:
+                edge_active_mask = (active_vec[1:] & active_vec[:-1]).view(1, -1, 1)
         if apply_beta:
             addition = self_stream[:, 1:, :] * beta
             if group_mask is not None:
                 addition = addition * group_mask.to(addition.dtype)
+            if edge_active_mask is not None:
+                addition = addition * edge_active_mask.to(addition.dtype)
             tensor[:, :-1, 1::2] += addition
 
     def loop_embedding(self, repeat: int) -> torch.Tensor | None:
@@ -4330,6 +4364,7 @@ class TransformerStackCore(nn.Module):
         sane_first_columns: torch.Tensor | None = None,
         sane_group_ids: torch.Tensor | None = None,
         sane_z_indices: torch.Tensor | None = None,
+        sane_active_mask: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, list[torch.Tensor], list[tuple[torch.Tensor, torch.Tensor]]]:
         rows, cols, _ = x.shape
         rope_positions_tensor = None
@@ -4392,6 +4427,7 @@ class TransformerStackCore(nn.Module):
                     mode=mode,
                     sane_first_columns=sane_first_columns,
                     sane_group_ids=sane_group_ids,
+                    sane_active_mask=sane_active_mask,
                 )
         for rep_idx in range(repeats):
             for layer_idx, block in enumerate(self.blocks):
@@ -4417,6 +4453,7 @@ class TransformerStackCore(nn.Module):
                     sane_hook=sane_hook,
                     sane_group_ids=sane_group_ids,
                     sane_z_indices=sane_z_indices,
+                    sane_active_mask=sane_active_mask,
                 )
                 samples[layer_idx] = current
                 if kv_pair is None:
@@ -4897,6 +4934,7 @@ class TransformerStackSequence(nn.Module):
         sane_first_columns: torch.Tensor | None = None,
         sane_group_ids: torch.Tensor | None = None,
         sane_z_indices: torch.Tensor | None = None,
+        sane_active_mask: torch.Tensor | None = None,
         layer_repeat: int = 1,
         layer_top_only: bool = False,
         think_last_only: bool = False,
@@ -4937,6 +4975,7 @@ class TransformerStackSequence(nn.Module):
                 sane_first_columns=sane_first_columns,
                 sane_group_ids=sane_group_ids,
                 sane_z_indices=sane_z_indices,
+                sane_active_mask=sane_active_mask,
                 layer_repeat=layer_repeat,
                 layer_top_only=layer_top_only,
                 think_last_only=think_last_only,
@@ -5160,6 +5199,7 @@ class TransformerStackSequence(nn.Module):
         sane_first_columns: torch.Tensor | None,
         sane_group_ids: torch.Tensor | None,
         sane_z_indices: torch.Tensor | None,
+        sane_active_mask: torch.Tensor | None,
         layer_repeat: int,
         layer_top_only: bool,
         think_last_only: bool,
@@ -5201,6 +5241,7 @@ class TransformerStackSequence(nn.Module):
             sane_first_columns=sane_first_columns,
             sane_group_ids=sane_group_ids,
             sane_z_indices=sane_z_indices,
+            sane_active_mask=sane_active_mask,
         )
         kv_out = kv_pairs
         layer_outputs = samples if capture_layer_outputs else None
@@ -5687,6 +5728,7 @@ def _run_microbatch_pass(
                 ]
                 sane_depth = max(1, int(getattr(segment, "sane_z", 1) or 1))
                 sane_passes = max(1, int(getattr(segment, "sane_x", 1) or 1))
+                restrict_active_zone = bool(getattr(segment, "sane_z_strict", False))
                 use_sane_decode = mode == "decode" and sane_depth > 1
                 if use_sane_decode:
                     if getattr(segment, "loss_input_stream", False) or getattr(segment, "loss_output_stream", False):
@@ -5781,6 +5823,11 @@ def _run_microbatch_pass(
                         think_count = torch.full(
                             (cols,), sane_passes, device=device, dtype=torch.long
                         )
+                        active_mask_tensor = None
+                        if restrict_active_zone:
+                            active_mask_tensor = (column_z >= pass_idx).to(
+                                device=device, dtype=torch.bool
+                            )
                         chunk_output, grce_state, xctx_state, kv_out, layer_outputs = model.stack_sequence.forward(
                             chunk_input,
                             grce_in=grce_state,
@@ -5794,6 +5841,7 @@ def _run_microbatch_pass(
                             sane_first_columns=sane_first_columns,
                             sane_group_ids=sane_group_ids,
                             sane_z_indices=sane_z_indices,
+                            sane_active_mask=active_mask_tensor,
                             think_step_index=think_index,
                             think_step_count=think_count,
                             layer_repeat=layer_repeat,
