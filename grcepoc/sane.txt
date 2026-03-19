@@ -94,3 +94,57 @@ So for example --layout '16[ 64E 2Y = 64D 4Y = 64D 3X 2Y 4z >> S$$ ]' should lea
 
 Notes on the $$ syntax: E.g. S20 means x=2, z=0.) The active zone is z>=x. S20 and S21 are not in the active zone. (S22 and S23 are in the active zone.) The above statements says that the losses from outside of the active zone (S10, S20, and S21) will learn low losses with `4z` because non-causal attention and beta-propagation in the non-active positions will provide them with pathways to access the injected tokens they are trying to predict. Using `4Z` insted of `4z` will block those pathways.
 
+----
+
+### Elaborated example
+
+Elaborating further on the `3X 2Y 4z >> S$$` example. Loss function is LM head, either on "self" or on "next" stream.
+
+#### Column z=0
+
+The history of the first column (z=0) should look like this:
+
+initialize:
+  self(state) = [|predict-next|] + token(t)
+  next(state) = 0
+
+Y=2 rounds of transformer with alpha-propagation to x'=x, z'=z+1 and alpha-propagation to x'=x+1, z'=0 (and alpha-propagation from x'=x-1, z'=0 and beta-propagation from x'=x, z'=z+1).
+
+constrain (loss S00):
+  next(state) = token(t+1)
+
+Y=2 rounds of transformer with alpha-propagation to x'=x, z'=z+1 and alpha-propagation to x'=x+1, z'=0 (and alpha-propagation from x'=x-1, z'=0 and beta-propagation from x'=x, z'=z+1).
+
+constrain (loss S10):
+  next(state) = token(t+1)
+
+Y=2 rounds of transformer with alpha-propagation to x'=x, z'=z+1 and alpha-propagation to x'=x+1, z'=0 (and alpha-propagation from x'=x-1, z'=0 and beta-propagation from x'=x, z'=z+1).
+
+constrain (loss S20):
+  next(state) = token(t+1)
+
+#### Column z=1
+
+The history of the second column (z=1) should look like this:
+
+initialize:
+  self(state) = [|find-self|]
+  next(state) = 0
+
+Y=2 rounds of transformer with alpha-propagation from x'=x, z'=z+1 and to x'=x, z'=z+1 and [...]
+
+constrain (loss S01):
+  self(state) = token(t+1)
+
+switch to non-active zone:
+  self(state) += [|predict-next|] + token(t+1)
+
+Y=2 rounds of transformer with alpha-propagation from x'=x, z'=z+1 and to x'=x, z'=z+1 and [...]
+
+constrain (loss S11):
+  next(state) = token(t+2)
+
+Y=2 rounds of transformer with alpha-propagation from x'=x, z'=z+1 and to x'=x, z'=z+1 and [...]
+
+constrain (loss S21):
+  next(state) = token(t+2)
