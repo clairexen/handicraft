@@ -39,10 +39,16 @@ Note on looping: We pass the transformer state vector through RMSNorm(elementwis
 
 We operate on an encoder-like block of Z parallel Y-looping transforers. The looping transformer at position z=0 is fed the previous token (at index t) and the [|predict-next|] embedding on the "self" stream, and after Y loop iterations we obtain the token t+1 from the "next" output stream at position z=0. The inputs to the looping transformers at positions z>0 are fed the [|find-self|] embedding in the "self" stream.
 
-After predicting a token in this way, we do not throw away the entire state. Instead we shift the transformer state one position to the left, shifting away the previous firty position, that just predicted a token, and creating a new most-right last position (initialized with [|find-self|] in the "self" stream). We then (re-)add the embedding for the emitted token and [|predict-next|] to the new first position. Then we loop Y times on that new configuration, and so forth.
+After predicting a token in this way, we do not throw away the entire state! Instead we shift the transformer state one position to the left, shifting away the previous first position, that just predicted a token, and creating a new most-right last position (initialized with [|find-self|] in the "self" stream). We then (re-)add the embedding for the emitted token and [|predict-next|] to the new first position. Then we loop Y times on that new configuration, and so forth.
 
 
 #### Training
+
+In training we emulate that sliding window behavior without a sliding window. Instead of moving a fixed-size active zone forward and shifting states one position to the left, as in inference, we simply make the token at position z=x the new start of the active zone, add its true self token and [|predict-next|]. column z=x-1, not part of the "active zone" anymore is kept unmodified and constrained in the same way, doing another Y loops (and providing K/V for its position to the "active zone" positions.
+
+During the pass with index x the active zone therefore contains exactly the column at z=x. All earlier columns (z<x) stay frozen: we do not inject new embeddings or flip their control mode, and their supervision target remains whatever it was in the preceding pass. They merely keep looping so their cached K/V continues to be available to the currently active column. Only the freshly exposed column at z=x is reinitialized with its true self token and [|predict-next|], then supervised to emit t+z+1 on its next stream.
+
+Columns that lie ahead of the active zone (z>x) likewise retain their previous role. They keep their [|find-self|] inputs, remain detached from the active region, and are constrained to repeat the same t+z self targets as before. Each inter-X transition therefore promotes exactly one column into the active zone while everyone else keeps looping in place, faithfully emulating the sliding-window behavior we want at inference time.
 
 We are constuctring a "Grid" (in notex.txt/grce.py lingo) to train and evaluate "SANE" thinking within `D` regime of th grid concept specifically (left-to-right-decoder without GRCE/XCTX recurrent context).
 
@@ -62,8 +68,12 @@ On every z=0 position we initialize the transformer state with the embedding for
 
 After Y=2 iterations we enter the `x=1` region. For the z<=x positions we (re-)add the token embedding `t+z` and [|predict-next|] to the self input stream at position i and constrain the output after Y=2 more itrations to carry the token embedding `t+z+1` in their "next" output. The z>x positions are simply left as they are (keep looping) and are again constrained to carry the token embedding of `t+z` in their output streams, and so forth.
 
-This encoder-like intra-span coupling is intentionally stronger than what we ultimately want to ship. When X>0 we can leak ground-truth information backwards: on the second iteration (x=1) the freshly injected z=1 column can send its correct self token to z=0 via attention/beta, telling the decoder what it needs to predict. On x=2 that leakage can travel from z=2 back to z=0, then through the alpha bridge into the next span (k+1), revealing its upcoming target as well. We keep this loosened behavior for the proof-of-concept so we can verify the machinery is wired up correctly; once that is confirmed we will tighten the spec to block these retrograde channels during training.
-
 With regards to attention a transformer with a position with k_2 and z_2 attents to all other transformers at k_1 and z_1 when either `k_1 < k_2 and z_1=0` or `k_1 == k_2`.
 
 With regards to SANE alpha and beta channels there are two aspects. Within a goup (k_1 == k_2) there's alpha propagation from each z_1 to z_2 and beta propagation from each z_2 to z_1 where z_1+1 == z_2. From one group to the next (k_1+1 == k_2) there's alpha propagation from z_1=0 in k_1 to z_2=0 in k_2.
+
+----
+
+This encoder-like intra-span coupling is intentionally stronger than what we ultimately want to ship. When X>0 we can leak ground-truth information backwards: on the second iteration (x=1) the freshly injected z=1 column can send its correct self token to z=0 via attention/beta, telling the decoder what it needs to predict. On x=2 that leakage can travel from z=2 back to z=0, then through the alpha bridge into the next span (k+1), revealing its upcoming target as well. We keep this loosened behavior for the proof-of-concept so we can verify the machinery is wired up correctly; once that is confirmed we will tighten the spec to block these retrograde channels during training.
+
+So for example --layout '16[ 64E 2Y = 64D 4Y = 64D 3X 2Y 4Z >> S$$ ]' should learn easily how to produce low losses at S10, S20, and S21 because non-causal attention and beta-propagation within a span provide pathways to access the token values they are trying to predict.
