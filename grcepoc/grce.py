@@ -4305,8 +4305,14 @@ class TransformerStackCore(nn.Module):
         beta = beta_table[layer_idx].view(1, 1, half)
         next_stream = delta[..., 1::2]
         self_stream = delta[..., ::2]
+        alpha_group_mask = None
+        if sane_group_ids is not None and sane_group_ids.numel() >= 2:
+            group_ids = sane_group_ids.to(delta.device)
+            alpha_group_mask = (group_ids[1:] == group_ids[:-1]).view(1, -1, 1)
         if mode in {"decode", "encode"}:
             addition = next_stream[:, :-1, :] * alpha
+            if alpha_group_mask is not None:
+                addition = addition * alpha_group_mask.to(addition.dtype)
             tensor[:, 1:, ::2] += addition
             if sane_first_columns is not None and sane_first_columns.numel() > 1:
                 indices = sane_first_columns.to(delta.device)
