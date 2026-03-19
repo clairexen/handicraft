@@ -715,28 +715,38 @@ on every virtual pass and, after the column completes, we sample the GRCE/XCTX
 state from the *final* (top) repetition so the recurrent channels always see
 the last step’s activations.
 
-The suffix `2Z`, `3Z`, … enables a SANE multi-token decoder span. Each
-`NZ` modifier expands every logical column into a Z-wide encoder-style strip of
-parallel looping transformers that model offsets `t ... t+Z-1` simultaneously.
-During the first `x=0` pass column `z=0` consumes the real token embedding
-(plus [|predict-next|] on its self stream) and is supervised on the "next"
-stream, while columns `z>0` receive [|find-self|] on their self stream and are
-constrained to emit the embedding of token `t+z` on their self stream. On later
-passes, whenever `z <= x` we re-inject the ground-truth token `t+z` (plus
-[|predict-next|]) into that column and require it to predict `t+z+1` on its next
-stream; columns with `z > x` retain the earlier self-stream supervision so they
-keep refining their latent futures. SANE alpha/beta couplings link neighbouring
-offsets so that each `z` column can steer the next/previous one as described in
-sane.txt. When a token is emitted we slide the internal state one column to the
-left, reusing the partially-thought futures and appending a fresh `z=Z-1`
-column initialized with [|find-self|].
+The suffix `2z`, `3z`, … (or uppercase `2Z`, `3Z`, …) enables a SANE multi-token
+decoder span. Each modifier expands every logical column into a Z-wide
+encoder-style strip of parallel looping transformers that model offsets
+`t ... t+Z-1` simultaneously. During the first `x=0` pass column `z=0` consumes
+the real token embedding (plus [|predict-next|] on its self stream) and is
+supervised on the "next" stream, while columns `z>0` receive [|find-self|] on
+their self stream and are constrained to emit the embedding of token `t+z` on
+their self stream. On later passes, only the newly promoted column at `z=x`
+receives another additive injection of `t+z` plus [|predict-next|] before being
+tasked with predicting `t+z+1` on its next stream. Columns with `z > x` retain
+the earlier self-stream supervision so they keep refining their latent futures,
+and columns with `z < x` stay frozen so their cached K/V remains available.
+SANE alpha/beta couplings link neighbouring offsets so each column can steer
+the next/previous one (details in sane.txt). When a token is emitted we slide
+the internal state one column to the left, reusing the partially-thought
+futures and appending a fresh `z=Z-1` column initialized with [|find-self|].
 
-`Z=1` leaves the grid identical to a standard looped decoder, but larger `Z`
+Lowercase modifiers (`Nz`) keep the relaxed proof-of-concept wiring: every
+column inside a span can attend to any other column in that span and all beta
+propagation remains active. Uppercase modifiers (`NZ`) enforce stricter
+causality by restricting non-causal attention and beta propagation to the
+*active zone* (`z >= x`). Once a column leaves the active zone it stops sending
+or receiving backwards information even though it continues to loop for K/V
+availability. This lets us mix permissive and constrained experiments within
+one layout language.
+
+`Z/z = 1` leaves the grid identical to a standard looped decoder, but larger
 values let the model reason about several future tokens before one is
 committed. Because the SANE training procedure is inherently left-to-right, we
-currently only allow `NZ` modifiers on decode (`d`/`D`) grids; encoder or
-reverse segments with `Z>1` (or multi-step `X>1` thinking) must be rejected by
-implementations to avoid undefined attention masks.
+currently only allow these modifiers on decode (`d`/`D`) grids; encoder or
+reverse segments with `Z>1`/`z>1` (or multi-step `X>1` thinking) must be
+rejected by implementations to avoid undefined attention masks.
 
 We also allow # instead of = for chaining sequences inside of a [...] block.
 The difference is that with # we drop the entire k/v-history at this point,

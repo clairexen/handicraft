@@ -72,8 +72,22 @@ With regards to attention a transformer with a position with k_2 and z_2 attents
 
 With regards to SANE alpha and beta channels there are two aspects. Within a goup (k_1 == k_2) there's alpha propagation from each z_1 to z_2 and beta propagation from each z_2 to z_1 where z_1+1 == z_2. From one group to the next (k_1+1 == k_2) there's alpha propagation from z_1=0 in k_1 to z_2=0 in k_2.
 
+### Lowercase vs uppercase Z modifiers
+
+We expose two layout suffix families for multi-token spans. Lowercase modifiers
+(`Nz`) behave exactly as described above: every column within a span attends to
+every other column in that span, regardless of `z`, and both alpha and beta
+propagation flow freely so latent futures can steer earlier offsets. Uppercase
+modifiers (`NZ`) build the same Z-wide grid but restrict those backward paths to
+the *active zone* (`z >= x`). Columns that have already left the active zone are
+masked out of the non-causal attention pattern and no longer accept or emit
+beta updates, so they behave exactly like causal decoder positions once their
+token has been predicted. This allows experiments that deliberately permit
+ground-truth leakage (lowercase `z`) and tighter causal experiments (uppercase
+`Z`) to coexist within the same layout language.
+
 ----
 
-This encoder-like intra-span coupling is intentionally stronger than what we ultimately want to ship. When X>0 we can leak ground-truth information backwards: on the second iteration (x=1) the freshly injected z=1 column can send its correct self token to z=0 via attention/beta, telling the decoder what it needs to predict. On x=2 that leakage can travel from z=2 back to z=0, then through the alpha bridge into the next span (k+1), revealing its upcoming target as well. We keep this loosened behavior for the proof-of-concept so we can verify the machinery is wired up correctly; once that is confirmed we will tighten the spec to block these retrograde channels during training.
+This encoder-like intra-span coupling is intentionally stronger than what we ultimately want to ship. When X>0 we can leak ground-truth information backwards: on the second iteration (x=1) the freshly injected z=1 column can send its correct self token to z=0 via attention/beta, telling the decoder what it needs to predict. On x=2 that leakage can travel from z=2 back to z=0, then through the alpha bridge into the next span (k+1), revealing its upcoming target as well. The uppercase `Z` modifier provides the tightened behavior that blocks these retrograde channels as soon as a column leaves the active zone, while the lowercase `z` modifier keeps the relaxed proof-of-concept wiring so we can verify the machinery is operating correctly.
 
-So for example --layout '16[ 64E 2Y = 64D 4Y = 64D 3X 2Y 4Z >> S$$ ]' should learn easily how to produce low losses at S10, S20, and S21 because non-causal attention and beta-propagation within a span provide pathways to access the token values they are trying to predict.
+So for example --layout '16[ 64E 2Y = 64D 4Y = 64D 3X 2Y 4z >> S$$ ]' should learn easily how to produce low losses at S10, S20, and S21 because non-causal attention and beta-propagation within a span provide pathways to access the token values they are trying to predict. Replacing `4z` with `4Z` blocks those pathways and eliminates the low-loss columns.
