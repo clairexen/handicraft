@@ -5733,6 +5733,19 @@ def _run_microbatch_pass(
                     state_tensor = token_components.new_zeros(
                         row_count, cols, token_components.size(-1)
                     )
+                    control_state = torch.full(
+                        (cols,),
+                        CONTROL_FIND_SELF,
+                        dtype=torch.long,
+                        device=device,
+                    )
+                    next_target_grid = torch.full(
+                        (row_count, cols),
+                        LOSS_IGNORE_INDEX,
+                        dtype=xb_base.dtype,
+                        device=xb_base.device,
+                    )
+                    self_target_grid = self_token_ids.clone()
                     kv_final: list[tuple[torch.Tensor, torch.Tensor]] | None = None
                     segment_loss: torch.Tensor | None = None
                     segment_tokens = 0
@@ -5740,17 +5753,15 @@ def _run_microbatch_pass(
                     row_token_counts_seg: torch.Tensor | None = None
                     for pass_idx in range(sane_passes):
                         chunk_base = state_tensor.clone()
-                        injection_mask = column_z <= pass_idx
-                        if torch.any(injection_mask):
-                            chunk_base[:, injection_mask, :] = (
-                                chunk_base[:, injection_mask, :] + column_embeddings[:, injection_mask, :]
+                        newly_active = column_z == pass_idx
+                        if torch.any(newly_active):
+                            chunk_base[:, newly_active, :] = (
+                                chunk_base[:, newly_active, :] + column_embeddings[:, newly_active, :]
                             )
-                        control_values = torch.where(
-                            injection_mask,
-                            torch.full_like(column_z, CONTROL_PREDICT_NEXT),
-                            torch.full_like(column_z, CONTROL_FIND_SELF),
-                        )
-                        control_slice = control_values.view(1, -1).expand(row_count, -1)
+                            control_state[newly_active] = CONTROL_PREDICT_NEXT
+                            next_target_grid[:, newly_active] = next_token_ids[:, newly_active]
+                            self_target_grid[:, newly_active] = LOSS_IGNORE_INDEX
+                        control_slice = control_state.view(1, -1).expand(row_count, -1)
                         control_embed = model.core.expand_to_even(
                             model.core.control_emb(control_slice)
                         )
@@ -5801,23 +5812,15 @@ def _run_microbatch_pass(
                         self_logits = model.core.head(
                             model.core.output_features(head_features, use_next_stream=False)
                         )
-                        next_targets = torch.full(
-                            (row_count, cols),
-                            LOSS_IGNORE_INDEX,
-                            dtype=xb_base.dtype,
-                            device=xb_base.device,
-                        )
-                        self_targets = next_targets.clone()
-                        retain_mask = ~injection_mask
-                        if torch.any(injection_mask):
-                            next_targets[:, injection_mask] = next_token_ids[:, injection_mask]
-                        if torch.any(retain_mask):
-                            self_targets[:, retain_mask] = self_token_ids[:, retain_mask]
+                        next_targets = next_target_grid
+                        self_targets = self_target_grid
+                        predict_mask = control_state == CONTROL_PREDICT_NEXT
+                        self_mask = control_state == CONTROL_FIND_SELF
                         pass_loss: torch.Tensor | None = None
                         pass_tokens = 0
                         row_loss_combined: torch.Tensor | None = None
                         row_tokens_combined: torch.Tensor | None = None
-                        if torch.any(injection_mask):
+                        if torch.any(predict_mask):
                             loss_val, tok_count, row_loss, row_tokens = loss_sum_token_count_with_rows(
                                 next_logits,
                                 next_targets,
@@ -5828,7 +5831,7 @@ def _run_microbatch_pass(
                                 pass_tokens += tok_count
                                 row_loss_combined = row_loss
                                 row_tokens_combined = row_tokens
-                        if torch.any(retain_mask):
+                        if torch.any(self_mask):
                             loss_val, tok_count, row_loss, row_tokens = loss_sum_token_count_with_rows(
                                 self_logits,
                                 self_targets,
@@ -5873,11 +5876,11 @@ def _run_microbatch_pass(
                         if coord_metric_templates:
                             per_column_losses = chunk_output.new_zeros(cols)
                             per_column_tokens = chunk_output.new_zeros(cols)
-                            if torch.any(injection_mask):
+                            if torch.any(predict_mask):
                                 loss_vec, token_vec = _column_loss_stats(next_logits, next_targets)
                                 per_column_losses += loss_vec
                                 per_column_tokens += token_vec
-                            if torch.any(retain_mask):
+                            if torch.any(self_mask):
                                 loss_vec, token_vec = _column_loss_stats(self_logits, self_targets)
                                 per_column_losses += loss_vec
                                 per_column_tokens += token_vec
