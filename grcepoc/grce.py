@@ -5817,7 +5817,6 @@ def _run_microbatch_pass(
                             )
                             control_state[newly_active] = CONTROL_PREDICT_NEXT
                             next_target_grid[:, newly_active] = next_token_ids[:, newly_active]
-                            self_target_grid[:, newly_active] = LOSS_IGNORE_INDEX
                         control_slice = (
                             control_state.view(1, -1).expand(row_count, -1).clone()
                         )
@@ -5879,8 +5878,8 @@ def _run_microbatch_pass(
                         )
                         next_targets = next_target_grid.clone()
                         self_targets = self_target_grid.clone()
-                        predict_mask = control_state == CONTROL_PREDICT_NEXT
-                        self_mask = control_state == CONTROL_FIND_SELF
+                        predict_mask = next_targets != LOSS_IGNORE_INDEX
+                        self_mask = self_targets != LOSS_IGNORE_INDEX
                         pass_loss: torch.Tensor | None = None
                         pass_tokens = 0
                         row_loss_combined: torch.Tensor | None = None
