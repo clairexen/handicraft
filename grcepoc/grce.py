@@ -2722,6 +2722,9 @@ if __name__ == "__main__":
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+if os.environ.get("GRCE_DETECT_ANOMALY") == "1":
+    torch.autograd.set_detect_anomaly(True)
 import string
 from tokenizers import Tokenizer
 
@@ -4291,6 +4294,7 @@ class TransformerStackCore(nn.Module):
         mode: str,
         sane_first_columns: torch.Tensor | None,
         sane_group_ids: torch.Tensor | None,
+        sane_z_indices: torch.Tensor | None,
         sane_active_mask: torch.Tensor | None,
     ) -> None:
         if not self.use_sane or delta is None:
@@ -4305,14 +4309,20 @@ class TransformerStackCore(nn.Module):
         beta = beta_table[layer_idx].view(1, 1, half)
         next_stream = delta[..., 1::2]
         self_stream = delta[..., ::2]
-        alpha_group_mask = None
-        if sane_group_ids is not None and sane_group_ids.numel() >= 2:
-            group_ids = sane_group_ids.to(delta.device)
-            alpha_group_mask = (group_ids[1:] == group_ids[:-1]).view(1, -1, 1)
+        group_ids = None
+        alpha_adj_mask = None
+        if sane_group_ids is not None or sane_z_indices is not None:
+            with torch.no_grad():
+                if sane_group_ids is not None:
+                    group_ids = sane_group_ids.to(delta.device).clone()
+                if sane_z_indices is not None:
+                    z_ids = sane_z_indices.to(delta.device).clone()
+                    if z_ids.numel() >= 2:
+                        alpha_adj_mask = (z_ids[1:] == (z_ids[:-1] + 1)).view(1, -1, 1)
         if mode in {"decode", "encode"}:
             addition = next_stream[:, :-1, :] * alpha
-            if alpha_group_mask is not None:
-                addition = addition * alpha_group_mask.to(addition.dtype)
+            if alpha_adj_mask is not None:
+                addition = addition * alpha_adj_mask.to(addition.dtype)
             tensor[:, 1:, ::2] += addition
             if sane_first_columns is not None and sane_first_columns.numel() > 1:
                 indices = sane_first_columns.to(delta.device)
@@ -4324,13 +4334,11 @@ class TransformerStackCore(nn.Module):
         group_mask = None
         if mode in {"reverse", "encode"}:
             apply_beta = True
-        elif mode == "decode" and sane_group_ids is not None:
+        elif mode == "decode" and group_ids is not None:
             apply_beta = True
-            group_ids = sane_group_ids.to(delta.device)
             if group_ids.numel() >= 2:
-                group_mask = (group_ids[1:] == group_ids[:-1]).view(1, -1, 1)
-            else:
-                group_mask = None
+                with torch.no_grad():
+                    group_mask = (group_ids[1:] == group_ids[:-1]).view(1, -1, 1)
         edge_active_mask = None
         if sane_active_mask is not None:
             active_vec = sane_active_mask.to(delta.device, dtype=torch.bool)
@@ -4433,6 +4441,7 @@ class TransformerStackCore(nn.Module):
                     mode=mode,
                     sane_first_columns=sane_first_columns,
                     sane_group_ids=sane_group_ids,
+                    sane_z_indices=sane_z_indices,
                     sane_active_mask=sane_active_mask,
                 )
         for rep_idx in range(repeats):
@@ -5809,7 +5818,9 @@ def _run_microbatch_pass(
                             control_state[newly_active] = CONTROL_PREDICT_NEXT
                             next_target_grid[:, newly_active] = next_token_ids[:, newly_active]
                             self_target_grid[:, newly_active] = LOSS_IGNORE_INDEX
-                        control_slice = control_state.view(1, -1).expand(row_count, -1)
+                        control_slice = (
+                            control_state.view(1, -1).expand(row_count, -1).clone()
+                        )
                         control_embed = model.core.expand_to_even(
                             model.core.control_emb(control_slice)
                         )
@@ -5866,8 +5877,8 @@ def _run_microbatch_pass(
                         self_logits = model.core.head(
                             model.core.output_features(head_features, use_next_stream=False)
                         )
-                        next_targets = next_target_grid
-                        self_targets = self_target_grid
+                        next_targets = next_target_grid.clone()
+                        self_targets = self_target_grid.clone()
                         predict_mask = control_state == CONTROL_PREDICT_NEXT
                         self_mask = control_state == CONTROL_FIND_SELF
                         pass_loss: torch.Tensor | None = None
