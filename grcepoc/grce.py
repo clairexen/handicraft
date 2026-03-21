@@ -5772,7 +5772,7 @@ def _run_microbatch_pass(
                 sane_depth = max(1, int(getattr(segment, "sane_z", 1) or 1))
                 sane_passes = max(1, int(getattr(segment, "sane_x", 1) or 1))
                 strict_active_zone = bool(getattr(segment, "sane_z_strict", False))
-                use_sane_decode = mode == "decode" and sane_depth > 1
+                use_sane_decode = mode == "decode" and (sane_depth > 1 or sane_passes > 1)
                 if use_sane_decode:
                     if getattr(segment, "loss_input_stream", False) or getattr(segment, "loss_output_stream", False):
                         raise ValueError("SANE decode segments do not support b/B modifiers yet")
