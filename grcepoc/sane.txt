@@ -108,12 +108,12 @@ forth.
 
 In training we emulate that sliding window behavior without a sliding window.
 Instead of moving a fixed-size active zone forward and shifting states one
-position to the left, as in inference, we simply make the token at position z=x
-the new start of the active zone and **add** (not replace) its true self token
-plus [|predict-next|] into that column. Column z=x-1, no longer part of the
-"active zone", is kept unmodified and constrained in the same way, doing
-another Y loops (and providing K/V for its position to the "active zone"
-positions).
+position to the left, as in inference, we simply treat the column with z=x as
+the new *leading position* of the active zone and **add** (not replace) its
+true self token plus [|predict-next|] into that column. Column z=x-1, no longer
+part of the active zone, is kept unmodified and constrained in the same way,
+doing another Y loops (and providing K/V for its position to the active-zone
+columns).
 
 During the pass with index x the active zone therefore consists of all columns
 with z>=x, just like inference where everything to the right of the decoder
@@ -123,15 +123,15 @@ remains whatever it was in the preceding pass. They merely keep looping so
 their cached K/V continues to be available to the currently active column. In
 lowercase `z` layouts those frozen columns can still leak in their targets via
 beta propagation and non-causal attention, whereas uppercase `Z` layouts block
-those retrograde paths so the frozen losses stay roughly flat. Only the
-freshly exposed column at z=x receives an additive injection of its true self
+those retrograde paths so the frozen losses stay roughly flat. Only the column
+currently leading the active zone (z=x) receives an additive injection of its true self
 token and [|predict-next|], then gets supervised to emit t+z+1 on its next
 stream. No column is reinitialized during an inter-X transition—we always
 preserve the accumulated hidden state and only add new signals on top.
 
 Columns farther to the right but still inside the active zone (z>x) retain
 their previous speculative role. They keep their [|find-self|] inputs, remain
-detached from the newly promoted column, and are constrained to repeat the same
+detached from the newly leading column of the active zone, and are constrained to repeat the same
 t+z self targets as before. Each inter-X transition therefore promotes exactly
 one column while everyone else keeps looping in place, approximating the
 sliding-window behavior we want at inference time (the only difference is that
@@ -257,7 +257,25 @@ exactly iff:
 
 ### Explicit Rules for Input and Supervision
 
-...fixme...
+Let `x ∈ [0, X-1]`, `y ∈ [0, Y-1]`, `z ∈ [0, Z-1]`, and `t` denote the token
+index such that column `i = t*Z + z`.
+
+**Inputs**
+
+- For all `x, y, z>0`: self(i, x, y) = [|find-self|], next(i, x, y) = 0.
+- For `z=0`: self(i, x, y=0) = token(t) + [|predict-next|]; next(i, x, y=0) = 0.
+- When a column becomes the leading position of the active zone at pass `x`
+  (i.e. the column whose z equals x) we add the true token for its offset and
+  [|predict-next|] to its self stream: self(i, x, y=0) += token(t+z) +
+  [|predict-next|].
+- No embeddings are removed between X-steps; state is carried over and only augmented.
+
+**Supervision** (LM head applied either on self or next stream as specified)
+
+- For `z=0`: supervise next(i, x, y=Y-1) → token(t+1) at every X-step.
+- For `0 < z < x`: supervise self(i, x, y=Y-1) → token(t+z) (frozen columns).
+- For `z = x`: supervise next(i, x, y=Y-1) → token(t+z+1).
+- For `z > x`: supervise self(i, x, y=Y-1) → token(t+z) (speculative columns keep their targets).
 
 ----
 
@@ -328,7 +346,7 @@ Y=2 rounds of transformer with alpha-propagation from x'=x, z'=z+1 and to x'=x, 
 constrain (loss S01):
   self(state) = token(t+1)
 
-switch to non-active zone:
+becomes the leading position of the active zone (x=1):
   self(state) += [|predict-next|] + token(t+1)
 
 Y=2 rounds of transformer with alpha-propagation from x'=x, z'=z+1 and to x'=x, z'=z+1 and [...]
