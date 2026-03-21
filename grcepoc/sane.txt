@@ -260,10 +260,13 @@ exactly iff:
 Let `x ∈ [0, X-1]`, `y ∈ [0, Y-1]`, `z ∈ [0, Z-1]`, and `t` denote the token
 index such that column `i = t*Z + z`.
 
-**Inputs**
+**Inputs at x=0, y=0**
 
-- For all `x, y, z>0`: self(i, x, y) = [|find-self|], next(i, x, y) = 0.
 - For `z=0`: self(i, x, y=0) = token(t) + [|predict-next|]; next(i, x, y=0) = 0.
+- For `z>0`: self(i, x, y) = [|find-self|], next(i, x, y) = 0.
+
+**Updates at x>0, y=0**
+
 - When a column becomes the leading position of the active zone at pass `x`
   (i.e. the column whose z equals x) we add the true token for its offset and
   [|predict-next|] to its self stream: self(i, x, y=0) += token(t+z) +
