@@ -8362,12 +8362,36 @@ def run_test_slice(
             top_probs_cpu = top_probs.squeeze(0).cpu().tolist()
 
             idx_width = 4
+            annotations = _column_debug_annotations(row)
+            label_width = 0
+            if annotations:
+                label_width = max((len(info.get("label", "")) for info in annotations), default=0)
+            if label_width > 0:
+                idx_width += 1 + label_width
+            pad = " " * 4
+            _print_sane_pass_summary(row, annotations, pad)
             token_width = max(
                 len(_format_token_fragment(tokenizer, tok)) for tok in inputs_cpu + targets_cpu
             )
-            pad = " " * 4
             seq_len = len(inputs_cpu)
+            last_step_marker: tuple[int, int] | None = None
             for col in range(seq_len):
+                annotation = annotations[col] if col < len(annotations) else {}
+                step_total = annotation.get("sane_pass_total")
+                step_group = annotation.get("sane_step")
+                seg_id = annotation.get("segment_id")
+                if step_total and step_group is not None and seg_id is not None:
+                    marker = (seg_id, step_group)
+                    if marker != last_step_marker:
+                        print(
+                            color_text(
+                                f"{pad}Step {step_group + 1}/{step_total} (segment {seg_id + 1})",
+                                Colors.YELLOW,
+                            )
+                        )
+                        last_step_marker = marker
+                else:
+                    last_step_marker = None
                 token_text = _format_token_fragment(tokenizer, inputs_cpu[col])
                 loss_value = losses_cpu[col] if mask_cpu[col] else None
                 ranking: list[str] = []
@@ -8375,7 +8399,11 @@ def run_test_slice(
                     token_piece = _format_token_fragment(tokenizer, idx)
                     ranking.append(f"{token_piece} ({prob * 100:.1f}%)")
                 loss_display = f"{loss_value:7.3f}" if loss_value is not None else "   --  "
-                idx_text = f"{col:4d}"
+                label = annotation.get("label") if annotation else ""
+                if label_width > 0:
+                    idx_text = f"{col:4d} {label:>{label_width}}"
+                else:
+                    idx_text = f"{col:4d}"
                 print(
                     f"{pad}{idx_text} | {token_text:<{token_width}} | {loss_display} | {', '.join(ranking)}"
                 )
@@ -8390,6 +8418,7 @@ def run_test_slice(
             print(
                 f"{pad}{summary_label} | {summary_target:<{token_width}} | {row_avg_loss_text} nats/token"
             )
+            _print_extra_metric_summaries(row_result, pad)
 
             log_masks = getattr(args, "log_attn_masks", False)
             if log_masks:
@@ -8616,6 +8645,86 @@ def _log_position_matrices(row: BlockLayout) -> None:
         print()
 
 
+def _column_debug_annotations(row: BlockLayout) -> list[dict[str, object]]:
+    total = row.total_columns()
+    annotations: list[dict[str, object]] = [
+        {
+            "label": "",
+            "segment_id": None,
+            "sane_pass_total": None,
+            "sane_step": None,
+        }
+        for _ in range(total)
+    ]
+    cursor = 0
+    for seg_idx, segment in enumerate(row.segments):
+        cols = int(segment.columns)
+        if cols <= 0:
+            continue
+        passes = max(1, int(getattr(segment, "sane_x", 1) or 1))
+        plan = None
+        if segment.mode == "decode":
+            plan = _decode_segment_plan_tensors(segment)
+        if plan is not None:
+            groups, z_indices = plan
+            label_count = min(cols, groups.numel())
+            for local in range(label_count):
+                idx = cursor + local
+                if idx >= total:
+                    break
+                z_value = int(z_indices[local].item())
+                annotations[idx]["label"] = _grid_coordinate_label(
+                    int(groups[local].item()),
+                    z_value,
+                )
+                annotations[idx]["segment_id"] = seg_idx
+                if passes > 1:
+                    annotations[idx]["sane_pass_total"] = passes
+                    step_group = min(z_value, passes - 1)
+                    annotations[idx]["sane_step"] = step_group
+        cursor += cols
+    return annotations
+
+
+def _print_sane_pass_summary(
+    row: BlockLayout,
+    annotations: Sequence[dict[str, object]],
+    pad: str,
+) -> None:
+    per_segment: dict[int, dict[str, object]] = {}
+    for idx, info in enumerate(annotations):
+        seg_id = info.get("segment_id")
+        total = info.get("sane_pass_total")
+        step = info.get("sane_step")
+        label = info.get("label")
+        if seg_id is None or total is None or step is None:
+            continue
+        segment_data = per_segment.setdefault(
+            seg_id,
+            {"total": int(total), "groups": {}},
+        )
+        groups = segment_data["groups"]
+        groups.setdefault(int(step), []).append((idx, label))
+    for seg_id in sorted(per_segment.keys()):
+        data = per_segment[seg_id]
+        total_pass = int(data["total"])
+        print(
+            color_text(
+                f"{pad}Decode segment #{seg_id + 1} think passes (X={total_pass}):",
+                Colors.GRAY,
+            )
+        )
+        for step in range(total_pass):
+            entries = data["groups"].get(step)
+            if not entries:
+                continue
+            desc = ", ".join(
+                f"{col}:{label}" if label else str(col)
+                for col, label in entries
+            )
+            print(f"{pad}  Step {step + 1}/{total_pass}: {desc}")
+
+
 def _alpha_propagation_matrix(
     groups: torch.Tensor,
     z_indices: torch.Tensor,
@@ -8752,6 +8861,22 @@ def _log_alpha_beta_matrices(row: BlockLayout) -> None:
                 row_text = f"{row_label:>{label_width}} | " + " ".join(row_chars)
                 print(row_text)
             print()
+
+
+def _print_extra_metric_summaries(result: RowEvalResult, pad: str) -> None:
+    entries: list[tuple[str, float]] = []
+    for name, total in result.mode_loss_sums.items():
+        if name in BATCH_MODES or name == "target":
+            continue
+        count = result.mode_token_counts.get(name, 0)
+        if count <= 0:
+            continue
+        entries.append((name, total / count))
+    if not entries:
+        return
+    print(f"{pad}Extra metrics:")
+    for name, value in sorted(entries):
+        print(f"{pad}  {name}: {value:.3f} nats/token")
 def _metric_bucket_keys(metric_map: dict[str, float | None]) -> list[str]:
     extras = sorted(
         key for key in metric_map.keys() if key not in METRIC_BUCKET_ORDER
