@@ -282,10 +282,10 @@ index such that column `i = t*Z + z`.
 - For `z = x`: supervise next(i, x, y=Y-1) → token(t+z+1).
 - For `z > x`: supervise self(i, x, y=Y-1) → token(t+z) (speculative columns keep their targets).
 
-----
+### Additional notes
 
-This encoder-like intra-span coupling is intentionally stronger than what we
-ultimately want to ship. When X>0 we can leak ground-truth information
+The "non-causal" `z` mode intra-span coupling is intentionally stronger than
+what we ultimately want to ship. When X>0 we can leak ground-truth information
 backwards: on the second iteration (x=1) the freshly injected z=1 column can
 send its correct self token to z=0 via attention/beta, telling the decoder what
 it needs to predict. On x=2 that leakage can travel from z=2 back to z=0, then
@@ -308,8 +308,6 @@ S20, and S21) will learn low losses with `4z` because non-causal attention and
 beta-propagation in the non-active positions will provide them with pathways to
 access the injected tokens they are trying to predict. Using `4Z` insted of
 `4z` will block those pathways.
-
-### Additional notes
 
 - During inference there is no explicit `x` loop, but masks derived from the
   causal/active-zone rules should continue to treat already-emitted columns as
