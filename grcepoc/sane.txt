@@ -133,8 +133,10 @@ Columns farther to the right but still inside the active zone (z>x) retain
 their previous speculative role. They keep their [|find-self|] inputs, remain
 detached from the newly promoted column, and are constrained to repeat the same
 t+z self targets as before. Each inter-X transition therefore promotes exactly
-one column while everyone else keeps looping in place, faithfully emulating the
-sliding-window behavior we want at inference time.
+one column while everyone else keeps looping in place, approximating the
+sliding-window behavior we want at inference time (the only difference is that
+the training window gradually shrinks because we cannot append a fresh
+rightmost column).
 
 We are constuctring a "Grid" (in notex.txt/grce.py lingo) to train and evaluate
 "SANE" thinking within `D` regime of th grid concept specifically
