@@ -138,7 +138,7 @@ sliding-window behavior we want at inference time (the only difference is that
 the training window gradually shrinks because we cannot append a fresh
 rightmost column).
 
-We are constuctring a "Grid" (in notex.txt/grce.py lingo) to train and evaluate
+We are constuctring a "Grid" (in notes.txt/grce.py lingo) to train and evaluate
 "SANE" thinking within `D` regime of th grid concept specifically
 (left-to-right-decoder without GRCE/XCTX recurrent context).
 
