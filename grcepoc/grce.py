@@ -3780,27 +3780,26 @@ class CausalSelfAttention(nn.Module):
         ):
             groups = sane_group_ids.to(x.device, dtype=torch.long)
             z_idx = sane_z_indices.to(x.device, dtype=torch.long)
-            token_positions = groups + z_idx
             groups_row = groups.view(T, 1)
             groups_col = groups.view(1, T)
             z_row = z_idx.view(T, 1)
             z_col = z_idx.view(1, T)
             same_group = groups_row == groups_col
-            triangular_same = same_group & (z_col <= z_row)
             earlier_zero = (groups_col < groups_row) & (z_col == 0)
-            pos_allowed = token_positions.view(T, 1) >= token_positions.view(1, T)
-            if sane_active_mask is not None:
+            if sane_active_mask is None:
+                allowed = same_group | earlier_zero
+            else:
+                token_positions = groups + z_idx
+                pos_allowed = token_positions.view(T, 1) >= token_positions.view(1, T)
                 active_vec = sane_active_mask.to(x.device, dtype=torch.bool)
                 if active_vec.dim() != 1 or active_vec.size(0) != T:
                     raise ValueError("sane_active_mask must match sequence length")
                 row_active = active_vec.view(T, 1)
                 col_active = active_vec.view(1, T)
-            else:
-                row_active = torch.ones(T, 1, dtype=torch.bool, device=x.device)
-                col_active = torch.ones(1, T, dtype=torch.bool, device=x.device)
-            active_pair = same_group & row_active & col_active
-            allow_active = triangular_same | earlier_zero | active_pair
-            allowed = torch.where(row_active, allow_active, pos_allowed)
+                triangular_same = same_group & (z_col <= z_row)
+                active_pair = same_group & row_active & col_active
+                base_allowed = triangular_same | earlier_zero
+                allowed = torch.where(row_active, base_allowed | active_pair, base_allowed & pos_allowed)
             block_mask = ~allowed
         if block_mask is not None:
             if cache_len > 0:

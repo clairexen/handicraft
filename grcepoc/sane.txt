@@ -264,22 +264,22 @@ index such that column `i = t*Z + z`.
 
 **Inputs at x=0, y=0**
 
-- For `z=0`: self(i, x, y=0) = token(t) + [|predict-next|]; next(i, x, y=0) = 0.
-- For `z>0`: self(i, x, y) = [|find-self|], next(i, x, y) = 0.
+- For `z=0`: self(t, x=0, y=0, z=0) = token(t) + [|predict-next|]; next(t, x=0, y=0, z=0) = 0.
+- For `z>0`: self(t, x=0, y=0, z) = [|find-self|], next(t, x=0, y=0, z=0) = 0.
 
 **Updates at x>0, y=0**
 
 - When a column becomes the leading position of the active zone at pass `x`
   (i.e. the column whose z equals x) we add the true token for its offset and
-  [|predict-next|] to its self stream: self(i, x, y=0) += token(t+z) +
-  [|predict-next|].
+  [|predict-next|] to its self stream:
+    self(t, x, y=0, z=x) += token(t+z) + [|predict-next|].
 - No embeddings are removed between X-steps; state is carried over and only augmented.
 
-**Supervision** (LM head applied either on self or next stream as specified)
+**Supervision after y=Y-1 loops** (LM head applied either on self or next stream as specified)
 
-- For `0 <= z < x`: supervise next(i, x, y=Y-1) → token(t+z+1).   (frozen columns keep their predict-next targets).
-- For `z = x`: supervise next(i, x, y=Y-1) → token(t+z+1).   (leading position in active zone changes to predict-next)
-- For `z > x`: supervise self(i, x, y=Y-1) → token(t+z).   (speculative columns keep their find-self targets).
+- For `0 <= z < x`: supervise next(t, x, y=Y-1, z) → token(t+z+1).   (frozen columns keep their predict-next targets).
+- For `z = x`: supervise next(t, x, y=Y-1, z) → token(t+z+1).   (leading position in active zone changes to predict-next supervision)
+- For `z > x`: supervise self(t, x, y=Y-1, z) → token(t+z).   (speculative columns keep their find-self targets).
 
 ### Additional notes
 
