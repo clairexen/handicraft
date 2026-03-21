@@ -7832,6 +7832,7 @@ def _evaluate_row_block(
     base_inputs: torch.Tensor,
     base_targets: torch.Tensor,
     *,
+    base_source_ids: torch.Tensor | None = None,
     capture_columns: set[int] | None = None,
     drop_rng: random.Random | None = None,
 ) -> RowEvalResult:
@@ -7846,7 +7847,10 @@ def _evaluate_row_block(
         )
     base_inputs = base_inputs[:, :pos_total]
     base_targets = base_targets[:, :pos_total]
-    base_source_ids = base_inputs.clone()
+    if base_source_ids is not None:
+        base_source_store = base_source_ids.detach().clone()
+    else:
+        base_source_store = base_inputs.detach().clone()
     expanded_inputs = _expand_think_sequences(base_inputs, row.segments)
     expanded_targets = _expand_think_sequences(base_targets, row.segments)
     row_count = expanded_inputs.size(0)
@@ -8180,7 +8184,7 @@ def _evaluate_row_block(
         total_tokens=total_tokens,
         target_ids=target_ids,
         source_ids=expanded_inputs,
-        base_source_ids=base_source_ids,
+        base_source_ids=base_source_store,
         attention_maps=attention_storage if capture_columns else None,
         block_attentions=block_attentions,
         sampled_rows=row_count,
@@ -8196,19 +8200,24 @@ def _prepare_eval_tokens(
     start_pos: int,
     custom_text: str | None,
     align_rng: random.Random | None = None,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, int, str, str]:
+    future_margin: int = 0,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, int, str, str, torch.Tensor]:
+    future_margin = max(0, int(future_margin))
     if custom_text:
         provided = tokenizer.encode(custom_text)
-        if provided.numel() < 2:
-            raise ValueError("Custom text must produce at least two tokens for evaluation")
-        if provided.numel() - 1 > args.n_pos:
+        min_tokens = token_length + 1 + future_margin
+        if provided.numel() < min_tokens:
+            raise ValueError(
+                f"Custom text must produce at least {min_tokens} tokens for evaluation"
+            )
+        if provided.numel() > args.n_pos + future_margin:
             raise ValueError(
                 "Custom text exceeds the configured --n-pos; shorten the text or increase --n-pos."
             )
-        context_tokens = provided
+        context_tokens = provided[:min_tokens]
         source_label = "custom text"
     else:
-        span = token_length + 1
+        span = token_length + 1 + future_margin
         if span <= 1:
             raise ValueError("--block-size must be >= 1 for evaluation")
         tokens = dataset._tokens_for_split("test")
@@ -8221,19 +8230,22 @@ def _prepare_eval_tokens(
         )
         context_tokens = chunk
         source_label = f"test split offset {adjusted}"
-    if context_tokens.numel() < 2:
+    if context_tokens.numel() < token_length + 1:
         raise ValueError("Not enough tokens collected for evaluation")
-    inputs = context_tokens[:-1]
-    targets = context_tokens[1:]
+    usable = context_tokens[: token_length + 1]
+    inputs = usable[:-1]
+    targets = usable[1:]
     if inputs.numel() < token_length:
         raise ValueError(
             f"Requested {token_length} evaluation tokens but only {inputs.numel()} available"
         )
     inputs = inputs[:token_length]
     targets = targets[:token_length]
+    future_tokens = context_tokens[token_length + 1 :]
+    base_source_ids = torch.cat([inputs, usable[-1:], future_tokens])
     eval_block_size = inputs.numel()
     pretty_text = tokenizer.decode_pretty(args, context_tokens)
-    return context_tokens, inputs, targets, eval_block_size, source_label, pretty_text
+    return context_tokens, inputs, targets, eval_block_size, source_label, pretty_text, base_source_ids
 
 
 def _prepare_eval_batch_tokens(
@@ -8244,6 +8256,7 @@ def _prepare_eval_batch_tokens(
     token_length: int,
     start_positions: Sequence[int],
     align_rng: random.Random | None = None,
+    future_margin: int = 0,
 ) -> tuple[torch.Tensor, torch.Tensor, str, str]:
     if not start_positions:
         raise ValueError("Random evaluation batch requires at least one start position")
@@ -8259,6 +8272,7 @@ def _prepare_eval_batch_tokens(
             _,
             source_label,
             pretty_text,
+            _,
         ) = _prepare_eval_tokens(
             args,
             dataset,
@@ -8267,6 +8281,7 @@ def _prepare_eval_batch_tokens(
             start_pos=pos,
             custom_text=None,
             align_rng=align_rng,
+            future_margin=future_margin,
         )
         input_chunks.append(inputs)
         target_chunks.append(targets)
@@ -8305,6 +8320,7 @@ def run_test_slice(
         max_positions = max((row.total_positions() for row in layout.rows), default=0)
         if max_positions <= 0:
             raise ValueError("Layout does not contain any token positions to evaluate")
+        layout_future_margin = max((_row_future_margin(row) for row in layout.rows), default=0)
         (
             context_tokens,
             inputs,
@@ -8312,6 +8328,7 @@ def run_test_slice(
             eval_token_length,
             source_label,
             pretty_text,
+            base_source_ids,
         ) = _prepare_eval_tokens(
             args,
             dataset,
@@ -8320,17 +8337,30 @@ def run_test_slice(
             start_pos=start_pos,
             custom_text=custom_text,
             align_rng=None,
+            future_margin=layout_future_margin,
         )
 
         print(color_text(f"Evaluating layout '{args.layout}' on {source_label}:", Colors.CYAN))
         print(pretty_text)
-        print(color_text(
-            f"Sequence tokens: {eval_token_length} inputs (context) + 1 target tail", Colors.CYAN
-        ))
+        if layout_future_margin > 0:
+            print(
+                color_text(
+                    f"Sequence tokens: {eval_token_length} inputs (context) + 1 target tail + {layout_future_margin} future tokens",
+                    Colors.CYAN,
+                )
+            )
+        else:
+            print(
+                color_text(
+                    f"Sequence tokens: {eval_token_length} inputs (context) + 1 target tail",
+                    Colors.CYAN,
+                )
+            )
 
         xb_base = inputs.unsqueeze(0).to(model_device)
         yb_base = targets.unsqueeze(0).to(model_device)
         vocab_size = model.config.vocab_size
+        base_source_tensor = base_source_ids
 
         eval_drop_rng = random.Random(getattr(args, "rng_seed", 0) or 0)
         for row_idx, row in enumerate(layout.rows, start=1):
@@ -8349,6 +8379,7 @@ def run_test_slice(
                     row,
                     xb_base,
                     yb_base,
+                    base_source_ids=base_source_tensor,
                     capture_columns=capture_columns,
                     drop_rng=eval_drop_rng,
                 )
@@ -8408,7 +8439,7 @@ def run_test_slice(
             _print_sane_pass_summary(row, annotations, pad)
             base_tokens = None
             if getattr(row_result, "base_source_ids", None) is not None:
-                base_tokens = row_result.base_source_ids.squeeze(0).cpu().tolist()
+                base_tokens = row_result.base_source_ids.detach().cpu().view(-1).tolist()
             token_width = 0
             token_texts: list[str] = []
             seq_len = len(inputs_cpu)
@@ -8465,7 +8496,12 @@ def run_test_slice(
                     f"{pad}{idx_text} | {token_text:<{token_width}} | {loss_text} | {self_desc} | {next_desc}"
                 )
 
-            summary_target = _format_token_fragment(tokenizer, targets_cpu[-1])
+            summary_token_id = targets_cpu[-1]
+            if base_tokens is not None:
+                future_index = len(inputs_cpu)
+                if future_index < len(base_tokens):
+                    summary_token_id = base_tokens[future_index]
+            summary_target = _format_token_fragment(tokenizer, summary_token_id)
             row_total_loss = row_result.total_loss_sum
             if row_result.total_tokens > 0:
                 row_avg_loss_text = f"{row_total_loss / row_result.total_tokens:7.3f}"
@@ -9158,6 +9194,7 @@ def run_eval_layout(
         max_positions = max((row.total_positions() for row in layout.rows), default=0)
         if max_positions <= 0:
             raise ValueError("Layout does not contain any token positions to evaluate")
+        layout_future_margin = max((_row_future_margin(row) for row in layout.rows), default=0)
         if batch_inputs is not None and batch_targets is not None:
             inputs_tensor = batch_inputs
             targets_tensor = batch_targets
@@ -9172,6 +9209,7 @@ def run_eval_layout(
                 eval_block_size,
                 source_label,
                 pretty_text,
+                _,
             ) = _prepare_eval_tokens(
                 args,
                 dataset,
@@ -9180,6 +9218,7 @@ def run_eval_layout(
                 start_pos=start_pos,
                 custom_text=custom_text,
                 align_rng=align_rng,
+                future_margin=layout_future_margin,
             )
             inputs_tensor = inputs.unsqueeze(0)
             targets_tensor = targets.unsqueeze(0)
@@ -10428,6 +10467,9 @@ class Runtime:
                     max_positions = max(
                         (row.total_positions() for row in layout_probe.rows), default=0
                     )
+                    layout_future_margin = max(
+                        (_row_future_margin(row) for row in layout_probe.rows), default=0
+                    )
                     if max_positions <= 0:
                         raise ValueError("Layout does not contain any token positions to evaluate")
                     offsets = [rng.randint(0, window - 1) for _ in range(rand_runs)]
@@ -10450,6 +10492,7 @@ class Runtime:
                             token_length=max_positions,
                             start_positions=batch_offsets,
                             align_rng=rng if self.args.align_articles else None,
+                            future_margin=layout_future_margin,
                         )
                         summary = run_eval_layout(
                             args=self.args,
