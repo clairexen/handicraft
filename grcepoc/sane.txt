@@ -308,3 +308,15 @@ S20, and S21) will learn low losses with `4z` because non-causal attention and
 beta-propagation in the non-active positions will provide them with pathways to
 access the injected tokens they are trying to predict. Using `4Z` insted of
 `4z` will block those pathways.
+
+### Additional notes
+
+- During inference there is no explicit `x` loop, but masks derived from the
+  causal/active-zone rules should continue to treat already-emitted columns as
+  `z<x` so they remain frozen.
+- Lowercase `z` spans are a debugging aid; when evaluating causal quality or
+  comparing against plain decoders prefer uppercase `Z` spans so leakage paths
+  are disabled.
+- RMSNorm after each loop iteration is part of the SANE path; the `loop_ln`
+  module in `grce.py` is reserved for future forward (`F`) rows and should stay
+  inactive in SANE grids.
