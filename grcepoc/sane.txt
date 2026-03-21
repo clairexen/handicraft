@@ -33,11 +33,13 @@ channel enables the "next" stream at position t to steer the "self" stream at
 position t+1, and the beta channel enables the "self" stream at position t to
 steer the "next" stream at position t-1.
 
-For clarity: the MTLD grid acts like a decoder when we look at how *spans*
-interact. Each Z-wide span may only attend to earlier spans, and only the alpha
-channel delivers information from one span into the next. Inside a span,
-however, the Z positions behave like an encoder strip. Every column can attend
-to every other column in the same span (regardless of direction), and both
+For clarity: when `Z=1` (plain decoder spans) the MTLD grid acts like a decoder
+when we look at how *spans* interact. Each span may only attend to earlier
+spans, and only the alpha channel delivers information from one span into the
+next. Once `Z>1` the columns inside each span behave like an encoder strip (the
+later `k_1 < k_2` / `z_1=0` rules describe this regime). Every column can
+attend to every other column in the same span (regardless of direction), and
+both
 alpha and beta propagation operate so features can shuttle forward or backward
 across the offsets. This reflects the desire to let the latent future positions
 collaborate freely without compromising the overall left-to-right
