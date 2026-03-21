@@ -5805,6 +5805,8 @@ def _run_microbatch_pass(
                     )
                     token_embedding_grid = torch.gather(full_embeddings, 1, embedding_index)
 
+                    rope_positions = column_offsets.clone()
+
                     def _gather_token_ids(offsets: torch.Tensor) -> torch.Tensor:
                         index = offsets.view(1, -1).expand(row_count, -1)
                         return torch.gather(full_tokens, 1, index)
@@ -5856,7 +5858,7 @@ def _run_microbatch_pass(
                             control_slice=control_embed,
                         )
                         kv_sources = kv_chain if kv_chain else None
-                        segment_positions = column_positions[start:end]
+                        segment_positions = rope_positions
                         layer_repeat = max(1, int(getattr(segment, "layer_repeat", 1) or 1))
                         layer_top_only = bool(getattr(segment, "layer_top_only", False))
                         segment_disable_sane = row_disable_sane or getattr(segment, "disable_sane", False)
@@ -6083,7 +6085,7 @@ def _run_microbatch_pass(
                 kv_sources = kv_chain if kv_chain else None
                 prev_grce_state = grce_state
                 prev_xctx_state = xctx_state
-                segment_positions = column_positions[start:end]
+                segment_positions = column_offsets
                 layer_repeat = max(1, int(getattr(segment, "layer_repeat", 1) or 1))
                 layer_top_only = bool(getattr(segment, "layer_top_only", False))
                 think_last_only = bool(getattr(segment, "think_last_only", False))
@@ -7884,7 +7886,7 @@ def _evaluate_row_block(
         kv_sources = kv_chain if kv_chain else None
         prev_grce_state = grce_state
         prev_xctx_state = xctx_state
-        segment_positions = column_positions[start:end]
+        segment_positions = column_offsets
         layer_repeat = max(1, int(getattr(segment, "layer_repeat", 1) or 1))
         layer_top_only = bool(getattr(segment, "layer_top_only", False))
         think_last_only = bool(getattr(segment, "think_last_only", False))
