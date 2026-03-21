@@ -148,6 +148,7 @@ class Defaults:
     log_row_details: bool = False
     log_alpha_beta_rms: bool = False
     log_attn_masks: bool = False
+    log_pos_matrix: bool = False
     lr_base: float = 3e-4
     weight_decay: float = 0.01
     adam_beta1: float = 0.9
@@ -1785,6 +1786,13 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         "--log-attn-masks",
         action="store_true",
         help="Print the leading portion of each decode attention mask",
+    )
+    test_parser.add_argument(
+        "--log-pos-matrix",
+        action="store_true",
+        help=(
+            "Print the relative RoPE position matrix for each decode grid (matches mask layout)"
+        ),
     )
 
     eval_parser = subparsers.add_parser(
@@ -8383,6 +8391,8 @@ def run_test_slice(
                     row,
                     row_result,
                 )
+            if getattr(args, "log_pos_matrix", False):
+                _log_position_matrices(row)
             if getattr(args, "attn_map", False) and row_result.block_attentions:
                 for block in row_result.block_attentions:
                     _print_attention_heatmap(
@@ -8432,6 +8442,27 @@ def _print_attention_heatmap(
         print(row_text)
 
 
+def _decode_segment_plan_tensors(
+    segment: SegmentLayout,
+) -> tuple[torch.Tensor, torch.Tensor] | None:
+    if segment.mode != "decode":
+        return None
+    cols = int(segment.columns)
+    base_tokens = int(segment.token_columns())
+    if cols <= 0 or base_tokens <= 0:
+        return None
+    depth = max(1, int(getattr(segment, "sane_z", 1) or 1))
+    if depth > 1:
+        plan = _sane_column_plan(base_tokens, depth)
+        if len(plan) != cols:
+            plan = [(idx, 0) for idx in range(cols)]
+    else:
+        plan = [(idx, 0) for idx in range(cols)]
+    groups = torch.tensor([pos for pos, _ in plan], dtype=torch.long)
+    z_indices = torch.tensor([z for _, z in plan], dtype=torch.long)
+    return groups, z_indices
+
+
 def _grid_time_label(index: int) -> str:
     """Map a zero-based index to Excel-style column labels (A, B, ... AA, AB)."""
 
@@ -8464,28 +8495,22 @@ def _log_attention_masks(
     del model, row_result  # The masks depend purely on the resolved layout.
     max_dim = 25
     for seg_idx, segment in enumerate(row.segments):
-        if segment.mode != "decode":
+        tensors = _decode_segment_plan_tensors(segment)
+        if tensors is None:
             continue
-        base_tokens = int(segment.token_columns())
+        groups, z_indices = tensors
         depth = max(1, int(getattr(segment, "sane_z", 1) or 1))
         passes = max(1, int(getattr(segment, "sane_x", 1) or 1))
-        if base_tokens <= 0:
+        total_cols = groups.numel()
+        if total_cols <= 0:
             continue
-        plan = _sane_column_plan(base_tokens, depth)
-        expected_cols = int(segment.columns)
-        if len(plan) != expected_cols:
-            plan = [(idx, 0) for idx in range(expected_cols)]
-        if not plan:
-            continue
-        groups = torch.tensor([pos for pos, _ in plan], dtype=torch.long)
-        z_indices = torch.tensor([z for _, z in plan], dtype=torch.long)
         segment_title = (
             f"Attention mask for decode grid segment #{seg_idx + 1} "
-            f"(cols={len(plan)}, Z={depth}, X={passes})"
+            f"(cols={total_cols}, Z={depth}, X={passes})"
         )
         strict_active = bool(getattr(segment, "sane_z_strict", False))
         self_only = bool(getattr(segment, "self_attention_only", False))
-        label_count = min(len(plan), max_dim)
+        label_count = min(total_cols, max_dim)
         if label_count <= 0:
             continue
         labels = [
@@ -8494,10 +8519,10 @@ def _log_attention_masks(
         ]
         label_width = max(2, max(len(label) for label in labels))
         print(color_text(segment_title, Colors.CYAN))
-        if len(plan) > max_dim:
+        if total_cols > max_dim:
             print(
                 color_text(
-                    f"  Showing top-left {max_dim}×{max_dim} of {len(plan)}×{len(plan)}",
+                    f"  Showing top-left {max_dim}×{max_dim} of {total_cols}×{total_cols}",
                     Colors.GRAY,
                 )
             )
@@ -8529,6 +8554,56 @@ def _log_attention_masks(
                 row_text = f"{row_label:>{label_width}} | " + " ".join(row_bits)
                 print(row_text)
             print()
+
+
+def _log_position_matrices(row: BlockLayout) -> None:
+    max_dim = 25
+    for seg_idx, segment in enumerate(row.segments):
+        tensors = _decode_segment_plan_tensors(segment)
+        if tensors is None:
+            continue
+        groups, z_indices = tensors
+        total_cols = groups.numel()
+        if total_cols <= 0:
+            continue
+        positions = (groups + z_indices).to(torch.long)
+        label_count = min(total_cols, max_dim)
+        if label_count <= 0:
+            continue
+        labels = [
+            _grid_coordinate_label(int(groups[idx].item()), int(z_indices[idx].item()))
+            for idx in range(label_count)
+        ]
+        label_width = max(2, max(len(label) for label in labels))
+        value_width = max(4, label_width)
+        print(
+            color_text(
+                (
+                    f"Relative RoPE positions for decode grid segment #{seg_idx + 1}"
+                    f" (cols={total_cols})"
+                ),
+                Colors.MAGENTA,
+            )
+        )
+        if total_cols > max_dim:
+            print(
+                color_text(
+                    f"  Showing top-left {max_dim}×{max_dim} of {total_cols}×{total_cols}",
+                    Colors.GRAY,
+                )
+            )
+        print(color_text("  Entries show (row - column) RoPE offsets", Colors.GRAY))
+        header = " " * (label_width + 3)
+        header += " ".join(label.rjust(value_width) for label in labels)
+        print(header)
+        trimmed = positions[:label_count]
+        diffs = trimmed.view(-1, 1) - trimmed.view(1, -1)
+        for row_idx in range(label_count):
+            row_label = labels[row_idx]
+            row_values = [f"{int(val):+{value_width}d}" for val in diffs[row_idx]]
+            row_text = f"{row_label:>{label_width}} | " + " ".join(row_values)
+            print(row_text)
+        print()
 
 def _metric_bucket_keys(metric_map: dict[str, float | None]) -> list[str]:
     extras = sorted(
