@@ -255,6 +255,10 @@ exactly iff:
 
 	(t1 = t2 AND z1 = z2+1)
 
+### Explicit Rules for Input and Supervision
+
+...fixme...
+
 ----
 
 This encoder-like intra-span coupling is intentionally stronger than what we
