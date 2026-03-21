@@ -221,7 +221,7 @@ In "causal" (`Z`) mode a position t2, x2, y2, z2, i2=t2*Z+z2
 attents to a position t1, x1, y1, z1, i1=t1*Z+z1
 exactly iff:
 
-	(t1 < t2 AND z1=0) OR (t1 = t2 AND z1 >= x1 AND z2 >= x2)
+	(t1 < t2 AND z1=0) OR (t1 = t2 AND z1 <= z2) OR (t1 = t2 AND z1 >= x1 AND z2 >= x2)
 
 In "causal" (`Z`) mode a position t2, x2, y2, z2, i2=t2*Z+z2
 receives alpha-propagation from position t1, x1, y1, z1, i1=t1*Z+z1
