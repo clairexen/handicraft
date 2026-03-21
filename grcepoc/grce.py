@@ -7802,6 +7802,7 @@ class RowEvalResult:
     total_tokens: int
     target_ids: torch.Tensor
     source_ids: torch.Tensor
+    base_source_ids: torch.Tensor | None = None
     attention_maps: dict[int, dict[int, torch.Tensor]] | None = None
     block_attentions: list["BlockAttention"] | None = None
     sampled_rows: int = 1
@@ -7845,6 +7846,7 @@ def _evaluate_row_block(
         )
     base_inputs = base_inputs[:, :pos_total]
     base_targets = base_targets[:, :pos_total]
+    base_source_ids = base_inputs.clone()
     expanded_inputs = _expand_think_sequences(base_inputs, row.segments)
     expanded_targets = _expand_think_sequences(base_targets, row.segments)
     row_count = expanded_inputs.size(0)
@@ -8178,6 +8180,7 @@ def _evaluate_row_block(
         total_tokens=total_tokens,
         target_ids=target_ids,
         source_ids=expanded_inputs,
+        base_source_ids=base_source_ids,
         attention_maps=attention_storage if capture_columns else None,
         block_attentions=block_attentions,
         sampled_rows=row_count,
@@ -8403,13 +8406,31 @@ def run_test_slice(
                 idx_width += 1 + label_width
             pad = " " * 4
             _print_sane_pass_summary(row, annotations, pad)
-            token_width = max(
-                len(_format_token_fragment(tokenizer, tok)) for tok in inputs_cpu + targets_cpu
-            )
+            base_tokens = None
+            if getattr(row_result, "base_source_ids", None) is not None:
+                base_tokens = row_result.base_source_ids.squeeze(0).cpu().tolist()
+            token_width = 0
+            token_texts: list[str] = []
             seq_len = len(inputs_cpu)
             for col in range(seq_len):
                 annotation = annotations[col] if col < len(annotations) else {}
-                token_text = _format_token_fragment(tokenizer, inputs_cpu[col])
+                base_index = annotation.get("base_index") if annotation else None
+                token_id = None
+                if base_tokens is not None and base_index is not None:
+                    idx_val = int(base_index)
+                    if 0 <= idx_val < len(base_tokens):
+                        token_id = base_tokens[idx_val]
+                if token_id is None:
+                    token_id = inputs_cpu[col]
+                token_text = _format_token_fragment(tokenizer, token_id)
+                z_value = int(annotation.get("z_index", 0) or 0)
+                if z_value > 0:
+                    token_text = f"{' ' * z_value}{token_text}"
+                token_texts.append(token_text)
+                token_width = max(token_width, len(token_text))
+            for col in range(seq_len):
+                annotation = annotations[col] if col < len(annotations) else {}
+                token_text = token_texts[col]
                 loss_value = losses_cpu[col] if mask_cpu[col] else None
                 pass_sup = annotation.get("pass_supervision")
                 if pass_sup is None or not pass_sup:
@@ -8714,6 +8735,8 @@ def _column_debug_annotations(row: BlockLayout) -> list[dict[str, object]]:
                     z_value,
                 )
                 annotations[idx]["segment_id"] = seg_idx
+                annotations[idx]["base_index"] = int(groups[local].item() + z_value)
+                annotations[idx]["z_index"] = z_value
                 if passes > 1:
                     annotations[idx]["sane_pass_total"] = passes
                     step_group = min(z_value, passes - 1)
