@@ -120,17 +120,20 @@ with z>=x, just like inference where everything to the right of the decoder
 head keeps thinking ahead. All earlier columns (z<x) stay frozen: we do not
 inject new embeddings or flip their control mode, and their supervision target
 remains whatever it was in the preceding pass. They merely keep looping so
-their cached K/V continues to be available to the currently active column. Only
-the freshly exposed column at z=x receives an additive injection of its true
-self token and [|predict-next|], then gets supervised to emit t+z+1 on its next
+their cached K/V continues to be available to the currently active column. In
+lowercase `z` layouts those frozen columns can still leak in their targets via
+beta propagation and non-causal attention, whereas uppercase `Z` layouts block
+those retrograde paths so the frozen losses stay roughly flat. Only the
+freshly exposed column at z=x receives an additive injection of its true self
+token and [|predict-next|], then gets supervised to emit t+z+1 on its next
 stream. No column is reinitialized during an inter-X transition—we always
 preserve the accumulated hidden state and only add new signals on top.
 
-Columns that lie ahead of the active zone (z>x) likewise retain their previous
-role. They keep their [|find-self|] inputs, remain detached from the active
-region, and are constrained to repeat the same t+z self targets as before. Each
-inter-X transition therefore promotes exactly one column into the active zone
-while everyone else keeps looping in place, faithfully emulating the
+Columns farther to the right but still inside the active zone (z>x) retain
+their previous speculative role. They keep their [|find-self|] inputs, remain
+detached from the newly promoted column, and are constrained to repeat the same
+t+z self targets as before. Each inter-X transition therefore promotes exactly
+one column while everyone else keeps looping in place, faithfully emulating the
 sliding-window behavior we want at inference time.
 
 We are constuctring a "Grid" (in notex.txt/grce.py lingo) to train and evaluate
