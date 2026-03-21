@@ -5758,6 +5758,7 @@ def _run_microbatch_pass(
                     kv_chain = []
                 start = cursor
                 end = cursor + cols
+                segment_positions = column_positions[start:end]
                 extra_metric_templates = list(getattr(segment, "extra_metrics", ()))
                 coord_metric_templates = [
                     name for name in extra_metric_templates if _metric_template_has_coords(name)
@@ -5797,6 +5798,7 @@ def _run_microbatch_pass(
                     token_base_offsets = token_offsets + base_start
                     column_offsets = token_base_offsets + z_offsets
                     next_offsets = column_offsets + 1
+                    segment_positions = column_offsets
                     seq_len = full_tokens.size(1)
                     if torch.any(column_offsets >= seq_len) or torch.any(next_offsets >= seq_len):
                         raise ValueError("SANE decode segment requires unavailable tokens")
