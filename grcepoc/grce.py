@@ -3757,14 +3757,11 @@ class CausalSelfAttention(nn.Module):
         scores = (q @ all_k.transpose(-2, -1)) / math.sqrt(head_dim)
 
         block_mask: torch.Tensor | None = None
-        base_allowed: torch.Tensor | None = None
-        token_positions: torch.Tensor | None = None
         if attn_mode not in {"encode", "decode", "reverse"}:
             raise ValueError(f"Unknown attention mode: {attn_mode}")
         if attn_mode == "decode" and not full_attention:
             tril = self._ensure_tril_capacity(T, x.device)
             block_mask = tril[:T, :T] == 0
-            base_allowed = tril[:T, :T] == 1
         elif attn_mode == "reverse" and not full_attention:
             tril = self._ensure_tril_capacity(T, x.device)
             block_mask = tril[:T, :T].transpose(0, 1) == 0
@@ -3775,35 +3772,35 @@ class CausalSelfAttention(nn.Module):
             not self_attention_only
             and block_mask is not None
             and attn_mode == "decode"
+            and cache_len == 0
             and sane_group_ids is not None
             and sane_z_indices is not None
-            and cache_len == 0
             and sane_group_ids.numel() == T
             and sane_z_indices.numel() == T
         ):
             groups = sane_group_ids.to(x.device, dtype=torch.long)
             z_idx = sane_z_indices.to(x.device, dtype=torch.long)
             token_positions = groups + z_idx
-            allowed = torch.zeros(T, T, dtype=torch.bool, device=x.device)
-            for j in range(T):
-                same_group = groups == groups[j]
-                earlier_zero = (groups < groups[j]) & (z_idx == 0)
-                cond = same_group | earlier_zero
-                allowed[j, cond] = True
+            groups_row = groups.view(T, 1)
+            groups_col = groups.view(1, T)
+            z_row = z_idx.view(T, 1)
+            z_col = z_idx.view(1, T)
+            same_group = groups_row == groups_col
+            triangular_same = same_group & (z_col <= z_row)
+            earlier_zero = (groups_col < groups_row) & (z_col == 0)
+            pos_allowed = token_positions.view(T, 1) >= token_positions.view(1, T)
             if sane_active_mask is not None:
                 active_vec = sane_active_mask.to(x.device, dtype=torch.bool)
                 if active_vec.dim() != 1 or active_vec.size(0) != T:
                     raise ValueError("sane_active_mask must match sequence length")
-                row_mask = active_vec.view(-1, 1)
-                col_mask = active_vec.view(1, -1)
-                both_active = row_mask & col_mask
-                if base_allowed is None:
-                    tril = self._ensure_tril_capacity(T, x.device)
-                    base_allowed = tril[:T, :T] == 1
-                if token_positions is not None:
-                    pos_allowed = token_positions.view(-1, 1) >= token_positions.view(1, -1)
-                    base_allowed = base_allowed & pos_allowed
-                allowed = torch.where(both_active, allowed, base_allowed)
+                row_active = active_vec.view(T, 1)
+                col_active = active_vec.view(1, T)
+            else:
+                row_active = torch.ones(T, 1, dtype=torch.bool, device=x.device)
+                col_active = torch.ones(1, T, dtype=torch.bool, device=x.device)
+            active_pair = same_group & row_active & col_active
+            allow_active = triangular_same | earlier_zero | active_pair
+            allowed = torch.where(row_active, allow_active, pos_allowed)
             block_mask = ~allowed
         if block_mask is not None:
             if cache_len > 0:

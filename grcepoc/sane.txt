@@ -277,10 +277,9 @@ index such that column `i = t*Z + z`.
 
 **Supervision** (LM head applied either on self or next stream as specified)
 
-- For `z=0`: supervise next(i, x, y=Y-1) → token(t+1) at every X-step.
-- For `0 < z < x`: supervise self(i, x, y=Y-1) → token(t+z) (frozen columns).
-- For `z = x`: supervise next(i, x, y=Y-1) → token(t+z+1).
-- For `z > x`: supervise self(i, x, y=Y-1) → token(t+z) (speculative columns keep their targets).
+- For `0 <= z < x`: supervise next(i, x, y=Y-1) → token(t+z+1).   (frozen columns keep their predict-next targets).
+- For `z = x`: supervise next(i, x, y=Y-1) → token(t+z+1).   (leading position in active zone changes to predict-next)
+- For `z > x`: supervise self(i, x, y=Y-1) → token(t+z).   (speculative columns keep their find-self targets).
 
 ### Additional notes
 
@@ -318,3 +317,23 @@ access the injected tokens they are trying to predict. Using `4Z` insted of
 - RMSNorm after each loop iteration is part of the SANE path; the `loop_ln`
   module in `grce.py` is reserved for future forward (`F`) rows and should stay
   inactive in SANE grids.
+
+----
+
+### Prompts and notes
+
+Let's assume *[*D 3X 1Y 4Z >> S$$]. (Y=1 for simplicity.) Let's label the
+transformers that are supervised under the loss Sxz with Axy, Bxy, Cxy. So in
+order of their i-index we should have for x=0:
+  A00 A01 A02 A03 B00 B01 B02 B03 C00 C01 C02 C03.
+
+for x=1:
+  A20 A21 A22 A23 B20 B21 B22 B23 C20 C21 C22 C23.
+
+and for x=2:
+  A20 A21 A22 A23 B20 B21 B22 B23 C20 C21 C22 C23.
+
+Show me the attention masks for each of those sets of 12 columns.
+
+label each column with the injected tokens visible at this position, in this
+x-cycle. label each row with the token the row is supervised with.
