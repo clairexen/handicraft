@@ -265,8 +265,8 @@ with n_kv as the arbitrary number of entries in the given cache. (Usually
 n_kv is simply the number of columns of the grid that produced this kv-cache.
 The output 'kv_out' is a single such n_layers-sized list of 2-tuples.
 
-`mode` selects the attention behavior (`decode`, `encode`, `reverse`, or
-`noattn`). The optional `position_offsets` tensor has length = rows and shifts
+`mode` selects the attention behavior (`decode`, `encode`, or
+`reverse`). The optional `position_offsets` tensor has length = rows and shifts
 the RoPE phase independently for each row (useful when stitching cached
 prefixes that are already several tokens deep). `rope_positions` is an optional
 length = cols tensor that specifies the absolute position index for each column
@@ -303,8 +303,14 @@ past), inject embeddings into the **next** stream while sampling from the
 **self** stream so the model predicts the *previous* token, and add the
 `[|predict-prev|]` embedding to every column instead of `[|predict-next|]`.
 Mode="encode" allows every position to attend to every other position (only
-the final column is supervised) and mode="noattn" uses purely self-attention.
-External KV caches and `qh_query_callback` are available in every mode.
+the final column is supervised). External KV caches and `qh_query_callback`
+are available in every mode.
+
+Appending the `N` modifier to any segment disables cross-column attention
+inside that block: each column only attends to itself while the segment still
+reads from any provided K/V caches and continues to append its own activations
+to the cache. This replaces the old `n/N` standalone mode and keeps the loss
+bucket unchanged.
 
 The output 's_out' is a list of size n_layers, containing tensors of size
 [rows, cols, n_embd], with the sampled output of every transformer block in the
@@ -410,8 +416,7 @@ for each column. When per-layer supervision is enabled (via `b`/`B` modifiers),
 `s_out` contains a list of tensors with shape [rows, cols, n_embd] capturing the
 post-layer activations for every stack layer; otherwise `s_out` is an empty list.
 
-`mode` selects the attention behavior (`forward`, `decode`, `encode`, `reverse`,
-or `noattn`). `qh_query_callback` integrates external memory just like in the
+`mode` selects the attention behavior (`forward`, `decode`, `encode`, `reverse`). `qh_query_callback` integrates external memory just like in the
 grid API, and `attention_capture` taps attention matrices for individual rows or
 columns (see StackGrid). `detach_internal_kv_cache` switches between live cache
 chains and detached buffers. The span-related arguments
@@ -447,12 +452,6 @@ We maintain an internal kv_cache, as described in "Management and balancing of
 k/v-caches in sequences" below, which we return as kv_out. When
 `detach_internal_kv_cache` is true we preallocate detached buffers per layer so
 the caches do not retain autograd history beyond the configured span.
-
-When mode="noattn" we skip writing/reading the sequence’s *internal* KV cache;
-recurrent channels become the only way to carry information between columns.
-However the segment still receives external KV sources and
-`qh_query_callback`, and it still emits its own KV slices so downstream
-segments or later spans can access them.
 
 When mode is "encode", "decode", or "reverse", then a single large internal stack grid
 is created that covers all the positions in the sequence. In this case we
@@ -528,7 +527,6 @@ These batch layouts are composed from the following sequence types:
 - "encode"
 - "decode"
 - "forward"
-- "noattn"
 - "reverse"
 
 There's GRCE and XCTX paths going through the entire flow, but "encode",
@@ -538,8 +536,10 @@ without means of "sensing" the GRCE or XCTX signals via bias injection.
 Reverse blocks automatically mirror the decode input/output streams: every
 column receives the `[|predict-prev|]` embedding, consumes the token that
 follows the target in the corpus, and learns to emit the previous token while
-the attention mask is flipped. Decode/forward/noattn continue to receive
-`[|predict-next|]` and predict the next token instead.
+the attention mask is flipped. Decode/forward segments continue to receive
+`[|predict-next|]` and predict the next token instead. Apply the `N` modifier
+to any block when you want to suppress cross-column attention without changing
+its loss bucket.
 
 Note that for the "encode" sequence we must only use the prediction from the
 very last position, that predicts the next token after the encode block
@@ -548,7 +548,7 @@ input.
 We report 4 loss numbers when evaluating the model: "target" = the actual
 optimization target, "encode" = loss only based on the last column of the
 encode block, "decode" = loss based on all columns of the decode (and
-reverse) blocks, and likewise for "forward" and "noattn".
+reverse) blocks, and "forward" = loss based on forward/thinking segments.
 
 
 ## Mini-language for batch layouts
@@ -573,13 +573,14 @@ exceeds --n-pos/--block-size.
 There's more syntax to introduce randomness and dynamically adjust a layout
 to a given --batch-size and --n-pos/--block-size. Consider this layout:
 
-	2[*d]+2[*f]+*[*1-2e=*1-4d=*1-4f=*1-2n]
+	2[*d]+2[*f]+*[*1-2e=*1-4d=*1-4f=*1-2fN]
 
 So we have 2 rows by block-size cols of "decode", then 2 by block_size "forward",
-then batch_size-4 rows of an encode-decode-forward-noattn pattern, with the columns
+then batch_size-4 rows of an encode-decode-forward-forwardN pattern. Columns are
 assigned as follows: first a random number in the range of 1-2 is allocated for
 "encode"; then numbers in the range 1-4 for the "decode" and "forward" sequences;
-and finally a number in the range 1-2 for "noattn".
+and finally a number in the range 1-2 for a `forward` block with the `N` modifier,
+which restricts attention inside that span to the diagonal only.
 
 If the available --n-pos/--block-size is smaller than the resulting total
 sequence length, we randomly select sub-blocks that are still over their lower
@@ -676,6 +677,13 @@ used without `B`, the usual top-layer output loss is skipped entirely and only
 the input-stream reconstruction losses remain. Use these sparingly (typically a
 single column per batch) to encourage embeddings that stay meaningful through
 the stack and to keep even/odd parity lanes well separated for looping.
+
+Appending `N` to any mode disables cross-column attention inside that block.
+Columns continue to write their outputs into the standard K/V caches and still
+read from any caches supplied by earlier segments, but attention within the
+block collapses to the diagonal so each column only attends to itself. This is
+useful for isolating spans or preventing leakage without changing the loss
+bucket or disabling recurrent/context updates.
 
 Adding the `P` modifyier to an `e`/`E` mode string adds a random "drop" position
 within the encoder grid, that is not the first or last position. Adding `2P`
@@ -843,7 +851,8 @@ embedding names that correspond to special tokens below.
 
 [|predict-next|] [|predict-prev|]
   this tells the model what to do. we add [|predict-next|] to all
-  positions in "decode", "forward", and "noattn" sequences. We
+  positions in "decode" and "forward" sequences (including those using the
+  `N` modifier). We
   add [|predict-prev|] to all positions in "reverse" sequences.
   And we add [|predict-next|] to only the last position in an
   "encode" sequence, because the other positions are unconstrained.
@@ -1170,33 +1179,20 @@ python grce.py --pt model/wp_en_GMLP_Q4_ED4Y.pt --cycles 5000 \
 
 ## SANE and MTLD Experiments
 
-# SANE/MTLD models now always enable SANE; no extra flag required
-: python grce.py --pt model/SANE_MTLD_wp_en_small.pt --small --use-gmlp --n-query 4 create
-: python grce.py --pt model/SANE_MTLD_wp_en_small.pt corpus --add wikipedia-en-000{0,1,2,3,4,5,6,7}
-python grce.py --pt model/SANE_MTLD_wp_en_small.pt --cycles 700 \
+python grce.py --pt model/wp_en_small_SANE_MTLD.pt --small --use-gmlp --n-query 4 create
+python grce.py --pt model/wp_en_small_SANE_MTLD.pt corpus --add wikipedia-en-000{0,1,2,3,4,5,6,7}
+python grce.py --pt model/wp_en_small_SANE_MTLD.pt --cycles 700 \
   --layout '16[ 64E (1|2)Y = (64D4Y|128D2Y) = 64D 3X 2Y 4Z >> S$$ ]'  \
   --lr-warmup-steps 100 --lr-cosine-steps 200 --generate-with-decode --align-articles train --json
 
-# python grce.py --pt model/SANE_MTLD_z_wp_en_small.pt --small --use-gmlp --n-query 4 create
-# python grce.py --pt model/SANE_MTLD_z_wp_en_small.pt corpus --add wikipedia-en-000{0,1,2,3,4,5,6,7}
-# python grce.py --pt model/SANE_MTLD_z_wp_en_small.pt --cycles 700 \
+# python grce.py --pt model/wp_en_small_SANE_MTLD_z.pt --small --use-gmlp --n-query 4 create
+# python grce.py --pt model/wp_en_small_SANE_MTLD_z.pt corpus --add wikipedia-en-000{0,1,2,3,4,5,6,7}
+# python grce.py --pt model/wp_en_small_SANE_MTLD_z.pt --cycles 700 \
 #   --layout '16[ 64E (1|2)Y = (64D4Y|128D2Y) = 64D 3X 2Y 4z >> S$$ ]'  \
 #   --lr-warmup-steps 100 --lr-cosine-steps 200 --generate-with-decode --align-articles train --json
 
-python grce.py --pt model/NOSANE_MTLD_wp_en_small.pt --small --use-gmlp --n-query 4 create
-python grce.py --pt model/NOSANE_MTLD_wp_en_small.pt corpus --add wikipedia-en-000{0,1,2,3,4,5,6,7}
-python grce.py --pt model/NOSANE_MTLD_wp_en_small.pt --cycles 700 \
-  --layout '16[ 64E (1|2)Y = (64D4Y|128D2Y) = 64D 3X 2Y 4Z >> S$$ ]'  \
-  --lr-warmup-steps 100 --lr-cosine-steps 200 --generate-with-decode --align-articles train --json
-
-# python grce.py --pt model/NOSANE_MTLD_z_wp_en_small.pt --small --use-gmlp --n-query 4 create
-# python grce.py --pt model/NOSANE_MTLD_z_wp_en_small.pt corpus --add wikipedia-en-000{0,1,2,3,4,5,6,7}
-# python grce.py --pt model/NOSANE_MTLD_z_wp_en_small.pt --cycles 700 \
-#   --layout '16[ 64E (1|2)Y = (64D4Y|128D2Y) = 64D 3X 2Y 4z >> S$$ ]'  \
-#   --lr-warmup-steps 100 --lr-cosine-steps 200 --generate-with-decode --align-articles train --json
-
-: python grce.py --pt model/NOSANE_NOMTLD_wp_en_small.pt --small --use-gmlp --n-query 4 create
-: python grce.py --pt model/NOSANE_NOMTLD_wp_en_small.pt corpus --add wikipedia-en-000{0,1,2,3,4,5,6,7}
-python grce.py --pt model/NOSANE_NOMTLD_wp_en_small.pt --cycles 700 \
-  --layout '16[ 64E (1|2)Y = (64D4Y|128D2Y) = 64D 2Y >> S00 ]'  \
+python grce.py --pt model/wp_en_small_NO_SANE_MTLD.pt --small --use-gmlp --n-query 4 create
+python grce.py --pt model/wp_en_small_NO_SANE_MTLD.pt corpus --add wikipedia-en-000{0,1,2,3,4,5,6,7}
+python grce.py --pt model/wp_en_small_NO_SANE_MTLD.pt --cycles 700 \
+  --layout '16[ 64E (1|2)Y = (64D4Y|128D2Y) = 64D 2Y >> S$$ ]'  \
   --lr-warmup-steps 100 --lr-cosine-steps 200 --generate-with-decode --align-articles train --json

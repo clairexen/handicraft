@@ -231,7 +231,6 @@ _MODE_ALIASES: dict[str, str] = {
     "d": "decode",
     "r": "reverse",
     "f": "forward",
-    "n": "noattn",
 }
 
 _MODE_LETTERS: dict[str, str] = {value: key for key, value in _MODE_ALIASES.items()}
@@ -390,6 +389,7 @@ class SegmentSpec:
     disable_sane: bool = False
     sane_z: int = 1
     sane_z_strict: bool = False
+    self_attention_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -437,6 +437,7 @@ class SegmentLayout:
     sane_x: int = 1
     sane_x_last_only: bool = False
     sane_z_strict: bool = False
+    self_attention_only: bool = False
 
     def token_columns(self) -> int:
         if self.token_columns_override is not None:
@@ -674,6 +675,7 @@ def _parse_segment_spec(text: str, connector: str | None) -> SegmentSpec:
     bias_output_loss = False
     drop_count = 0
     disable_sane = False
+    self_attention_only = False
     while mode_token:
         tail = mode_token[-1]
         if tail == "h":
@@ -704,6 +706,12 @@ def _parse_segment_spec(text: str, connector: str | None) -> SegmentSpec:
             continue
         if tail == "S":
             disable_sane = True
+            mode_token = mode_token[:-1]
+            continue
+        if tail == "N":
+            if self_attention_only:
+                raise LayoutParseError("'N' modifier specified multiple times")
+            self_attention_only = True
             mode_token = mode_token[:-1]
             continue
         break
@@ -765,6 +773,7 @@ def _parse_segment_spec(text: str, connector: str | None) -> SegmentSpec:
         disable_sane=disable_sane,
         sane_z=sane_z,
         sane_z_strict=sane_z_strict,
+        self_attention_only=self_attention_only,
     )
 
 
@@ -1058,6 +1067,7 @@ class BatchLayout:
                     sane_x=sane_x,
                     sane_x_last_only=sane_x_last_only,
                     sane_z_strict=sane_z_strict,
+                    self_attention_only=bool(getattr(spec, "self_attention_only", False)),
                 )
             )
         max_cols = sum(segment.columns for segment in segments)
@@ -1111,6 +1121,7 @@ class BatchLayout:
                     suffix_letter = "Z" if getattr(segment, "sane_z_strict", False) else "z"
                     depth_suffix = f"{segment.sane_z}{suffix_letter}"
                 sane_suffix = "S" if getattr(segment, "disable_sane", False) else ""
+                self_attn_suffix = "N" if getattr(segment, "self_attention_only", False) else ""
                 metric_suffix = ""
                 extra = getattr(segment, "extra_metrics", ())
                 if extra:
@@ -1121,7 +1132,7 @@ class BatchLayout:
                     if segment.token_columns_override is not None
                     else segment.columns
                 )
-                bit = f"{count_text}{letter}{hide_suffix}{layer_suffix}{think_suffix}{decode_think_suffix}{bias_suffix}{drop_suffix}{depth_suffix}{sane_suffix}{metric_suffix}"
+                bit = f"{count_text}{letter}{hide_suffix}{layer_suffix}{think_suffix}{decode_think_suffix}{bias_suffix}{drop_suffix}{depth_suffix}{sane_suffix}{self_attn_suffix}{metric_suffix}"
                 if idx > 0:
                     connector = segment.connector or "="
                     bit = connector + bit
@@ -1155,6 +1166,7 @@ class BatchLayout:
                             loss_output_stream=seg.loss_output_stream,
                             drop_count=seg.drop_count,
                             disable_sane=seg.disable_sane,
+                            self_attention_only=seg.self_attention_only,
                         )
                         for seg in group.segments
                     ]
@@ -1375,7 +1387,7 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         type=str,
         default=DEFAULTS.layout,
         help=(
-            "Batch layout mini-language string controlling per-row encode/decode/forward/noattn segments."
+            "Batch layout mini-language string controlling per-row encode/decode/forward segments."
             " Supports ranges, '*' expansions, and () alternations."
         ),
     )
@@ -3672,6 +3684,7 @@ class CausalSelfAttention(nn.Module):
         sane_group_ids: torch.Tensor | None = None,
         sane_z_indices: torch.Tensor | None = None,
         sane_active_mask: torch.Tensor | None = None,
+        self_attention_only: bool = False,
     ) -> tuple[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
         B, T, C = x.shape
         head_dim = self.head_dim
@@ -3746,7 +3759,7 @@ class CausalSelfAttention(nn.Module):
         block_mask: torch.Tensor | None = None
         base_allowed: torch.Tensor | None = None
         token_positions: torch.Tensor | None = None
-        if attn_mode not in {"encode", "decode", "reverse", "noattn"}:
+        if attn_mode not in {"encode", "decode", "reverse"}:
             raise ValueError(f"Unknown attention mode: {attn_mode}")
         if attn_mode == "decode" and not full_attention:
             tril = self._ensure_tril_capacity(T, x.device)
@@ -3755,11 +3768,12 @@ class CausalSelfAttention(nn.Module):
         elif attn_mode == "reverse" and not full_attention:
             tril = self._ensure_tril_capacity(T, x.device)
             block_mask = tril[:T, :T].transpose(0, 1) == 0
-        elif attn_mode == "noattn":
+        if self_attention_only:
             eye = torch.eye(T, dtype=torch.bool, device=x.device)
             block_mask = ~eye
         if (
-            block_mask is not None
+            not self_attention_only
+            and block_mask is not None
             and attn_mode == "decode"
             and sane_group_ids is not None
             and sane_z_indices is not None
@@ -4013,6 +4027,7 @@ class Block(nn.Module):
         sane_group_ids: torch.Tensor | None = None,
         sane_z_indices: torch.Tensor | None = None,
         sane_active_mask: torch.Tensor | None = None,
+        self_attention_only: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor | None, tuple[torch.Tensor, torch.Tensor] | None]:
         attn_input = self._apply_xctx_bias(x, xctx_bias, self.xctx_attn_gain)
         attn_norm = self.ln1(attn_input)
@@ -4032,6 +4047,7 @@ class Block(nn.Module):
             sane_group_ids=sane_group_ids,
             sane_z_indices=sane_z_indices,
             sane_active_mask=sane_active_mask,
+            self_attention_only=self_attention_only,
         )
         if attention_disabled_rows is not None and attention_disabled_rows.any():
             mask = (~attention_disabled_rows).view(-1, 1, 1).to(attn_output.dtype)
@@ -4384,6 +4400,7 @@ class TransformerStackCore(nn.Module):
         sane_group_ids: torch.Tensor | None = None,
         sane_z_indices: torch.Tensor | None = None,
         sane_active_mask: torch.Tensor | None = None,
+        self_attention_only: bool = False,
     ) -> tuple[torch.Tensor, list[torch.Tensor], list[tuple[torch.Tensor, torch.Tensor]]]:
         rows, cols, _ = x.shape
         rope_positions_tensor = None
@@ -4474,6 +4491,7 @@ class TransformerStackCore(nn.Module):
                     sane_group_ids=sane_group_ids,
                     sane_z_indices=sane_z_indices,
                     sane_active_mask=sane_active_mask,
+                    self_attention_only=self_attention_only,
                 )
                 samples[layer_idx] = current
                 if kv_pair is None:
@@ -4832,6 +4850,7 @@ class TransformerStackColumn:
         layer_repeat: int = 1,
         layer_top_only: bool = False,
         use_context: bool = True,
+        self_attention_only: bool = False,
     ) -> tuple[
         torch.Tensor,
         list[torch.Tensor],
@@ -4863,6 +4882,7 @@ class TransformerStackColumn:
             attention_capture=attention_capture,
             layer_repeat=layer_repeat,
             layer_top_only=layer_top_only,
+            self_attention_only=self_attention_only,
         )
         if detach_internal_kv_cache:
             column_output = column_output.detach()
@@ -4961,8 +4981,9 @@ class TransformerStackSequence(nn.Module):
         capture_layer_outputs: bool = False,
         use_context: bool = True,
         disable_sane: bool = False,
+        self_attention_only: bool = False,
     ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None, list, list[torch.Tensor] | None]:
-        if mode not in {"forward", "encode", "decode", "reverse", "noattn"}:
+        if mode not in {"forward", "encode", "decode", "reverse"}:
             raise ValueError(f"Unknown TransformerStackSequence mode: {mode}")
         rows, cols, _ = x.shape
         device = x.device
@@ -5002,6 +5023,7 @@ class TransformerStackSequence(nn.Module):
                 capture_layer_outputs=capture_layer_outputs,
                 use_context=use_context,
                 disable_sane=disable_sane,
+                self_attention_only=self_attention_only,
             )
         column_positions_tensor = None
         if column_positions is not None:
@@ -5009,7 +5031,7 @@ class TransformerStackSequence(nn.Module):
             if positions.dim() != 1 or positions.size(0) != cols:
                 raise ValueError("column_positions must match sequence columns")
             column_positions_tensor = positions
-        use_internal_cache = mode != "noattn"
+        use_internal_cache = True
         base_sources = list(kv_cache_list_in or [])
         kv_history: list[list[tuple[torch.Tensor, torch.Tensor] | None]] = []
         kv_storage: list[tuple[torch.Tensor, torch.Tensor]] | None = None
@@ -5098,6 +5120,7 @@ class TransformerStackSequence(nn.Module):
                 layer_repeat=layer_repeat,
                 layer_top_only=layer_top_only,
                 use_context=use_context,
+                self_attention_only=self_attention_only,
             )
             outputs.append(column_output)
             if captured_layers is not None:
@@ -5226,6 +5249,7 @@ class TransformerStackSequence(nn.Module):
         capture_layer_outputs: bool,
         use_context: bool = True,
         disable_sane: bool = False,
+        self_attention_only: bool = False,
     ) -> tuple[
         torch.Tensor,
         torch.Tensor | None,
@@ -5262,6 +5286,7 @@ class TransformerStackSequence(nn.Module):
             sane_group_ids=sane_group_ids,
             sane_z_indices=sane_z_indices,
             sane_active_mask=sane_active_mask,
+            self_attention_only=self_attention_only,
         )
         kv_out = kv_pairs
         layer_outputs = samples if capture_layer_outputs else None
@@ -5430,7 +5455,7 @@ class GRCEGPT(nn.Module):
         tok = self.core.expand_to_even(self.core.tok_emb(idx))
         x = self.core.drop(tok)
         context_info: dict[str, torch.Tensor] | None = None
-        if mode in {"forward", "noattn", "encode"}:
+        if mode in {"forward", "encode"}:
             sequence_output, grce_out, xctx_out, _, _ = self.stack_sequence.forward(
                 x,
                 mode=mode,
@@ -5517,13 +5542,13 @@ LOSS_IGNORE_INDEX = -100
 # -----------------------------------------------------------------------------
 
 
-BATCH_MODES: tuple[str, ...] = ("encode", "decode", "forward", "noattn", "reverse")
+BATCH_MODES: tuple[str, ...] = ("reverse", "encode", "decode", "forward")
 METRIC_BUCKET_ORDER = ["target", *BATCH_MODES]
 
 
 ROW_METRIC_HIST_KEYS = list(BATCH_MODES)
 ROW_METRIC_LOG_KEYS = list(BATCH_MODES)
-ROW_METRIC_LOG_GROUP = {"encode", "forward", "noattn"}
+ROW_METRIC_LOG_GROUP = {"reverse", "decode"}
 
 
 @dataclass
@@ -5872,6 +5897,7 @@ def _run_microbatch_pass(
                             capture_layer_outputs=False,
                             use_context=bool(getattr(segment, "context_enabled", True)),
                             disable_sane=segment_disable_sane,
+                            self_attention_only=bool(getattr(segment, "self_attention_only", False)),
                         )
                         kv_final = kv_out
                         state_tensor = model.core.sane_loop_norm(chunk_output)
@@ -5994,7 +6020,7 @@ def _run_microbatch_pass(
                     continue
                 if mode == "reverse":
                     control_ids[:, start:end] = CONTROL_PREDICT_PREV
-                elif mode in {"decode", "forward", "noattn"}:
+                elif mode in {"decode", "forward"}:
                     control_ids[:, start:end] = CONTROL_PREDICT_NEXT
                 elif mode == "encode" and end > start:
                     control_ids[:, start:end] = CONTROL_NONE
@@ -6098,6 +6124,7 @@ def _run_microbatch_pass(
                     capture_layer_outputs=capture_layers,
                     use_context=bool(getattr(segment, "context_enabled", True)),
                     disable_sane=segment_disable_sane,
+                    self_attention_only=bool(getattr(segment, "self_attention_only", False)),
                 )
                 if not getattr(segment, "context_enabled", True):
                     if model.stack_sequence.grce is not None:
@@ -7797,7 +7824,7 @@ def _evaluate_row_block(
         end = cursor + cols
         if segment.mode == "reverse":
             control_ids[:, start:end] = CONTROL_PREDICT_PREV
-        elif segment.mode in {"decode", "forward", "noattn"}:
+        elif segment.mode in {"decode", "forward"}:
             control_ids[:, start:end] = CONTROL_PREDICT_NEXT
         elif segment.mode == "encode" and end > start:
             control_ids[:, start:end] = CONTROL_NONE
@@ -7896,6 +7923,7 @@ def _evaluate_row_block(
             capture_layer_outputs=capture_layers,
             use_context=bool(segment.context_enabled),
             disable_sane=segment_disable_sane,
+            self_attention_only=bool(getattr(segment, "self_attention_only", False)),
         )
         if not segment.context_enabled:
             batch_rows = chunk_output.size(0)
