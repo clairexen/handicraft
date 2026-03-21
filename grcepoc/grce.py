@@ -7834,6 +7834,7 @@ def _evaluate_row_block(
         )
     block_attentions: list[BlockAttention] = []
     cursor = 0
+    pos_cursor = 0
     kv_chain: list[list[tuple[torch.Tensor, torch.Tensor]] | None] = []
     grce_state = None
     xctx_state = None
@@ -7852,6 +7853,7 @@ def _evaluate_row_block(
     for segment in row.segments:
         segment_start = cursor
         cols = int(segment.columns)
+        base_tokens = int(segment.token_columns())
         if cols <= 0:
             continue
         if cursor + cols > cols_total:
