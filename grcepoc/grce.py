@@ -619,26 +619,39 @@ def _parse_segment_spec(text: str, connector: str | None) -> SegmentSpec:
         count = int(match.group(1))
         marker = match.group(2)
         mode_token = mode_token[: match.start()]
+        if marker in {"t", "T"}:
+            if base_mode_char not in {"f", "t"}:
+                raise LayoutParseError(
+                    "T modifiers are only supported for forward/think segments"
+                )
+            if count not in (2, 3, 4):
+                raise LayoutParseError("Think modifiers only support 2x/3x/4x")
+            if think_factor != 1:
+                raise LayoutParseError("Think modifier specified multiple times")
+            think_factor = count
+            think_last_only = marker.isupper()
+            continue
         if marker in {"x", "X"}:
+            if base_mode_char == "d":
+                if count not in (2, 3, 4):
+                    raise LayoutParseError("Decode X modifiers only support 2x/3x/4x")
+                if sane_x != 1:
+                    raise LayoutParseError("Decode X modifier specified multiple times")
+                sane_x = count
+                sane_x_last_only = marker.isupper()
+                continue
             if base_mode_char in {"f", "t"}:
+                # Backward compatibility for legacy layouts that still use X for thinking.
                 if count not in (2, 3, 4):
                     raise LayoutParseError("Think modifiers only support 2x/3x/4x")
                 if think_factor != 1:
                     raise LayoutParseError("Think modifier specified multiple times")
                 think_factor = count
                 think_last_only = marker.isupper()
-            elif base_mode_char == "d":
-                if count not in (2, 3, 4):
-                    raise LayoutParseError("Think modifiers only support 2x/3x/4x")
-                if sane_x != 1:
-                    raise LayoutParseError("Think modifier specified multiple times")
-                sane_x = count
-                sane_x_last_only = marker.isupper()
-            else:
-                raise LayoutParseError(
-                    "Think modifiers are only supported for forward/think or decode segments"
-                )
-            continue
+                continue
+            raise LayoutParseError(
+                "X modifiers are only supported for decode segments"
+            )
         if marker in {"z", "Z"}:
             if base_mode_char != "d":
                 raise LayoutParseError("Z modifiers are only supported for decode segments")
@@ -702,13 +715,7 @@ def _parse_segment_spec(text: str, connector: str | None) -> SegmentSpec:
         raise LayoutParseError("Missing mode in segment")
     mode_char = mode_token[0]
     context_enabled = mode_char.islower()
-    metric_mode: str | None = None
     mode_key = mode_char.lower()
-    if mode_key == "t":
-        if not context_enabled:
-            raise LayoutParseError("Think segments must keep context enabled (use lowercase 't')")
-        metric_mode = "think"
-        mode_key = "f"
     if mode_key not in _MODE_ALIASES:
         raise LayoutParseError(f"Unsupported mode '{mode_token}'")
     if drop_count and mode_key != "e":
@@ -1072,18 +1079,15 @@ class BatchLayout:
         for row in rows:
             segment_bits = []
             for idx, segment in enumerate(row.segments):
-                if segment.metric_mode == "think":
-                    letter = "t" if segment.context_enabled else "T"
-                else:
-                    letter = _MODE_LETTERS.get(segment.mode, segment.mode[0])
-                    if not segment.context_enabled:
-                        letter = letter.upper()
+                letter = _MODE_LETTERS.get(segment.mode, segment.mode[0])
+                if not segment.context_enabled:
+                    letter = letter.upper()
                 hide_suffix = ""
                 if getattr(segment, "hide_typed_metrics", False):
                     hide_suffix = "H"
                 think_suffix = ""
                 if getattr(segment, "think_factor", 1) and segment.think_factor > 1:
-                    suffix_letter = "X" if getattr(segment, "think_last_only", False) else "x"
+                    suffix_letter = "T" if getattr(segment, "think_last_only", False) else "t"
                     think_suffix = f"{segment.think_factor}{suffix_letter}"
                 decode_think_suffix = ""
                 if segment.mode == "decode" and getattr(segment, "sane_x", 1) > 1:
@@ -5531,7 +5535,7 @@ LOSS_IGNORE_INDEX = -100
 # -----------------------------------------------------------------------------
 
 
-BATCH_MODES: tuple[str, ...] = ("encode", "decode", "forward", "think", "noattn", "reverse")
+BATCH_MODES: tuple[str, ...] = ("encode", "decode", "forward", "noattn", "reverse")
 METRIC_BUCKET_ORDER = ["target", *BATCH_MODES]
 
 

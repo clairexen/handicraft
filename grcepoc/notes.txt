@@ -424,7 +424,7 @@ StackGrid and selects between Ny and NY cache behavior for the current segment.
 
 Columns are evaluated strictly left-to-right, and GRCE/XCTX state updates from
 column t are visible only to column t+1. When the layout requests explicit
-thinking (e.g. `f2x`, `f3x`, `f4x`, or `t...`) we duplicate the input tokens so
+thinking (e.g. `f2t`, `f3t`, `f4t`) we duplicate the input tokens so
 each think-step occupies its own column and pass `think_step_index` /`think_step_count`
 (shape [cols]) into `seq.forward`. Only the final column in the span is
 supervised; the intermediate think-columns run the full stack (including
@@ -432,8 +432,8 @@ GRCE/XCTX sampling) but their targets are masked out. Additionally we loop the
 LayerNorm-normalized output of each intermediate column back into the next
 column’s input within the same span, so later think steps see both the original
 embedding and the refined residual from previous stacks. Thinking is available
-only in forward mode; using `t` instead of `f` simply records its losses under
-the dedicated `think` metric while sharing the same forward compute path.
+only in forward mode, and its losses now contribute to the standard `forward`
+metric alongside non-thinking spans.
 
 With GRCE and XCTX disabled (n_grce=0 and n_xctx=0), TransformerStackSequence
 is functionally equivalent to evaluating a TransformerStackGrid with the same
@@ -661,9 +661,9 @@ to future tokens instead of the past. Uppercase `R` works the same way but
 disables recurrent/context updates, mirroring how `E/D/F/N` behave.
 
 Likewise `H` (hide typed losses) can be appended to a mode to suppress
-adding those losses to the typed metrics. For example *[16e=*tH2x=*t4x]
-will train for 2x and 4x thinking, but only the 4x thinking losses are
-reported in the "think" metric.
+adding those losses to the typed metrics. For example *[16e=*fH2t=*f4t]
+will train for 2t and 4t thinking, but only the 4t block contributes to the
+typed `forward` metric because the 2t block hides its losses via `H`.
 
 The `b`/`B` modifiers control where we probe the stream for supervision:
 `B` (uppercase) measures the standard next-token loss against the *output*
@@ -695,12 +695,15 @@ reconstruction of the embedding vector (which would block context-dependent
 refinement) while still enforcing that the token can be recovered from any
 layer’s parity lane.
 
-Appending `2x`, `3x`, or `4x` to a mode enables 2x/3x/4x "thinking" along the
-position axis (we refer to this family as the `Nx` modifier below). Using `t`
-instead of `f` keeps the computation identical but routes *all* loss from that
-segment into the "think" metric instead of "forward". Uppercase `X` behaves
-like lowercase `x` but only exposes the K/V cache from the final think step to
-later segments; intermediate steps remain accessible inside the span.
+Appending `2t`, `3t`, or `4t` to a forward-mode segment enables 2x/3x/4x
+"thinking" along the position axis (we refer to this family as the `Nt`
+modifier below). Uppercase `T` behaves like lowercase `t` but only exposes the
+K/V cache from the final think step to later segments; intermediate steps
+remain accessible only inside the span. These modifiers do not create a
+separate loss bucket – every think segment still logs its loss under the
+`forward` metric. Decoder segments continue to use the `Nx` modifier described
+later, and their `x/X` suffixes operate independently of the forward-thinking
+controls.
 
 We also support stacking the virtual transformer along the *layer* axis via
 an `Ny` modifier. Appending `2y`, `3y`, … causes every physical transformer
@@ -826,8 +829,8 @@ itself is only added to the first transformer inut in the span and the the
 correct next token is only enforce at the last transformer output in the span.
 
 As thinking requires a recurrent data path, it is only available in "forward"
-mode. If "t" is used instead of "f" in the layout string then the losses are
-recorded under the "think" metric instead of "forward".
+mode, and those losses now flow into the `forward` metric without any special
+routing.
 
 
 ## Non-token embeddings
