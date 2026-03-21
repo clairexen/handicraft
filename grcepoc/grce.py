@@ -87,7 +87,7 @@ PROMPT_GOALS = [
 # GRCE Model Configuration
 # -----------------------------------------------------------------------------
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 @dataclass
 class ModelGeometry:
@@ -8360,180 +8360,62 @@ def run_test_slice(
         xb_base = inputs.unsqueeze(0).to(model_device)
         yb_base = targets.unsqueeze(0).to(model_device)
         vocab_size = model.config.vocab_size
-        base_source_tensor = base_source_ids
+        base_source_tensor = base_source_ids.unsqueeze(0).to(model_device)
 
         eval_drop_rng = random.Random(getattr(args, "rng_seed", 0) or 0)
         for row_idx, row in enumerate(layout.rows, start=1):
             row_desc = _row_description(layout, row)
             print(color_text(f"Row block #{row_idx}: {row_desc}", Colors.YELLOW))
 
+            max_passes = _max_decode_passes(row)
+            annotations_full = _column_debug_annotations(row)
+            row_steps = row.total_columns()
             capture_columns = None
-            if getattr(args, "attn_map", False):
-                row_steps = row.total_columns()
-                if row_steps > 0:
-                    capture_columns = {row_steps - 1}
-            try:
-                row_result = _evaluate_row_block(
-                    args,
-                    model,
-                    row,
-                    xb_base,
-                    yb_base,
-                    base_source_ids=base_source_tensor,
-                    capture_columns=capture_columns,
-                    drop_rng=eval_drop_rng,
-                )
-            except ValueError as exc:
-                print(color_text(f"  (error evaluating row: {exc})", Colors.RED))
+            if getattr(args, "attn_map", False) and row_steps > 0:
+                capture_columns = {row_steps - 1}
+            pass_results: list[tuple[BlockLayout, RowEvalResult]] = []
+            row_variants: list[BlockLayout] = [
+                _row_with_sane_pass_limit(row, limit) for limit in range(1, max_passes)
+            ]
+            row_variants.append(row)
+            row_seed = eval_drop_rng.randint(0, 2**63 - 1)
+            for variant_idx, variant in enumerate(row_variants):
+                capture = capture_columns if variant_idx == len(row_variants) - 1 else None
+                try:
+                    result = _evaluate_row_block(
+                        args,
+                        model,
+                        variant,
+                        xb_base,
+                        yb_base,
+                        base_source_ids=base_source_tensor,
+                        capture_columns=capture,
+                        drop_rng=random.Random(row_seed),
+                    )
+                except ValueError as exc:
+                    print(color_text(f"  (error evaluating row: {exc})", Colors.RED))
+                    pass_results = []
+                    break
+                pass_results.append((variant, result))
+            if not pass_results:
                 continue
 
-            row_logits = row_result.logits
-            log_probs = torch.log_softmax(row_logits, dim=-1)
-            next_logits = getattr(row_result, "next_stream_logits", None)
-            if next_logits is None:
-                next_logits = row_logits
-            next_log_probs = torch.log_softmax(next_logits, dim=-1)
-            self_logits_tensor = getattr(row_result, "self_stream_logits", None)
-            self_log_probs = None
-            if self_logits_tensor is not None:
-                self_log_probs = torch.log_softmax(self_logits_tensor, dim=-1)
-            target_ids = row_result.target_ids
-            gathered = torch.gather(
-                log_probs,
-                dim=-1,
-                index=target_ids.unsqueeze(-1),
-            ).squeeze(-1)
-            per_token_loss = (-gathered).squeeze(0)
-
-            top_k = min(3, vocab_size)
-            next_top_logp, next_top_indices = torch.topk(next_log_probs, k=top_k, dim=-1)
-            next_top_probs = next_top_logp.exp()
-            self_top_indices = None
-            self_top_probs = None
-            if self_log_probs is not None:
-                self_top_logp, self_top_indices = torch.topk(self_log_probs, k=top_k, dim=-1)
-                self_top_probs = self_top_logp.exp()
-
-            losses_cpu = per_token_loss.cpu().tolist()
-            mask_cpu = row_result.supervision_mask.cpu().tolist()
-            inputs_cpu = row_result.source_ids.squeeze(0).cpu().tolist()
-            targets_cpu = row_result.target_ids.squeeze(0).cpu().tolist()
-            modes_cpu = row_result.column_modes
-            next_top_indices_cpu = next_top_indices.squeeze(0).cpu().tolist()
-            next_top_probs_cpu = next_top_probs.squeeze(0).cpu().tolist()
-            self_top_indices_cpu = (
-                self_top_indices.squeeze(0).cpu().tolist() if self_top_indices is not None else None
-            )
-            self_top_probs_cpu = (
-                self_top_probs.squeeze(0).cpu().tolist() if self_top_probs is not None else None
-            )
-
-            idx_width = 4
-            annotations = _column_debug_annotations(row)
-            label_width = 0
-            if annotations:
-                label_width = max((len(info.get("label", "")) for info in annotations), default=0)
-            if label_width > 0:
-                idx_width += 1 + label_width
             pad = " " * 4
-            _print_sane_pass_summary(row, annotations, pad)
-            base_tokens = None
-            if getattr(row_result, "base_source_ids", None) is not None:
-                base_tokens = row_result.base_source_ids.detach().cpu().view(-1).tolist()
-            token_width = 0
-            token_texts: list[str] = []
-            seq_len = len(inputs_cpu)
-            for col in range(seq_len):
-                annotation = annotations[col] if col < len(annotations) else {}
-                base_index = annotation.get("base_index") if annotation else None
-                token_id = None
-                if base_tokens is not None and base_index is not None:
-                    idx_val = int(base_index)
-                    if 0 <= idx_val < len(base_tokens):
-                        token_id = base_tokens[idx_val]
-                if token_id is None:
-                    token_id = inputs_cpu[col]
-                token_text = _format_token_fragment(tokenizer, token_id)
-                z_value = int(annotation.get("z_index", 0) or 0)
-                if z_value > 0:
-                    token_text = f"{' ' * z_value}{token_text}"
-                token_texts.append(token_text)
-                token_width = max(token_width, len(token_text))
-            for col in range(seq_len):
-                annotation = annotations[col] if col < len(annotations) else {}
-                token_text = token_texts[col]
-                loss_value = losses_cpu[col] if mask_cpu[col] else None
-                pass_sup = annotation.get("pass_supervision")
-                if pass_sup is None or not pass_sup:
-                    pass_sup = ["next"]
-                pass_total = len(pass_sup)
-                loss_cells: list[str] = []
-                for pass_idx in range(pass_total):
-                    supervision = pass_sup[pass_idx]
-                    loss_cells.append(
-                        _format_loss_cell(
-                            loss_value,
-                            supervision=supervision,
-                        )
-                    )
-                loss_text = " ".join(loss_cells)
-                label = annotation.get("label") if annotation else ""
-                if label_width > 0:
-                    idx_text = f"{col:4d} {label:>{label_width}}"
-                else:
-                    idx_text = f"{col:4d}"
-                self_desc = _format_top_predictions(
+            total_passes = len(pass_results)
+            for pass_idx, (variant, result) in enumerate(pass_results):
+                print(_format_step_supervision_line(annotations_full, pass_idx, total_passes))
+                annotations = _column_debug_annotations(variant)
+                _print_row_pass_details(
                     tokenizer,
-                    self_top_indices_cpu[col] if self_top_indices_cpu is not None else None,
-                    self_top_probs_cpu[col] if self_top_probs_cpu is not None else None,
+                    result,
+                    annotations,
+                    pad,
+                    vocab_size,
+                    show_metrics=(pass_idx == total_passes - 1),
+                    args=args,
+                    model=model,
+                    row=row,
                 )
-                next_desc = _format_top_predictions(
-                    tokenizer,
-                    next_top_indices_cpu[col],
-                    next_top_probs_cpu[col],
-                )
-                print(
-                    f"{pad}{idx_text} | {token_text:<{token_width}} | {loss_text} | {self_desc} | {next_desc}"
-                )
-
-            summary_token_id = targets_cpu[-1]
-            if base_tokens is not None:
-                future_index = len(inputs_cpu)
-                if future_index < len(base_tokens):
-                    summary_token_id = base_tokens[future_index]
-            summary_target = _format_token_fragment(tokenizer, summary_token_id)
-            row_total_loss = row_result.total_loss_sum
-            if row_result.total_tokens > 0:
-                row_avg_loss_text = f"{row_total_loss / row_result.total_tokens:7.3f}"
-            else:
-                row_avg_loss_text = "   --  "
-            summary_label = "*" * idx_width
-            print(
-                f"{pad}{summary_label} | {summary_target:<{token_width}} | {row_avg_loss_text} nats/token"
-            )
-            _print_extra_metric_summaries(row_result, pad)
-
-            log_masks = getattr(args, "log_attn_masks", False)
-            if log_masks:
-                _log_attention_masks(
-                    args,
-                    model,
-                    row,
-                    row_result,
-                )
-            if getattr(args, "log_pos_matrix", False):
-                _log_position_matrices(row)
-            if getattr(args, "log_alpha_beta_matrix", False):
-                _log_alpha_beta_matrices(row)
-            if getattr(args, "attn_map", False) and row_result.block_attentions:
-                for block in row_result.block_attentions:
-                    _print_attention_heatmap(
-                        tokenizer,
-                        block,
-                        pad,
-                        token_width,
-                        model.config.n_layer,
-                    )
 
     if was_training:
         model.train()
@@ -8793,6 +8675,44 @@ def _column_debug_annotations(row: BlockLayout) -> list[dict[str, object]]:
     return annotations
 
 
+def _max_decode_passes(row: BlockLayout) -> int:
+    max_pass = 1
+    for segment in row.segments:
+        if segment.mode != "decode":
+            continue
+        value = max(1, int(getattr(segment, "sane_x", 1) or 1))
+        max_pass = max(max_pass, value)
+    return max_pass
+
+
+def _row_with_sane_pass_limit(row: BlockLayout, limit: int) -> BlockLayout:
+    limit = max(1, int(limit))
+    new_segments: list[SegmentLayout] = []
+    for segment in row.segments:
+        if segment.mode != "decode":
+            new_segments.append(segment)
+            continue
+        current = max(1, int(getattr(segment, "sane_x", 1) or 1))
+        new_segments.append(replace(segment, sane_x=min(current, limit)))
+    return BlockLayout(row.rows, new_segments, row.modifiers)
+
+
+def _format_step_supervision_line(
+    annotations: Sequence[dict[str, object]],
+    pass_idx: int,
+    total_passes: int,
+) -> str:
+    entries: list[str] = []
+    for idx, info in enumerate(annotations):
+        label = info.get("label", "") or ""
+        sup_list = info.get("pass_supervision") or ["next"]
+        pos = pass_idx if pass_idx < len(sup_list) else len(sup_list) - 1
+        supervision = sup_list[pos]
+        tag = "n" if supervision == "next" else "s"
+        entries.append(f"{idx}:{label}[{tag}]")
+    return f"      Step {pass_idx + 1}/{total_passes}: {', '.join(entries)}"
+
+
 def _format_loss_cell(value: float | None, *, supervision: str) -> str:
     if value is None:
         return "   --  "
@@ -8853,6 +8773,152 @@ def _format_top_predictions(
         token_piece = _format_token_fragment(tokenizer, idx)
         entries.append(f"{token_piece} ({prob * 100:.1f}%)")
     return ", ".join(entries) if entries else "--"
+
+
+def _print_row_pass_details(
+    tokenizer: GPT2TokenizerWrapper,
+    row_result: RowEvalResult,
+    annotations: Sequence[dict[str, object]],
+    pad: str,
+    vocab_size: int,
+    *,
+    show_metrics: bool,
+    args: Args,
+    model: GRCEGPT,
+    row: BlockLayout,
+) -> None:
+    row_logits = row_result.logits
+    log_probs = torch.log_softmax(row_logits, dim=-1)
+    next_logits_tensor = getattr(row_result, "next_stream_logits", None)
+    if next_logits_tensor is None:
+        next_logits = row_logits
+    else:
+        next_logits = next_logits_tensor
+    next_log_probs = torch.log_softmax(next_logits, dim=-1)
+    self_log_probs = None
+    if row_result.self_stream_logits is not None:
+        self_log_probs = torch.log_softmax(row_result.self_stream_logits, dim=-1)
+    target_ids = row_result.target_ids
+    gathered = torch.gather(
+        log_probs,
+        dim=-1,
+        index=target_ids.unsqueeze(-1),
+    ).squeeze(-1)
+    per_token_loss = (-gathered).squeeze(0)
+
+    top_k = min(3, vocab_size)
+    next_top_logp, next_top_indices = torch.topk(next_log_probs, k=top_k, dim=-1)
+    next_top_probs = next_top_logp.exp()
+    self_top_indices = None
+    self_top_probs = None
+    if self_log_probs is not None:
+        self_top_logp, self_top_indices = torch.topk(self_log_probs, k=top_k, dim=-1)
+        self_top_probs = self_top_logp.exp()
+
+    losses_cpu = per_token_loss.cpu().tolist()
+    mask_cpu = row_result.supervision_mask.cpu().tolist()
+    inputs_cpu = row_result.source_ids.squeeze(0).cpu().tolist()
+    targets_cpu = row_result.target_ids.squeeze(0).cpu().tolist()
+    next_top_indices_cpu = next_top_indices.squeeze(0).cpu().tolist()
+    next_top_probs_cpu = next_top_probs.squeeze(0).cpu().tolist()
+    self_top_indices_cpu = (
+        self_top_indices.squeeze(0).cpu().tolist() if self_top_indices is not None else None
+    )
+    self_top_probs_cpu = (
+        self_top_probs.squeeze(0).cpu().tolist() if self_top_probs is not None else None
+    )
+
+    base_tokens = None
+    if getattr(row_result, "base_source_ids", None) is not None:
+        base_tokens = row_result.base_source_ids.detach().cpu().view(-1).tolist()
+
+    label_width = 0
+    if annotations:
+        label_width = max((len(info.get("label", "")) for info in annotations), default=0)
+    idx_width = 4 + (1 + label_width if label_width > 0 else 0)
+
+    token_texts: list[str] = []
+    token_width = 0
+    seq_len = len(inputs_cpu)
+    for col in range(seq_len):
+        annotation = annotations[col] if col < len(annotations) else {}
+        base_index = annotation.get("base_index") if annotation else None
+        token_id = None
+        if base_tokens is not None and base_index is not None:
+            idx_val = int(base_index)
+            if 0 <= idx_val < len(base_tokens):
+                token_id = base_tokens[idx_val]
+        if token_id is None:
+            token_id = inputs_cpu[col]
+        token_text = _format_token_fragment(tokenizer, token_id)
+        z_value = int(annotation.get("z_index", 0) or 0)
+        if z_value > 0:
+            token_text = f"{' ' * z_value}{token_text}"
+        token_texts.append(token_text)
+        token_width = max(token_width, len(token_text))
+
+    for col in range(seq_len):
+        annotation = annotations[col] if col < len(annotations) else {}
+        token_text = token_texts[col]
+        loss_value = losses_cpu[col] if mask_cpu[col] else None
+        pass_sup = annotation.get("pass_supervision") or ["next"]
+        loss_cells = [
+            _format_loss_cell(loss_value, supervision=sup) for sup in pass_sup
+        ]
+        loss_text = " ".join(loss_cells)
+        label = annotation.get("label") if annotation else ""
+        if label_width > 0:
+            idx_text = f"{col:4d} {label:>{label_width}}"
+        else:
+            idx_text = f"{col:4d}"
+        self_desc = _format_top_predictions(
+            tokenizer,
+            self_top_indices_cpu[col] if self_top_indices_cpu is not None else None,
+            self_top_probs_cpu[col] if self_top_probs_cpu is not None else None,
+        )
+        next_desc = _format_top_predictions(
+            tokenizer,
+            next_top_indices_cpu[col],
+            next_top_probs_cpu[col],
+        )
+        print(
+            f"{pad}{idx_text} | {token_text:<{token_width}} | {loss_text} | {self_desc} | {next_desc}"
+        )
+
+    summary_token_id = targets_cpu[-1]
+    if base_tokens is not None:
+        future_index = len(inputs_cpu)
+        if future_index < len(base_tokens):
+            summary_token_id = base_tokens[future_index]
+    summary_target = _format_token_fragment(tokenizer, summary_token_id)
+    row_total_loss = row_result.total_loss_sum
+    if row_result.total_tokens > 0:
+        row_avg_loss_text = f"{row_total_loss / row_result.total_tokens:7.3f}"
+    else:
+        row_avg_loss_text = "   --  "
+    summary_label = "*" * idx_width
+    print(
+        f"{pad}{summary_label} | {summary_target:<{token_width}} | {row_avg_loss_text} nats/token"
+    )
+
+    if show_metrics:
+        _print_extra_metric_summaries(row_result, pad)
+        if getattr(args, "log_attn_masks", False):
+            _log_attention_masks(args, model, row, row_result)
+        if getattr(args, "log_pos_matrix", False):
+            _log_position_matrices(row)
+        if getattr(args, "log_alpha_beta_matrix", False):
+            _log_alpha_beta_matrices(row)
+        if getattr(args, "attn_map", False) and row_result.block_attentions:
+            for block in row_result.block_attentions:
+                _print_attention_heatmap(
+                    tokenizer,
+                    block,
+                    pad,
+                    token_width,
+                    model.config.n_layer,
+                )
+
 
 
 def _alpha_propagation_matrix(
