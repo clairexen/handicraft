@@ -7342,7 +7342,7 @@ def train_model(
                     "alpha_mlp": _tensor_rms_per_layer(getattr(core, "sane_alpha_mlp", None)),
                     "beta_mlp": _tensor_rms_per_layer(getattr(core, "sane_beta_mlp", None)),
                 }
-                header = "SANE gain kRMS | alpha_attn beta_attn | alpha_mlp beta_mlp"
+                header = "SANE gain mRMS | alpha_attn beta_attn | alpha_mlp beta_mlp"
                 print(color_text(header, Colors.CYAN))
                 max_layers = max(len(values) for values in stats.values()) if stats else 0
                 for layer_idx in range(max_layers):
@@ -7354,7 +7354,7 @@ def train_model(
                         f"post-layer {layer_idx} | {alpha_attn*1000:.2f} {beta_attn*1000:.2f} "
                         f"| {alpha_mlp*1000:.2f} {beta_mlp*1000:.2f}"
                     )
-                print(color_text(line, Colors.CYAN))
+                    print(color_text(line, Colors.CYAN))
 
         prompt_input = sample_prompt
         selected_prompt_text = args.prompt
