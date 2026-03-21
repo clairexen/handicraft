@@ -216,19 +216,19 @@ A position t2, x2, y2, z2, i2=t2*Z+z2
 attents to a position t1, x1, y1, z1, i1=t1*Z+z1
 exactly iff:
 
-	(t1 < t2 AND z1=0) OR ...fixme...
+	(t1 < t2 AND z1=0) OR (t1 = t2)
 
 A position t2, x2, y2, z2, i2=t2*Z+z2
 receives alpha-propagation from position t1, x1, y1, z1, i1=t1*Z+z1
 exactly iff:
 
-	...fixme...
+	(t1 = t2 AND z2 = z1+1) OR (t2 = t1+1 AND z1=0 AND z2=0)
 
 A position t2, x2, y2, z2, i2=t2*Z+z2
 receives beta-propagation from position t1, x1, y1, z1, i1=t1*Z+z1
 exactly iff:
 
-	...fixme...
+	(t1 = t2 AND z1 = z2+1)
 
 (In all those cases, i2 is the position receiving information and i1 is
 the position sending information.)
