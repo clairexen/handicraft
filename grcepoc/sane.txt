@@ -142,7 +142,7 @@ We are constuctring a "Grid" (in notex.txt/grce.py lingo) to train and evaluate
 "SANE" thinking within `D` regime of th grid concept specifically
 (left-to-right-decoder without GRCE/XCTX recurrent context).
 
-Let's call `x in [0...X-1]` the X-axis, the "time-axis", indexed by the token index `x`.
+Let's call `x in [0...X-1]` the X-axis, the "time-axis", indexed by the time step `x`.
 Let's call `y in [0...Y-1]` the Y-axis, the "loop-axis", indexed by the loop iteration `y`.
 Let's further call `z in [0...Z-1]` the Z-axis, the "depth" of the current thought, indexed by the token offset `z`.
 
