@@ -4292,7 +4292,7 @@ class TransformerStackCore(nn.Module):
         layer_idx: int,
         stage: str,
         mode: str,
-        sane_first_columns: torch.Tensor | None,
+        sane_z0_indices: torch.Tensor | None,
         sane_group_ids: torch.Tensor | None,
         sane_z_indices: torch.Tensor | None,
         sane_active_mask: torch.Tensor | None,
@@ -4324,8 +4324,8 @@ class TransformerStackCore(nn.Module):
             if alpha_adj_mask is not None:
                 addition = addition * alpha_adj_mask.to(addition.dtype)
             tensor[:, 1:, ::2] += addition
-            if sane_first_columns is not None and sane_first_columns.numel() > 1:
-                indices = sane_first_columns.to(delta.device)
+            if sane_z0_indices is not None and sane_z0_indices.numel() > 1:
+                indices = sane_z0_indices.to(delta.device)
                 src = indices[:-1]
                 dst = indices[1:]
                 addition = next_stream[:, src, :] * alpha
@@ -4375,7 +4375,7 @@ class TransformerStackCore(nn.Module):
         layer_repeat: int = 1,
         layer_top_only: bool = False,
         enable_sane: bool | None = None,
-        sane_first_columns: torch.Tensor | None = None,
+        sane_z0_indices: torch.Tensor | None = None,
         sane_group_ids: torch.Tensor | None = None,
         sane_z_indices: torch.Tensor | None = None,
         sane_active_mask: torch.Tensor | None = None,
@@ -4439,7 +4439,7 @@ class TransformerStackCore(nn.Module):
                     layer_idx=layer_idx,
                     stage=stage,
                     mode=mode,
-                    sane_first_columns=sane_first_columns,
+                    sane_z0_indices=sane_z0_indices,
                     sane_group_ids=sane_group_ids,
                     sane_z_indices=sane_z_indices,
                     sane_active_mask=sane_active_mask,
@@ -4946,7 +4946,7 @@ class TransformerStackSequence(nn.Module):
         think_step_index: torch.Tensor | None = None,
         think_step_count: torch.Tensor | None = None,
         column_positions: torch.Tensor | None = None,
-        sane_first_columns: torch.Tensor | None = None,
+        sane_z0_indices: torch.Tensor | None = None,
         sane_group_ids: torch.Tensor | None = None,
         sane_z_indices: torch.Tensor | None = None,
         sane_active_mask: torch.Tensor | None = None,
@@ -4987,7 +4987,7 @@ class TransformerStackSequence(nn.Module):
                 context_detach_enabled=context_detach_enabled,
                 attention_capture=attention_capture,
                 column_positions=column_positions,
-                sane_first_columns=sane_first_columns,
+                sane_z0_indices=sane_z0_indices,
                 sane_group_ids=sane_group_ids,
                 sane_z_indices=sane_z_indices,
                 sane_active_mask=sane_active_mask,
@@ -5211,7 +5211,7 @@ class TransformerStackSequence(nn.Module):
         context_detach_enabled: bool | None,
         attention_capture: AttentionCapture | None,
         column_positions: torch.Tensor | None,
-        sane_first_columns: torch.Tensor | None,
+        sane_z0_indices: torch.Tensor | None,
         sane_group_ids: torch.Tensor | None,
         sane_z_indices: torch.Tensor | None,
         sane_active_mask: torch.Tensor | None,
@@ -5253,7 +5253,7 @@ class TransformerStackSequence(nn.Module):
             layer_repeat=layer_repeat,
             layer_top_only=layer_top_only,
             enable_sane=sane_override,
-            sane_first_columns=sane_first_columns,
+            sane_z0_indices=sane_z0_indices,
             sane_group_ids=sane_group_ids,
             sane_z_indices=sane_z_indices,
             sane_active_mask=sane_active_mask,
@@ -5743,7 +5743,7 @@ def _run_microbatch_pass(
                 ]
                 sane_depth = max(1, int(getattr(segment, "sane_z", 1) or 1))
                 sane_passes = max(1, int(getattr(segment, "sane_x", 1) or 1))
-                restrict_active_zone = bool(getattr(segment, "sane_z_strict", False))
+                strict_active_zone = bool(getattr(segment, "sane_z_strict", False))
                 use_sane_decode = mode == "decode" and sane_depth > 1
                 if use_sane_decode:
                     if getattr(segment, "loss_input_stream", False) or getattr(segment, "loss_output_stream", False):
@@ -5752,7 +5752,7 @@ def _run_microbatch_pass(
                         pos_cursor += base_tokens
                         cursor += cols
                         continue
-                    sane_first_columns = None
+                    sane_z0_indices = None
                     plan = _sane_column_plan(base_tokens, sane_depth)
                     if len(plan) != cols:
                         raise ValueError("SANE decode plan does not match allocated columns")
@@ -5761,17 +5761,17 @@ def _run_microbatch_pass(
                     full_embeddings = model.core.expand_to_even(
                         model.core.tok_emb(full_tokens)
                     )
-                    column_local = torch.tensor(
+                    token_offsets = torch.tensor(
                         [idx for idx, _ in plan], device=device, dtype=torch.long
                     )
-                    column_z = torch.tensor(
+                    z_offsets = torch.tensor(
                         [z for _, z in plan], device=device, dtype=torch.long
                     )
-                    sane_first_columns = (column_z == 0).nonzero(as_tuple=False).squeeze(-1)
-                    sane_group_ids = column_local
-                    sane_z_indices = column_z
-                    column_base_offsets = column_local + base_start
-                    column_offsets = column_base_offsets + column_z
+                    sane_z0_indices = (z_offsets == 0).nonzero(as_tuple=False).squeeze(-1)
+                    sane_group_ids = token_offsets
+                    sane_z_indices = z_offsets
+                    token_base_offsets = token_offsets + base_start
+                    column_offsets = token_base_offsets + z_offsets
                     next_offsets = column_offsets + 1
                     seq_len = full_tokens.size(1)
                     if torch.any(column_offsets >= seq_len) or torch.any(next_offsets >= seq_len):
@@ -5779,7 +5779,7 @@ def _run_microbatch_pass(
                     embedding_index = column_offsets.view(1, -1, 1).expand(
                         row_count, -1, full_embeddings.size(-1)
                     )
-                    column_embeddings = torch.gather(full_embeddings, 1, embedding_index)
+                    token_embedding_grid = torch.gather(full_embeddings, 1, embedding_index)
 
                     def _gather_token_ids(offsets: torch.Tensor) -> torch.Tensor:
                         index = offsets.view(1, -1).expand(row_count, -1)
@@ -5803,6 +5803,8 @@ def _run_microbatch_pass(
                         device=xb_base.device,
                     )
                     self_target_grid = self_token_ids.clone()
+                    if torch.any(z_offsets == 0):
+                        self_target_grid[:, z_offsets == 0] = LOSS_IGNORE_INDEX
                     kv_final: list[tuple[torch.Tensor, torch.Tensor]] | None = None
                     segment_loss: torch.Tensor | None = None
                     segment_tokens = 0
@@ -5810,13 +5812,14 @@ def _run_microbatch_pass(
                     row_token_counts_seg: torch.Tensor | None = None
                     for pass_idx in range(sane_passes):
                         chunk_base = state_tensor.clone()
-                        newly_active = column_z == pass_idx
-                        if torch.any(newly_active):
-                            chunk_base[:, newly_active, :] = (
-                                chunk_base[:, newly_active, :] + column_embeddings[:, newly_active, :]
+                        new_leading_mask = z_offsets == pass_idx
+                        if torch.any(new_leading_mask):
+                            chunk_base[:, new_leading_mask, :] = (
+                                chunk_base[:, new_leading_mask, :] + token_embedding_grid[:, new_leading_mask, :]
                             )
-                            control_state[newly_active] = CONTROL_PREDICT_NEXT
-                            next_target_grid[:, newly_active] = next_token_ids[:, newly_active]
+                            control_state[new_leading_mask] = CONTROL_PREDICT_NEXT
+                            next_target_grid[:, new_leading_mask] = next_token_ids[:, new_leading_mask]
+                            self_target_grid[:, new_leading_mask] = LOSS_IGNORE_INDEX
                         control_slice = (
                             control_state.view(1, -1).expand(row_count, -1).clone()
                         )
@@ -5840,8 +5843,8 @@ def _run_microbatch_pass(
                             (cols,), sane_passes, device=device, dtype=torch.long
                         )
                         active_mask_tensor = None
-                        if restrict_active_zone:
-                            active_mask_tensor = (column_z >= pass_idx).to(
+                        if strict_active_zone:
+                            active_mask_tensor = (z_offsets >= pass_idx).to(
                                 device=device, dtype=torch.bool
                             )
                         chunk_output, grce_state, xctx_state, kv_out, layer_outputs = model.stack_sequence.forward(
@@ -5854,7 +5857,7 @@ def _run_microbatch_pass(
                             context_detach_span=detach_span_override,
                             context_detach_enabled=context_detach_override,
                             column_positions=segment_positions,
-                            sane_first_columns=sane_first_columns,
+                            sane_z0_indices=sane_z0_indices,
                             sane_group_ids=sane_group_ids,
                             sane_z_indices=sane_z_indices,
                             sane_active_mask=active_mask_tensor,
@@ -5950,7 +5953,7 @@ def _run_microbatch_pass(
                                 per_column_tokens += token_vec
                             loss_list = per_column_losses.detach().cpu().tolist()
                             token_list = [int(val) for val in per_column_tokens.detach().cpu().tolist()]
-                            column_z_list = [int(val) for val in column_z.detach().cpu().tolist()]
+                            column_z_list = [int(val) for val in z_offsets.detach().cpu().tolist()]
                             for col_idx, tok_count in enumerate(token_list):
                                 if tok_count <= 0:
                                     continue
@@ -6081,7 +6084,7 @@ def _run_microbatch_pass(
                     context_detach_span=detach_span_override,
                     context_detach_enabled=context_detach_override,
                     column_positions=segment_positions,
-                    sane_first_columns=None,
+                    sane_z0_indices=None,
                     sane_group_ids=None,
                     sane_z_indices=None,
                     think_step_index=think_index,
