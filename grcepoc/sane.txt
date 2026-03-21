@@ -212,15 +212,15 @@ ground-truth leakage (lowercase `z`) and tighter causal experiments (uppercase
 
 ### Explicit Rules for Attention and Alpha/Beta Steering
 
-In all of the following cases, i2 is the position receiving information and i1 is
-the position sending information. Each column retains its `(t, x, y, z)` indices
-throughout training/inference, so predicates like `z1 >= x1` refer to the
-time-step coordinate associated with that column in the current pass.
-
 Let `x ∈ [0, X-1]`, `y ∈ [0, Y-1]`, `z ∈ [0, Z-1]`, and `t` denote the token
 index such that column `i = t*Z + z`.
 
 With regards to position encodings (RoPE) the position of column `i = t*Z + z` is `t+z`.
+
+In all of the following cases, i2 is the position receiving information and i1 is
+the position sending information. Each column retains its `(t, x, y, z)` indices
+throughout training/inference, so predicates like `z1 >= x1` refer to the
+time-step coordinate associated with that column in the current pass.
 
 #### Explicit Rules for Attention and Alpha/Beta Steering in "causal" `Z` Mode
 
