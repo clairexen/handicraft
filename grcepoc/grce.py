@@ -147,6 +147,7 @@ class Defaults:
     log_step_details: bool = False
     log_row_details: bool = False
     log_alpha_beta_rms: bool = False
+    log_attn_masks: bool = False
     lr_base: float = 3e-4
     weight_decay: float = 0.01
     adam_beta1: float = 0.9
@@ -1779,6 +1780,11 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         "--attn-map",
         action="store_true",
         help="Render per-layer attention weights for the final prediction",
+    )
+    test_parser.add_argument(
+        "--log-attn-masks",
+        action="store_true",
+        help="Print the leading portion of each decode attention mask",
     )
 
     eval_parser = subparsers.add_parser(
@@ -3776,8 +3782,7 @@ class CausalSelfAttention(nn.Module):
             eye = torch.eye(T, dtype=torch.bool, device=x.device)
             block_mask = ~eye
         if (
-            not self_attention_only
-            and block_mask is not None
+            block_mask is not None
             and attn_mode == "decode"
             and cache_len == 0
             and sane_group_ids is not None
@@ -3787,26 +3792,17 @@ class CausalSelfAttention(nn.Module):
         ):
             groups = sane_group_ids.to(x.device, dtype=torch.long)
             z_idx = sane_z_indices.to(x.device, dtype=torch.long)
-            groups_row = groups.view(T, 1)
-            groups_col = groups.view(1, T)
-            z_row = z_idx.view(T, 1)
-            z_col = z_idx.view(1, T)
-            same_group = groups_row == groups_col
-            earlier_zero = (groups_col < groups_row) & (z_col == 0)
-            if sane_active_mask is None:
-                allowed = same_group | earlier_zero
-            else:
-                token_positions = groups + z_idx
-                pos_allowed = token_positions.view(T, 1) >= token_positions.view(1, T)
+            active_vec = None
+            if sane_active_mask is not None:
                 active_vec = sane_active_mask.to(x.device, dtype=torch.bool)
                 if active_vec.dim() != 1 or active_vec.size(0) != T:
                     raise ValueError("sane_active_mask must match sequence length")
-                row_active = active_vec.view(T, 1)
-                col_active = active_vec.view(1, T)
-                triangular_same = same_group & (z_col <= z_row)
-                active_pair = same_group & row_active & col_active
-                base_allowed = triangular_same | earlier_zero
-                allowed = torch.where(row_active, base_allowed | active_pair, base_allowed & pos_allowed)
+            allowed = _build_decode_attention_mask(
+                groups,
+                z_idx,
+                active_mask=active_vec,
+                self_attention_only=self_attention_only,
+            )
             block_mask = ~allowed
         if block_mask is not None:
             if cache_len > 0:
@@ -6930,6 +6926,37 @@ def _tensor_rms_per_layer(tensor: torch.Tensor | None) -> list[float]:
     return [float(value.item()) for value in rms]
 
 
+def _build_decode_attention_mask(
+    groups: torch.Tensor,
+    z_idx: torch.Tensor,
+    *,
+    active_mask: torch.Tensor | None,
+    self_attention_only: bool,
+) -> torch.Tensor:
+    T = groups.numel()
+    device = groups.device
+    if self_attention_only:
+        return torch.eye(T, dtype=torch.bool, device=device)
+    groups_row = groups.view(T, 1)
+    groups_col = groups.view(1, T)
+    same_group = groups_row == groups_col
+    z_row = z_idx.view(T, 1)
+    z_col = z_idx.view(1, T)
+    earlier_zero = (groups_col < groups_row) & (z_col == 0)
+    if active_mask is None:
+        allowed = same_group | earlier_zero
+        return allowed
+    triangular_same = same_group & (z_col <= z_row)
+    base_allowed = triangular_same | earlier_zero
+    row_active = active_mask.view(T, 1)
+    col_active = active_mask.view(1, T)
+    active_pair = same_group & row_active & col_active
+    token_positions = groups + z_idx
+    pos_allowed = token_positions.view(T, 1) >= token_positions.view(1, T)
+    allowed = torch.where(row_active, base_allowed | active_pair, base_allowed & pos_allowed)
+    return allowed
+
+
 def _optimizer_param_groups(module: nn.Module, weight_decay: float) -> list[dict[str, Any]]:
     decay: list[torch.Tensor] = []
     no_decay: list[torch.Tensor] = []
@@ -8348,6 +8375,14 @@ def run_test_slice(
                 f"{pad}{summary_label} | {summary_target:<{token_width}} | {row_avg_loss_text} nats/token"
             )
 
+            log_masks = getattr(args, "log_attn_masks", False)
+            if log_masks:
+                _log_attention_masks(
+                    args,
+                    model,
+                    row,
+                    row_result,
+                )
             if getattr(args, "attn_map", False) and row_result.block_attentions:
                 for block in row_result.block_attentions:
                     _print_attention_heatmap(
@@ -8395,6 +8430,105 @@ def _print_attention_heatmap(
                 digits.append(str(scaled))
             row_text += f" {''.join(digits):>4}"
         print(row_text)
+
+
+def _grid_time_label(index: int) -> str:
+    """Map a zero-based index to Excel-style column labels (A, B, ... AA, AB)."""
+
+    if index < 0:
+        return f"?{index}"
+    label_parts: list[str] = []
+    value = index
+    while True:
+        value, remainder = divmod(value, 26)
+        label_parts.append(chr(ord("A") + remainder))
+        if value == 0:
+            break
+        value -= 1
+    return "".join(reversed(label_parts))
+
+
+def _grid_coordinate_label(group_index: int, z_index: int) -> str:
+    """Return the human-readable label (e.g. A0, B3) for a grid coordinate."""
+
+    return f"{_grid_time_label(group_index)}{z_index}"
+
+
+def _log_attention_masks(
+    args: Args,
+    model: GRCEGPT,
+    row: BlockLayout,
+    row_result: RowEvalResult,
+) -> None:
+    del args  # Reserved for future use; `row` carries the segment metadata we need.
+    del model, row_result  # The masks depend purely on the resolved layout.
+    max_dim = 25
+    for seg_idx, segment in enumerate(row.segments):
+        if segment.mode != "decode":
+            continue
+        base_tokens = int(segment.token_columns())
+        depth = max(1, int(getattr(segment, "sane_z", 1) or 1))
+        passes = max(1, int(getattr(segment, "sane_x", 1) or 1))
+        if base_tokens <= 0:
+            continue
+        plan = _sane_column_plan(base_tokens, depth)
+        expected_cols = int(segment.columns)
+        if len(plan) != expected_cols:
+            plan = [(idx, 0) for idx in range(expected_cols)]
+        if not plan:
+            continue
+        groups = torch.tensor([pos for pos, _ in plan], dtype=torch.long)
+        z_indices = torch.tensor([z for _, z in plan], dtype=torch.long)
+        segment_title = (
+            f"Attention mask for decode grid segment #{seg_idx + 1} "
+            f"(cols={len(plan)}, Z={depth}, X={passes})"
+        )
+        strict_active = bool(getattr(segment, "sane_z_strict", False))
+        self_only = bool(getattr(segment, "self_attention_only", False))
+        label_count = min(len(plan), max_dim)
+        if label_count <= 0:
+            continue
+        labels = [
+            _grid_coordinate_label(int(groups[idx].item()), int(z_indices[idx].item()))
+            for idx in range(label_count)
+        ]
+        label_width = max(2, max(len(label) for label in labels))
+        print(color_text(segment_title, Colors.CYAN))
+        if len(plan) > max_dim:
+            print(
+                color_text(
+                    f"  Showing top-left {max_dim}×{max_dim} of {len(plan)}×{len(plan)}",
+                    Colors.GRAY,
+                )
+            )
+        for pass_idx in range(passes):
+            if passes > 1:
+                pass_title = color_text(
+                    f"  Step {pass_idx + 1}/{passes}",
+                    Colors.YELLOW,
+                )
+                print(pass_title)
+            active_mask = None
+            if strict_active:
+                active_mask = (z_indices >= pass_idx)
+            allowed = _build_decode_attention_mask(
+                groups,
+                z_indices,
+                active_mask=active_mask,
+                self_attention_only=self_only,
+            )
+            if allowed.dim() != 2:
+                continue
+            limited = allowed[:label_count, :label_count].to(dtype=torch.bool, device="cpu")
+            header = " " * (label_width + 3)
+            header += " ".join(label.rjust(label_width) for label in labels[: limited.size(1)])
+            print(header)
+            for row_idx in range(limited.size(0)):
+                row_label = labels[row_idx]
+                row_bits = ["1" if cell else "." for cell in limited[row_idx].tolist()]
+                row_text = f"{row_label:>{label_width}} | " + " ".join(row_bits)
+                print(row_text)
+            print()
 
 def _metric_bucket_keys(metric_map: dict[str, float | None]) -> list[str]:
     extras = sorted(
