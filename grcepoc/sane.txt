@@ -210,6 +210,29 @@ token has been predicted. This allows experiments that deliberately permit
 ground-truth leakage (lowercase `z`) and tighter causal experiments (uppercase
 `Z`) to coexist within the same layout language.
 
+### Explicit Rules for Attention and Alpha/Beta Steering
+
+A position t2, x2, y2, z2, i2=t2*Z+z2
+attents to a position t1, x1, y1, z1, i1=t1*Z+z1
+exactly iff:
+
+	(t1 < t2 AND z1=0) OR ...fixme...
+
+A position t2, x2, y2, z2, i2=t2*Z+z2
+receives alpha-propagation from position t1, x1, y1, z1, i1=t1*Z+z1
+exactly iff:
+
+	...fixme...
+
+A position t2, x2, y2, z2, i2=t2*Z+z2
+receives beta-propagation from position t1, x1, y1, z1, i1=t1*Z+z1
+exactly iff:
+
+	...fixme...
+
+(In all those cases, i2 is the position receiving information and i1 is
+the position sending information.)
+
 ----
 
 This encoder-like intra-span coupling is intentionally stronger than what we
