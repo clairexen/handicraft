@@ -4261,10 +4261,10 @@ class TransformerStackCore(nn.Module):
         self.rope_xl_half_window = float(config.n_pos) / 2.0 if self.use_rope_xl else 0.0
         self.sane_stream_width = config.n_width // 2
         half = self.sane_stream_width
-        self.sane_alpha_attn = nn.Parameter(torch.zeros(config.n_layer, half))
-        self.sane_beta_attn = nn.Parameter(torch.zeros(config.n_layer, half))
-        self.sane_alpha_mlp = nn.Parameter(torch.zeros(config.n_layer, half))
-        self.sane_beta_mlp = nn.Parameter(torch.zeros(config.n_layer, half))
+        self.sane_alpha_attn = nn.Parameter(torch.ones(config.n_layer, half))
+        self.sane_beta_attn = nn.Parameter(torch.ones(config.n_layer, half))
+        self.sane_alpha_mlp = nn.Parameter(torch.ones(config.n_layer, half))
+        self.sane_beta_mlp = nn.Parameter(torch.ones(config.n_layer, half))
 
     def expand_to_even(self, tensor: torch.Tensor) -> torch.Tensor:
         """Place half-width embedding features into the even data-path slots."""
