@@ -3755,6 +3755,7 @@ class CausalSelfAttention(nn.Module):
 
         block_mask: torch.Tensor | None = None
         base_allowed: torch.Tensor | None = None
+        token_positions: torch.Tensor | None = None
         if attn_mode not in {"encode", "decode", "reverse", "noattn"}:
             raise ValueError(f"Unknown attention mode: {attn_mode}")
         if attn_mode == "decode" and not full_attention:
@@ -3778,8 +3779,8 @@ class CausalSelfAttention(nn.Module):
         ):
             groups = sane_group_ids.to(x.device, dtype=torch.long)
             z_idx = sane_z_indices.to(x.device, dtype=torch.long)
+            token_positions = groups + z_idx
             allowed = torch.zeros(T, T, dtype=torch.bool, device=x.device)
-            col_index = torch.arange(T, device=x.device)
             for j in range(T):
                 same_group = groups == groups[j]
                 earlier_zero = (groups < groups[j]) & (z_idx == 0)
@@ -3795,6 +3796,9 @@ class CausalSelfAttention(nn.Module):
                 if base_allowed is None:
                     tril = self._ensure_tril_capacity(T, x.device)
                     base_allowed = tril[:T, :T] == 1
+                if token_positions is not None:
+                    pos_allowed = token_positions.view(-1, 1) >= token_positions.view(1, -1)
+                    base_allowed = base_allowed & pos_allowed
                 allowed = torch.where(both_active, allowed, base_allowed)
             block_mask = ~allowed
         if block_mask is not None:
@@ -4324,16 +4328,31 @@ class TransformerStackCore(nn.Module):
                     z_ids = sane_z_indices.to(delta.device).clone()
                     if z_ids.numel() >= 2:
                         alpha_adj_mask = (z_ids[1:] == (z_ids[:-1] + 1)).view(1, -1, 1)
+        edge_active_mask = None
+        if sane_active_mask is not None:
+            active_vec = sane_active_mask.to(delta.device, dtype=torch.bool)
+            if active_vec.dim() != 1 or active_vec.size(0) != tensor.size(1):
+                raise ValueError("sane_active_mask must match column count")
+            if active_vec.numel() >= 2:
+                edge_active_mask = (active_vec[1:] & active_vec[:-1]).view(1, -1, 1)
         if mode in {"decode", "encode"}:
             addition = next_stream[:, :-1, :] * alpha
             if alpha_adj_mask is not None:
                 addition = addition * alpha_adj_mask.to(addition.dtype)
+            if edge_active_mask is not None:
+                addition = addition * edge_active_mask.to(addition.dtype)
             tensor[:, 1:, ::2] += addition
             if sane_z0_indices is not None and sane_z0_indices.numel() > 1:
                 indices = sane_z0_indices.to(delta.device)
                 src = indices[:-1]
                 dst = indices[1:]
                 addition = next_stream[:, src, :] * alpha
+                if sane_active_mask is not None:
+                    active_vec = sane_active_mask.to(delta.device, dtype=torch.bool)
+                    if active_vec.dim() != 1 or active_vec.size(0) != tensor.size(1):
+                        raise ValueError("sane_active_mask must match column count")
+                    bridge_mask = (active_vec[src] & active_vec[dst]).view(1, -1, 1)
+                    addition = addition * bridge_mask.to(addition.dtype)
                 tensor[:, dst, ::2] += addition
         apply_beta = False
         group_mask = None
@@ -4344,13 +4363,6 @@ class TransformerStackCore(nn.Module):
             if group_ids.numel() >= 2:
                 with torch.no_grad():
                     group_mask = (group_ids[1:] == group_ids[:-1]).view(1, -1, 1)
-        edge_active_mask = None
-        if sane_active_mask is not None:
-            active_vec = sane_active_mask.to(delta.device, dtype=torch.bool)
-            if active_vec.dim() != 1 or active_vec.size(0) != tensor.size(1):
-                raise ValueError("sane_active_mask must match column count")
-            if active_vec.numel() >= 2:
-                edge_active_mask = (active_vec[1:] & active_vec[:-1]).view(1, -1, 1)
         if apply_beta:
             addition = self_stream[:, 1:, :] * beta
             if group_mask is not None:
