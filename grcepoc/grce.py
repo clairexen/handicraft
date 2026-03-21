@@ -106,7 +106,6 @@ class ModelGeometry:
     use_rope_xl: bool = False
     use_rope_vr: bool = False
     use_rope_vr_all: bool = False
-    use_sane: bool = False
 
     @property
     def block_size(self) -> int:
@@ -134,7 +133,6 @@ class Defaults:
     use_rope_xl: bool = MODEL_GEOMETRY_DEFAULTS.use_rope_xl
     use_rope_vr: bool = MODEL_GEOMETRY_DEFAULTS.use_rope_vr
     use_rope_vr_all: bool = MODEL_GEOMETRY_DEFAULTS.use_rope_vr_all
-    use_sane: bool = MODEL_GEOMETRY_DEFAULTS.use_sane
     corpus: str | None = None
     steps: int = 100
     cycles: int = 100
@@ -715,6 +713,7 @@ def _parse_segment_spec(text: str, connector: str | None) -> SegmentSpec:
         raise LayoutParseError("Missing mode in segment")
     mode_char = mode_token[0]
     context_enabled = mode_char.islower()
+    metric_mode: str | None = None
     mode_key = mode_char.lower()
     if mode_key not in _MODE_ALIASES:
         raise LayoutParseError(f"Unsupported mode '{mode_token}'")
@@ -1315,14 +1314,6 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         action="store_true",
         default=DEFAULTS.use_rope_vr_all,
         help="Rotate value vectors for every attention head instead of only half",
-    )
-    model_group.add_argument(
-        "--use-sane",
-        action="store_true",
-        default=DEFAULTS.use_sane,
-        help=(
-            "Enable the Self-And-Next Encoder (SANE) grid hooks that propagate residuals between positions"
-        ),
     )
     model_group.add_argument(
         "--n-grce",
@@ -2075,8 +2066,8 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
     if use_rope_vr:
         if args.n_head % 2 != 0:
             raise ValueError("--use-rope-vr requires an even --n-head")
-    if getattr(args, "use_sane", False) and (args.n_width % 2 != 0):
-        raise ValueError("--use-sane requires an even --n-width")
+    if args.n_width % 2 != 0:
+        raise ValueError("SANE thinking requires an even --n-width")
     args.checkpoint_dirty = False
 
     # --------------------------------------------------------
@@ -2118,7 +2109,6 @@ def args_to_model_geometry(args: Args):
         use_rope_xl=getattr(args, "use_rope_xl", MODEL_GEOMETRY_DEFAULTS.use_rope_xl),
         use_rope_vr=getattr(args, "use_rope_vr", MODEL_GEOMETRY_DEFAULTS.use_rope_vr),
         use_rope_vr_all=getattr(args, "use_rope_vr_all", MODEL_GEOMETRY_DEFAULTS.use_rope_vr_all),
-        use_sane=getattr(args, "use_sane", MODEL_GEOMETRY_DEFAULTS.use_sane),
     )
 
 
@@ -3346,10 +3336,6 @@ def _strip_state_entries(
         return dict(filtered)
 
 
-def _strip_sane_parameters(state: Mapping[str, torch.Tensor]) -> Mapping[str, torch.Tensor]:
-    return _strip_state_entries(state, predicate=lambda key: ".sane_" in key)
-
-
 def _upgrade_control_embedding_rows(
     state: dict[str, torch.Tensor],
     *,
@@ -4260,15 +4246,13 @@ class TransformerStackCore(nn.Module):
         self.sane_loop_norm = RMSNormNoAffine(config.n_width)
         self.head = nn.Linear(self.embedding_dim, config.vocab_size, bias=False)
         self.use_rope_xl = bool(getattr(config, "use_rope_xl", False))
-        self.use_sane = bool(getattr(config, "use_sane", False))
         self.rope_xl_half_window = float(config.n_pos) / 2.0 if self.use_rope_xl else 0.0
-        self.sane_stream_width = config.n_width // 2 if self.use_sane else 0
-        if self.use_sane:
-            half = self.sane_stream_width
-            self.sane_alpha_attn = nn.Parameter(torch.zeros(config.n_layer, half))
-            self.sane_beta_attn = nn.Parameter(torch.zeros(config.n_layer, half))
-            self.sane_alpha_mlp = nn.Parameter(torch.zeros(config.n_layer, half))
-            self.sane_beta_mlp = nn.Parameter(torch.zeros(config.n_layer, half))
+        self.sane_stream_width = config.n_width // 2
+        half = self.sane_stream_width
+        self.sane_alpha_attn = nn.Parameter(torch.zeros(config.n_layer, half))
+        self.sane_beta_attn = nn.Parameter(torch.zeros(config.n_layer, half))
+        self.sane_alpha_mlp = nn.Parameter(torch.zeros(config.n_layer, half))
+        self.sane_beta_mlp = nn.Parameter(torch.zeros(config.n_layer, half))
 
     def expand_to_even(self, tensor: torch.Tensor) -> torch.Tensor:
         """Place half-width embedding features into the even data-path slots."""
@@ -4310,7 +4294,7 @@ class TransformerStackCore(nn.Module):
         sane_z_indices: torch.Tensor | None,
         sane_active_mask: torch.Tensor | None,
     ) -> None:
-        if not self.use_sane or delta is None:
+        if delta is None:
             return
         if tensor.size(1) <= 1:
             return
@@ -4448,7 +4432,7 @@ class TransformerStackCore(nn.Module):
         repeats = max(1, int(layer_repeat))
         samples: list[torch.Tensor | None] = [None] * len(self.blocks)
         kv_outputs: list[tuple[torch.Tensor, torch.Tensor] | None] = [None] * len(self.blocks)
-        sane_enabled = self.use_sane and mode in {"decode", "reverse", "encode"}
+        sane_enabled = mode in {"decode", "reverse", "encode"}
         if enable_sane is not None:
             sane_enabled = bool(enable_sane)
         sane_hook = None
@@ -5522,8 +5506,6 @@ def build_model_tag(config: GeometryLike) -> str:
         tag += "_ropevr"
     if getattr(config, "use_rope_vr_all", False):
         tag += "_ropevrall"
-    if getattr(config, "use_sane", False):
-        tag += "_sane"
     return tag
 
 
@@ -8656,7 +8638,7 @@ def preprocess_runtime_args(args: Args) -> None:
                 "Checkpoint lacks config metadata; re-save it with the latest format."
             )
         saved = dict(saved_config)
-        for legacy_key in ("use_carpet", "use_carpet2", "use_carpet3"):
+        for legacy_key in ("use_carpet", "use_carpet2", "use_carpet3", "use_sane"):
             saved.pop(legacy_key, None)
         if "n_pos" not in saved:
             if "block_size" in saved:
@@ -8718,7 +8700,6 @@ def preprocess_runtime_args(args: Args) -> None:
         n_grce=args.n_grce,
         n_xctx=args.n_xctx,
         use_gmlp=getattr(args, "use_gmlp", MODEL_GEOMETRY_DEFAULTS.use_gmlp),
-        use_sane=getattr(args, "use_sane", MODEL_GEOMETRY_DEFAULTS.use_sane),
     )
     tag = build_model_tag(inferred)
     for extra_tag in args.tag:
@@ -9313,16 +9294,10 @@ class Runtime:
         if isinstance(payload, dict) and "model" in payload:
             metadata = dict(payload)
             source_state = upgrade_state_dict(payload["model"])
-            src_cfg = payload.get("config")
-            source_use_sane = bool(src_cfg.get("use_sane", False)) if isinstance(src_cfg, dict) else False
         else:
             metadata = {}
             state_dict = payload if isinstance(payload, dict) else payload
             source_state = upgrade_state_dict(state_dict)
-            source_use_sane = False
-        target_use_sane = bool(getattr(self.args, "use_sane", False))
-        if source_use_sane and not target_use_sane:
-            source_state = _strip_sane_parameters(source_state)
         load_summary = _load_checkpoint_state(
             model,
             source_state,
@@ -9644,11 +9619,7 @@ class Runtime:
             control_emb_expanded = False
             if payload is not None:
                 saved_config = payload.get("config") if isinstance(payload, dict) else None
-                source_use_sane = bool(saved_config.get("use_sane", False)) if isinstance(saved_config, dict) else False
-                target_use_sane = bool(getattr(self.args, "use_sane", False))
-                allow_partial_load = self.args.allow_shape_mismatch_load or (
-                    target_use_sane and not source_use_sane
-                )
+                allow_partial_load = self.args.allow_shape_mismatch_load
                 load_summary: dict[str, object] | None = None
                 if isinstance(payload, dict) and "model" in payload:
                     self.args.completed_cycles = int(payload.get("completed_cycles", 0) or 0)
@@ -9658,8 +9629,6 @@ class Runtime:
                         isinstance(before_rows, int)
                         and before_rows < CONTROL_EMBEDDING_ROWS
                     )
-                    if source_use_sane and not target_use_sane:
-                        upgraded = _strip_sane_parameters(upgraded)
                     payload["model"] = upgraded
                     load_summary = _load_checkpoint_state(
                         model,
@@ -9686,11 +9655,7 @@ class Runtime:
                         self.args.tokenizer_json_override = payload.get("tokenizer_json")
                 else:
                     before_rows = _control_embedding_rows(payload) if hasattr(payload, "get") else None
-                    upgraded_payload = upgrade_state_dict(
-                        _strip_sane_parameters(payload)
-                        if (source_use_sane and not target_use_sane and hasattr(payload, "items"))
-                        else payload
-                    )
+                    upgraded_payload = upgrade_state_dict(payload)
                     if isinstance(before_rows, int) and before_rows < CONTROL_EMBEDDING_ROWS:
                         control_emb_expanded = True
                     load_summary = _load_checkpoint_state(
