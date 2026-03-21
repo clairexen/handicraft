@@ -149,6 +149,7 @@ class Defaults:
     log_alpha_beta_rms: bool = False
     log_attn_masks: bool = False
     log_pos_matrix: bool = False
+    log_alpha_beta_matrix: bool = False
     lr_base: float = 3e-4
     weight_decay: float = 0.01
     adam_beta1: float = 0.9
@@ -1792,6 +1793,13 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         action="store_true",
         help=(
             "Print the relative RoPE position matrix for each decode grid (matches mask layout)"
+        ),
+    )
+    test_parser.add_argument(
+        "--log-alpha-beta-matrix",
+        action="store_true",
+        help=(
+            "Print alpha/beta propagation matrices for decode grids (per think step when X>1)"
         ),
     )
 
@@ -8393,6 +8401,8 @@ def run_test_slice(
                 )
             if getattr(args, "log_pos_matrix", False):
                 _log_position_matrices(row)
+            if getattr(args, "log_alpha_beta_matrix", False):
+                _log_alpha_beta_matrices(row)
             if getattr(args, "attn_map", False) and row_result.block_attentions:
                 for block in row_result.block_attentions:
                     _print_attention_heatmap(
@@ -8605,6 +8615,155 @@ def _log_position_matrices(row: BlockLayout) -> None:
             print(row_text)
         print()
 
+
+def _alpha_propagation_matrix(
+    groups: torch.Tensor,
+    z_indices: torch.Tensor,
+    *,
+    active_mask: torch.Tensor | None,
+    use_sane_decode: bool,
+) -> torch.Tensor:
+    total = groups.numel()
+    matrix = torch.zeros(total, total, dtype=torch.bool)
+    if total <= 1:
+        return matrix
+    same_stride = torch.ones(total - 1, dtype=torch.bool)
+    if z_indices.numel() >= 2:
+        same_stride = z_indices[1:] == (z_indices[:-1] + 1)
+    valid_pairs = same_stride.clone()
+    if active_mask is not None and active_mask.numel() >= 2:
+        valid_pairs &= (active_mask[1:] & active_mask[:-1])
+    indices = valid_pairs.nonzero(as_tuple=False).flatten().tolist()
+    for idx in indices:
+        dst = idx + 1
+        matrix[dst, idx] = True
+    if use_sane_decode:
+        z0_indices = (z_indices == 0).nonzero(as_tuple=False).flatten()
+        if z0_indices.numel() > 1:
+            for pos in range(z0_indices.numel() - 1):
+                src = int(z0_indices[pos].item())
+                dst = int(z0_indices[pos + 1].item())
+                allowed = True
+                if active_mask is not None:
+                    allowed = bool(active_mask[src] and active_mask[dst])
+                if allowed:
+                    matrix[dst, src] = True
+    return matrix
+
+
+def _beta_propagation_matrix(
+    groups: torch.Tensor,
+    *,
+    active_mask: torch.Tensor | None,
+    use_sane_decode: bool,
+) -> torch.Tensor:
+    total = groups.numel()
+    matrix = torch.zeros(total, total, dtype=torch.bool)
+    if total <= 1 or not use_sane_decode:
+        return matrix
+    same_group = groups[1:] == groups[:-1]
+    if active_mask is not None and active_mask.numel() >= 2:
+        same_group &= (active_mask[1:] & active_mask[:-1])
+    indices = same_group.nonzero(as_tuple=False).flatten().tolist()
+    for idx in indices:
+        src = idx + 1
+        dst = idx
+        matrix[dst, src] = True
+    return matrix
+
+
+def _log_alpha_beta_matrices(row: BlockLayout) -> None:
+    max_dim = 25
+    row_disable_sane = bool(row.modifiers and getattr(row.modifiers, "disable_sane", False))
+    for seg_idx, segment in enumerate(row.segments):
+        tensors = _decode_segment_plan_tensors(segment)
+        if tensors is None:
+            continue
+        groups, z_indices = tensors
+        total_cols = groups.numel()
+        if total_cols <= 0:
+            continue
+        depth = max(1, int(getattr(segment, "sane_z", 1) or 1))
+        passes = max(1, int(getattr(segment, "sane_x", 1) or 1))
+        use_sane_decode = depth > 1 or passes > 1
+        label_count = min(total_cols, max_dim)
+        if label_count <= 0:
+            continue
+        labels = [
+            _grid_coordinate_label(int(groups[idx].item()), int(z_indices[idx].item()))
+            for idx in range(label_count)
+        ]
+        label_width = max(2, max(len(label) for label in labels))
+        print(
+            color_text(
+                (
+                    f"Alpha/Beta propagation for decode grid segment #{seg_idx + 1}"
+                    f" (cols={total_cols}, X={passes})"
+                ),
+                Colors.BLUE,
+            )
+        )
+        if total_cols > max_dim:
+            print(
+                color_text(
+                    f"  Showing top-left {max_dim}×{max_dim} of {total_cols}×{total_cols}",
+                    Colors.GRAY,
+                )
+            )
+        disabled = row_disable_sane or getattr(segment, "disable_sane", False)
+        if disabled:
+            print(color_text("  SANE propagation disabled for this segment", Colors.GRAY))
+        strict_active = bool(getattr(segment, "sane_z_strict", False))
+        for pass_idx in range(passes):
+            if passes > 1:
+                pass_title = color_text(
+                    f"  Step {pass_idx + 1}/{passes}",
+                    Colors.YELLOW,
+                )
+                print(pass_title)
+            active_mask = None
+            if strict_active:
+                active_mask = (z_indices >= pass_idx)
+            if disabled:
+                alpha_mat = torch.zeros(total_cols, total_cols, dtype=torch.bool)
+                beta_mat = torch.zeros_like(alpha_mat)
+            else:
+                alpha_mat = _alpha_propagation_matrix(
+                    groups,
+                    z_indices,
+                    active_mask=active_mask,
+                    use_sane_decode=use_sane_decode,
+                )
+                beta_mat = _beta_propagation_matrix(
+                    groups,
+                    active_mask=active_mask,
+                    use_sane_decode=use_sane_decode,
+                )
+            alpha_trim = alpha_mat[:label_count, :label_count]
+            beta_trim = beta_mat[:label_count, :label_count]
+            header = " " * (label_width + 3)
+            header += " ".join(label.rjust(label_width) for label in labels)
+            print(header)
+            for row_idx in range(alpha_trim.size(0)):
+                row_label = labels[row_idx]
+                row_chars: list[str] = []
+                for col_idx in range(alpha_trim.size(1)):
+                    if row_idx == col_idx:
+                        row_chars.append(".")
+                        continue
+                    has_alpha = bool(alpha_trim[row_idx, col_idx])
+                    has_beta = bool(beta_trim[row_idx, col_idx])
+                    if has_alpha and has_beta:
+                        row_chars.append("X")
+                    elif has_alpha:
+                        row_chars.append("+")
+                    elif has_beta:
+                        row_chars.append("-")
+                    else:
+                        row_chars.append(".")
+                row_text = f"{row_label:>{label_width}} | " + " ".join(row_chars)
+                print(row_text)
+            print()
 def _metric_bucket_keys(metric_map: dict[str, float | None]) -> list[str]:
     extras = sorted(
         key for key in metric_map.keys() if key not in METRIC_BUCKET_ORDER
