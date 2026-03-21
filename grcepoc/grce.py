@@ -8411,18 +8411,19 @@ def run_test_slice(
                 annotation = annotations[col] if col < len(annotations) else {}
                 token_text = _format_token_fragment(tokenizer, inputs_cpu[col])
                 loss_value = losses_cpu[col] if mask_cpu[col] else None
-                pass_total = int(annotation.get("sane_pass_total") or 1)
+                pass_sup = annotation.get("pass_supervision")
+                if pass_sup is None or not pass_sup:
+                    pass_sup = ["next"]
+                pass_total = len(pass_sup)
                 loss_cells: list[str] = []
-                active_pass = annotation.get("sane_step") if pass_total > 1 else 0
                 for pass_idx in range(pass_total):
-                    if pass_total == 1 or active_pass == pass_idx:
-                        formatted = _format_loss_cell(
+                    supervision = pass_sup[pass_idx]
+                    loss_cells.append(
+                        _format_loss_cell(
                             loss_value,
-                            is_next_target=bool(annotation.get("is_next_target")),
+                            supervision=supervision,
                         )
-                    else:
-                        formatted = "   --  "
-                    loss_cells.append(formatted)
+                    )
                 loss_text = " ".join(loss_cells)
                 label = annotation.get("label") if annotation else ""
                 if label_width > 0:
@@ -8717,16 +8718,27 @@ def _column_debug_annotations(row: BlockLayout) -> list[dict[str, object]]:
                     annotations[idx]["sane_pass_total"] = passes
                     step_group = min(z_value, passes - 1)
                     annotations[idx]["sane_step"] = step_group
-                annotations[idx]["is_next_target"] = bool(z_value == 0)
+                    sup_list: list[str] = []
+                    for pass_idx in range(passes):
+                        if z_value == 0:
+                            supervision = "next"
+                        elif z_value == pass_idx:
+                            supervision = "next"
+                        else:
+                            supervision = "self"
+                        sup_list.append(supervision)
+                    annotations[idx]["pass_supervision"] = sup_list
+                else:
+                    annotations[idx]["pass_supervision"] = ["next"]
         cursor += cols
     return annotations
 
 
-def _format_loss_cell(value: float | None, *, is_next_target: bool) -> str:
+def _format_loss_cell(value: float | None, *, supervision: str) -> str:
     if value is None:
         return "   --  "
     text = f"{value:7.3f}"
-    return f"({text.strip()})" if is_next_target else text
+    return text if supervision == "next" else f"({text.strip()})"
 
 
 def _print_sane_pass_summary(
@@ -8738,16 +8750,16 @@ def _print_sane_pass_summary(
     for idx, info in enumerate(annotations):
         seg_id = info.get("segment_id")
         total = info.get("sane_pass_total")
-        step = info.get("sane_step")
-        label = info.get("label")
-        if seg_id is None or total is None or step is None:
+        if seg_id is None or total is None:
             continue
         segment_data = per_segment.setdefault(
             seg_id,
             {"total": int(total), "groups": {}},
         )
-        groups = segment_data["groups"]
-        groups.setdefault(int(step), []).append((idx, label))
+        sup_list = info.get("pass_supervision") or ["next"]
+        for step, supervision in enumerate(sup_list):
+            groups = segment_data["groups"].setdefault(step, [])
+            groups.append((idx, info.get("label"), supervision))
     for seg_id in sorted(per_segment.keys()):
         data = per_segment[seg_id]
         total_pass = int(data["total"])
@@ -8762,8 +8774,10 @@ def _print_sane_pass_summary(
             if not entries:
                 continue
             desc = ", ".join(
-                f"{col}:{label}" if label else str(col)
-                for col, label in entries
+                f"{col}:{label}[{'n' if supervision == 'next' else 's'}]"
+                if label
+                else f"{col}[{'n' if supervision == 'next' else 's'}]"
+                for col, label, supervision in entries
             )
             print(f"{pad}  Step {step + 1}/{total_pass}: {desc}")
 
