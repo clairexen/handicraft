@@ -7792,6 +7792,8 @@ class AttentionCapture:
 @dataclass
 class RowEvalResult:
     logits: torch.Tensor
+    next_stream_logits: torch.Tensor
+    self_stream_logits: torch.Tensor
     supervision_mask: torch.Tensor
     column_modes: list[str]
     mode_loss_sums: dict[str, float]
@@ -7867,6 +7869,8 @@ def _evaluate_row_block(
     total_loss = 0.0
     total_tokens = 0
     logits_buffer: list[torch.Tensor] = []
+    next_logits_buffer: list[torch.Tensor] = []
+    self_logits_buffer: list[torch.Tensor] = []
     attention_storage: dict[int, dict[int, torch.Tensor]] = {}
     base_capture = None
     if capture_columns:
@@ -8024,10 +8028,16 @@ def _evaluate_row_block(
             else:
                 xctx_state = None
         head_features = model.core.ln_f(chunk_output)
-        use_next_stream = segment.mode != "reverse"
-        logits = model.core.head(
-            model.core.output_features(head_features, use_next_stream=use_next_stream)
+        segment_next_logits = model.core.head(
+            model.core.output_features(head_features, use_next_stream=True)
         )
+        segment_self_logits = model.core.head(
+            model.core.output_features(head_features, use_next_stream=False)
+        )
+        use_next_stream = segment.mode != "reverse"
+        logits = segment_next_logits if use_next_stream else segment_self_logits
+        next_logits_buffer.append(segment_next_logits)
+        self_logits_buffer.append(segment_self_logits)
         logits_buffer.append(logits)
         last_only = segment.mode == "encode" and drop_mask_tensor is None
         eval_targets = chunk_target
@@ -8154,8 +8164,12 @@ def _evaluate_row_block(
     if not logits_buffer:
         raise ValueError("Row block produced no segments during evaluation")
     row_logits = torch.cat(logits_buffer, dim=1)
+    row_next_logits = torch.cat(next_logits_buffer, dim=1)
+    row_self_logits = torch.cat(self_logits_buffer, dim=1)
     return RowEvalResult(
         logits=row_logits,
+        next_stream_logits=row_next_logits,
+        self_stream_logits=row_self_logits,
         supervision_mask=supervision_mask,
         column_modes=column_modes,
         mode_loss_sums=mode_loss_sums,
@@ -8341,6 +8355,14 @@ def run_test_slice(
 
             row_logits = row_result.logits
             log_probs = torch.log_softmax(row_logits, dim=-1)
+            next_logits = getattr(row_result, "next_stream_logits", None)
+            if next_logits is None:
+                next_logits = row_logits
+            next_log_probs = torch.log_softmax(next_logits, dim=-1)
+            self_logits_tensor = getattr(row_result, "self_stream_logits", None)
+            self_log_probs = None
+            if self_logits_tensor is not None:
+                self_log_probs = torch.log_softmax(self_logits_tensor, dim=-1)
             target_ids = row_result.target_ids
             gathered = torch.gather(
                 log_probs,
@@ -8349,17 +8371,28 @@ def run_test_slice(
             ).squeeze(-1)
             per_token_loss = (-gathered).squeeze(0)
 
-            top_k = min(5, vocab_size)
-            top_logp, top_indices = torch.topk(log_probs, k=top_k, dim=-1)
-            top_probs = top_logp.exp()
+            top_k = min(3, vocab_size)
+            next_top_logp, next_top_indices = torch.topk(next_log_probs, k=top_k, dim=-1)
+            next_top_probs = next_top_logp.exp()
+            self_top_indices = None
+            self_top_probs = None
+            if self_log_probs is not None:
+                self_top_logp, self_top_indices = torch.topk(self_log_probs, k=top_k, dim=-1)
+                self_top_probs = self_top_logp.exp()
 
             losses_cpu = per_token_loss.cpu().tolist()
             mask_cpu = row_result.supervision_mask.cpu().tolist()
             inputs_cpu = row_result.source_ids.squeeze(0).cpu().tolist()
             targets_cpu = row_result.target_ids.squeeze(0).cpu().tolist()
             modes_cpu = row_result.column_modes
-            top_indices_cpu = top_indices.squeeze(0).cpu().tolist()
-            top_probs_cpu = top_probs.squeeze(0).cpu().tolist()
+            next_top_indices_cpu = next_top_indices.squeeze(0).cpu().tolist()
+            next_top_probs_cpu = next_top_probs.squeeze(0).cpu().tolist()
+            self_top_indices_cpu = (
+                self_top_indices.squeeze(0).cpu().tolist() if self_top_indices is not None else None
+            )
+            self_top_probs_cpu = (
+                self_top_probs.squeeze(0).cpu().tolist() if self_top_probs is not None else None
+            )
 
             idx_width = 4
             annotations = _column_debug_annotations(row)
@@ -8374,38 +8407,40 @@ def run_test_slice(
                 len(_format_token_fragment(tokenizer, tok)) for tok in inputs_cpu + targets_cpu
             )
             seq_len = len(inputs_cpu)
-            last_step_marker: tuple[int, int] | None = None
             for col in range(seq_len):
                 annotation = annotations[col] if col < len(annotations) else {}
-                step_total = annotation.get("sane_pass_total")
-                step_group = annotation.get("sane_step")
-                seg_id = annotation.get("segment_id")
-                if step_total and step_group is not None and seg_id is not None:
-                    marker = (seg_id, step_group)
-                    if marker != last_step_marker:
-                        print(
-                            color_text(
-                                f"{pad}Step {step_group + 1}/{step_total} (segment {seg_id + 1})",
-                                Colors.YELLOW,
-                            )
-                        )
-                        last_step_marker = marker
-                else:
-                    last_step_marker = None
                 token_text = _format_token_fragment(tokenizer, inputs_cpu[col])
                 loss_value = losses_cpu[col] if mask_cpu[col] else None
-                ranking: list[str] = []
-                for idx, prob in zip(top_indices_cpu[col], top_probs_cpu[col]):
-                    token_piece = _format_token_fragment(tokenizer, idx)
-                    ranking.append(f"{token_piece} ({prob * 100:.1f}%)")
-                loss_display = f"{loss_value:7.3f}" if loss_value is not None else "   --  "
+                pass_total = int(annotation.get("sane_pass_total") or 1)
+                loss_cells: list[str] = []
+                active_pass = annotation.get("sane_step") if pass_total > 1 else 0
+                for pass_idx in range(pass_total):
+                    if pass_total == 1 or active_pass == pass_idx:
+                        formatted = _format_loss_cell(
+                            loss_value,
+                            is_next_target=bool(annotation.get("is_next_target")),
+                        )
+                    else:
+                        formatted = "   --  "
+                    loss_cells.append(formatted)
+                loss_text = " ".join(loss_cells)
                 label = annotation.get("label") if annotation else ""
                 if label_width > 0:
                     idx_text = f"{col:4d} {label:>{label_width}}"
                 else:
                     idx_text = f"{col:4d}"
+                self_desc = _format_top_predictions(
+                    tokenizer,
+                    self_top_indices_cpu[col] if self_top_indices_cpu is not None else None,
+                    self_top_probs_cpu[col] if self_top_probs_cpu is not None else None,
+                )
+                next_desc = _format_top_predictions(
+                    tokenizer,
+                    next_top_indices_cpu[col],
+                    next_top_probs_cpu[col],
+                )
                 print(
-                    f"{pad}{idx_text} | {token_text:<{token_width}} | {loss_display} | {', '.join(ranking)}"
+                    f"{pad}{idx_text} | {token_text:<{token_width}} | {loss_text} | {self_desc} | {next_desc}"
                 )
 
             summary_target = _format_token_fragment(tokenizer, targets_cpu[-1])
@@ -8682,8 +8717,16 @@ def _column_debug_annotations(row: BlockLayout) -> list[dict[str, object]]:
                     annotations[idx]["sane_pass_total"] = passes
                     step_group = min(z_value, passes - 1)
                     annotations[idx]["sane_step"] = step_group
+                annotations[idx]["is_next_target"] = bool(z_value == 0)
         cursor += cols
     return annotations
+
+
+def _format_loss_cell(value: float | None, *, is_next_target: bool) -> str:
+    if value is None:
+        return "   --  "
+    text = f"{value:7.3f}"
+    return f"({text.strip()})" if is_next_target else text
 
 
 def _print_sane_pass_summary(
@@ -8723,6 +8766,20 @@ def _print_sane_pass_summary(
                 for col, label in entries
             )
             print(f"{pad}  Step {step + 1}/{total_pass}: {desc}")
+
+
+def _format_top_predictions(
+    tokenizer: GPT2TokenizerWrapper,
+    indices: Sequence[int] | None,
+    probs: Sequence[float] | None,
+) -> str:
+    if indices is None or probs is None:
+        return "--"
+    entries = []
+    for idx, prob in zip(indices, probs):
+        token_piece = _format_token_fragment(tokenizer, idx)
+        entries.append(f"{token_piece} ({prob * 100:.1f}%)")
+    return ", ".join(entries) if entries else "--"
 
 
 def _alpha_propagation_matrix(
