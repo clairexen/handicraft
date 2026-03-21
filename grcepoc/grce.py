@@ -1113,7 +1113,12 @@ class BatchLayout:
                 if extra:
                     prefix = ">>" if getattr(segment, "suppress_default_metric", False) else ">"
                     metric_suffix = prefix + ">".join(extra)
-                bit = f"{segment.columns}{letter}{hide_suffix}{layer_suffix}{think_suffix}{decode_think_suffix}{bias_suffix}{drop_suffix}{depth_suffix}{sane_suffix}{metric_suffix}"
+                count_text = (
+                    segment.token_columns_override
+                    if segment.token_columns_override is not None
+                    else segment.columns
+                )
+                bit = f"{count_text}{letter}{hide_suffix}{layer_suffix}{think_suffix}{decode_think_suffix}{bias_suffix}{drop_suffix}{depth_suffix}{sane_suffix}{metric_suffix}"
                 if idx > 0:
                     connector = segment.connector or "="
                     bit = connector + bit
