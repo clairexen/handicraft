@@ -155,9 +155,9 @@ We maintain spans of Z=4 columns but truncate the last such span so it only
 contains the first column (z=0). This guarantees that the last column in our
 grid has the properties we'd expect of the final decoder column and avoids
 ragged tensor shapes near the boundary. Let's use N to capture the number of
-columns in our grid. Then N=(T-1)*Z+1. Let's use the grid `65D 3X 2Y 4Z` (thus
-N=64*4+1=257) as an example going forward. Thus the column index `i in
-[0...N-1]` can be written as `i = t*Z+z`.
+columns in our grid. Then N=(T-1)*Z+1. For the concrete walkthrough below we
+choose `T=65`, i.e. layout `65D 3X 2Y 4Z`, which yields N=(65-1)*4+1=257. Thus
+the column index `i in [0...N-1]` can be written as `i = t*Z+z`.
 
 So we have 64 full-width encoder-style spans indexed by `k in [0...K-1]`, each
 4 columns wide, spanning a total of 64*4=256 columns, plus a single regular
