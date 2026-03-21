@@ -8619,35 +8619,25 @@ def _log_position_matrices(row: BlockLayout) -> None:
 def _alpha_propagation_matrix(
     groups: torch.Tensor,
     z_indices: torch.Tensor,
-    *,
-    active_mask: torch.Tensor | None,
-    use_sane_decode: bool,
 ) -> torch.Tensor:
     total = groups.numel()
     matrix = torch.zeros(total, total, dtype=torch.bool)
     if total <= 1:
         return matrix
-    same_stride = torch.ones(total - 1, dtype=torch.bool)
     if z_indices.numel() >= 2:
-        same_stride = z_indices[1:] == (z_indices[:-1] + 1)
-    valid_pairs = same_stride.clone()
-    if active_mask is not None and active_mask.numel() >= 2:
-        valid_pairs &= (active_mask[1:] & active_mask[:-1])
-    indices = valid_pairs.nonzero(as_tuple=False).flatten().tolist()
-    for idx in indices:
-        dst = idx + 1
-        matrix[dst, idx] = True
-    if use_sane_decode:
-        z0_indices = (z_indices == 0).nonzero(as_tuple=False).flatten()
-        if z0_indices.numel() > 1:
-            for pos in range(z0_indices.numel() - 1):
-                src = int(z0_indices[pos].item())
-                dst = int(z0_indices[pos + 1].item())
-                allowed = True
-                if active_mask is not None:
-                    allowed = bool(active_mask[src] and active_mask[dst])
-                if allowed:
-                    matrix[dst, src] = True
+        same_token = groups[1:] == groups[:-1]
+        next_z = z_indices[1:] == (z_indices[:-1] + 1)
+        intra_pairs = (same_token & next_z).nonzero(as_tuple=False).flatten().tolist()
+        for idx in intra_pairs:
+            dst = idx + 1
+            matrix[dst, idx] = True
+    z0_indices = (z_indices == 0).nonzero(as_tuple=False).flatten()
+    if z0_indices.numel() > 1:
+        for pos in range(z0_indices.numel() - 1):
+            src = int(z0_indices[pos].item())
+            dst = int(z0_indices[pos + 1].item())
+            if groups[dst] == groups[src] + 1:
+                matrix[dst, src] = True
     return matrix
 
 
@@ -8731,8 +8721,6 @@ def _log_alpha_beta_matrices(row: BlockLayout) -> None:
                 alpha_mat = _alpha_propagation_matrix(
                     groups,
                     z_indices,
-                    active_mask=active_mask,
-                    use_sane_decode=use_sane_decode,
                 )
                 beta_mat = _beta_propagation_matrix(
                     groups,
