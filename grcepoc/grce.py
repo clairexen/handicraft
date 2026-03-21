@@ -146,6 +146,7 @@ class Defaults:
     rng_cycle_only: bool = False
     log_step_details: bool = False
     log_row_details: bool = False
+    log_alpha_beta_rms: bool = False
     lr_base: float = 3e-4
     weight_decay: float = 0.01
     adam_beta1: float = 0.9
@@ -1402,6 +1403,12 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         action="store_true",
         default=DEFAULTS.log_row_details,
         help="Print per-row metrics and window spans (implies --log-step-details)",
+    )
+    training_group.add_argument(
+        "--log-alpha-beta-rms",
+        action="store_true",
+        default=DEFAULTS.log_alpha_beta_rms,
+        help="Log the RMS of SANE alpha/beta gains after each evaluation step",
     )
     training_group.add_argument(
         "--lr-base",
@@ -6912,6 +6919,17 @@ def _grad_norm(module: nn.Module) -> float:
     return math.sqrt(total)
 
 
+def _tensor_rms_per_layer(tensor: torch.Tensor | None) -> list[float]:
+    if tensor is None or tensor.numel() == 0:
+        return []
+    data = tensor.detach().to(dtype=torch.float32)
+    if data.dim() <= 1:
+        rms = torch.sqrt(torch.mean(data.pow(2)))
+        return [float(rms.item())]
+    rms = torch.sqrt(torch.mean(data.pow(2), dim=tuple(range(1, data.dim()))))
+    return [float(value.item()) for value in rms]
+
+
 def _optimizer_param_groups(module: nn.Module, weight_decay: float) -> list[dict[str, Any]]:
     decay: list[torch.Tensor] = []
     no_decay: list[torch.Tensor] = []
@@ -7314,6 +7332,29 @@ def train_model(
                 )
         model.train()
         eval_timer.stop()
+
+        if getattr(args, "log_alpha_beta_rms", False):
+            core = getattr(model, "core", None)
+            if core is not None:
+                stats = {
+                    "alpha_attn": _tensor_rms_per_layer(getattr(core, "sane_alpha_attn", None)),
+                    "beta_attn": _tensor_rms_per_layer(getattr(core, "sane_beta_attn", None)),
+                    "alpha_mlp": _tensor_rms_per_layer(getattr(core, "sane_alpha_mlp", None)),
+                    "beta_mlp": _tensor_rms_per_layer(getattr(core, "sane_beta_mlp", None)),
+                }
+                header = "SANE gain kRMS | alpha_attn beta_attn | alpha_mlp beta_mlp"
+                print(color_text(header, Colors.CYAN))
+                max_layers = max(len(values) for values in stats.values()) if stats else 0
+                for layer_idx in range(max_layers):
+                    alpha_attn = stats["alpha_attn"][layer_idx] if layer_idx < len(stats["alpha_attn"]) else 0.0
+                    beta_attn = stats["beta_attn"][layer_idx] if layer_idx < len(stats["beta_attn"]) else 0.0
+                    alpha_mlp = stats["alpha_mlp"][layer_idx] if layer_idx < len(stats["alpha_mlp"]) else 0.0
+                    beta_mlp = stats["beta_mlp"][layer_idx] if layer_idx < len(stats["beta_mlp"]) else 0.0
+                    line = (
+                        f"post-layer {layer_idx} | {alpha_attn*1000:.2f} {beta_attn*1000:.2f} "
+                        f"| {alpha_mlp*1000:.2f} {beta_mlp*1000:.2f}"
+                    )
+                print(color_text(line, Colors.CYAN))
 
         prompt_input = sample_prompt
         selected_prompt_text = args.prompt
