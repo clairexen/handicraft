@@ -318,9 +318,12 @@ access the injected tokens they are trying to predict. Using `4Z` insted of
   module in `grce.py` is reserved for future forward (`F`) rows and should stay
   inactive in SANE grids.
 
-----
+
+---------------------------------------------------------------------
 
 ### Prompts and notes
+
+---------------------------------------------------------------------
 
 Let's assume *[*D 3X 1Y 4Z >> S$$]. (Y=1 for simplicity.) Let's label the
 transformers that are supervised under the loss Sxz with Axy, Bxy, Cxy. So in
@@ -337,3 +340,17 @@ Show me the attention masks for each of those sets of 12 columns.
 
 label each column with the injected tokens visible at this position, in this
 x-cycle. label each row with the token the row is supervised with.
+
+----
+
+Enumerate the rules in the "Explicit Rules for Attention and Alpha/Beta Steering"
+section in sane.txt. For each rule, print a summary of how it is implemented (with
+references to the relevant code sections in grce.py), and double-check that the
+code implements the spec exactly.
+
+----
+
+Enumerate the rules in the "Explicit Rules for Input and Supervision" section
+in sane.txt. For each rule, print a summary of how it is implemented (with
+references to the relevant code sections in grce.py), and double-check that the
+code implements the spec exactly.
