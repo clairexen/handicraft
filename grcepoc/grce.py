@@ -8648,14 +8648,26 @@ def _column_debug_annotations(row: BlockLayout) -> list[dict[str, object]]:
         for _ in range(total)
     ]
     cursor = 0
+    base_cursor = 0
     for seg_idx, segment in enumerate(row.segments):
         cols = int(segment.columns)
         if cols <= 0:
             continue
+        base_tokens = int(segment.token_columns())
+        if base_tokens <= 0:
+            base_tokens = cols
         passes = max(1, int(getattr(segment, "sane_x", 1) or 1))
         plan = None
         if segment.mode == "decode":
             plan = _decode_segment_plan_tensors(segment)
+        for local in range(cols):
+            idx = cursor + local
+            if idx >= total:
+                break
+            annotations[idx]["segment_id"] = seg_idx
+            if segment.mode != "decode" and base_tokens > 0:
+                offset = min(local, base_tokens - 1)
+                annotations[idx]["base_index"] = base_cursor + offset
         if plan is not None:
             groups, z_indices = plan
             label_count = min(cols, groups.numel())
@@ -8669,7 +8681,8 @@ def _column_debug_annotations(row: BlockLayout) -> list[dict[str, object]]:
                     z_value,
                 )
                 annotations[idx]["segment_id"] = seg_idx
-                annotations[idx]["base_index"] = int(groups[local].item() + z_value)
+                base_index = int(groups[local].item() + z_value)
+                annotations[idx]["base_index"] = base_cursor + base_index
                 annotations[idx]["z_index"] = z_value
                 if getattr(segment, "extra_metrics", None):
                     coord_templates = tuple(
@@ -8697,6 +8710,8 @@ def _column_debug_annotations(row: BlockLayout) -> list[dict[str, object]]:
                     supervision = "next" if z_value == 0 else "self"
                     annotations[idx]["pass_supervision"] = [supervision]
         cursor += cols
+        if base_tokens > 0:
+            base_cursor += base_tokens
     return annotations
 
 
@@ -8993,8 +9008,17 @@ def _print_row_pass_details(
         z_value = int(annotation.get("z_index", 0) or 0)
         if z_value > 0:
             token_text = f"{' ' * z_value}{token_text}"
-        token_texts.append(token_text)
-        token_width = max(token_width, len(token_text))
+        token_idx = None
+        if base_index is not None:
+            token_idx = int(base_index)
+        elif annotation and isinstance(annotation.get("segment_id"), int):
+            token_idx = col
+        idx_prefix = "--"
+        if token_idx is not None:
+            idx_prefix = str(token_idx)
+        token_display = f"{idx_prefix} {token_text}"
+        token_texts.append(token_display)
+        token_width = max(token_width, len(token_display))
 
     loss_summary = {"self": [0.0, 0], "next": [0.0, 0]}
     for col in range(seq_len):
