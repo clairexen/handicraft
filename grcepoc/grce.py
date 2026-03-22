@@ -7928,6 +7928,22 @@ def _evaluate_row_block(
         zero_self_logits = model.core.head(
             model.core.output_features(head_input, use_next_stream=False)
         )
+        if base_source_store is not None:
+            base_list = base_source_store.view(-1).tolist()
+            zero_self_logits = zero_self_logits.clone()
+            zero_self_logits.fill_(-1e9)
+            total_cols = row.total_columns()
+            annotations_full = _column_debug_annotations(row)
+            for col in range(total_cols):
+                info = annotations_full[col]
+                base_index = info.get("base_index")
+                if base_index is None:
+                    continue
+                idx_val = int(base_index)
+                if idx_val < 0 or idx_val >= len(base_list):
+                    continue
+                token_id = int(base_list[idx_val])
+                zero_self_logits[0, col, token_id] = 0.0
     column_positions = _segment_column_positions(row.segments, token_components.device)
     if row.modifiers and getattr(row.modifiers, "halt_rope", False):
         column_positions = torch.zeros_like(column_positions)
