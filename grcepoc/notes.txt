@@ -1185,8 +1185,16 @@ python grce.py --pt model/wp_en_GMLP_Q4_ED4Y.pt --cycles 5000 \
 : python grce.py --pt model/wp_en_small_SANE_MTLD_4Z.pt --small --use-gmlp --n-query 4 create
 : python grce.py --pt model/wp_en_small_SANE_MTLD_4Z.pt corpus --add wikipedia-en-000{0,1,2,3,4,5,6,7}
 python grce.py --pt model/wp_en_small_SANE_MTLD_4Z.pt --cycles 700 \
-  --layout '16[ 64E (1|2)Y = (64D4Y|128D2Y) = 64D 3X 2Y 4Z >> S$$ = 1Db>>A = 1DB>>B ]' \
+  --layout '16[ 64E (1|2)Y = (64D2Y|128D) = 64D 3X 2Y 4Z >> S$$ = 1D4Yb>>A = 1D4YB>>B ]' \
   --lr-warmup-steps 100 --lr-cosine-steps 200 --generate-with-decode --align-articles train --json
+
+python grce.py --pt model/wp_en_small_SANE_MTLD_4Z.pt --steps 1 \
+  --layout '16[ 64E (1|2)Y = (64D2Y|128D) = 64D 3X 2Y 4Z >> S$$ = 1D4Yb>>A = 1D4YB>>B ]' try
+
+python grce.py --pt model/wp_en_small_SANE_MTLD_4Z.pt --steps 1 \
+  --layout '16[ 64E (1|2)Y = (64D2Y|128D) = 64D 3X 2Y 4Z >> S$$ = 1D4Yb>>A = 1D4YB>>B ]' eval
+
+----
 
 # python grce.py --pt model/wp_en_small_SANE_MTLD_4z.pt --small --use-gmlp --n-query 4 create
 # python grce.py --pt model/wp_en_small_SANE_MTLD_4z.pt corpus --add wikipedia-en-000{0,1,2,3,4,5,6,7}
