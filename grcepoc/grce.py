@@ -8417,11 +8417,9 @@ def run_test_slice(
                     final_sums[name] = total
                     final_counts[name] = count
             for pass_idx, (variant, result) in enumerate(pass_results):
-                for line in _format_step_supervision_lines(
-                    annotations_full, pass_idx, total_passes
-                ):
-                    print(line)
                 annotations = _column_debug_annotations(variant)
+                for line in _format_block_step_lines(variant, annotations):
+                    print(line)
                 _print_row_pass_details(
                     tokenizer,
                     result,
@@ -8748,23 +8746,40 @@ def _row_with_sane_pass_limit(row: BlockLayout, limit: int) -> BlockLayout:
     return BlockLayout(row.rows, new_segments, row.modifiers)
 
 
-def _format_step_supervision_lines(
+def _format_block_step_lines(
+    row: BlockLayout,
     annotations: Sequence[dict[str, object]],
-    pass_idx: int,
-    total_passes: int,
 ) -> list[str]:
-    entries: list[str] = []
+    per_segment: dict[int, list[tuple[int, str, Sequence[str]]]] = {}
     for idx, info in enumerate(annotations):
+        seg_id = info.get("segment_id")
+        if seg_id is None:
+            continue
         label = info.get("label", "") or ""
-        sup_list = info.get("pass_supervision") or ["next"]
-        pos = pass_idx if pass_idx < len(sup_list) else len(sup_list) - 1
-        supervision = sup_list[pos]
-        tag = "n" if supervision == "next" else "s"
-        entries.append(f"{idx}:{label}[{tag}]")
-    if not entries:
-        return [f"      Step {pass_idx + 1}/{total_passes}: (no columns)"]
-    line = ", ".join(entries)
-    return [f"      Step {pass_idx + 1}/{total_passes}: {line}"]
+        sup_list: Sequence[str] = info.get("pass_supervision") or ["next"]
+        per_segment.setdefault(int(seg_id), []).append((idx, label, sup_list))
+    lines: list[str] = []
+    for seg_idx, segment in enumerate(row.segments):
+        entries = per_segment.get(seg_idx)
+        if not entries:
+            continue
+        steps = max(1, int(getattr(segment, "sane_x", 1) or 1))
+        lines.append(f"      Block {seg_idx} (X={steps}):")
+        for step in range(steps):
+            step_entries: list[str] = []
+            for col_idx, label, sup_list in entries:
+                pos = step if step < len(sup_list) else len(sup_list) - 1
+                supervision = sup_list[pos]
+                tag = "n" if supervision == "next" else "s"
+                if label:
+                    step_entries.append(f"{col_idx}:{label}[{tag}]")
+                else:
+                    step_entries.append(f"{col_idx}[{tag}]")
+            desc = ", ".join(step_entries) if step_entries else "(no columns)"
+            lines.append(f"        Step {step + 1}/{steps}: {desc}")
+    if not lines:
+        lines.append("      (no supervised blocks)")
+    return lines
 
 
 def _coordinate_metric_names(row: BlockLayout) -> set[str]:
@@ -8948,7 +8963,19 @@ def _print_row_pass_details(
             (len(info.get("label", "")) for info in effective_annotations),
             default=0,
         )
-    idx_width = 4 + (1 + label_width if label_width > 0 else 0)
+
+    segment_lengths: dict[int | None, int] = {}
+    for info in effective_annotations:
+        seg_id = info.get("segment_id")
+        segment_lengths[seg_id] = segment_lengths.get(seg_id, 0) + 1
+    block_count = len(row.segments)
+    block_id_width = max(3, len(str(max(block_count - 1, 0))))
+    max_local = max((length - 1 for length in segment_lengths.values() if length > 0), default=0)
+    block_local_width = max(3, len(str(max_local)))
+    global_width = max(4, len(str(max(seq_len - 1, 0))))
+    idx_prefix_width = block_id_width + 1 + block_local_width + 1 + global_width
+    idx_width = idx_prefix_width + (1 + label_width if label_width > 0 else 0)
+    block_local_counters: dict[int | None, int] = defaultdict(int)
 
     token_texts: list[str] = []
     token_width = 0
@@ -8986,10 +9013,18 @@ def _print_row_pass_details(
                 bucket[1] += 1
         loss_text = " ".join(loss_cells)
         label = annotation.get("label") if annotation else ""
+        block_idx = annotation.get("segment_id") if annotation else None
+        local_idx = block_local_counters[block_idx]
+        block_local_counters[block_idx] += 1
+        block_str = "-" if block_idx is None else str(int(block_idx))
+        local_str = "-" if block_idx is None else str(local_idx)
+        block_text = block_str.rjust(block_id_width)
+        local_text = local_str.rjust(block_local_width)
+        col_text = f"{col:>{global_width}d}"
         if label_width > 0:
-            idx_text = f"{col:4d} {label:>{label_width}}"
+            idx_text = f"{block_text} {local_text} {col_text} {label:>{label_width}}"
         else:
-            idx_text = f"{col:4d}"
+            idx_text = f"{block_text} {local_text} {col_text}"
         self_desc = _format_top_predictions(
             tokenizer,
             self_top_indices_cpu[col] if self_top_indices_cpu is not None else None,
