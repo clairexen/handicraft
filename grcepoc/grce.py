@@ -5828,12 +5828,13 @@ def _run_microbatch_pass(
                     sane_z_indices = z_offsets
                     token_base_offsets = token_offsets + base_start
                     column_offsets = token_base_offsets + z_offsets
+                    embedding_offsets = token_base_offsets + torch.clamp(z_offsets - 1, min=0)
                     next_offsets = column_offsets + 1
                     segment_positions = column_offsets
                     seq_len = full_tokens.size(1)
                     if torch.any(column_offsets >= seq_len) or torch.any(next_offsets >= seq_len):
                         raise ValueError("SANE decode segment requires unavailable tokens")
-                    embedding_index = column_offsets.view(1, -1, 1).expand(
+                    embedding_index = embedding_offsets.view(1, -1, 1).expand(
                         row_count, -1, full_embeddings.size(-1)
                     )
                     token_embedding_grid = torch.gather(full_embeddings, 1, embedding_index)
@@ -8037,6 +8038,7 @@ def _evaluate_row_block(
             base_start = pos_cursor
             token_base_offsets = token_offsets + base_start
             column_offsets = token_base_offsets + z_offsets
+            embedding_offsets = token_base_offsets + torch.clamp(z_offsets - 1, min=0)
             next_offsets = column_offsets + 1
             seq_len = base_source_store.size(1)
             if (
@@ -8049,7 +8051,7 @@ def _evaluate_row_block(
                 index = offsets.view(1, -1).expand(row_count, -1)
                 return torch.gather(base_source_store, 1, index)
 
-            embedding_index = column_offsets.view(1, -1, 1).expand(
+            embedding_index = embedding_offsets.view(1, -1, 1).expand(
                 row_count,
                 -1,
                 source_embeddings.size(-1),
