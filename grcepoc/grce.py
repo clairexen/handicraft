@@ -8241,8 +8241,7 @@ def _prepare_eval_tokens(
         )
     inputs = inputs[:token_length]
     targets = targets[:token_length]
-    future_tokens = context_tokens[token_length + 1 :]
-    base_source_ids = torch.cat([inputs, usable[-1:], future_tokens])
+    base_source_ids = context_tokens.clone()
     eval_block_size = inputs.numel()
     pretty_text = tokenizer.decode_pretty(args, context_tokens)
     return context_tokens, inputs, targets, eval_block_size, source_label, pretty_text, base_source_ids
@@ -8402,8 +8401,24 @@ def run_test_slice(
 
             pad = " " * 4
             total_passes = len(pass_results)
+            coord_names = _coordinate_metric_names(row)
+            final_result = pass_results[-1][1]
+            if coord_names:
+                coord_metrics = _collect_coordinate_metrics(
+                    annotations_full,
+                    pass_results,
+                    coord_names,
+                )
+                final_sums = final_result.mode_loss_sums
+                final_counts = final_result.mode_token_counts
+                for name, (total, count) in coord_metrics.items():
+                    final_sums[name] = total
+                    final_counts[name] = count
             for pass_idx, (variant, result) in enumerate(pass_results):
-                print(_format_step_supervision_line(annotations_full, pass_idx, total_passes))
+                for line in _format_step_supervision_lines(
+                    annotations_full, pass_idx, total_passes
+                ):
+                    print(line)
                 annotations = _column_debug_annotations(variant)
                 _print_row_pass_details(
                     tokenizer,
@@ -8655,6 +8670,14 @@ def _column_debug_annotations(row: BlockLayout) -> list[dict[str, object]]:
                 annotations[idx]["segment_id"] = seg_idx
                 annotations[idx]["base_index"] = int(groups[local].item() + z_value)
                 annotations[idx]["z_index"] = z_value
+                if getattr(segment, "extra_metrics", None):
+                    coord_templates = tuple(
+                        name
+                        for name in getattr(segment, "extra_metrics", ())
+                        if _metric_template_has_coords(name)
+                    )
+                    if coord_templates:
+                        annotations[idx]["metric_templates"] = coord_templates
                 if passes > 1:
                     annotations[idx]["sane_pass_total"] = passes
                     step_group = min(z_value, passes - 1)
@@ -8697,11 +8720,11 @@ def _row_with_sane_pass_limit(row: BlockLayout, limit: int) -> BlockLayout:
     return BlockLayout(row.rows, new_segments, row.modifiers)
 
 
-def _format_step_supervision_line(
+def _format_step_supervision_lines(
     annotations: Sequence[dict[str, object]],
     pass_idx: int,
     total_passes: int,
-) -> str:
+) -> list[str]:
     entries: list[str] = []
     for idx, info in enumerate(annotations):
         label = info.get("label", "") or ""
@@ -8710,14 +8733,66 @@ def _format_step_supervision_line(
         supervision = sup_list[pos]
         tag = "n" if supervision == "next" else "s"
         entries.append(f"{idx}:{label}[{tag}]")
-    return f"      Step {pass_idx + 1}/{total_passes}: {', '.join(entries)}"
+    if not entries:
+        return [f"      Step {pass_idx + 1}/{total_passes}: (no columns)"]
+    line = ", ".join(entries)
+    return [f"      Step {pass_idx + 1}/{total_passes}: {line}"]
+
+
+def _coordinate_metric_names(row: BlockLayout) -> set[str]:
+    names: set[str] = set()
+    for segment in row.segments:
+        extra = getattr(segment, "extra_metrics", ())
+        if not extra:
+            continue
+        passes = max(1, int(getattr(segment, "sane_x", 1) or 1))
+        depth = max(1, int(getattr(segment, "sane_z", 1) or 1))
+        for template in extra:
+            if not _metric_template_has_coords(template):
+                continue
+            for pass_idx in range(passes):
+                for z_idx in range(depth):
+                    names.add(_format_metric_template(template, pass_idx, z_idx))
+    return names
+
+
+def _collect_coordinate_metrics(
+    annotations: Sequence[dict[str, object]],
+    pass_results: Sequence[tuple[BlockLayout, RowEvalResult]],
+    coord_names: set[str],
+) -> dict[str, tuple[float, int]]:
+    if not coord_names:
+        return {}
+    stats: dict[str, tuple[float, int]] = {}
+    for pass_idx, (_, result) in enumerate(pass_results):
+        losses, mask = _column_loss_values(result)
+        for col_idx, loss in enumerate(losses):
+            if col_idx >= len(annotations):
+                continue
+            if col_idx >= len(mask) or not mask[col_idx]:
+                continue
+            info = annotations[col_idx]
+            z_value = int(info.get("z_index", 0) or 0)
+            templates = info.get("metric_templates") or ()
+            if not templates:
+                continue
+            for template in templates:
+                name = _format_metric_template(template, pass_idx, z_value)
+                if name not in coord_names:
+                    continue
+                total, count = stats.get(name, (0.0, 0))
+                stats[name] = (total + float(loss), count + 1)
+    return stats
 
 
 def _format_loss_cell(value: float | None, *, supervision: str) -> str:
     if value is None:
         return "   --  "
     text = f"{value:7.3f}"
-    return text if supervision == "next" else f"({text.strip()})"
+    if supervision == "next":
+        core = text.strip()
+        return f" {core} "
+    return f"({text.strip()})"
 
 
 def _print_sane_pass_summary(
@@ -8887,9 +8962,21 @@ def _print_row_pass_details(
 
     summary_token_id = targets_cpu[-1]
     if base_tokens is not None:
-        future_index = len(inputs_cpu)
-        if future_index < len(base_tokens):
-            summary_token_id = base_tokens[future_index]
+        future_candidates: list[int] = []
+        context_limit = len(inputs_cpu) - 1
+        for info in annotations:
+            base_index = info.get("base_index")
+            if base_index is None:
+                continue
+            base_value = int(base_index)
+            if base_value > context_limit:
+                future_candidates.append(base_value)
+        if future_candidates:
+            future_index = min(future_candidates)
+        else:
+            future_index = len(inputs_cpu)
+        future_index = max(0, min(future_index, len(base_tokens) - 1))
+        summary_token_id = base_tokens[future_index]
     summary_target = _format_token_fragment(tokenizer, summary_token_id)
     row_total_loss = row_result.total_loss_sum
     if row_result.total_tokens > 0:
