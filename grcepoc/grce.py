@@ -7803,6 +7803,7 @@ class RowEvalResult:
     target_ids: torch.Tensor
     source_ids: torch.Tensor
     base_source_ids: torch.Tensor | None = None
+    base_context_length: int = 0
     attention_maps: dict[int, dict[int, torch.Tensor]] | None = None
     block_attentions: list["BlockAttention"] | None = None
     sampled_rows: int = 1
@@ -8185,6 +8186,7 @@ def _evaluate_row_block(
         target_ids=target_ids,
         source_ids=expanded_inputs,
         base_source_ids=base_source_store,
+        base_context_length=base_inputs.size(1),
         attention_maps=attention_storage if capture_columns else None,
         block_attentions=block_attentions,
         sampled_rows=row_count,
@@ -8424,6 +8426,7 @@ def run_test_slice(
                     tokenizer,
                     result,
                     annotations,
+                    annotations_full,
                     pad,
                     vocab_size,
                     show_metrics=(pass_idx == total_passes - 1),
@@ -8693,9 +8696,34 @@ def _column_debug_annotations(row: BlockLayout) -> list[dict[str, object]]:
                         sup_list.append(supervision)
                     annotations[idx]["pass_supervision"] = sup_list
                 else:
-                    annotations[idx]["pass_supervision"] = ["next"]
+                    supervision = "next" if z_value == 0 else "self"
+                    annotations[idx]["pass_supervision"] = [supervision]
         cursor += cols
     return annotations
+
+
+def _combine_annotation_views(
+    primary: Sequence[dict[str, object]],
+    fallback: Sequence[dict[str, object]],
+    count: int,
+) -> list[dict[str, object]]:
+    """Merge per-pass annotations with the full layout metadata."""
+
+    merged: list[dict[str, object]] = []
+    for idx in range(count):
+        base = fallback[idx] if idx < len(fallback) else None
+        overlay = primary[idx] if idx < len(primary) else None
+        entry: dict[str, object] = {}
+        if base:
+            entry.update(base)
+        elif overlay:
+            entry.update(overlay)
+        if overlay:
+            for key in ("pass_supervision", "sane_pass_total", "sane_step"):
+                if key in overlay:
+                    entry[key] = overlay[key]
+        merged.append(entry)
+    return merged
 
 
 def _max_decode_passes(row: BlockLayout) -> int:
@@ -8790,8 +8818,7 @@ def _format_loss_cell(value: float | None, *, supervision: str) -> str:
         return "   --  "
     text = f"{value:7.3f}"
     if supervision == "next":
-        core = text.strip()
-        return f" {core} "
+        return text
     return f"({text.strip()})"
 
 
@@ -8854,6 +8881,7 @@ def _print_row_pass_details(
     tokenizer: GPT2TokenizerWrapper,
     row_result: RowEvalResult,
     annotations: Sequence[dict[str, object]],
+    full_annotations: Sequence[dict[str, object]],
     pad: str,
     vocab_size: int,
     *,
@@ -8907,16 +8935,25 @@ def _print_row_pass_details(
     if getattr(row_result, "base_source_ids", None) is not None:
         base_tokens = row_result.base_source_ids.detach().cpu().view(-1).tolist()
 
+    seq_len = len(inputs_cpu)
+    effective_annotations = _combine_annotation_views(
+        annotations,
+        full_annotations,
+        seq_len,
+    )
+
     label_width = 0
-    if annotations:
-        label_width = max((len(info.get("label", "")) for info in annotations), default=0)
+    if effective_annotations:
+        label_width = max(
+            (len(info.get("label", "")) for info in effective_annotations),
+            default=0,
+        )
     idx_width = 4 + (1 + label_width if label_width > 0 else 0)
 
     token_texts: list[str] = []
     token_width = 0
-    seq_len = len(inputs_cpu)
     for col in range(seq_len):
-        annotation = annotations[col] if col < len(annotations) else {}
+        annotation = effective_annotations[col] if col < len(effective_annotations) else {}
         base_index = annotation.get("base_index") if annotation else None
         token_id = None
         if base_tokens is not None and base_index is not None:
@@ -8932,14 +8969,21 @@ def _print_row_pass_details(
         token_texts.append(token_text)
         token_width = max(token_width, len(token_text))
 
+    loss_summary = {"self": [0.0, 0], "next": [0.0, 0]}
     for col in range(seq_len):
-        annotation = annotations[col] if col < len(annotations) else {}
+        annotation = effective_annotations[col] if col < len(effective_annotations) else {}
         token_text = token_texts[col]
         loss_value = losses_cpu[col] if mask_cpu[col] else None
         pass_sup = annotation.get("pass_supervision") or ["next"]
         loss_cells = [
             _format_loss_cell(loss_value, supervision=sup) for sup in pass_sup
         ]
+        if loss_value is not None:
+            for supervision in pass_sup:
+                key = "next" if supervision == "next" else "self"
+                bucket = loss_summary[key]
+                bucket[0] += loss_value
+                bucket[1] += 1
         loss_text = " ".join(loss_cells)
         label = annotation.get("label") if annotation else ""
         if label_width > 0:
@@ -8961,31 +9005,29 @@ def _print_row_pass_details(
         )
 
     summary_token_id = targets_cpu[-1]
-    if base_tokens is not None:
-        future_candidates: list[int] = []
-        context_limit = len(inputs_cpu) - 1
-        for info in annotations:
-            base_index = info.get("base_index")
-            if base_index is None:
-                continue
-            base_value = int(base_index)
-            if base_value > context_limit:
-                future_candidates.append(base_value)
-        if future_candidates:
-            future_index = min(future_candidates)
-        else:
-            future_index = len(inputs_cpu)
-        future_index = max(0, min(future_index, len(base_tokens) - 1))
+    context_len = int(getattr(row_result, "base_context_length", len(inputs_cpu)))
+    if base_tokens is not None and base_tokens:
+        future_index = max(0, min(context_len, len(base_tokens) - 1))
         summary_token_id = base_tokens[future_index]
     summary_target = _format_token_fragment(tokenizer, summary_token_id)
-    row_total_loss = row_result.total_loss_sum
-    if row_result.total_tokens > 0:
-        row_avg_loss_text = f"{row_total_loss / row_result.total_tokens:7.3f}"
-    else:
-        row_avg_loss_text = "   --  "
     summary_label = "*" * idx_width
+    summary_parts: list[str] = []
+    self_total, self_count = loss_summary["self"]
+    if self_count > 0:
+        summary_parts.append(f"({self_total / self_count:.3f})")
+    next_total, next_count = loss_summary["next"]
+    if next_count > 0:
+        summary_parts.append(f" {next_total / next_count:7.3f}")
+    summary_loss_text = "".join(summary_parts) if summary_parts else "   --  "
+    if row_result.total_tokens > 0:
+        overall_avg = row_result.total_loss_sum / row_result.total_tokens
+        overall_text = f"{overall_avg:7.3f}"
+        if summary_parts:
+            summary_loss_text = f"{summary_loss_text} = {overall_text}"
+        else:
+            summary_loss_text = overall_text
     print(
-        f"{pad}{summary_label} | {summary_target:<{token_width}} | {row_avg_loss_text} nats/token"
+        f"{pad}{summary_label} | {summary_target:<{token_width}} | {summary_loss_text} nats/token"
     )
 
     if show_metrics:
