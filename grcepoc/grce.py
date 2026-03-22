@@ -7917,6 +7917,7 @@ def _evaluate_row_block(
         expanded_targets,
         None,
     )
+    vocab_size = model.config.vocab_size
     zero_next_logits: torch.Tensor | None = None
     zero_self_logits: torch.Tensor | None = None
     if getattr(args, "log_zero_step", False):
@@ -7983,6 +7984,7 @@ def _evaluate_row_block(
     control_ids = torch.zeros((row_count, cols_total), dtype=torch.long, device=device)
     drop_rng = drop_rng or random.Random(getattr(args, "rng_seed", 0) or 0)
     target_ids = torch.zeros_like(expanded_targets)
+    source_embeddings: torch.Tensor | None = None
     for segment in row.segments:
         segment_start = cursor
         cols = int(segment.columns)
@@ -7996,6 +7998,281 @@ def _evaluate_row_block(
             kv_chain = []
         start = cursor
         end = cursor + cols
+        extra_metric_templates = list(getattr(segment, "extra_metrics", ()))
+        coord_metric_templates = [
+            name for name in extra_metric_templates if _metric_template_has_coords(name)
+        ]
+        plain_metric_templates = [
+            name for name in extra_metric_templates if not _metric_template_has_coords(name)
+        ]
+        metric_key = segment.metric_mode or segment.mode
+        column_modes[start:end] = [metric_key] * (end - start)
+        sane_depth = max(1, int(getattr(segment, "sane_z", 1) or 1))
+        sane_passes = max(1, int(getattr(segment, "sane_x", 1) or 1))
+        strict_active_zone = bool(getattr(segment, "sane_z_strict", False))
+        segment_disable_sane = row_disable_sane or getattr(segment, "disable_sane", False)
+        use_sane_decode = (
+            segment.mode == "decode"
+            and not segment_disable_sane
+            and (sane_depth > 1 or sane_passes > 1)
+        )
+        if use_sane_decode:
+            # SANE-specific decode evaluation mirrors training-time logic.
+            plan = _sane_column_plan(base_tokens, sane_depth)
+            if len(plan) != cols:
+                raise ValueError("SANE decode plan does not match allocated columns during evaluation")
+            if source_embeddings is None:
+                source_embeddings = model.core.expand_to_even(
+                    model.core.tok_emb(base_source_store)
+                )
+            token_offsets = torch.tensor(
+                [pos for pos, _ in plan], dtype=torch.long, device=device
+            )
+            z_offsets = torch.tensor(
+                [z for _, z in plan], dtype=torch.long, device=device
+            )
+            sane_z0_indices = (z_offsets == 0).nonzero(as_tuple=False).squeeze(-1)
+            sane_group_ids = token_offsets
+            sane_z_indices = z_offsets
+            base_start = pos_cursor
+            token_base_offsets = token_offsets + base_start
+            column_offsets = token_base_offsets + z_offsets
+            next_offsets = column_offsets + 1
+            seq_len = base_source_store.size(1)
+            if (
+                torch.any(column_offsets >= seq_len)
+                or torch.any(next_offsets >= seq_len)
+            ):
+                raise ValueError("SANE decode segment requires unavailable tokens during evaluation")
+
+            def _gather_token_ids(offsets: torch.Tensor) -> torch.Tensor:
+                index = offsets.view(1, -1).expand(row_count, -1)
+                return torch.gather(base_source_store, 1, index)
+
+            embedding_index = column_offsets.view(1, -1, 1).expand(
+                row_count,
+                -1,
+                source_embeddings.size(-1),
+            )
+            token_embedding_grid = torch.gather(source_embeddings, 1, embedding_index)
+            self_token_ids = _gather_token_ids(column_offsets)
+            next_token_ids = _gather_token_ids(next_offsets)
+            state_tensor = token_components.new_zeros(row_count, cols, token_components.size(-1))
+            control_state = torch.full(
+                (cols,), CONTROL_FIND_SELF, dtype=torch.long, device=device
+            )
+            next_target_grid = torch.full(
+                (row_count, cols),
+                LOSS_IGNORE_INDEX,
+                dtype=base_inputs.dtype,
+                device=device,
+            )
+            self_target_grid = self_token_ids.clone()
+            if torch.any(z_offsets == 0):
+                self_target_grid[:, z_offsets == 0] = LOSS_IGNORE_INDEX
+            segment_effective_logits = token_components.new_zeros(row_count, cols, vocab_size)
+            segment_next_store = token_components.new_zeros(row_count, cols, vocab_size)
+            segment_self_store = token_components.new_zeros(row_count, cols, vocab_size)
+            segment_targets = torch.full(
+                (row_count, cols),
+                LOSS_IGNORE_INDEX,
+                dtype=base_inputs.dtype,
+                device=device,
+            )
+            column_supervision_flags = torch.zeros(cols, dtype=torch.bool, device=device)
+            kv_final: list[tuple[torch.Tensor, torch.Tensor]] | None = None
+            segment_loss: torch.Tensor | None = None
+            segment_tokens = 0
+            for pass_idx in range(sane_passes):
+                chunk_base = state_tensor.clone()
+                new_leading_mask = z_offsets == pass_idx
+                if torch.any(new_leading_mask):
+                    chunk_base[:, new_leading_mask, :] = (
+                        chunk_base[:, new_leading_mask, :]
+                        + token_embedding_grid[:, new_leading_mask, :]
+                    )
+                    control_state[new_leading_mask] = CONTROL_PREDICT_NEXT
+                    next_target_grid[:, new_leading_mask] = next_token_ids[:, new_leading_mask]
+                    self_target_grid[:, new_leading_mask] = LOSS_IGNORE_INDEX
+                control_slice = control_state.view(1, -1).expand(row_count, -1).clone()
+                control_embed = model.core.expand_to_even(
+                    model.core.control_emb(control_slice)
+                )
+                chunk_input = _compose_chunk_embeddings(
+                    model.core.drop,
+                    chunk_base,
+                    control_slice=control_embed,
+                )
+                kv_sources = kv_chain if kv_chain else None
+                segment_positions = column_positions[start:end]
+                layer_repeat = max(1, int(getattr(segment, "layer_repeat", 1) or 1))
+                layer_top_only = bool(getattr(segment, "layer_top_only", False))
+                active_mask_tensor = None
+                if strict_active_zone:
+                    active_mask_tensor = (z_offsets >= pass_idx).to(
+                        device=device, dtype=torch.bool
+                    )
+                think_index = torch.full(
+                    (cols,), pass_idx + 1, dtype=torch.long, device=device
+                )
+                think_count = torch.full(
+                    (cols,), sane_passes, dtype=torch.long, device=device
+                )
+                chunk_output, grce_state, xctx_state, kv_out, _ = model.stack_sequence.forward(
+                    chunk_input,
+                    grce_in=grce_state,
+                    xctx_in=xctx_state,
+                    kv_cache_list_in=kv_sources,
+                    mode=segment.mode,
+                    detach_internal_kv_cache=row_detach_kv_cache,
+                    context_detach_span=detach_span_override,
+                    context_detach_enabled=context_detach_override,
+                    column_positions=segment_positions,
+                    sane_z0_indices=sane_z0_indices,
+                    sane_group_ids=sane_group_ids,
+                    sane_z_indices=sane_z_indices,
+                    sane_active_mask=active_mask_tensor,
+                    think_step_index=think_index,
+                    think_step_count=think_count,
+                    layer_repeat=layer_repeat,
+                    layer_top_only=layer_top_only,
+                    think_last_only=bool(getattr(segment, "sane_x_last_only", False)),
+                    capture_layer_outputs=False,
+                    use_context=bool(segment.context_enabled),
+                    disable_sane=False,
+                    self_attention_only=bool(getattr(segment, "self_attention_only", False)),
+                )
+                kv_final = kv_out
+                state_tensor = model.core.sane_loop_norm(chunk_output)
+                head_features = model.core.ln_f(chunk_output)
+                next_logits = model.core.head(
+                    model.core.output_features(head_features, use_next_stream=True)
+                )
+                self_logits = model.core.head(
+                    model.core.output_features(head_features, use_next_stream=False)
+                )
+                next_targets = next_target_grid.clone()
+                self_targets = self_target_grid.clone()
+                predict_mask = next_targets != LOSS_IGNORE_INDEX
+                self_mask = self_targets != LOSS_IGNORE_INDEX
+                pass_loss: torch.Tensor | None = None
+                pass_tokens = 0
+                if torch.any(predict_mask):
+                    next_loss, next_tokens = loss_sum_and_token_count(
+                        next_logits,
+                        next_targets,
+                        last_only=False,
+                    )
+                else:
+                    next_loss = None
+                    next_tokens = 0
+                if torch.any(self_mask):
+                    self_loss, self_tokens = loss_sum_and_token_count(
+                        self_logits,
+                        self_targets,
+                        last_only=False,
+                    )
+                else:
+                    self_loss = None
+                    self_tokens = 0
+                if next_loss is not None and next_tokens > 0:
+                    pass_loss = next_loss
+                    pass_tokens += next_tokens
+                    next_flat_mask = predict_mask.view(-1)
+                    if torch.any(next_flat_mask):
+                        next_store = segment_next_store.view(row_count * cols, -1)
+                        next_logits_flat = next_logits.view(row_count * cols, -1)
+                        next_store[next_flat_mask] = next_logits_flat[next_flat_mask]
+                        eff_store = segment_effective_logits.view(row_count * cols, -1)
+                        eff_store[next_flat_mask] = next_logits_flat[next_flat_mask]
+                        target_flat = segment_targets.view(row_count * cols)
+                        next_target_flat = next_targets.view(-1)
+                        target_flat[next_flat_mask] = next_target_flat[next_flat_mask]
+                        column_supervision_flags |= predict_mask.any(dim=0)
+                if self_loss is not None and self_tokens > 0:
+                    pass_loss = self_loss if pass_loss is None else pass_loss + self_loss
+                    pass_tokens += self_tokens
+                    self_flat_mask = self_mask.view(-1)
+                    if torch.any(self_flat_mask):
+                        self_store = segment_self_store.view(row_count * cols, -1)
+                        self_logits_flat = self_logits.view(row_count * cols, -1)
+                        self_store[self_flat_mask] = self_logits_flat[self_flat_mask]
+                        eff_store = segment_effective_logits.view(row_count * cols, -1)
+                        eff_store[self_flat_mask] = self_logits_flat[self_flat_mask]
+                        target_flat = segment_targets.view(row_count * cols)
+                        self_target_flat = self_targets.view(-1)
+                        target_flat[self_flat_mask] = self_target_flat[self_flat_mask]
+                        column_supervision_flags |= self_mask.any(dim=0)
+                if pass_loss is None or pass_tokens <= 0:
+                    continue
+                loss_value = float(pass_loss.detach().item())
+                if not segment.suppress_default_metric and not getattr(
+                    segment, "hide_typed_metrics", False
+                ):
+                    _accumulate_metric(
+                        mode_loss_sums,
+                        mode_token_counts,
+                        metric_key,
+                        loss_value,
+                        pass_tokens,
+                    )
+                for tag in plain_metric_templates:
+                    _accumulate_metric(
+                        mode_loss_sums,
+                        mode_token_counts,
+                        tag,
+                        loss_value,
+                        pass_tokens,
+                    )
+                if coord_metric_templates:
+                    per_column_losses = chunk_output.new_zeros(cols)
+                    per_column_tokens = chunk_output.new_zeros(cols)
+                    if torch.any(predict_mask):
+                        loss_vec, token_vec = _column_loss_stats(next_logits, next_targets)
+                        per_column_losses += loss_vec
+                        per_column_tokens += token_vec
+                    if torch.any(self_mask):
+                        loss_vec, token_vec = _column_loss_stats(self_logits, self_targets)
+                        per_column_losses += loss_vec
+                        per_column_tokens += token_vec
+                    loss_list = per_column_losses.detach().cpu().tolist()
+                    token_list = [int(val) for val in per_column_tokens.detach().cpu().tolist()]
+                    column_z_list = [int(val) for val in z_offsets.detach().cpu().tolist()]
+                    for col_idx, tok_count in enumerate(token_list):
+                        if tok_count <= 0:
+                            continue
+                        per_loss = float(loss_list[col_idx])
+                        z_value = column_z_list[col_idx]
+                        for template in coord_metric_templates:
+                            metric_name = _format_metric_template(
+                                template,
+                                pass_idx,
+                                z_value,
+                            )
+                            _accumulate_metric(
+                                mode_loss_sums,
+                                mode_token_counts,
+                                metric_name,
+                                per_loss,
+                                tok_count,
+                            )
+                if segment_loss is None:
+                    segment_loss = pass_loss
+                else:
+                    segment_loss = segment_loss + pass_loss
+                segment_tokens += pass_tokens
+            if segment_loss is not None and segment_tokens > 0:
+                total_loss += float(segment_loss.detach().item())
+                total_tokens += segment_tokens
+            target_ids[:, start:end] = segment_targets
+            supervision_mask[start:end] = column_supervision_flags
+            logits_buffer.append(segment_effective_logits)
+            next_logits_buffer.append(segment_next_store)
+            self_logits_buffer.append(segment_self_store)
+            kv_chain.append(kv_final)
+            cursor += cols
+            pos_cursor += base_tokens
+            continue
         if segment.mode == "reverse":
             control_ids[:, start:end] = CONTROL_PREDICT_PREV
         elif segment.mode in {"decode", "forward"}:
@@ -8004,6 +8281,13 @@ def _evaluate_row_block(
             control_ids[:, start:end] = CONTROL_NONE
             control_ids[:, end - 1 : end] = CONTROL_PREDICT_NEXT
         control_slice = control_ids[:, start:end].clone()
+        if segment.mode == "reverse":
+            token_source = future_token_components
+            chunk_target = expanded_inputs[:, start:end]
+        else:
+            token_source = token_components
+            chunk_target = expanded_targets[:, start:end]
+        token_slice = token_source[:, start:end, :]
         drop_mask_tensor: torch.Tensor | None = None
         if segment.mode == "encode" and getattr(segment, "drop_count", 0) > 0:
             drop_positions = _sample_drop_positions(cols, segment.drop_count, drop_rng)
@@ -8015,13 +8299,6 @@ def _evaluate_row_block(
             control_slice[:, drop_mask_tensor] = CONTROL_FIND_SELF
             control_ids[:, start:end][:, drop_mask_tensor] = CONTROL_FIND_SELF
         control_embed = model.core.expand_to_even(model.core.control_emb(control_slice))
-        if segment.mode == "reverse":
-            token_source = future_token_components
-            chunk_target = expanded_inputs[:, start:end]
-        else:
-            token_source = token_components
-            chunk_target = expanded_targets[:, start:end]
-        token_slice = token_source[:, start:end, :]
         think_index, think_count, think_mask = _segment_think_metadata(
             segment,
             cols,
@@ -8070,14 +8347,6 @@ def _evaluate_row_block(
             getattr(segment, "loss_input_stream", False)
             or getattr(segment, "loss_output_stream", False)
         )
-        segment_disable_sane = row_disable_sane or getattr(segment, "disable_sane", False)
-        extra_metric_templates = list(getattr(segment, "extra_metrics", ()))
-        coord_metric_templates = [
-            name for name in extra_metric_templates if _metric_template_has_coords(name)
-        ]
-        plain_metric_templates = [
-            name for name in extra_metric_templates if not _metric_template_has_coords(name)
-        ]
         chunk_output, grce_state, xctx_state, kv_out, layer_outputs = model.stack_sequence.forward(
             chunk_input,
             grce_in=grce_state,
@@ -8339,11 +8608,12 @@ def _prepare_eval_batch_tokens(
     start_positions: Sequence[int],
     align_rng: random.Random | None = None,
     future_margin: int = 0,
-) -> tuple[torch.Tensor, torch.Tensor, str, str]:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, str, str]:
     if not start_positions:
         raise ValueError("Random evaluation batch requires at least one start position")
     input_chunks: list[torch.Tensor] = []
     target_chunks: list[torch.Tensor] = []
+    source_chunks: list[torch.Tensor] = []
     labels: list[str] = []
     previews: list[str] = []
     for pos in start_positions:
@@ -8354,7 +8624,7 @@ def _prepare_eval_batch_tokens(
             _,
             source_label,
             pretty_text,
-            _,
+            base_source_ids,
         ) = _prepare_eval_tokens(
             args,
             dataset,
@@ -8367,14 +8637,16 @@ def _prepare_eval_batch_tokens(
         )
         input_chunks.append(inputs)
         target_chunks.append(targets)
+        source_chunks.append(base_source_ids)
         labels.append(source_label)
         if len(previews) < 3:
             previews.append(pretty_text)
     stacked_inputs = torch.stack(input_chunks)
     stacked_targets = torch.stack(target_chunks)
+    stacked_sources = torch.stack(source_chunks)
     source_label = ", ".join(labels)
     pretty_preview = "\n---\n".join(previews)
-    return stacked_inputs, stacked_targets, source_label, pretty_preview
+    return stacked_inputs, stacked_targets, stacked_sources, source_label, pretty_preview
 
 
 def run_test_slice(
@@ -9542,6 +9814,7 @@ def run_eval_layout(
     align_rng: random.Random | None = None,
     batch_inputs: torch.Tensor | None = None,
     batch_targets: torch.Tensor | None = None,
+    batch_sources: torch.Tensor | None = None,
     batch_label: str | None = None,
     batch_pretty: str | None = None,
     use_sampled_weight: bool = False,
@@ -9563,21 +9836,23 @@ def run_eval_layout(
         if max_positions <= 0:
             raise ValueError("Layout does not contain any token positions to evaluate")
         layout_future_margin = max((_row_future_margin(row) for row in layout.rows), default=0)
+        base_source_tensor: torch.Tensor | None = None
         if batch_inputs is not None and batch_targets is not None:
             inputs_tensor = batch_inputs
             targets_tensor = batch_targets
+            base_source_tensor = batch_sources
             source_label = batch_label or "random batch"
             pretty_text = batch_pretty or ""
             eval_block_size = inputs_tensor.size(-1)
         else:
             (
-                context_tokens,
+                _,
                 inputs,
                 targets,
                 eval_block_size,
                 source_label,
                 pretty_text,
-                _,
+                base_source_ids,
             ) = _prepare_eval_tokens(
                 args,
                 dataset,
@@ -9590,6 +9865,12 @@ def run_eval_layout(
             )
             inputs_tensor = inputs.unsqueeze(0)
             targets_tensor = targets.unsqueeze(0)
+            base_source_tensor = base_source_ids.unsqueeze(0)
+
+        if base_source_tensor is None:
+            base_source_tensor = torch.cat(
+                [inputs_tensor[:, :1], targets_tensor], dim=1
+            )
 
         if verbose_flag and pretty_text:
             print(color_text(f"Evaluating layout '{args.layout}' on {source_label}:", Colors.CYAN))
@@ -9597,6 +9878,7 @@ def run_eval_layout(
 
         xb_base = inputs_tensor.to(model_device)
         yb_base = targets_tensor.to(model_device)
+        base_source_tensor = base_source_tensor.to(model_device)
 
         overall_loss_sums = {mode: 0.0 for mode in BATCH_MODES}
         overall_token_counts = {mode: 0 for mode in BATCH_MODES}
@@ -9625,6 +9907,7 @@ def run_eval_layout(
                         variant,
                         xb_base,
                         yb_base,
+                        base_source_ids=base_source_tensor,
                         drop_rng=random.Random(row_seed),
                     )
                 except ValueError as exc:
@@ -10880,7 +11163,7 @@ class Runtime:
                                     Colors.BLUE,
                                 )
                             )
-                        batch_inputs, batch_targets, batch_label, batch_pretty = _prepare_eval_batch_tokens(
+                        batch_inputs, batch_targets, batch_sources, batch_label, batch_pretty = _prepare_eval_batch_tokens(
                             self.args,
                             dataset,
                             tokenizer,
@@ -10901,6 +11184,7 @@ class Runtime:
                             align_rng=None,
                             batch_inputs=batch_inputs,
                             batch_targets=batch_targets,
+                            batch_sources=batch_sources,
                             batch_label=batch_label,
                             batch_pretty=batch_pretty,
                             use_sampled_weight=True,
