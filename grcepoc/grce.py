@@ -151,6 +151,7 @@ class Defaults:
     log_pos_matrix: bool = False
     log_alpha_beta_matrix: bool = False
     log_all_steps: bool = False
+    log_zero_step: bool = False
     lr_base: float = 3e-4
     weight_decay: float = 0.01
     adam_beta1: float = 0.9
@@ -1807,6 +1808,11 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         "--log-all-steps",
         action="store_true",
         help="Print every think pass; otherwise only the final pass is shown",
+    )
+    test_parser.add_argument(
+        "--log-zero-step",
+        action="store_true",
+        help="Log initial LM(self)/LM(next) predictions before the transformer runs",
     )
 
     eval_parser = subparsers.add_parser(
@@ -7851,6 +7857,8 @@ class RowEvalResult:
     attention_maps: dict[int, dict[int, torch.Tensor]] | None = None
     block_attentions: list["BlockAttention"] | None = None
     sampled_rows: int = 1
+    initial_next_logits: torch.Tensor | None = None
+    initial_self_logits: torch.Tensor | None = None
 
 
 @dataclass
@@ -7909,6 +7917,17 @@ def _evaluate_row_block(
         expanded_targets,
         None,
     )
+    zero_next_logits: torch.Tensor | None = None
+    zero_self_logits: torch.Tensor | None = None
+    if getattr(args, "log_zero_step", False):
+        base_embed = model.core.drop(token_components)
+        head_input = model.core.ln_f(base_embed)
+        zero_next_logits = model.core.head(
+            model.core.output_features(head_input, use_next_stream=True)
+        )
+        zero_self_logits = model.core.head(
+            model.core.output_features(head_input, use_next_stream=False)
+        )
     column_positions = _segment_column_positions(row.segments, token_components.device)
     if row.modifiers and getattr(row.modifiers, "halt_rope", False):
         column_positions = torch.zeros_like(column_positions)
@@ -8234,6 +8253,8 @@ def _evaluate_row_block(
         attention_maps=attention_storage if capture_columns else None,
         block_attentions=block_attentions,
         sampled_rows=row_count,
+        initial_next_logits=zero_next_logits,
+        initial_self_logits=zero_self_logits,
     )
 
 
@@ -8461,6 +8482,27 @@ def run_test_slice(
                     final_sums[name] = total
                     final_counts[name] = count
             log_all_steps = bool(getattr(args, "log_all_steps", False))
+            if getattr(args, "log_zero_step", False):
+                zero_next = getattr(final_result, "initial_next_logits", None)
+                if zero_next is not None:
+                    zero_self = getattr(final_result, "initial_self_logits", None)
+                    _print_row_pass_details(
+                        tokenizer,
+                        final_result,
+                        annotations_full,
+                        annotations_full,
+                        pad,
+                        vocab_size,
+                        show_metrics=False,
+                        args=args,
+                        model=model,
+                        row=row,
+                        pass_idx=0,
+                        logits_override=zero_next,
+                        self_logits_override=zero_self,
+                        disable_losses=True,
+                        step_override=0,
+                    )
             for pass_idx, (variant, result) in enumerate(pass_results):
                 if not log_all_steps and pass_idx < total_passes - 1:
                     continue
@@ -8930,25 +8972,38 @@ def _print_row_pass_details(
     model: GRCEGPT,
     row: BlockLayout,
     pass_idx: int,
+    logits_override: torch.Tensor | None = None,
+    self_logits_override: torch.Tensor | None = None,
+    disable_losses: bool = False,
+    step_override: int | None = None,
 ) -> None:
-    row_logits = row_result.logits
+    base_logits = row_result.logits
+    row_logits = logits_override if logits_override is not None else base_logits
     log_probs = torch.log_softmax(row_logits, dim=-1)
     next_logits_tensor = getattr(row_result, "next_stream_logits", None)
-    if next_logits_tensor is None:
-        next_logits = row_logits
+    if logits_override is not None:
+        next_logits = logits_override
+    elif next_logits_tensor is None:
+        next_logits = base_logits
     else:
         next_logits = next_logits_tensor
     next_log_probs = torch.log_softmax(next_logits, dim=-1)
-    self_log_probs = None
-    if row_result.self_stream_logits is not None:
+    if self_logits_override is not None:
+        self_log_probs = torch.log_softmax(self_logits_override, dim=-1)
+    elif row_result.self_stream_logits is not None:
         self_log_probs = torch.log_softmax(row_result.self_stream_logits, dim=-1)
+    else:
+        self_log_probs = None
     target_ids = row_result.target_ids
-    gathered = torch.gather(
-        log_probs,
-        dim=-1,
-        index=target_ids.unsqueeze(-1),
-    ).squeeze(-1)
-    per_token_loss = (-gathered).squeeze(0)
+    if disable_losses:
+        per_token_loss = None
+    else:
+        gathered = torch.gather(
+            log_probs,
+            dim=-1,
+            index=target_ids.unsqueeze(-1),
+        ).squeeze(-1)
+        per_token_loss = (-gathered).squeeze(0)
 
     top_k = min(3, vocab_size)
     next_top_logp, next_top_indices = torch.topk(next_log_probs, k=top_k, dim=-1)
@@ -8959,8 +9014,12 @@ def _print_row_pass_details(
         self_top_logp, self_top_indices = torch.topk(self_log_probs, k=top_k, dim=-1)
         self_top_probs = self_top_logp.exp()
 
-    losses_cpu = per_token_loss.cpu().tolist()
-    mask_cpu = row_result.supervision_mask.cpu().tolist()
+    if disable_losses or per_token_loss is None:
+        losses_cpu = [0.0] * row_result.supervision_mask.numel()
+        mask_cpu = [False] * row_result.supervision_mask.numel()
+    else:
+        losses_cpu = per_token_loss.cpu().tolist()
+        mask_cpu = row_result.supervision_mask.cpu().tolist()
     inputs_cpu = row_result.source_ids.squeeze(0).cpu().tolist()
     targets_cpu = row_result.target_ids.squeeze(0).cpu().tolist()
     next_top_indices_cpu = next_top_indices.squeeze(0).cpu().tolist()
@@ -9036,17 +9095,20 @@ def _print_row_pass_details(
     for col in range(seq_len):
         annotation = effective_annotations[col] if col < len(effective_annotations) else {}
         token_text = token_texts[col]
-        loss_value = losses_cpu[col] if mask_cpu[col] else None
+        loss_value = losses_cpu[col] if (not disable_losses and mask_cpu[col]) else None
         pass_sup = annotation.get("pass_supervision") or ["next"]
-        loss_cells = [
-            _format_loss_cell(loss_value, supervision=sup) for sup in pass_sup
-        ]
-        if loss_value is not None:
-            for supervision in pass_sup:
-                key = "next" if supervision == "next" else "self"
-                bucket = loss_summary[key]
-                bucket[0] += loss_value
-                bucket[1] += 1
+        if disable_losses:
+            loss_cells = ["   --  " for _ in pass_sup]
+        else:
+            loss_cells = [
+                _format_loss_cell(loss_value, supervision=sup) for sup in pass_sup
+            ]
+            if loss_value is not None:
+                for supervision in pass_sup:
+                    key = "next" if supervision == "next" else "self"
+                    bucket = loss_summary[key]
+                    bucket[0] += loss_value
+                    bucket[1] += 1
         loss_text = " ".join(loss_cells)
         label = annotation.get("label") if annotation else ""
         block_idx = annotation.get("segment_id") if annotation else None
@@ -9083,33 +9145,41 @@ def _print_row_pass_details(
         summary_token_id = base_tokens[future_index]
     summary_target = _format_token_fragment(tokenizer, summary_token_id)
     summary_label = "*" * idx_width
-    summary_parts: list[str] = []
-    self_total, self_count = loss_summary["self"]
-    if self_count > 0:
-        summary_parts.append(f"({self_total / self_count:.3f})")
-    next_total, next_count = loss_summary["next"]
-    if next_count > 0:
-        summary_parts.append(f" {next_total / next_count:7.3f}")
-    summary_loss_text = "".join(summary_parts) if summary_parts else "   --  "
-    if row_result.total_tokens > 0:
-        overall_avg = row_result.total_loss_sum / row_result.total_tokens
-        overall_text = f"{overall_avg:7.3f}"
-        if summary_parts:
-            summary_loss_text = f"{summary_loss_text} = {overall_text}"
-        else:
-            summary_loss_text = overall_text
+    if disable_losses:
+        summary_loss_text = "   --  "
+    else:
+        summary_parts: list[str] = []
+        self_total, self_count = loss_summary["self"]
+        if self_count > 0:
+            summary_parts.append(f"({self_total / self_count:.3f})")
+        next_total, next_count = loss_summary["next"]
+        if next_count > 0:
+            summary_parts.append(f" {next_total / next_count:7.3f}")
+        summary_loss_text = "".join(summary_parts) if summary_parts else "   --  "
+        if row_result.total_tokens > 0:
+            overall_avg = row_result.total_loss_sum / row_result.total_tokens
+            overall_text = f"{overall_avg:7.3f}"
+            if summary_parts:
+                summary_loss_text = f"{summary_loss_text} = {overall_text}"
+            else:
+                summary_loss_text = overall_text
     for seg_idx, segment in enumerate(row.segments):
         lines = block_line_map.get(seg_idx)
         if not lines:
             continue
         max_pass = max(1, int(getattr(segment, "sane_x", 1) or 1))
-        step_index = min(pass_idx, max_pass - 1)
+        if step_override is not None:
+            step_index = max(0, min(step_override, max_pass))
+            display_step = step_override
+        else:
+            step_index = min(pass_idx, max_pass - 1)
+            display_step = step_index + 1
         block_title = _segment_display_name(segment)
         block_pad = pad[:-2] if len(pad) >= 2 else ""
         step_pad = block_pad + "  "
         line_pad = step_pad + "  "
         print(f"{block_pad}Block {seg_idx} [{block_title}]:")
-        print(f"{step_pad}Step {step_index + 1}/{max_pass}:")
+        print(f"{step_pad}Step {display_step}/{max_pass}:")
         for line in lines:
             print(f"{line_pad}{line}")
 
