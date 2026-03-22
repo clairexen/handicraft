@@ -7761,6 +7761,44 @@ def _row_description(layout: BatchLayout, row: BlockLayout) -> str:
     return layout.serialize_rows([BlockLayout(1, row.segments, row.modifiers)])
 
 
+def _segment_display_name(segment: SegmentLayout) -> str:
+    letter = _MODE_LETTERS.get(segment.mode, segment.mode[0])
+    if not segment.context_enabled:
+        letter = letter.upper()
+    parts = [str(segment.token_columns_override if segment.token_columns_override is not None else segment.columns) + letter]
+    if getattr(segment, "hide_typed_metrics", False):
+        parts.append("H")
+    if getattr(segment, "layer_repeat", 1) and segment.layer_repeat > 1:
+        suffix_letter = "Y" if getattr(segment, "layer_top_only", False) else "y"
+        parts.append(f"{segment.layer_repeat}{suffix_letter}")
+    if getattr(segment, "think_factor", 1) and segment.think_factor > 1:
+        suffix_letter = "T" if getattr(segment, "think_last_only", False) else "t"
+        parts.append(f"{segment.think_factor}{suffix_letter}")
+    if segment.mode == "decode" and getattr(segment, "sane_x", 1) > 1:
+        suffix_letter = "X" if getattr(segment, "sane_x_last_only", False) else "x"
+        parts.append(f"{segment.sane_x}{suffix_letter}")
+    if getattr(segment, "loss_output_stream", False):
+        parts.append("B")
+    if getattr(segment, "loss_input_stream", False):
+        parts.append("b")
+    drop_count = getattr(segment, "drop_count", 0)
+    if drop_count:
+        prefix = f"{drop_count}" if drop_count > 1 else ""
+        parts.append(f"{prefix}P")
+    if getattr(segment, "sane_z", 1) and segment.sane_z > 1:
+        suffix_letter = "Z" if getattr(segment, "sane_z_strict", False) else "z"
+        parts.append(f"{segment.sane_z}{suffix_letter}")
+    if getattr(segment, "disable_sane", False):
+        parts.append("S")
+    if getattr(segment, "self_attention_only", False):
+        parts.append("N")
+    extra = getattr(segment, "extra_metrics", ())
+    if extra:
+        prefix = ">>" if getattr(segment, "suppress_default_metric", False) else ">"
+        parts.append(prefix + ">".join(extra))
+    return "".join(parts)
+
+
 @dataclass
 class AttentionCapture:
     columns: set[int]
@@ -8418,8 +8456,6 @@ def run_test_slice(
                     final_counts[name] = count
             for pass_idx, (variant, result) in enumerate(pass_results):
                 annotations = _column_debug_annotations(variant)
-                for line in _format_block_step_lines(variant, annotations):
-                    print(line)
                 _print_row_pass_details(
                     tokenizer,
                     result,
@@ -8431,6 +8467,7 @@ def run_test_slice(
                     args=args,
                     model=model,
                     row=row,
+                    pass_idx=pass_idx,
                 )
 
     if was_training:
@@ -8761,42 +8798,6 @@ def _row_with_sane_pass_limit(row: BlockLayout, limit: int) -> BlockLayout:
     return BlockLayout(row.rows, new_segments, row.modifiers)
 
 
-def _format_block_step_lines(
-    row: BlockLayout,
-    annotations: Sequence[dict[str, object]],
-) -> list[str]:
-    per_segment: dict[int, list[tuple[int, str, Sequence[str]]]] = {}
-    for idx, info in enumerate(annotations):
-        seg_id = info.get("segment_id")
-        if seg_id is None:
-            continue
-        label = info.get("label", "") or ""
-        sup_list: Sequence[str] = info.get("pass_supervision") or ["next"]
-        per_segment.setdefault(int(seg_id), []).append((idx, label, sup_list))
-    lines: list[str] = []
-    for seg_idx, segment in enumerate(row.segments):
-        entries = per_segment.get(seg_idx)
-        if not entries:
-            continue
-        steps = max(1, int(getattr(segment, "sane_x", 1) or 1))
-        lines.append(f"      Block {seg_idx} (X={steps}):")
-        for step in range(steps):
-            step_entries: list[str] = []
-            for col_idx, label, sup_list in entries:
-                pos = step if step < len(sup_list) else len(sup_list) - 1
-                supervision = sup_list[pos]
-                tag = "n" if supervision == "next" else "s"
-                if label:
-                    step_entries.append(f"{col_idx}:{label}[{tag}]")
-                else:
-                    step_entries.append(f"{col_idx}[{tag}]")
-            desc = ", ".join(step_entries) if step_entries else "(no columns)"
-            lines.append(f"        Step {step + 1}/{steps}: {desc}")
-    if not lines:
-        lines.append("      (no supervised blocks)")
-    return lines
-
-
 def _coordinate_metric_names(row: BlockLayout) -> set[str]:
     names: set[str] = set()
     for segment in row.segments:
@@ -8919,6 +8920,7 @@ def _print_row_pass_details(
     args: Args,
     model: GRCEGPT,
     row: BlockLayout,
+    pass_idx: int,
 ) -> None:
     row_logits = row_result.logits
     log_probs = torch.log_softmax(row_logits, dim=-1)
@@ -9021,6 +9023,7 @@ def _print_row_pass_details(
         token_width = max(token_width, len(token_display))
 
     loss_summary = {"self": [0.0, 0], "next": [0.0, 0]}
+    block_line_map: dict[int | None, list[str]] = defaultdict(list)
     for col in range(seq_len):
         annotation = effective_annotations[col] if col < len(effective_annotations) else {}
         token_text = token_texts[col]
@@ -9059,9 +9062,10 @@ def _print_row_pass_details(
             next_top_indices_cpu[col],
             next_top_probs_cpu[col],
         )
-        print(
-            f"{pad}{idx_text} | {token_text:<{token_width}} | {loss_text} | {self_desc} | {next_desc}"
+        line_text = (
+            f"{idx_text} | {token_text:<{token_width}} | {loss_text} | {self_desc} | {next_desc}"
         )
+        block_line_map[block_idx].append(line_text)
 
     summary_token_id = targets_cpu[-1]
     context_len = int(getattr(row_result, "base_context_length", len(inputs_cpu)))
@@ -9085,6 +9089,22 @@ def _print_row_pass_details(
             summary_loss_text = f"{summary_loss_text} = {overall_text}"
         else:
             summary_loss_text = overall_text
+    for seg_idx, segment in enumerate(row.segments):
+        lines = block_line_map.get(seg_idx)
+        if not lines:
+            continue
+        max_pass = max(1, int(getattr(segment, "sane_x", 1) or 1))
+        if pass_idx >= max_pass:
+            continue
+        block_title = _segment_display_name(segment)
+        block_pad = pad[:-2] if len(pad) >= 2 else ""
+        step_pad = block_pad + "  "
+        line_pad = step_pad + "  "
+        print(f"{block_pad}Block {seg_idx} [{block_title}]:")
+        print(f"{step_pad}Step {min(pass_idx + 1, max_pass)}/{max_pass}:")
+        for line in lines:
+            print(f"{line_pad}{line}")
+
     print(
         f"{pad}{summary_label} | {summary_target:<{token_width}} | {summary_loss_text} nats/token"
     )
