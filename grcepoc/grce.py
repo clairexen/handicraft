@@ -150,6 +150,7 @@ class Defaults:
     log_attn_masks: bool = False
     log_pos_matrix: bool = False
     log_alpha_beta_matrix: bool = False
+    log_all_steps: bool = False
     lr_base: float = 3e-4
     weight_decay: float = 0.01
     adam_beta1: float = 0.9
@@ -1801,6 +1802,11 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         help=(
             "Print alpha/beta propagation matrices for decode grids (per think step when X>1)"
         ),
+    )
+    test_parser.add_argument(
+        "--log-all-steps",
+        action="store_true",
+        help="Print every think pass; otherwise only the final pass is shown",
     )
 
     eval_parser = subparsers.add_parser(
@@ -8454,7 +8460,10 @@ def run_test_slice(
                 for name, (total, count) in coord_metrics.items():
                     final_sums[name] = total
                     final_counts[name] = count
+            log_all_steps = bool(getattr(args, "log_all_steps", False))
             for pass_idx, (variant, result) in enumerate(pass_results):
+                if not log_all_steps and pass_idx < total_passes - 1:
+                    continue
                 annotations = _column_debug_annotations(variant)
                 _print_row_pass_details(
                     tokenizer,
@@ -9094,14 +9103,13 @@ def _print_row_pass_details(
         if not lines:
             continue
         max_pass = max(1, int(getattr(segment, "sane_x", 1) or 1))
-        if pass_idx >= max_pass:
-            continue
+        step_index = min(pass_idx, max_pass - 1)
         block_title = _segment_display_name(segment)
         block_pad = pad[:-2] if len(pad) >= 2 else ""
         step_pad = block_pad + "  "
         line_pad = step_pad + "  "
         print(f"{block_pad}Block {seg_idx} [{block_title}]:")
-        print(f"{step_pad}Step {min(pass_idx + 1, max_pass)}/{max_pass}:")
+        print(f"{step_pad}Step {step_index + 1}/{max_pass}:")
         for line in lines:
             print(f"{line_pad}{line}")
 
