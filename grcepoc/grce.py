@@ -9609,18 +9609,45 @@ def run_eval_layout(
         eval_drop_rng = random.Random(getattr(args, "rng_seed", 0) or 0)
         for row_idx, row in enumerate(layout.rows, start=1):
             row_desc = _row_description(layout, row)
-            try:
-                row_result = _evaluate_row_block(
-                    args,
-                    model,
-                    row,
-                    xb_base,
-                    yb_base,
-                    drop_rng=eval_drop_rng,
-                )
-            except ValueError as exc:
-                print(color_text(f"Row block #{row_idx}: {row_desc} -> error: {exc}", Colors.RED))
+            annotations_full = _column_debug_annotations(row)
+            max_passes = _max_decode_passes(row)
+            row_variants: list[BlockLayout] = [
+                _row_with_sane_pass_limit(row, limit) for limit in range(1, max_passes)
+            ]
+            row_variants.append(row)
+            pass_results: list[tuple[BlockLayout, RowEvalResult]] = []
+            row_seed = eval_drop_rng.randint(0, 2**63 - 1)
+            for variant_idx, variant in enumerate(row_variants):
+                try:
+                    result = _evaluate_row_block(
+                        args,
+                        model,
+                        variant,
+                        xb_base,
+                        yb_base,
+                        drop_rng=random.Random(row_seed),
+                    )
+                except ValueError as exc:
+                    print(color_text(f"Row block #{row_idx}: {row_desc} -> error: {exc}", Colors.RED))
+                    pass_results = []
+                    break
+                pass_results.append((variant, result))
+            if not pass_results:
                 continue
+            final_result = pass_results[-1][1]
+            coord_names = _coordinate_metric_names(row)
+            if coord_names:
+                coord_metrics = _collect_coordinate_metrics(
+                    annotations_full,
+                    pass_results,
+                    coord_names,
+                )
+                final_sums = final_result.mode_loss_sums
+                final_counts = final_result.mode_token_counts
+                for name, (total, count) in coord_metrics.items():
+                    final_sums[name] = total
+                    final_counts[name] = count
+            row_result = final_result
 
             row_metrics = _row_metric_values(row_result)
             if verbose_flag:
