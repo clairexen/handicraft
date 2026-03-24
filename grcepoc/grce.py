@@ -9082,8 +9082,11 @@ def _column_debug_annotations(row: BlockLayout) -> list[dict[str, object]]:
                     step_group = min(z_value, passes - 1)
                     annotations[idx]["sane_step"] = step_group
                     sup_list: list[str] = []
+                    override_sup = "self" if getattr(segment, "loss_input_stream", False) else None
                     for pass_idx in range(passes):
-                        if z_value <= 0:
+                        if override_sup is not None:
+                            supervision = override_sup
+                        elif z_value <= 0:
                             supervision = "next"
                         elif pass_idx < z_value:
                             supervision = "self"
@@ -9092,7 +9095,10 @@ def _column_debug_annotations(row: BlockLayout) -> list[dict[str, object]]:
                         sup_list.append(supervision)
                     annotations[idx]["pass_supervision"] = sup_list
                 else:
-                    supervision = "next" if z_value == 0 else "self"
+                    if getattr(segment, "loss_input_stream", False):
+                        supervision = "self"
+                    else:
+                        supervision = "next" if z_value == 0 else "self"
                     annotations[idx]["pass_supervision"] = [supervision]
         cursor += cols
         if base_tokens > 0:
@@ -9180,10 +9186,11 @@ def _build_pass_records(
         self_log_probs = torch.log_softmax(row_result.self_stream_logits, dim=-1)
         self_top_logp, self_top_indices = torch.topk(self_log_probs, k=top_k, dim=-1)
         self_top_probs = self_top_logp.exp()
+        self_targets = row_result.source_ids.long()
         gathered_self = torch.gather(
             self_log_probs,
             dim=-1,
-            index=row_result.target_ids.unsqueeze(-1),
+            index=self_targets.unsqueeze(-1),
         ).squeeze(-1)
         self_losses_cpu = (-gathered_self).squeeze(0).cpu().tolist()
         self_top_indices_cpu = self_top_indices.squeeze(0).cpu().tolist()
@@ -9769,7 +9776,8 @@ def _print_row_pass_details_from_records(
     if total_passes <= 0:
         return
 
-    if getattr(args, "log_all_steps", False):
+    show_all_steps = bool(getattr(args, "log_all_steps", False))
+    if show_all_steps:
         steps_to_show = list(range(total_passes))
     else:
         steps_to_show = [max(0, min(pass_idx, total_passes - 1))]
@@ -9836,6 +9844,7 @@ def _print_row_pass_details_from_records(
             token_display = f"{idx_prefix} {token_text}"
             token_strings.append(token_display)
             token_width = max(token_width, len(token_display))
+        pass_total = int(annotation.get("sane_pass_total") or 1)
         column_meta.append(
             {
                 "block_idx": block_idx,
@@ -9843,38 +9852,53 @@ def _print_row_pass_details_from_records(
                 "token_strings": token_strings,
                 "pass_records": pass_records,
                 "pass_supervision": annotation.get("pass_supervision") or ["next"],
+                "pass_total": pass_total,
             }
         )
 
     log_perplexity = bool(getattr(args, "log_perplexity", False))
     log_self_next = bool(getattr(args, "log_self_next", False))
     lines_by_step: dict[int, dict[int | None, list[str]]] = {
-        step: defaultdict(list) for step in steps_to_show
+        step: defaultdict(list) for step in range(total_passes)
     }
     loss_summaries: dict[int, dict[str, list[float]]] = {
-        step: {"self": [0.0, 0], "next": [0.0, 0]} for step in steps_to_show
+        step: {"self": [0.0, 0], "next": [0.0, 0]} for step in range(total_passes)
     }
 
     for meta in column_meta:
         pass_records = meta["pass_records"]
         token_strings = meta["token_strings"]
         sup_list = meta.get("pass_supervision") or ["next"]
-        for step in steps_to_show:
+        column_pass_total = max(1, int(meta.get("pass_total") or 1))
+        for step in range(column_pass_total):
             if step >= len(pass_records):
                 continue
             record = pass_records[step]
             token_display = token_strings[step] if step < len(token_strings) else token_strings[-1]
-            supervision = sup_list[min(step, len(sup_list) - 1)] if sup_list else "next"
+            current_supervision = sup_list[min(step, len(sup_list) - 1)] if sup_list else "next"
             mask = bool(record.get("mask")) if record else False
-            loss_value = None
-            if mask and record is not None:
-                if supervision == "self":
-                    loss_value = record.get("self_loss")
-                else:
-                    loss_value = record.get("next_loss")
-            loss_text = _format_loss_cell(loss_value, supervision=supervision)
+            loss_text_parts: list[str] = []
+            active_loss_value = None
+            max_loss_index = min(step, len(pass_records) - 1)
+            for loss_step in range(max_loss_index + 1):
+                loss_record = pass_records[loss_step]
+                sup = sup_list[loss_step] if loss_step < len(sup_list) else (
+                    sup_list[-1] if sup_list else "next"
+                )
+                value = None
+                if loss_record and loss_record.get("mask"):
+                    if sup == "self":
+                        value = loss_record.get("self_loss")
+                    else:
+                        value = loss_record.get("next_loss")
+                if loss_step == step:
+                    active_loss_value = value
+                loss_text_parts.append(_format_loss_cell(value, supervision=sup))
+            loss_text = " ".join(loss_text_parts) if loss_text_parts else "   --  "
             if log_perplexity:
-                perplexity_text = "   --  " if loss_value is None else f"{math.exp(loss_value):7.3f}"
+                perplexity_text = (
+                    "   --  " if active_loss_value is None else f"{math.exp(active_loss_value):7.3f}"
+                )
             next_desc = _format_top_predictions(
                 tokenizer,
                 record.get("next_top_indices") if record else None,
@@ -9894,37 +9918,49 @@ def _print_row_pass_details_from_records(
                     + f" | {self_desc} | {next_desc}"
                 )
             else:
-                prediction = self_desc if supervision == "self" else next_desc
+                prediction = self_desc if current_supervision == "self" else next_desc
                 line_text = (
                     f"{meta['idx_text']} | {token_display:<{token_width}} | {loss_text}"
                     + (f" | {perplexity_text}" if log_perplexity else "")
                     + f" | {prediction}"
                 )
             lines_by_step[step][meta["block_idx"]].append(line_text)
-            if loss_value is not None:
-                key = "next" if supervision == "next" else "self"
+            if active_loss_value is not None:
+                key = "next" if current_supervision == "next" else "self"
                 bucket = loss_summaries[step][key]
-                bucket[0] += float(loss_value)
+                bucket[0] += float(active_loss_value)
                 bucket[1] += 1
 
     block_pad = pad[:-2] if len(pad) >= 2 else ""
     step_pad = block_pad + "  "
     line_pad = step_pad + "  "
     for seg_idx, segment in enumerate(row.segments):
-        has_lines = any(lines_by_step[step].get(seg_idx) for step in steps_to_show)
-        if not has_lines:
+        segment_pass_total = max(1, int(getattr(segment, "sane_x", 1) or 1))
+        segment_pass_total = min(segment_pass_total, total_passes)
+        if show_all_steps:
+            block_steps = [
+                step
+                for step in range(segment_pass_total)
+                if lines_by_step[step].get(seg_idx)
+            ]
+        else:
+            target_step = min(pass_idx, segment_pass_total - 1)
+            block_steps = [
+                target_step
+            ] if lines_by_step[target_step].get(seg_idx) else []
+        if not block_steps:
             continue
         block_title = _segment_display_name(segment)
         print(f"{block_pad}Block {seg_idx} [{block_title}]:")
-        for step in steps_to_show:
+        for step in block_steps:
             step_lines = lines_by_step[step].get(seg_idx)
             if not step_lines:
                 continue
-            print(f"{step_pad}Step {step + 1}/{total_passes}:")
+            print(f"{step_pad}Step {step + 1}/{segment_pass_total}:")
             for line in step_lines:
                 print(f"{line_pad}{line}")
 
-    summary_step = steps_to_show[-1]
+    summary_step = max(0, min(pass_idx, total_passes - 1))
     loss_summary = loss_summaries.get(summary_step, {"self": [0.0, 0], "next": [0.0, 0]})
     summary_token_id = row_result.target_ids.squeeze(0).cpu().tolist()[-1]
     context_len = int(getattr(row_result, "base_context_length", row_result.source_ids.size(1)))
