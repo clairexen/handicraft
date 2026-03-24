@@ -146,6 +146,7 @@ class Defaults:
     rng_cycle_only: bool = False
     log_step_details: bool = False
     log_row_details: bool = False
+    log_eval_details: bool = False
     log_alpha_beta_rms: bool = False
     log_attn_masks: bool = False
     log_pos_matrix: bool = False
@@ -1408,6 +1409,12 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         action="store_true",
         default=DEFAULTS.log_row_details,
         help="Print per-row metrics and window spans (implies --log-step-details)",
+    )
+    training_group.add_argument(
+        "--log-eval-details",
+        action="store_true",
+        default=DEFAULTS.log_eval_details,
+        help="Print per-row spans and losses during periodic train/test evaluations",
     )
     training_group.add_argument(
         "--log-alpha-beta-rms",
@@ -5595,6 +5602,7 @@ class EvalBatchStats:
     metrics: dict[str, float | None]
     loss_sums: dict[str, float]
     token_counts: dict[str, int]
+    row_details: list[dict[str, object]] | None = None
 
 
 def _combine_eval_stats(stats_list: Sequence[EvalBatchStats]) -> EvalBatchStats:
@@ -6317,6 +6325,30 @@ def _run_microbatch_pass(
     return result, time.time() - start_time, row_details
 
 
+def _format_row_detail_entry(detail: dict[str, object]) -> str:
+    micro_idx = detail.get("micro_index")
+    micro_text = "?" if micro_idx is None else str(micro_idx)
+    row_no = detail.get("row")
+    row_text = "?" if row_no is None else str(row_no)
+    start = int(detail.get("token_start", 0))
+    end = int(detail.get("token_end", 0))
+    span = int(detail.get("token_span", max(0, end - start)))
+    wrapped = " wrap" if detail.get("wrapped") else ""
+    token_count = int(detail.get("token_count", 0))
+    loss_sum = float(detail.get("loss_sum", 0.0))
+    avg_loss = loss_sum / token_count if token_count > 0 else None
+    layout_text = detail.get("layout") or ""
+    row_line = (
+        f"    micro {micro_text} row {row_text}: tokens {start}-{end}"
+        f" (span {span}{wrapped})"
+    )
+    if avg_loss is not None:
+        row_line += f" | avg loss {avg_loss:.4f}"
+    if layout_text:
+        row_line += f" | {layout_text}"
+    return row_line
+
+
 def train_layout_batch(
     args: Args,
     model: GRCEGPT,
@@ -6368,14 +6400,6 @@ def train_layout_batch(
                 rng=window_rng,
                 row_serializer=layout.serialize_rows,
             )
-            latest_metrics = getattr(args, "_latest_train_extra_metrics", {})
-            if layout.extra_metric_names:
-                for key in layout.extra_metric_names:
-                    loss_sum = result.mode_loss_sums.get(key)
-                    token_count = result.mode_token_counts.get(key, 0)
-                    if loss_sum is not None and token_count > 0:
-                        latest_metrics[key] = float(loss_sum / token_count)
-            setattr(args, "_latest_train_extra_metrics", latest_metrics)
         except torch.OutOfMemoryError as exc:
             if not hasattr(exc, "microbatch_detail"):
                 exc.microbatch_detail = micro_detail
@@ -6429,6 +6453,8 @@ def evaluate_layout_batch(
     layout: BatchLayout,
     device: torch.device,
     rng: random.Random | None = None,
+    *,
+    capture_row_details: bool = False,
 ) -> EvalBatchStats:
     step_span = layout.total_token_span()
     aggregate_loss_sums: dict[str, float] = {mode: 0.0 for mode in BATCH_MODES}
@@ -6446,11 +6472,13 @@ def evaluate_layout_batch(
         token_counts["target"] = 0
         return EvalBatchStats(metrics, loss_sums, token_counts)
     window_rng = rng if rng is not None else random
-    for batch_rows in layout.micro_batches:
+    detail_entries: list[dict[str, object]] | None = [] if capture_row_details else None
+    row_serializer = layout.serialize_rows if capture_row_details else None
+    for micro_index, batch_rows in enumerate(layout.micro_batches, start=1):
         micro_span = sum(row.token_span() for row in batch_rows)
         if micro_span <= 0:
             continue
-        result, _, _ = _run_microbatch_pass(
+        result, _, row_details = _run_microbatch_pass(
             args,
             model,
             dataset,
@@ -6459,7 +6487,13 @@ def evaluate_layout_batch(
             device,
             collect_mode_metrics=True,
             rng=window_rng,
+            row_serializer=row_serializer,
         )
+        if capture_row_details and detail_entries is not None and row_details:
+            for entry in row_details:
+                copy = dict(entry)
+                copy["micro_index"] = micro_index
+                detail_entries.append(copy)
         if result.total_loss_sum is not None:
             total_loss_sum = (
                 result.total_loss_sum
@@ -6487,7 +6521,12 @@ def evaluate_layout_batch(
     metrics["target"] = None if total_tokens <= 0 else total_loss_value / total_tokens
     loss_sums["target"] = total_loss_value
     token_counts["target"] = total_tokens
-    return EvalBatchStats(metrics, loss_sums, token_counts)
+    return EvalBatchStats(
+        metrics,
+        loss_sums,
+        token_counts,
+        row_details=detail_entries if capture_row_details else None,
+    )
 
 
 def count_eval_calls(steps: int, interval: int) -> int:
@@ -7139,8 +7178,6 @@ def train_model(
     run_total_steps = max(1, args.steps * args.cycles)
     current_lr = args.lr_base
 
-    setattr(args, "_latest_train_extra_metrics", {})
-
     header_probe = BatchLayout(
         args.layout,
         batch_size=batch_size,
@@ -7246,12 +7283,6 @@ def train_model(
                 grad_hook=_record_micro_grad if need_grad_tracking else None,
                 position_shift=position_shift,
             )
-            live_metrics = window_detail.get("extra_metrics")
-            if isinstance(live_metrics, dict):
-                previous_metrics = getattr(args, "_latest_train_extra_metrics", {})
-                merged = dict(previous_metrics)
-                merged.update(live_metrics)
-                setattr(args, "_latest_train_extra_metrics", merged)
             step_base_tokens = base_tokens
             if total_tokens <= 0:
                 raise RuntimeError("No tokens processed in training step")
@@ -7357,24 +7388,7 @@ def train_model(
             if args.log_row_details and isinstance(row_meta, list) and row_meta:
                 print(color_text("  per-row details:", Colors.BLUE))
                 for detail in row_meta:
-                    micro_idx = detail.get("micro_index")
-                    layout_text = detail.get("layout") or ""
-                    start = int(detail.get("token_start", 0))
-                    end = int(detail.get("token_end", 0))
-                    span = int(detail.get("token_span", 0))
-                    wrapped = " wrap" if detail.get("wrapped") else ""
-                    token_count = int(detail.get("token_count", 0))
-                    loss_sum = float(detail.get("loss_sum", 0.0))
-                    avg_loss = loss_sum / token_count if token_count > 0 else None
-                    row_no = detail.get("row")
-                    row_line = (
-                        f"    micro {micro_idx} row {row_no}: tokens {start}-{end}"
-                        f" (span {span}{wrapped})"
-                    )
-                    if avg_loss is not None:
-                        row_line += f" | avg loss {avg_loss:.4f}"
-                    if layout_text:
-                        row_line += f" | {layout_text}"
+                    row_line = _format_row_detail_entry(detail)
                     print(color_text(row_line, Colors.BLUE))
         oom_retries = 0
         step += 1
@@ -7395,9 +7409,22 @@ def train_model(
                     split,
                     layout,
                     device,
+                    capture_row_details=args.log_eval_details,
                 )
         model.train()
         eval_timer.stop()
+
+        if args.log_eval_details:
+            for split in ("train", "test"):
+                stats = eval_metrics.get(split)
+                details = stats.row_details if stats else None
+                if not details:
+                    continue
+                split_color = Colors.MAGENTA if split == "train" else Colors.GREEN
+                print(color_text(f"  [{split}] eval per-row details:", split_color))
+                for entry in details:
+                    row_line = _format_row_detail_entry(entry)
+                    print(color_text(row_line, split_color))
 
         if getattr(args, "log_alpha_beta_rms", False):
             core = getattr(model, "core", None)
@@ -7530,13 +7557,9 @@ def train_model(
             if not keys:
                 return ""
             parts = []
-            live_train_metrics = getattr(args, "_latest_train_extra_metrics", {})
             for key in keys:
-                live_value = live_train_metrics.get(key)
-                if live_value is not None:
-                    parts.append(f"{live_value:.2f}")
-                else:
-                    parts.append(metric_value_text("test", key))
+                test_value = eval_metrics["test"].metrics.get(key)
+                parts.append("****" if test_value is None else f"{test_value:.2f}")
             return " ".join(parts)
 
         newly_observed_extra_metrics = set(layout.extra_metric_names)
