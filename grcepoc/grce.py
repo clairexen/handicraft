@@ -1814,6 +1814,11 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         action="store_true",
         help="Log initial LM(self)/LM(next) predictions before the transformer runs",
     )
+    test_parser.add_argument(
+        "--log-self-next",
+        action="store_true",
+        help="Show both LM(self) and LM(next) predictions for every column",
+    )
 
     eval_parser = subparsers.add_parser(
         "eval",
@@ -9239,12 +9244,17 @@ def _format_top_predictions(
     tokenizer: GPT2TokenizerWrapper,
     indices: Sequence[int] | None,
     probs: Sequence[float] | None,
+    *,
+    target_token: int | None = None,
 ) -> str:
     if indices is None or probs is None:
         return "--"
     entries = []
+    target_token = int(target_token) if target_token is not None else None
     for idx, prob in zip(indices, probs):
         token_piece = _format_token_fragment(tokenizer, idx)
+        if target_token is not None and int(idx) == target_token:
+            token_piece = f"{Colors.BOLD}{token_piece}{Colors.NOT_BOLD}"
         entries.append(f"{token_piece} ({prob * 100:.1f}%)")
     return ", ".join(entries) if entries else "--"
 
@@ -9352,7 +9362,10 @@ def _print_row_pass_details(
     idx_width = idx_prefix_width + (1 + label_width if label_width > 0 else 0)
     block_local_counters: dict[int | None, int] = defaultdict(int)
 
+    log_self_next = bool(getattr(args, "log_self_next", False))
+
     token_texts: list[str] = []
+    token_ids: list[int] = []
     token_width = 0
     for col in range(seq_len):
         annotation = effective_annotations[col] if col < len(effective_annotations) else {}
@@ -9378,6 +9391,7 @@ def _print_row_pass_details(
             idx_prefix = str(token_idx)
         token_display = f"{idx_prefix} {token_text}"
         token_texts.append(token_display)
+        token_ids.append(token_id)
         token_width = max(token_width, len(token_display))
 
     loss_summary = {"self": [0.0, 0], "next": [0.0, 0]}
@@ -9413,19 +9427,55 @@ def _print_row_pass_details(
             idx_text = f"{block_text} {local_text} {col_text} {label:>{label_width}}"
         else:
             idx_text = f"{block_text} {local_text} {col_text}"
-        self_desc = _format_top_predictions(
-            tokenizer,
-            self_top_indices_cpu[col] if self_top_indices_cpu is not None else None,
-            self_top_probs_cpu[col] if self_top_probs_cpu is not None else None,
-        )
-        next_desc = _format_top_predictions(
-            tokenizer,
-            next_top_indices_cpu[col],
-            next_top_probs_cpu[col],
-        )
-        line_text = (
-            f"{idx_text} | {token_text:<{token_width}} | {loss_text} | {self_desc} | {next_desc}"
-        )
+        if log_self_next:
+            current_token_id = token_ids[col] if col < len(token_ids) else None
+            next_token_id = targets_cpu[col] if col < len(targets_cpu) else None
+            self_desc = _format_top_predictions(
+                tokenizer,
+                self_top_indices_cpu[col]
+                if self_top_indices_cpu is not None
+                else None,
+                self_top_probs_cpu[col]
+                if self_top_probs_cpu is not None
+                else None,
+                target_token=current_token_id,
+            )
+            next_desc = _format_top_predictions(
+                tokenizer,
+                next_top_indices_cpu[col],
+                next_top_probs_cpu[col],
+                target_token=next_token_id,
+            )
+            line_text = (
+                f"{idx_text} | {token_text:<{token_width}} | {loss_text} | {self_desc} | {next_desc}"
+            )
+        else:
+            sup_index = max(0, min(pass_idx, len(pass_sup) - 1))
+            chosen_supervision = pass_sup[sup_index]
+            prediction_desc = "--"
+            if mask_cpu[col]:
+                target_token = targets_cpu[col]
+                if chosen_supervision == "self":
+                    prediction_desc = _format_top_predictions(
+                        tokenizer,
+                        self_top_indices_cpu[col]
+                        if self_top_indices_cpu is not None
+                        else None,
+                        self_top_probs_cpu[col]
+                        if self_top_probs_cpu is not None
+                        else None,
+                        target_token=target_token,
+                    )
+                else:
+                    prediction_desc = _format_top_predictions(
+                        tokenizer,
+                        next_top_indices_cpu[col],
+                        next_top_probs_cpu[col],
+                        target_token=target_token,
+                    )
+            line_text = (
+                f"{idx_text} | {token_text:<{token_width}} | {loss_text} | {prediction_desc}"
+            )
         block_line_map[block_idx].append(line_text)
 
     summary_token_id = targets_cpu[-1]
@@ -9473,9 +9523,13 @@ def _print_row_pass_details(
         for line in lines:
             print(f"{line_pad}{line}")
 
-    print(
-        f"{pad}{summary_label} | {summary_target:<{token_width}} | {summary_loss_text} nats/token"
+    summary_line = (
+        f"{pad}{summary_label} | {summary_target:<{token_width}} | {summary_loss_text}"
     )
+    if log_self_next:
+        summary_line += " | -- | --"
+    summary_line += " nats/token"
+    print(summary_line)
 
     if show_metrics:
         _print_extra_metric_summaries(row_result, pad)
