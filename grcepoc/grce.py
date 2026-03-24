@@ -1788,6 +1788,12 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         ),
     )
     test_parser.add_argument(
+        "--use-train-split",
+        dest="test_use_train_split",
+        action="store_true",
+        help="Read slices from the train split instead of the test split",
+    )
+    test_parser.add_argument(
         "--attn-map",
         action="store_true",
         help="Render per-layer attention weights for the final prediction",
@@ -8588,6 +8594,7 @@ def _prepare_eval_tokens(
     custom_text: str | None,
     align_rng: random.Random | None = None,
     future_margin: int = 0,
+    split: str = "test",
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, int, str, str, torch.Tensor]:
     future_margin = max(0, int(future_margin))
     if custom_text:
@@ -8607,7 +8614,7 @@ def _prepare_eval_tokens(
         span = token_length + 1 + future_margin
         if span <= 1:
             raise ValueError("--block-size must be >= 1 for evaluation")
-        tokens = dataset._tokens_for_split("test")
+        tokens = dataset._tokens_for_split(split)
         chunk, adjusted = dataset._aligned_window(
             tokens,
             start_pos,
@@ -8616,7 +8623,7 @@ def _prepare_eval_tokens(
             allow_resample=align_rng is not None,
         )
         context_tokens = chunk
-        source_label = f"test split offset {adjusted}"
+        source_label = f"{split} split offset {adjusted}"
     if context_tokens.numel() < token_length + 1:
         raise ValueError("Not enough tokens collected for evaluation")
     usable = context_tokens[: token_length + 1]
@@ -8643,6 +8650,7 @@ def _prepare_eval_batch_tokens(
     start_positions: Sequence[int],
     align_rng: random.Random | None = None,
     future_margin: int = 0,
+    split: str = "test",
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, str, str]:
     if not start_positions:
         raise ValueError("Random evaluation batch requires at least one start position")
@@ -8669,6 +8677,7 @@ def _prepare_eval_batch_tokens(
             custom_text=None,
             align_rng=align_rng,
             future_margin=future_margin,
+            split=split,
         )
         input_chunks.append(inputs)
         target_chunks.append(targets)
@@ -8693,6 +8702,7 @@ def run_test_slice(
     start_pos: int,
     *,
     custom_text: str | None = None,
+    split: str = "test",
 ) -> None:
     """Run the layout on either a corpus slice or custom text and log per-token stats."""
 
@@ -8727,6 +8737,7 @@ def run_test_slice(
             custom_text=custom_text,
             align_rng=None,
             future_margin=layout_future_margin,
+            split=split,
         )
 
         print(color_text(f"Evaluating layout '{args.layout}' on {source_label}:", Colors.CYAN))
@@ -11683,6 +11694,7 @@ class Runtime:
                     block_size=self.args.block_size,
                     start_pos=self.args.test_start,
                     custom_text=custom_text,
+                    split="train" if getattr(self.args, "test_use_train_split", False) else "test",
                 )
                 return
 
