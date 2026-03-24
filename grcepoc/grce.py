@@ -5788,9 +5788,16 @@ def _run_microbatch_pass(
             row_entries: list[dict[str, object]] = []
             for idx in range(row_count):
                 meta = metadata[idx] if idx < len(metadata) else {}
+                base_tokens_row = xb_base[idx] if idx < xb_base.size(0) else None
+                preview_ids: list[int] | None = None
+                if base_tokens_row is not None:
+                    preview_len = min(5, base_tokens_row.size(0))
+                    if preview_len > 0:
+                        preview_ids = base_tokens_row[:preview_len].detach().cpu().tolist()
                 row_entries.append(
                     {
                         "layout": layout_text,
+                        "preview_ids": preview_ids,
                         "row": int(meta.get("row", idx + 1)),
                         "token_start": int(meta.get("token_start", 0)),
                         "token_end": int(meta.get("token_end", 0)),
@@ -6331,7 +6338,37 @@ def _run_microbatch_pass(
     return result, time.time() - start_time, row_details
 
 
-def _format_row_detail_entry(detail: dict[str, object]) -> str:
+def _row_preview_text(
+    detail: dict[str, object], tokenizer: GPT2TokenizerWrapper, args: Args, *, limit: int = 5
+) -> str:
+    ids = detail.get("preview_ids")
+    if not ids:
+        return ""
+    trimmed = list(ids)[:limit]
+    try:
+        tensor = torch.tensor(trimmed, dtype=torch.long)
+    except Exception:
+        return ""
+    return tokenizer.decode(tensor)
+
+
+def _detail_layout_groups(
+    details: Sequence[dict[str, object]]
+) -> list[tuple[str, list[dict[str, object]]]]:
+    ordered: list[tuple[str, list[dict[str, object]]]] = []
+    layout_map: dict[str, list[dict[str, object]]] = {}
+    for entry in details:
+        layout = entry.get("layout") or "(layout unspecified)"
+        group = layout_map.get(layout)
+        if group is None:
+            group = []
+            layout_map[layout] = group
+            ordered.append((layout, group))
+        group.append(entry)
+    return ordered
+
+
+def _format_row_detail_entry(detail: dict[str, object], *, preview: str | None = None) -> str:
     micro_idx = detail.get("micro_index")
     micro_text = "?" if micro_idx is None else str(micro_idx)
     row_no = detail.get("row")
@@ -6343,15 +6380,14 @@ def _format_row_detail_entry(detail: dict[str, object]) -> str:
     token_count = int(detail.get("token_count", 0))
     loss_sum = float(detail.get("loss_sum", 0.0))
     avg_loss = loss_sum / token_count if token_count > 0 else None
-    layout_text = detail.get("layout") or ""
     row_line = (
         f"    micro {micro_text} row {row_text}: tokens {start}-{end}"
         f" (span {span}{wrapped})"
     )
     if avg_loss is not None:
         row_line += f" | avg loss {avg_loss:.4f}"
-    if layout_text:
-        row_line += f" | {layout_text}"
+    if preview:
+        row_line += f" | {preview}"
     return row_line
 
 
@@ -7392,10 +7428,13 @@ def train_model(
             summary = f"  {opt_duration:.2f}s optimize, {other_time:.2f}s other"
             print(color_text(summary, Colors.BLUE))
             if args.log_row_details and isinstance(row_meta, list) and row_meta:
-                print(color_text("  per-row details:", Colors.BLUE))
-                for detail in row_meta:
-                    row_line = _format_row_detail_entry(detail)
-                    print(color_text(row_line, Colors.BLUE))
+                for layout_text, entries in _detail_layout_groups(row_meta):
+                    header = f"  per-row details (layout {layout_text}):"
+                    print(color_text(header, Colors.BLUE))
+                    for detail in entries:
+                        preview_text = _row_preview_text(detail, tokenizer, args)
+                        row_line = _format_row_detail_entry(detail, preview=preview_text)
+                        print(color_text(row_line, Colors.BLUE))
         oom_retries = 0
         step += 1
         train_step_index += 1
@@ -7427,10 +7466,13 @@ def train_model(
                 if not details:
                     continue
                 split_color = Colors.MAGENTA if split == "train" else Colors.GREEN
-                print(color_text(f"  [{split}] eval per-row details:", split_color))
-                for entry in details:
-                    row_line = _format_row_detail_entry(entry)
-                    print(color_text(row_line, split_color))
+                for layout_text, entries in _detail_layout_groups(details):
+                    header = f"  [{split}] eval per-row details (layout {layout_text}):"
+                    print(color_text(header, split_color))
+                    for entry in entries:
+                        preview_text = _row_preview_text(entry, tokenizer, args)
+                        row_line = _format_row_detail_entry(entry, preview=preview_text)
+                        print(color_text(row_line, split_color))
 
         if getattr(args, "log_alpha_beta_rms", False):
             core = getattr(model, "core", None)
