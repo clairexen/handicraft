@@ -8770,6 +8770,7 @@ def run_test_slice(
             total_passes = len(pass_results)
             coord_names = _coordinate_metric_names(row)
             final_result = pass_results[-1][1]
+            _attach_pass_records(row, annotations_full, pass_results)
             if coord_names:
                 coord_metrics = _collect_coordinate_metrics(
                     annotations_full,
@@ -8803,23 +8804,19 @@ def run_test_slice(
                         disable_losses=True,
                         step_override=0,
                     )
-            for pass_idx, (variant, result) in enumerate(pass_results):
-                if not log_all_steps and pass_idx < total_passes - 1:
-                    continue
-                annotations = _column_debug_annotations(variant)
-                _print_row_pass_details(
-                    tokenizer,
-                    result,
-                    annotations,
-                    annotations_full,
-                    pad,
-                    vocab_size,
-                    show_metrics=(pass_idx == total_passes - 1),
-                    args=args,
-                    model=model,
-                    row=row,
-                    pass_idx=pass_idx,
-                )
+            _print_row_pass_details(
+                tokenizer,
+                final_result,
+                annotations_full,
+                annotations_full,
+                pad,
+                vocab_size,
+                show_metrics=True,
+                args=args,
+                model=model,
+                row=row,
+                pass_idx=total_passes - 1,
+            )
 
     if was_training:
         model.train()
@@ -9086,12 +9083,12 @@ def _column_debug_annotations(row: BlockLayout) -> list[dict[str, object]]:
                     annotations[idx]["sane_step"] = step_group
                     sup_list: list[str] = []
                     for pass_idx in range(passes):
-                        if z_value == 0:
+                        if z_value <= 0:
                             supervision = "next"
-                        elif z_value == pass_idx:
-                            supervision = "next"
-                        else:
+                        elif pass_idx < z_value:
                             supervision = "self"
+                        else:
+                            supervision = "next"
                         sup_list.append(supervision)
                     annotations[idx]["pass_supervision"] = sup_list
                 else:
@@ -9125,6 +9122,110 @@ def _combine_annotation_views(
                     entry[key] = overlay[key]
         merged.append(entry)
     return merged
+
+
+def _attach_pass_records(
+    row: BlockLayout,
+    annotations_full: Sequence[dict[str, object]],
+    pass_results: Sequence[tuple[BlockLayout, RowEvalResult]],
+) -> None:
+    if not pass_results or not annotations_full:
+        return
+    seq_len = pass_results[-1][1].source_ids.size(1)
+    total_passes = len(pass_results)
+    for info in annotations_full:
+        info["pass_records"] = [None] * total_passes
+    for pass_idx, (variant, result) in enumerate(pass_results):
+        annotations = _column_debug_annotations(variant)
+        effective = _combine_annotation_views(annotations, annotations_full, seq_len)
+        records = _build_pass_records(row, result, effective)
+        for col, record in enumerate(records):
+            if col < len(annotations_full):
+                annotations_full[col]["pass_records"][pass_idx] = record
+
+
+def _build_pass_records(
+    row: BlockLayout,
+    row_result: RowEvalResult,
+    annotations: Sequence[dict[str, object]],
+) -> list[dict[str, object]]:
+    seq_len = row_result.source_ids.size(1)
+    base_tokens = None
+    if getattr(row_result, "base_source_ids", None) is not None:
+        base_tokens = row_result.base_source_ids.detach().cpu().view(-1).tolist()
+    inputs_cpu = row_result.source_ids.squeeze(0).cpu().tolist()
+    targets_cpu = row_result.target_ids.squeeze(0).cpu().tolist()
+    mask_cpu = row_result.supervision_mask.cpu().tolist()
+
+    next_logits = getattr(row_result, "next_stream_logits", None)
+    if next_logits is None:
+        next_logits = row_result.logits
+    next_log_probs = torch.log_softmax(next_logits, dim=-1)
+    top_k = min(3, next_log_probs.size(-1))
+    next_top_logp, next_top_indices = torch.topk(next_log_probs, k=top_k, dim=-1)
+    next_top_probs = next_top_logp.exp()
+    gathered_next = torch.gather(
+        next_log_probs,
+        dim=-1,
+        index=row_result.target_ids.unsqueeze(-1),
+    ).squeeze(-1)
+    next_losses = (-gathered_next).squeeze(0).cpu().tolist()
+    next_top_indices_cpu = next_top_indices.squeeze(0).cpu().tolist()
+    next_top_probs_cpu = next_top_probs.squeeze(0).cpu().tolist()
+
+    self_top_indices_cpu = None
+    self_top_probs_cpu = None
+    self_losses_cpu = None
+    if row_result.self_stream_logits is not None:
+        self_log_probs = torch.log_softmax(row_result.self_stream_logits, dim=-1)
+        self_top_logp, self_top_indices = torch.topk(self_log_probs, k=top_k, dim=-1)
+        self_top_probs = self_top_logp.exp()
+        gathered_self = torch.gather(
+            self_log_probs,
+            dim=-1,
+            index=row_result.target_ids.unsqueeze(-1),
+        ).squeeze(-1)
+        self_losses_cpu = (-gathered_self).squeeze(0).cpu().tolist()
+        self_top_indices_cpu = self_top_indices.squeeze(0).cpu().tolist()
+        self_top_probs_cpu = self_top_probs.squeeze(0).cpu().tolist()
+
+    records: list[dict[str, object]] = []
+    for col in range(seq_len):
+        annotation = annotations[col] if col < len(annotations) else {}
+        base_index = annotation.get("base_index") if annotation else None
+        token_id = None
+        if base_tokens is not None and base_index is not None:
+            idx_val = int(base_index)
+            if 0 <= idx_val < len(base_tokens):
+                token_id = base_tokens[idx_val]
+        if token_id is None and col < len(inputs_cpu):
+            token_id = inputs_cpu[col]
+        record: dict[str, object] = {
+            "token_id": token_id,
+            "target_token": targets_cpu[col] if col < len(targets_cpu) else None,
+            "mask": bool(mask_cpu[col]) if col < len(mask_cpu) else False,
+            "next_loss": next_losses[col] if col < len(next_losses) else None,
+            "self_loss": None,
+            "next_top_indices": next_top_indices_cpu[col]
+            if col < len(next_top_indices_cpu)
+            else [],
+            "next_top_probs": next_top_probs_cpu[col]
+            if col < len(next_top_probs_cpu)
+            else [],
+            "self_top_indices": None,
+            "self_top_probs": None,
+        }
+        if self_losses_cpu is not None and col < len(self_losses_cpu):
+            record["self_loss"] = self_losses_cpu[col]
+        if self_top_indices_cpu is not None and col < len(self_top_indices_cpu):
+            record["self_top_indices"] = self_top_indices_cpu[col]
+        if self_top_probs_cpu is not None and col < len(self_top_probs_cpu):
+            record["self_top_probs"] = self_top_probs_cpu[col]
+        if not record["mask"]:
+            record["next_loss"] = None
+            record["self_loss"] = None
+        records.append(record)
+    return records
 
 
 def _max_decode_passes(row: BlockLayout) -> int:
@@ -9282,9 +9383,27 @@ def _print_row_pass_details(
     disable_losses: bool = False,
     step_override: int | None = None,
 ) -> None:
+    if (
+        logits_override is None
+        and self_logits_override is None
+        and not disable_losses
+        and _annotations_have_pass_records(full_annotations)
+    ):
+        _print_row_pass_details_from_records(
+            tokenizer,
+            row_result,
+            full_annotations,
+            pad,
+            vocab_size,
+            show_metrics=show_metrics,
+            args=args,
+            model=model,
+            row=row,
+            pass_idx=pass_idx,
+        )
+        return
     base_logits = row_result.logits
     row_logits = logits_override if logits_override is not None else base_logits
-    log_probs = torch.log_softmax(row_logits, dim=-1)
     next_logits_tensor = getattr(row_result, "next_stream_logits", None)
     if logits_override is not None:
         next_logits = logits_override
@@ -9301,14 +9420,24 @@ def _print_row_pass_details(
         self_log_probs = None
     target_ids = row_result.target_ids
     if disable_losses:
-        per_token_loss = None
+        next_loss_tensor = None
+        self_loss_tensor = None
     else:
-        gathered = torch.gather(
-            log_probs,
+        gathered_next = torch.gather(
+            next_log_probs,
             dim=-1,
             index=target_ids.unsqueeze(-1),
         ).squeeze(-1)
-        per_token_loss = (-gathered).squeeze(0)
+        next_loss_tensor = (-gathered_next).squeeze(0)
+        if self_log_probs is not None:
+            gathered_self = torch.gather(
+                self_log_probs,
+                dim=-1,
+                index=target_ids.unsqueeze(-1),
+            ).squeeze(-1)
+            self_loss_tensor = (-gathered_self).squeeze(0)
+        else:
+            self_loss_tensor = None
 
     top_k = min(3, vocab_size)
     next_top_logp, next_top_indices = torch.topk(next_log_probs, k=top_k, dim=-1)
@@ -9319,12 +9448,15 @@ def _print_row_pass_details(
         self_top_logp, self_top_indices = torch.topk(self_log_probs, k=top_k, dim=-1)
         self_top_probs = self_top_logp.exp()
 
-    if disable_losses or per_token_loss is None:
-        losses_cpu = [0.0] * row_result.supervision_mask.numel()
+    if disable_losses or next_loss_tensor is None:
+        next_losses_cpu = [0.0] * row_result.supervision_mask.numel()
         mask_cpu = [False] * row_result.supervision_mask.numel()
     else:
-        losses_cpu = per_token_loss.cpu().tolist()
+        next_losses_cpu = next_loss_tensor.cpu().tolist()
         mask_cpu = row_result.supervision_mask.cpu().tolist()
+    self_losses_cpu = (
+        self_loss_tensor.cpu().tolist() if (not disable_losses and self_loss_tensor is not None) else None
+    )
     inputs_cpu = row_result.source_ids.squeeze(0).cpu().tolist()
     targets_cpu = row_result.target_ids.squeeze(0).cpu().tolist()
     next_top_indices_cpu = next_top_indices.squeeze(0).cpu().tolist()
@@ -9405,21 +9537,28 @@ def _print_row_pass_details(
     for col in range(seq_len):
         annotation = effective_annotations[col] if col < len(effective_annotations) else {}
         token_text = token_texts[col]
-        loss_value = losses_cpu[col] if (not disable_losses and mask_cpu[col]) else None
         pass_sup = annotation.get("pass_supervision") or ["next"]
+        loss_values: list[float | None] = []
         if disable_losses:
             loss_cells = ["   --  " for _ in pass_sup]
+            loss_display = " ".join(loss_cells) if len(loss_cells) > 1 else (loss_cells[0] if loss_cells else "   --  ")
         else:
+            for sup in pass_sup:
+                if not mask_cpu[col]:
+                    value = None
+                elif sup == "self":
+                    value = self_losses_cpu[col] if self_losses_cpu is not None else None
+                else:
+                    value = next_losses_cpu[col]
+                loss_values.append(value)
             loss_cells = [
-                _format_loss_cell(loss_value, supervision=sup) for sup in pass_sup
+                _format_loss_cell(value, supervision=sup)
+                for value, sup in zip(loss_values, pass_sup)
             ]
-        if loss_cells:
-            if len(loss_cells) == 1:
-                loss_display = loss_cells[0]
+            if loss_cells:
+                loss_display = " ".join(loss_cells) if len(loss_cells) > 1 else loss_cells[0]
             else:
-                loss_display = " ".join(loss_cells)
-        else:
-            loss_display = "   --  "
+                loss_display = "   --  "
         label = annotation.get("label") if annotation else ""
         block_idx = annotation.get("segment_id") if annotation else None
         segment = row.segments[block_idx] if isinstance(block_idx, int) else None
@@ -9432,33 +9571,31 @@ def _print_row_pass_details(
         )
         sup_index = max(0, min(pass_idx, len(pass_sup) - 1))
         chosen_supervision = pass_sup[sup_index]
+        active_loss_value: float | None = None
+        if not disable_losses and loss_values and sup_index < len(loss_values):
+            active_loss_value = loss_values[sup_index]
+
         if allow_multi_loss:
             loss_text = loss_display
-            if (
-                not disable_losses
-                and loss_value is not None
-                and mask_cpu[col]
-            ):
-                for supervision in pass_sup:
+            if not disable_losses and mask_cpu[col]:
+                for supervision, value in zip(pass_sup, loss_values):
+                    if value is None:
+                        continue
                     key = "next" if supervision == "next" else "self"
                     bucket = loss_summary[key]
-                    bucket[0] += loss_value
+                    bucket[0] += value
                     bucket[1] += 1
         else:
             loss_text = loss_display
-            if (
-                not disable_losses
-                and loss_value is not None
-                and mask_cpu[col]
-            ):
+            if active_loss_value is not None:
                 key = "next" if chosen_supervision == "next" else "self"
                 bucket = loss_summary[key]
-                bucket[0] += loss_value
+                bucket[0] += active_loss_value
                 bucket[1] += 1
-        if log_perplexity and (disable_losses or not mask_cpu[col] or loss_value is None):
+        if log_perplexity and (disable_losses or not mask_cpu[col] or active_loss_value is None):
             perplexity_text = "   --  "
         elif log_perplexity:
-            perplexity_value = math.exp(loss_value)
+            perplexity_value = math.exp(active_loss_value)
             perplexity_text = f"{perplexity_value:7.3f}"
         else:
             perplexity_text = ""
@@ -9599,6 +9736,245 @@ def _print_row_pass_details(
                     model.config.n_layer,
                 )
 
+
+def _annotations_have_pass_records(annotations: Sequence[dict[str, object]]) -> bool:
+    for info in annotations:
+        records = info.get("pass_records")
+        if isinstance(records, list) and records:
+            return True
+    return False
+
+
+def _print_row_pass_details_from_records(
+    tokenizer: GPT2TokenizerWrapper,
+    row_result: RowEvalResult,
+    annotations_full: Sequence[dict[str, object]],
+    pad: str,
+    vocab_size: int,
+    *,
+    show_metrics: bool,
+    args: Args,
+    model: GRCEGPT,
+    row: BlockLayout,
+    pass_idx: int,
+) -> None:
+    seq_len = row_result.source_ids.size(1)
+    annotations = list(annotations_full[:seq_len])
+    total_passes = 0
+    for info in annotations:
+        records = info.get("pass_records")
+        if isinstance(records, list) and records:
+            total_passes = len(records)
+            break
+    if total_passes <= 0:
+        return
+
+    if getattr(args, "log_all_steps", False):
+        steps_to_show = list(range(total_passes))
+    else:
+        steps_to_show = [max(0, min(pass_idx, total_passes - 1))]
+
+    label_width = 0
+    if annotations:
+        label_width = max((len(info.get("label", "")) for info in annotations), default=0)
+
+    segment_lengths: dict[int | None, int] = {}
+    for info in annotations:
+        seg_id = info.get("segment_id")
+        segment_lengths[seg_id] = segment_lengths.get(seg_id, 0) + 1
+    block_count = len(row.segments)
+    block_id_width = max(3, len(str(max(block_count - 1, 0))))
+    max_local = max((length - 1 for length in segment_lengths.values() if length > 0), default=0)
+    block_local_width = max(3, len(str(max_local)))
+    global_width = max(4, len(str(max(seq_len - 1, 0))))
+    idx_prefix_width = block_id_width + 1 + block_local_width + 1 + global_width
+    idx_width = idx_prefix_width + (1 + label_width if label_width > 0 else 0)
+
+    block_local_counters: dict[int | None, int] = defaultdict(int)
+    default_tokens = row_result.source_ids.squeeze(0).cpu().tolist()
+    column_meta: list[dict[str, object]] = []
+    token_width = 0
+    for col in range(seq_len):
+        annotation = annotations[col] if col < len(annotations) else {}
+        block_idx = annotation.get("segment_id") if annotation else None
+        local_idx = block_local_counters[block_idx]
+        block_local_counters[block_idx] += 1
+        block_str = "-" if block_idx is None else str(int(block_idx))
+        local_str = "-" if block_idx is None else str(local_idx)
+        block_text = block_str.rjust(block_id_width)
+        local_text = local_str.rjust(block_local_width)
+        col_text = f"{col:>{global_width}d}"
+        label = annotation.get("label") if annotation else ""
+        if label_width > 0:
+            idx_text = f"{block_text} {local_text} {col_text} {label:>{label_width}}"
+        else:
+            idx_text = f"{block_text} {local_text} {col_text}"
+        base_index = annotation.get("base_index") if annotation else None
+        if base_index is not None:
+            idx_prefix = str(int(base_index))
+        elif isinstance(block_idx, int):
+            idx_prefix = str(col)
+        else:
+            idx_prefix = "--"
+        z_value = int(annotation.get("z_index", 0) or 0)
+        pass_records = annotation.get("pass_records")
+        if not isinstance(pass_records, list):
+            pass_records = [None] * total_passes
+        token_strings: list[str] = []
+        for step in range(total_passes):
+            record = pass_records[step] if step < len(pass_records) else None
+            token_id = None
+            if record and record.get("token_id") is not None:
+                token_id = int(record["token_id"])
+            elif col < len(default_tokens):
+                token_id = default_tokens[col]
+            else:
+                token_id = 0
+            token_text = _format_token_fragment(tokenizer, token_id)
+            if z_value > 0:
+                token_text = f"{' ' * z_value}{token_text}"
+            token_display = f"{idx_prefix} {token_text}"
+            token_strings.append(token_display)
+            token_width = max(token_width, len(token_display))
+        column_meta.append(
+            {
+                "block_idx": block_idx,
+                "idx_text": idx_text,
+                "token_strings": token_strings,
+                "pass_records": pass_records,
+                "pass_supervision": annotation.get("pass_supervision") or ["next"],
+            }
+        )
+
+    log_perplexity = bool(getattr(args, "log_perplexity", False))
+    log_self_next = bool(getattr(args, "log_self_next", False))
+    lines_by_step: dict[int, dict[int | None, list[str]]] = {
+        step: defaultdict(list) for step in steps_to_show
+    }
+    loss_summaries: dict[int, dict[str, list[float]]] = {
+        step: {"self": [0.0, 0], "next": [0.0, 0]} for step in steps_to_show
+    }
+
+    for meta in column_meta:
+        pass_records = meta["pass_records"]
+        token_strings = meta["token_strings"]
+        sup_list = meta.get("pass_supervision") or ["next"]
+        for step in steps_to_show:
+            if step >= len(pass_records):
+                continue
+            record = pass_records[step]
+            token_display = token_strings[step] if step < len(token_strings) else token_strings[-1]
+            supervision = sup_list[min(step, len(sup_list) - 1)] if sup_list else "next"
+            mask = bool(record.get("mask")) if record else False
+            loss_value = None
+            if mask and record is not None:
+                if supervision == "self":
+                    loss_value = record.get("self_loss")
+                else:
+                    loss_value = record.get("next_loss")
+            loss_text = _format_loss_cell(loss_value, supervision=supervision)
+            if log_perplexity:
+                perplexity_text = "   --  " if loss_value is None else f"{math.exp(loss_value):7.3f}"
+            next_desc = _format_top_predictions(
+                tokenizer,
+                record.get("next_top_indices") if record else None,
+                record.get("next_top_probs") if record else None,
+                target_token=record.get("target_token") if record else None,
+            )
+            self_desc = _format_top_predictions(
+                tokenizer,
+                record.get("self_top_indices") if record else None,
+                record.get("self_top_probs") if record else None,
+                target_token=record.get("token_id") if record else None,
+            )
+            if log_self_next:
+                line_text = (
+                    f"{meta['idx_text']} | {token_display:<{token_width}} | {loss_text}"
+                    + (f" | {perplexity_text}" if log_perplexity else "")
+                    + f" | {self_desc} | {next_desc}"
+                )
+            else:
+                prediction = self_desc if supervision == "self" else next_desc
+                line_text = (
+                    f"{meta['idx_text']} | {token_display:<{token_width}} | {loss_text}"
+                    + (f" | {perplexity_text}" if log_perplexity else "")
+                    + f" | {prediction}"
+                )
+            lines_by_step[step][meta["block_idx"]].append(line_text)
+            if loss_value is not None:
+                key = "next" if supervision == "next" else "self"
+                bucket = loss_summaries[step][key]
+                bucket[0] += float(loss_value)
+                bucket[1] += 1
+
+    block_pad = pad[:-2] if len(pad) >= 2 else ""
+    step_pad = block_pad + "  "
+    line_pad = step_pad + "  "
+    for seg_idx, segment in enumerate(row.segments):
+        has_lines = any(lines_by_step[step].get(seg_idx) for step in steps_to_show)
+        if not has_lines:
+            continue
+        block_title = _segment_display_name(segment)
+        print(f"{block_pad}Block {seg_idx} [{block_title}]:")
+        for step in steps_to_show:
+            step_lines = lines_by_step[step].get(seg_idx)
+            if not step_lines:
+                continue
+            print(f"{step_pad}Step {step + 1}/{total_passes}:")
+            for line in step_lines:
+                print(f"{line_pad}{line}")
+
+    summary_step = steps_to_show[-1]
+    loss_summary = loss_summaries.get(summary_step, {"self": [0.0, 0], "next": [0.0, 0]})
+    summary_token_id = row_result.target_ids.squeeze(0).cpu().tolist()[-1]
+    context_len = int(getattr(row_result, "base_context_length", row_result.source_ids.size(1)))
+    if getattr(row_result, "base_source_ids", None) is not None:
+        base_tokens = row_result.base_source_ids.detach().cpu().view(-1).tolist()
+        if base_tokens:
+            future_index = max(0, min(context_len, len(base_tokens) - 1))
+            summary_token_id = base_tokens[future_index]
+    summary_target = _format_token_fragment(tokenizer, summary_token_id)
+    summary_label = "*" * idx_width
+    summary_parts: list[str] = []
+    self_total, self_count = loss_summary["self"]
+    if self_count > 0:
+        summary_parts.append(f"({self_total / self_count:.3f})")
+    next_total, next_count = loss_summary["next"]
+    if next_count > 0:
+        summary_parts.append(f" {next_total / next_count:7.3f}")
+    summary_loss_text = "".join(summary_parts) if summary_parts else "   --  "
+    if row_result.total_tokens > 0:
+        overall_avg = row_result.total_loss_sum / row_result.total_tokens
+        overall_text = f"{overall_avg:7.3f}"
+        if summary_parts:
+            summary_loss_text = f"{summary_loss_text} = {overall_text}"
+        else:
+            summary_loss_text = overall_text
+    summary_line = f"{pad}{summary_label} | {summary_target:<{token_width}} | {summary_loss_text}"
+    if log_perplexity:
+        summary_line += " |   --  "
+    if log_self_next:
+        summary_line += " | -- | --"
+    summary_line += " nats/token"
+    print(summary_line)
+
+    if show_metrics:
+        _print_extra_metric_summaries(row_result, pad)
+        if getattr(args, "log_attn_masks", False):
+            _log_attention_masks(args, model, row, row_result)
+        if getattr(args, "log_pos_matrix", False):
+            _log_position_matrices(row)
+        if getattr(args, "log_alpha_beta_matrix", False):
+            _log_alpha_beta_matrices(row)
+        if getattr(args, "attn_map", False) and row_result.block_attentions:
+            for block in row_result.block_attentions:
+                _print_attention_heatmap(
+                    tokenizer,
+                    block,
+                    pad,
+                    token_width,
+                    model.config.n_layer,
+                )
 
 
 def _alpha_propagation_matrix(
