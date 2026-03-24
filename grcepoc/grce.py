@@ -1819,6 +1819,11 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         action="store_true",
         help="Show both LM(self) and LM(next) predictions for every column",
     )
+    test_parser.add_argument(
+        "--log-perplexity",
+        action="store_true",
+        help="Append per-token perplexity values alongside the loss column",
+    )
 
     eval_parser = subparsers.add_parser(
         "eval",
@@ -9363,6 +9368,7 @@ def _print_row_pass_details(
     block_local_counters: dict[int | None, int] = defaultdict(int)
 
     log_self_next = bool(getattr(args, "log_self_next", False))
+    log_perplexity = bool(getattr(args, "log_perplexity", False))
 
     token_texts: list[str] = []
     token_ids: list[int] = []
@@ -9407,15 +9413,55 @@ def _print_row_pass_details(
             loss_cells = [
                 _format_loss_cell(loss_value, supervision=sup) for sup in pass_sup
             ]
-            if loss_value is not None:
+        if loss_cells:
+            if len(loss_cells) == 1:
+                loss_display = loss_cells[0]
+            else:
+                loss_display = " ".join(loss_cells)
+        else:
+            loss_display = "   --  "
+        label = annotation.get("label") if annotation else ""
+        block_idx = annotation.get("segment_id") if annotation else None
+        segment = row.segments[block_idx] if isinstance(block_idx, int) else None
+        allow_multi_loss = bool(
+            segment
+            and (
+                getattr(segment, "loss_input_stream", False)
+                or getattr(segment, "loss_output_stream", False)
+            )
+        )
+        sup_index = max(0, min(pass_idx, len(pass_sup) - 1))
+        chosen_supervision = pass_sup[sup_index]
+        if allow_multi_loss:
+            loss_text = loss_display
+            if (
+                not disable_losses
+                and loss_value is not None
+                and mask_cpu[col]
+            ):
                 for supervision in pass_sup:
                     key = "next" if supervision == "next" else "self"
                     bucket = loss_summary[key]
                     bucket[0] += loss_value
                     bucket[1] += 1
-        loss_text = " ".join(loss_cells)
-        label = annotation.get("label") if annotation else ""
-        block_idx = annotation.get("segment_id") if annotation else None
+        else:
+            loss_text = loss_display
+            if (
+                not disable_losses
+                and loss_value is not None
+                and mask_cpu[col]
+            ):
+                key = "next" if chosen_supervision == "next" else "self"
+                bucket = loss_summary[key]
+                bucket[0] += loss_value
+                bucket[1] += 1
+        if log_perplexity and (disable_losses or not mask_cpu[col] or loss_value is None):
+            perplexity_text = "   --  "
+        elif log_perplexity:
+            perplexity_value = math.exp(loss_value)
+            perplexity_text = f"{perplexity_value:7.3f}"
+        else:
+            perplexity_text = ""
         local_idx = block_local_counters[block_idx]
         block_local_counters[block_idx] += 1
         block_str = "-" if block_idx is None else str(int(block_idx))
@@ -9447,11 +9493,11 @@ def _print_row_pass_details(
                 target_token=next_token_id,
             )
             line_text = (
-                f"{idx_text} | {token_text:<{token_width}} | {loss_text} | {self_desc} | {next_desc}"
+                f"{idx_text} | {token_text:<{token_width}} | {loss_text}"
+                + (f" | {perplexity_text}" if log_perplexity else "")
+                + f" | {self_desc} | {next_desc}"
             )
         else:
-            sup_index = max(0, min(pass_idx, len(pass_sup) - 1))
-            chosen_supervision = pass_sup[sup_index]
             prediction_desc = "--"
             if mask_cpu[col]:
                 target_token = targets_cpu[col]
@@ -9474,7 +9520,9 @@ def _print_row_pass_details(
                         target_token=target_token,
                     )
             line_text = (
-                f"{idx_text} | {token_text:<{token_width}} | {loss_text} | {prediction_desc}"
+                f"{idx_text} | {token_text:<{token_width}} | {loss_text}"
+                + (f" | {perplexity_text}" if log_perplexity else "")
+                + f" | {prediction_desc}"
             )
         block_line_map[block_idx].append(line_text)
 
@@ -9526,6 +9574,8 @@ def _print_row_pass_details(
     summary_line = (
         f"{pad}{summary_label} | {summary_target:<{token_width}} | {summary_loss_text}"
     )
+    if log_perplexity:
+        summary_line += " |   --  "
     if log_self_next:
         summary_line += " | -- | --"
     summary_line += " nats/token"
