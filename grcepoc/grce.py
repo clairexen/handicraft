@@ -6368,6 +6368,19 @@ def _detail_layout_groups(
     return ordered
 
 
+def _print_row_typed_metrics(row_result: RowEvalResult, pad: str) -> None:
+    metrics = _row_metric_values(row_result)
+    ordered_keys = ["target", *BATCH_MODES]
+    parts: list[str] = []
+    for key in ordered_keys:
+        value = metrics.get(key)
+        if value is None:
+            continue
+        parts.append(f"{key}={value:.3f}")
+    if parts:
+        print(f"{pad}Typed losses: " + ", ".join(parts) + " nats/token")
+
+
 def _format_row_detail_entry(detail: dict[str, object], *, preview: str | None = None) -> str:
     micro_idx = detail.get("micro_index")
     micro_text = "?" if micro_idx is None else str(micro_idx)
@@ -8803,6 +8816,16 @@ def run_test_slice(
         yb_base = targets.unsqueeze(0).to(model_device)
         vocab_size = model.config.vocab_size
         base_source_tensor = base_source_ids.unsqueeze(0).to(model_device)
+        future_tail_tokens = None
+        if base_source_tensor.size(1) > xb_base.size(1) + 1:
+            future_tail_tokens = base_source_tensor[:, xb_base.size(1) + 1 :]
+        future_texts: list[str] | None = None
+        if future_tail_tokens is not None and future_tail_tokens.size(1) > 0:
+            future_ids = future_tail_tokens.squeeze(0).detach().cpu().tolist()
+            future_texts = [
+                _format_token_fragment(tokenizer, token_id)
+                for token_id in future_ids
+            ]
 
         eval_drop_rng = random.Random(getattr(args, "rng_seed", 0) or 0)
         for row_idx, row in enumerate(layout.rows, start=1):
@@ -8879,6 +8902,7 @@ def run_test_slice(
                         self_logits_override=zero_self,
                         disable_losses=True,
                         step_override=0,
+                        future_tokens=None,
                     )
             _print_row_pass_details(
                 tokenizer,
@@ -8892,6 +8916,7 @@ def run_test_slice(
                 model=model,
                 row=row,
                 pass_idx=total_passes - 1,
+                future_tokens=future_texts,
             )
 
     if was_training:
@@ -9481,6 +9506,7 @@ def _print_row_pass_details(
     self_logits_override: torch.Tensor | None = None,
     disable_losses: bool = False,
     step_override: int | None = None,
+    future_tokens: Sequence[str] | None = None,
 ) -> None:
     if (
         logits_override is None
@@ -9499,6 +9525,7 @@ def _print_row_pass_details(
             model=model,
             row=row,
             pass_idx=pass_idx,
+            future_tokens=future_tokens,
         )
         return
     base_logits = row_result.logits
@@ -9828,6 +9855,13 @@ def _print_row_pass_details(
     summary_line += " nats/token"
     print(summary_line)
 
+    if future_tokens:
+        for token_text in future_tokens:
+            print(f"{pad}**************** | {token_text}")
+
+    if show_metrics:
+        _print_row_typed_metrics(row_result, pad)
+
     if show_metrics:
         _print_extra_metric_summaries(row_result, pad)
         if getattr(args, "log_attn_masks", False):
@@ -9867,6 +9901,7 @@ def _print_row_pass_details_from_records(
     model: GRCEGPT,
     row: BlockLayout,
     pass_idx: int,
+    future_tokens: Sequence[str] | None = None,
 ) -> None:
     seq_len = row_result.source_ids.size(1)
     annotations = list(annotations_full[:seq_len])
@@ -10109,7 +10144,12 @@ def _print_row_pass_details_from_records(
     summary_line += " nats/token"
     print(summary_line)
 
+    if future_tokens:
+        for token_text in future_tokens:
+            print(f"{pad}**************** | {token_text}")
+
     if show_metrics:
+        _print_row_typed_metrics(row_result, pad)
         _print_extra_metric_summaries(row_result, pad)
         if getattr(args, "log_attn_masks", False):
             _log_attention_masks(args, model, row, row_result)
