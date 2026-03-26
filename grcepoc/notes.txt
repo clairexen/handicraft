@@ -1213,3 +1213,17 @@ python grce.py --pt model/wp_en_small_SANE_NO_MTLD.pt --cycles 700 \
 python grce.py --pt model/wp_en_small_NO_SANE_NO_MTLD.pt --cycles 700 \
   --layout '16S[ 64E (1|2)Y = (64D4Y|128D2Y) = 64D 3X 2Y >> S$$ ]' \
   --lr-warmup-steps 100 --lr-cosine-steps 200 --generate-with-decode --align-articles train --json
+
+----
+
+python grce.py --pt model/wp_en_small.pt --small create
+python grce.py --pt model/wp_en_small.pt corpus --add wikipedia-en-0000
+python grce.py --pt model/wp_en_small.pt --align-articles --layout '
+	16[ 64E = (64D4Y|128D2Y|192D) = 64D 2X 2Y >> S$$ ]
+  ' --cycles 100 --lr-warmup-steps 100 --lr-cosine-steps 200 --generate-with-decode --align-articles train --json
+
+python grce.py --pt model/wp_en_small_NOSANE.pt --small --no-sane create
+python grce.py --pt model/wp_en_small_NOSANE.pt corpus --add wikipedia-en-0000
+python grce.py --pt model/wp_en_small_NOSANE.pt --align-articles --layout '
+	16[ 64E = (64D4Y|128D2Y|192D) = 64D 2X 2Y >> S$$ ]
+  ' --cycles 100 --lr-warmup-steps 100 --lr-cosine-steps 200 --generate-with-decode --align-articles train --json

@@ -11354,6 +11354,15 @@ class Runtime:
         self.corpua: list[dict[str, int]] = []
         self.dataset_cache: dict[str, TextDataset] = {}
         self.active_corpus_entry: dict[str, int] | None = None
+        self.model_vocab_size = int(getattr(args, "vocab_size", MODEL_GEOMETRY_DEFAULTS.vocab_size))
+        self.tokenizer_vocab_size: int | None = None
+
+    def _geometry_vocab_size(self) -> int:
+        value = getattr(self, "model_vocab_size", None)
+        if value is None:
+            value = int(getattr(self.args, "vocab_size", MODEL_GEOMETRY_DEFAULTS.vocab_size))
+            self.model_vocab_size = value
+        return int(value)
 
     def _cuda_error_requires_cpu(self, error_message: str) -> bool:
         if self.args.device == "cpu":
@@ -11471,7 +11480,16 @@ class Runtime:
         tokenizer = GPT2TokenizerWrapper(
             tokenizer_json=tokenizer_json,
         )
-        self.args.vocab_size = tokenizer.vocab_size
+        tokenizer_vocab_size = tokenizer.vocab_size
+        self.tokenizer_vocab_size = tokenizer_vocab_size
+        geometry_vocab_size = self._geometry_vocab_size()
+        if tokenizer_vocab_size > geometry_vocab_size:
+            raise ValueError(
+                (
+                    f"Tokenizer vocabulary {tokenizer_vocab_size} exceeds model geometry "
+                    f"capacity {geometry_vocab_size}; increase --vocab-size or rebuild the checkpoint."
+                )
+            )
 
         newline_token_id = None
         newline_tokens = tokenizer.encode_ids("\n")
@@ -11994,7 +12012,7 @@ class Runtime:
         vocab_size: int | None = None,
     ) -> tuple[pathlib.Path, pathlib.Path]:
         data_dir = pathlib.Path(self.args.data)
-        vocab = self.args.vocab_size if vocab_size is None else vocab_size
+        vocab = self._geometry_vocab_size() if vocab_size is None else int(vocab_size)
         train_cache = data_dir / f"{corpus}_tokens_train_{vocab}.pt"
         test_cache = data_dir / f"{corpus}_tokens_test_{vocab}.pt"
         return train_cache, test_cache
