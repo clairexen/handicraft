@@ -1883,16 +1883,21 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
     )
 
     loss_parser = subparsers.add_parser(
-        "lossdb",
+        "losses",
         help="Build or inspect a loss database",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    loss_parser.set_defaults(command="lossdb")
-    loss_parser.add_argument("lossdb_corpus", help="Corpus name registered in the checkpoint")
-    loss_parser.add_argument("lossdb_id", help="Identifier to include in the loss database filename")
+    loss_parser.set_defaults(command="losses")
+    loss_parser.add_argument("losses_corpus", help="Corpus name registered in the checkpoint")
+    loss_parser.add_argument("losses_id", help="Identifier to include in the loss filename")
+    loss_parser.add_argument(
+        "losses_split",
+        choices=("train", "test"),
+        help="Corpus split to read/write losses for",
+    )
     loss_parser.add_argument(
         "--scan",
-        dest="lossdb_scan",
+        dest="losses_scan",
         action="store_true",
         help="Scan the loss database and report statistics instead of sampling",
     )
@@ -1900,14 +1905,14 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         "--overlap",
         type=int,
         default=None,
-        help="Tokens of overlap before the current cursor when running lossdb",
+        help="Tokens of overlap before the current cursor when running losses",
     )
     loss_parser.add_argument(
         "--max-iter",
-        dest="lossdb_max_iter",
+        dest="losses_max_iter",
         type=int,
         default=None,
-        help="Maximum number of lossdb iterations to run (default: run until corpus completion)",
+        help="Maximum number of losses iterations to run (default: run until corpus completion)",
     )
 
 
@@ -6441,33 +6446,29 @@ def _format_row_detail_entry(detail: dict[str, object], *, preview: str | None =
     return row_line
 
 
-def _load_or_init_loss_stats(path: pathlib.Path, train_len: int, test_len: int) -> dict[str, object]:
+def _load_or_init_loss_stats(path: pathlib.Path, split: str, split_len: int) -> dict[str, object]:
     changed = False
     if path.exists():
         stats = torch.load(path)
     else:
         path.parent.mkdir(parents=True, exist_ok=True)
         stats = {
-            "train": torch.zeros(train_len, dtype=torch.float16),
-            "test": torch.zeros(test_len, dtype=torch.float16),
+            split: torch.zeros(split_len, dtype=torch.float16),
             "meta": {
-                "train_length": train_len,
-                "test_length": test_len,
+                f"{split}_length": split_len,
                 "total_updates": 0,
-                "train_tokens_processed": 0,
-                "test_tokens_processed": 0,
-                "cursor_train": 0,
-                "cursor_test": 0,
+                f"{split}_tokens_processed": 0,
+                f"cursor_{split}": 0,
             },
         }
         torch.save(stats, path)
         return stats
 
-    def _normalize_split(split: str, length: int) -> None:
+    def _normalize_split(target_split: str, length: int) -> None:
         nonlocal changed
-        tensor = stats.get(split)
+        tensor = stats.get(target_split)
         if tensor is None:
-            stats[split] = torch.zeros(length, dtype=torch.float16)
+            stats[target_split] = torch.zeros(length, dtype=torch.float16)
             changed = True
             return
         data = tensor
@@ -6483,7 +6484,7 @@ def _load_or_init_loss_stats(path: pathlib.Path, train_len: int, test_len: int) 
                     averaged[: min(length, averaged_values.numel())] = averaged_values[:length].to(
                         torch.float16
                     )
-                stats[split] = averaged
+                stats[target_split] = averaged
                 changed = True
                 return
             data = data.reshape(-1).to(torch.float16)
@@ -6491,41 +6492,41 @@ def _load_or_init_loss_stats(path: pathlib.Path, train_len: int, test_len: int) 
                 resized = torch.zeros(length, dtype=torch.float16)
                 upto = min(length, data.numel())
                 resized[:upto] = data[:upto]
-                stats[split] = resized
+                stats[target_split] = resized
                 changed = True
                 return
             if data.dtype != torch.float16:
-                stats[split] = data.to(torch.float16)
+                stats[target_split] = data.to(torch.float16)
                 changed = True
                 return
         else:
-            stats[split] = torch.zeros(length, dtype=torch.float16)
+            stats[target_split] = torch.zeros(length, dtype=torch.float16)
             changed = True
 
-    _normalize_split("train", train_len)
-    _normalize_split("test", test_len)
+    _normalize_split(split, split_len)
     meta = stats.setdefault("meta", {})
     if "total_updates" not in meta:
         meta["total_updates"] = 0
         changed = True
-    for key in ("train_tokens_processed", "test_tokens_processed"):
-        if key not in meta:
-            meta[key] = 0
-            changed = True
-    for split_key in ("train", "test"):
-        meta_key = f"cursor_{split_key}"
-        if meta_key not in meta:
-            meta[meta_key] = 0
-            changed = True
-    meta.setdefault("train_length", train_len)
-    meta.setdefault("test_length", test_len)
+    tokens_key = f"{split}_tokens_processed"
+    if tokens_key not in meta:
+        meta[tokens_key] = 0
+        changed = True
+    cursor_key = f"cursor_{split}"
+    if cursor_key not in meta:
+        meta[cursor_key] = 0
+        changed = True
+    length_key = f"{split}_length"
+    if meta.get(length_key) != split_len:
+        meta[length_key] = split_len
+        changed = True
     if changed:
         torch.save(stats, path)
     return stats
 
 
 def _scan_loss_stats(path: pathlib.Path, stats: dict[str, object]) -> None:
-    print(color_text(f"[lossdb] scanning {path}", Colors.CYAN))
+    print(color_text(f"[losses] scanning {path}", Colors.CYAN))
     meta = stats.get("meta", {})
     if meta:
         print(color_text(f"  meta: {meta}", Colors.YELLOW))
@@ -6664,7 +6665,7 @@ def _update_loss_tensor(tensor: torch.Tensor, contributions: Sequence[tuple[int,
         tensor[idx] = torch.tensor(float(loss_value), dtype=tensor.dtype)
 
 
-def _default_lossdb_overlap(layout: BatchLayout) -> int:
+def _default_losses_overlap(layout: BatchLayout) -> int:
     if layout.rows:
         first_row = layout.rows[0]
         if first_row.segments:
@@ -11451,15 +11452,19 @@ class Runtime:
                 updated = True
         return entry, updated
 
-    def cli_lossdb(
+    def cli_losses(
         self,
         tokenizer: GPT2TokenizerWrapper,
         model: GRCEGPT,
     ) -> int:
-        corpus = getattr(self.args, "lossdb_corpus", None)
-        loss_id = getattr(self.args, "lossdb_id", None)
-        if not corpus or not loss_id:
-            raise ValueError("lossdb requires both a corpus name and an id")
+        corpus = getattr(self.args, "losses_corpus", None)
+        loss_id = getattr(self.args, "losses_id", None)
+        split = getattr(self.args, "losses_split", None)
+        if not corpus or not loss_id or not split:
+            raise ValueError("losses requires a corpus, identifier, and split")
+        split = str(split).lower().strip()
+        if split not in ("train", "test"):
+            raise ValueError("losses split must be either 'train' or 'test'")
         if not self.corpua:
             payload = getattr(self.args, "checkpoint_payload_override", None)
             if payload is None and self.model_path and self.model_path.exists():
@@ -11469,11 +11474,10 @@ class Runtime:
         if not self.corpua:
             raise RuntimeError("No corpora registered in this checkpoint; run 'corpus --add <name>' first")
         dataset = self._dataset_for_name(corpus)
-        loss_path = self._lossdb_path(corpus, loss_id)
-        train_len = int(dataset.train_tokens.numel())
-        test_len = int(dataset.test_tokens.numel())
-        stats = _load_or_init_loss_stats(loss_path, train_len, test_len)
-        if getattr(self.args, "lossdb_scan", False):
+        split_len = int(dataset.train_tokens.numel()) if split == "train" else int(dataset.test_tokens.numel())
+        loss_path = self._losses_path(corpus, loss_id, split)
+        stats = _load_or_init_loss_stats(loss_path, split, split_len)
+        if getattr(self.args, "losses_scan", False):
             _scan_loss_stats(loss_path, stats)
             return 0
         layout = BatchLayout(self.args.layout, batch_size=self.args.batch_size, block_size=self.args.block_size)
@@ -11490,23 +11494,22 @@ class Runtime:
         model.eval()
         overlap = getattr(self.args, "overlap", None)
         if overlap is None:
-            overlap = _default_lossdb_overlap(layout)
+            overlap = _default_losses_overlap(layout)
         overlap = max(0, int(overlap))
         if overlap > max_positions:
             overlap = max_positions
-        max_iterations = getattr(self.args, "lossdb_max_iter", None)
+        max_iterations = getattr(self.args, "losses_max_iter", None)
         if max_iterations is not None:
             max_iterations = max(0, int(max_iterations))
-        split_lengths = {"train": train_len, "test": test_len}
-        for split_name, split_len in split_lengths.items():
-            if split_len > 0 and span > split_len:
-                raise ValueError(
-                    f"Layout span {span} exceeds available tokens ({split_len}) in {split_name} split"
-                )
+        if split_len > 0 and span > split_len:
+            raise ValueError(
+                f"Layout span {span} exceeds available tokens ({split_len}) in {split} split"
+            )
         align_enabled = getattr(self.args, "align_articles", False)
-        print(color_text(f"[lossdb] writing stats to {loss_path}", Colors.CYAN))
+        print(color_text(f"[losses] writing stats to {loss_path}", Colors.CYAN))
         meta = stats.setdefault("meta", {})
-        cursor_keys = {split: f"cursor_{split}" for split in ("test", "train")}
+        cursor_key = f"cursor_{split}"
+        meta.setdefault(cursor_key, 0)
         iteration = 0
         try:
             with torch.no_grad():
@@ -11514,29 +11517,20 @@ class Runtime:
                     if max_iterations is not None and iteration >= max_iterations:
                         print(
                             color_text(
-                                f"[lossdb] reached max iterations ({max_iterations}); progress saved.",
+                                f"[losses] reached max iterations ({max_iterations}); progress saved.",
                                 Colors.YELLOW,
                             )
                         )
                         break
-                    split = None
-                    split_len = 0
-                    cursor_value = 0
-                    for candidate in ("test", "train"):
-                        key = cursor_keys[candidate]
-                        cursor = int(meta.get(key, 0))
-                        length = split_lengths[candidate]
-                        if cursor < length:
-                            split = candidate
-                            split_len = length
-                            cursor_value = cursor
-                            break
-                    if split is None:
-                        print(color_text("[lossdb] completed all splits", Colors.GREEN))
+                    cursor_value = int(meta.get(cursor_key, 0))
+                    if cursor_value >= split_len:
+                        print(color_text(f"[losses] completed {split} split", Colors.GREEN))
                         break
                     iteration += 1
+                    step_start = time.perf_counter()
                     if split_len <= 0:
-                        meta[cursor_keys[split]] = 0
+                        meta[cursor_key] = split_len
+                        torch.save(stats, loss_path)
                         continue
                     overlap_tokens = overlap
                     start_pos = cursor_value - overlap_tokens
@@ -11619,7 +11613,7 @@ class Runtime:
                     if not contributions:
                         advance = max(1, max_positions)
                         next_cursor = min(split_len, cursor_value + advance)
-                        meta[cursor_keys[split]] = next_cursor
+                        meta[cursor_key] = next_cursor
                         torch.save(stats, loss_path)
                         continue
                     filtered: dict[int, float] = {}
@@ -11630,7 +11624,7 @@ class Runtime:
                     if not filtered:
                         advance = max(1, max_positions)
                         next_cursor = min(split_len, cursor_value + advance)
-                        meta[cursor_keys[split]] = next_cursor
+                        meta[cursor_key] = next_cursor
                         torch.save(stats, loss_path)
                         continue
                     ordered = sorted(filtered.items())
@@ -11640,25 +11634,22 @@ class Runtime:
                     key = f"{split}_tokens_processed"
                     meta[key] = int(meta.get(key, 0)) + len(ordered)
                     next_cursor = min(split_len, ordered[-1][0] + 1)
-                    meta[cursor_keys[split]] = next_cursor
+                    meta[cursor_key] = next_cursor
                     torch.save(stats, loss_path)
                     avg_loss = sum(val for _, val in ordered) / len(ordered)
                     cursor_label = f"{split} split offset {cursor_value}"
-                    window_label = source_label
-                    if window_label and window_label != cursor_label:
-                        display_label = f"{cursor_label} (window {window_label})"
-                    else:
-                        display_label = cursor_label
+                    elapsed = max(time.perf_counter() - step_start, 1e-9)
+                    tokens_per_min = len(ordered) * 60.0 / elapsed
                     progress = next_cursor / split_len if split_len else 1.0
                     print(
                         color_text(
-                            f"[lossdb] {split} {display_label}: updated {len(ordered)} tokens (avg loss {avg_loss:.3f}); cursor {next_cursor}/{split_len} ({progress:.2%})",
+                            f"[losses] {split} {cursor_label}: updated {len(ordered)} tokens (avg loss {avg_loss:.3f}; avg {tokens_per_min:,.0f} tok/min); cursor {next_cursor}/{split_len} ({progress:.2%})",
                             Colors.GREEN,
                         )
                     )
         except KeyboardInterrupt:
             torch.save(stats, loss_path)
-            print(color_text("[lossdb] interrupted; progress saved.", Colors.YELLOW))
+            print(color_text("[losses] interrupted; progress saved.", Colors.YELLOW))
         return 0
 
     def _token_cache_paths(
@@ -11673,13 +11664,14 @@ class Runtime:
         test_cache = data_dir / f"{corpus}_tokens_test_{vocab}.pt"
         return train_cache, test_cache
 
-    def _lossdb_path(self, corpus: str, db_id: str) -> pathlib.Path:
+    def _losses_path(self, corpus: str, db_id: str, split: str) -> pathlib.Path:
         data_dir = pathlib.Path(self.args.data)
         vocab = self.args.vocab_size
         safe_id = re.sub(r"[^0-9A-Za-z_-]+", "", db_id)
         if not safe_id:
             safe_id = "default"
-        return data_dir / f"{corpus}_losses_{safe_id}_{vocab}.pt"
+        safe_split = "train" if split == "train" else "test"
+        return data_dir / f"{corpus}_losses_{safe_split}_{safe_id}_{vocab}.pt"
 
     def cli_prompts(
         self,
@@ -12321,8 +12313,8 @@ class Runtime:
                 )
                 return
 
-            if self.args.command == "lossdb":
-                return self.cli_lossdb(tokenizer=tokenizer, model=model)
+            if self.args.command == "losses":
+                return self.cli_losses(tokenizer=tokenizer, model=model)
 
             if self.args.command == "eval":
                 custom_text = None
