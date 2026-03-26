@@ -100,13 +100,21 @@ def iter_training_text(
 ) -> Iterable[str]:
     """Yield limited text snippets for tokenizer training."""
 
+    def sanitize(text: str) -> str:
+        sanitized = text
+        # Replace reserved tokens with whitespace so the trainer cannot learn partial merges.
+        for token in SPECIAL_TOKENS:
+            if token in sanitized:
+                sanitized = sanitized.replace(token, " ")
+        return sanitized
+
     for path, local_limit, weight in entries:
         limit = local_limit if local_limit is not None else default_limit
         data = read_limited_text(path, limit)
         if data:
             repeat = max(1, weight)
             for _ in range(repeat):
-                yield data
+                yield sanitize(data)
 
 
 def write_json(path: pathlib.Path, data: dict) -> None:
