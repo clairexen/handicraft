@@ -6525,11 +6525,35 @@ def _load_or_init_loss_stats(path: pathlib.Path, split: str, split_len: int) -> 
     return stats
 
 
-def _scan_loss_stats(path: pathlib.Path, stats: dict[str, object]) -> None:
+def _article_spans(tokens: torch.Tensor, separator_token_id: int) -> list[tuple[int, int]]:
+    if separator_token_id is None or tokens.numel() == 0:
+        return []
+    matches = (tokens == separator_token_id).nonzero(as_tuple=False).view(-1)
+    if matches.numel() == 0:
+        return []
+    positions = matches.tolist()
+    total = int(tokens.numel())
+    spans: list[tuple[int, int]] = []
+    for idx, pos in enumerate(positions):
+        start = pos + 1
+        end = positions[idx + 1] if idx + 1 < len(positions) else total
+        if end <= start:
+            continue
+        spans.append((start, end - start))
+    return spans
+
+
+def _scan_loss_stats(
+    path: pathlib.Path,
+    stats: dict[str, object],
+    dataset: TextDataset,
+    vocab_size: int,
+) -> None:
     print(color_text(f"[losses] scanning {path}", Colors.CYAN))
     meta = stats.get("meta", {})
     if meta:
         print(color_text(f"  meta: {meta}", Colors.YELLOW))
+    separator_token_id = getattr(dataset, "article_separator_token_id", None)
     for split in ("train", "test"):
         tensor = stats.get(split)
         if tensor is None:
@@ -6567,6 +6591,64 @@ def _scan_loss_stats(path: pathlib.Path, stats: dict[str, object]) -> None:
             for val, rel in zip(vals.tolist(), rel_idx.tolist()):
                 pos = int(idxs[rel].item())
                 print(f"      pos {pos}: {val:.4f}")
+        tokens = dataset.train_tokens if split == "train" else dataset.test_tokens
+        if separator_token_id is None:
+            print(color_text("    article scan skipped (no <|----|> token configured)", Colors.YELLOW))
+            continue
+        if tokens.numel() == 0:
+            print(color_text("    article scan skipped (no corpus tokens)", Colors.YELLOW))
+            continue
+        if tokens.numel() != total:
+            print(
+                color_text(
+                    f"    article scan warning: token count {tokens.numel():,} does not match loss entries {total:,}",
+                    Colors.YELLOW,
+                )
+            )
+        spans = _article_spans(tokens, separator_token_id)
+        if not spans:
+            print(color_text("    article scan: no <|----|> separators found", Colors.YELLOW))
+            continue
+        print(color_text("    article spans:", Colors.CYAN))
+        max_articles = 1000
+        limited = False
+        for article_idx, (start, span_len) in enumerate(spans, start=1):
+            if article_idx > max_articles:
+                limited = True
+                break
+            if start >= total or span_len <= 0:
+                continue
+            end = min(start + span_len, total)
+            segment_values = values[start:end]
+            segment_mask = processed_mask[start:end]
+            processed_count = int(segment_mask.sum().item())
+            if processed_count == 0:
+                print(
+                    color_text(
+                        f"      article {article_idx}: start={start:,} len={end - start:,} (no recorded losses)",
+                        Colors.MAGENTA,
+                    )
+                )
+                continue
+            recorded = segment_values[segment_mask]
+            avg_loss = float(recorded.mean().item())
+            perplexities = torch.exp(recorded)
+            avg_perplexity = float(perplexities.mean().item())
+            vocab_value = float(vocab_size)
+            failure_score = float((perplexities / (perplexities + vocab_value)).mean().item())
+            print(
+                f"      article {article_idx}: start={start:,} len={end - start:,}"
+                f" avg_loss={avg_loss:.4f} avg_ppl={avg_perplexity:.2f}"
+                f" failure_score={failure_score:.3f}"
+            )
+        if limited:
+            remaining = len(spans) - max_articles
+            print(
+                color_text(
+                    f"    (skipping {remaining} additional articles; showing first {max_articles})",
+                    Colors.YELLOW,
+                )
+            )
 
 
 def _collect_layout_row_results(
@@ -11478,7 +11560,7 @@ class Runtime:
         loss_path = self._losses_path(corpus, loss_id, split)
         stats = _load_or_init_loss_stats(loss_path, split, split_len)
         if getattr(self.args, "losses_scan", False):
-            _scan_loss_stats(loss_path, stats)
+            _scan_loss_stats(loss_path, stats, dataset, self.args.vocab_size)
             return 0
         layout = BatchLayout(self.args.layout, batch_size=self.args.batch_size, block_size=self.args.block_size)
         _log_layout_warnings(self.args, layout)
@@ -11637,13 +11719,14 @@ class Runtime:
                     meta[cursor_key] = next_cursor
                     torch.save(stats, loss_path)
                     avg_loss = sum(val for _, val in ordered) / len(ordered)
+                    max_loss = max(val for _, val in ordered)
                     cursor_label = f"{split} split offset {cursor_value}"
                     elapsed = max(time.perf_counter() - step_start, 1e-9)
                     tokens_per_min = len(ordered) * 60.0 / elapsed
                     progress = next_cursor / split_len if split_len else 1.0
                     print(
                         color_text(
-                            f"[losses] {cursor_label}: updated {len(ordered)} tokens (avg loss {avg_loss:.3f}; avg {tokens_per_min:,.0f} tok/min); cursor {next_cursor}/{split_len} ({progress:.2%})",
+                            f"[losses] {cursor_label}: updated {len(ordered)} tokens (avg loss {avg_loss:.3f}; max loss {max_loss:.3f}; avg {tokens_per_min:,.0f} tok/min); cursor {next_cursor}/{split_len} ({progress:.2%})",
                             Colors.GREEN,
                         )
                     )
