@@ -212,7 +212,8 @@ def encode_corpus(args: argparse.Namespace) -> int:
     if not saw_text:
         raise ValueError(f"Input corpus {args.input} is empty")
 
-    tensor = torch.tensor(token_ids, dtype=torch.uint16)
+    dtype = torch.uint32 if args.vocab_size > (1 << 16) else torch.uint16
+    tensor = torch.tensor(token_ids, dtype=dtype)
     payload = {"tokens": tensor, "bytes": total_bytes}
     args.output.parent.mkdir(parents=True, exist_ok=True)
     torch.save(payload, args.output)
