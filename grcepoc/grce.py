@@ -11482,6 +11482,46 @@ class Runtime:
             tokenizer_json,
         )
 
+    def _prepare_corpus(
+        self,
+        payload: dict | None,
+        model_path: pathlib.Path,
+    ) -> tuple[
+        GPT2TokenizerWrapper,
+        TextDataset,
+        int | None,
+        Sequence[int] | None,
+        bool,
+        str,
+    ]:
+        (
+            tokenizer,
+            newline_token_id,
+            boundary_blocklist,
+            default_prompt_boundary,
+            tokenizer_json,
+        ) = self._prepare_tokenizer_bundle(allow_files=True)
+        corpua = self._load_corpua_from_payload(payload if isinstance(payload, dict) else None)
+        if not corpua:
+            raise RuntimeError(
+                "No corpora configured in this checkpoint; run 'corpus --add <name>' before evaluating."
+            )
+        selected = getattr(self.args, "corpus", None)
+        if selected:
+            dataset = self._dataset_for_name(selected)
+        else:
+            entry = corpua[0]
+            dataset = self._dataset_for_name(entry["corpus"])
+            self.args.corpus = entry["corpus"]
+        return (
+            tokenizer,
+            dataset,
+            newline_token_id,
+            boundary_blocklist,
+            default_prompt_boundary,
+            tokenizer_json,
+        )
+
     def _normalize_corpus_entry(self, entry: dict[str, object] | None) -> dict[str, int] | None:
         if not isinstance(entry, dict):
             return None
