@@ -1,7 +1,7 @@
 #!/bin/bash
 
 set -ex
-vocab=30000
+vocab=60000
 
 lang=simple
 if [ ! -f wikipedia-${lang}-train.txt.gz ]; then
