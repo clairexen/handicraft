@@ -11643,7 +11643,7 @@ class Runtime:
                     progress = next_cursor / split_len if split_len else 1.0
                     print(
                         color_text(
-                            f"[losses] {split} {cursor_label}: updated {len(ordered)} tokens (avg loss {avg_loss:.3f}; avg {tokens_per_min:,.0f} tok/min); cursor {next_cursor}/{split_len} ({progress:.2%})",
+                            f"[losses] {cursor_label}: updated {len(ordered)} tokens (avg loss {avg_loss:.3f}; avg {tokens_per_min:,.0f} tok/min); cursor {next_cursor}/{split_len} ({progress:.2%})",
                             Colors.GREEN,
                         )
                     )
