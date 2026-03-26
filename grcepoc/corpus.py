@@ -113,8 +113,9 @@ def iter_training_text(
         data = read_limited_text(path, limit)
         if data:
             repeat = max(1, weight)
+            sanitized = sanitize(data)
             for _ in range(repeat):
-                yield sanitize(data)
+                yield sanitized
 
 
 def write_json(path: pathlib.Path, data: dict) -> None:
