@@ -70,6 +70,10 @@ pod_init() {
         run_ssh "python3 /root/rpwd.py"
 }
 
+pod_upgrade() {
+        run_ssh "pip uninstall -y torch torchvision torchaudio; pip cache purge; pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128"
+}
+
 rsync_update() {
     rsync "${RSYNC_COMMON[@]}" -e "$(join_cmd "${RSYNC_SSH[@]}")" "$ROOT_DIR/grce.py" "${REMOTE_HOST}:${REMOTE_DIR}/"
 }
@@ -135,6 +139,9 @@ case "${1:-}" in
         pod_init
         rsync_update
 	open_shell
+        ;;
+    upgrade)
+        pod_upgrade
         ;;
     init)
         pod_init

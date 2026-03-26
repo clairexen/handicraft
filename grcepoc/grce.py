@@ -83,6 +83,14 @@ PROMPT_GOALS = [
 ]
 
 
+CUDA_FALLBACK_ERROR_SUBSTRINGS = (
+    "torch not compiled with cuda",
+    "no kernel image is available for execution on the device",
+    "is not compatible with the current pytorch installation",
+    "cuda device compute capability",
+)
+
+
 # -----------------------------------------------------------------------------
 # GRCE Model Configuration
 # -----------------------------------------------------------------------------
@@ -1193,6 +1201,7 @@ import re
 import shlex
 import sys
 import time
+import types
 from collections import OrderedDict, defaultdict
 import json
 from dataclasses import dataclass, field, asdict
@@ -1873,25 +1882,32 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         help="Print the evaluated slice and per-row metrics",
     )
 
-    ppl_parser = subparsers.add_parser(
-        "ppldb",
-        help="Build or inspect a perplexity database",
+    loss_parser = subparsers.add_parser(
+        "lossdb",
+        help="Build or inspect a loss database",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    ppl_parser.set_defaults(command="ppldb")
-    ppl_parser.add_argument("ppldb_corpus", help="Corpus name registered in the checkpoint")
-    ppl_parser.add_argument("ppldb_id", help="Identifier to include in the ppl database filename")
-    ppl_parser.add_argument(
+    loss_parser.set_defaults(command="lossdb")
+    loss_parser.add_argument("lossdb_corpus", help="Corpus name registered in the checkpoint")
+    loss_parser.add_argument("lossdb_id", help="Identifier to include in the loss database filename")
+    loss_parser.add_argument(
         "--scan",
-        dest="ppldb_scan",
+        dest="lossdb_scan",
         action="store_true",
-        help="Scan the ppl database and report statistics instead of sampling",
+        help="Scan the loss database and report statistics instead of sampling",
     )
-    ppl_parser.add_argument(
+    loss_parser.add_argument(
         "--overlap",
         type=int,
         default=None,
-        help="Tokens of overlap before the current cursor when running ppldb",
+        help="Tokens of overlap before the current cursor when running lossdb",
+    )
+    loss_parser.add_argument(
+        "--max-iter",
+        dest="lossdb_max_iter",
+        type=int,
+        default=None,
+        help="Maximum number of lossdb iterations to run (default: run until corpus completion)",
     )
 
 
@@ -6425,7 +6441,7 @@ def _format_row_detail_entry(detail: dict[str, object], *, preview: str | None =
     return row_line
 
 
-def _load_or_init_ppl_stats(path: pathlib.Path, train_len: int, test_len: int) -> dict[str, object]:
+def _load_or_init_loss_stats(path: pathlib.Path, train_len: int, test_len: int) -> dict[str, object]:
     changed = False
     if path.exists():
         stats = torch.load(path)
@@ -6508,8 +6524,8 @@ def _load_or_init_ppl_stats(path: pathlib.Path, train_len: int, test_len: int) -
     return stats
 
 
-def _scan_ppl_stats(path: pathlib.Path, stats: dict[str, object]) -> None:
-    print(color_text(f"[ppldb] scanning {path}", Colors.CYAN))
+def _scan_loss_stats(path: pathlib.Path, stats: dict[str, object]) -> None:
+    print(color_text(f"[lossdb] scanning {path}", Colors.CYAN))
     meta = stats.get("meta", {})
     if meta:
         print(color_text(f"  meta: {meta}", Colors.YELLOW))
@@ -6539,14 +6555,14 @@ def _scan_ppl_stats(path: pathlib.Path, stats: dict[str, object]) -> None:
         topk = min(10, mins.numel())
         if topk > 0:
             vals, rel_idx = torch.topk(mins, k=topk, largest=False)
-            print(color_text(f"    smallest min perplexities:", Colors.CYAN))
+            print(color_text(f"    smallest recorded losses:", Colors.CYAN))
             for val, rel in zip(vals.tolist(), rel_idx.tolist()):
                 pos = int(idxs[rel].item())
                 print(f"      pos {pos}: {val:.4f}")
         topk = min(10, maxs.numel())
         if topk > 0:
             vals, rel_idx = torch.topk(maxs, k=topk, largest=True)
-            print(color_text(f"    largest max perplexities:", Colors.CYAN))
+            print(color_text(f"    largest recorded losses:", Colors.CYAN))
             for val, rel in zip(vals.tolist(), rel_idx.tolist()):
                 pos = int(idxs[rel].item())
                 print(f"      pos {pos}: {val:.4f}")
@@ -6596,7 +6612,7 @@ def _collect_layout_row_results(
     return results
 
 
-def _row_perplexity_contributions(
+def _row_loss_contributions(
     row_result: RowEvalResult,
     annotations: Sequence[dict[str, object]],
     actual_start: int,
@@ -6605,6 +6621,7 @@ def _row_perplexity_contributions(
     tokenizer: GPT2TokenizerWrapper,
     base_source_ids: torch.Tensor,
     split: str,
+    skip_prefix: int = 0,
 ) -> list[tuple[int, float]]:
     if actual_start < 0 or split_length <= 0:
         return []
@@ -6614,40 +6631,40 @@ def _row_perplexity_contributions(
         logits = logits.unsqueeze(0)
         targets = targets.unsqueeze(0)
     log_probs = torch.log_softmax(logits, dim=-1)
-    gathered = torch.gather(log_probs, dim=-1, index=targets.unsqueeze(-1)).squeeze(-1)
+    safe_targets = torch.where(targets >= 0, targets, torch.zeros_like(targets))
+    gathered = torch.gather(log_probs, dim=-1, index=safe_targets.unsqueeze(-1)).squeeze(-1)
     loss_matrix = (-gathered).detach().cpu()
     mask = (targets != LOSS_IGNORE_INDEX).detach().cpu()
     rows, cols = loss_matrix.shape
     contributions: list[tuple[int, float]] = []
-    base_source_flat = base_source_ids.view(-1).detach().cpu().tolist()
     for col_idx in range(min(cols, len(annotations))):
         base_index = annotations[col_idx].get("base_index")
         if base_index is None:
             continue
-        abs_index = actual_start + int(base_index)
-        if abs_index < 0 or abs_index >= split_length:
+        if int(base_index) < skip_prefix:
             continue
+        abs_index = (actual_start + int(base_index)) % split_length
         for row_idx in range(rows):
             if not mask[row_idx, col_idx]:
                 continue
             loss_val = float(loss_matrix[row_idx, col_idx])
             if math.isnan(loss_val) or math.isinf(loss_val):
                 continue
-            contributions.append((abs_index, math.exp(loss_val)))
+            contributions.append((abs_index, loss_val))
     return contributions
 
 
-def _update_ppl_tensor(tensor: torch.Tensor, contributions: Sequence[tuple[int, float]]) -> None:
+def _update_loss_tensor(tensor: torch.Tensor, contributions: Sequence[tuple[int, float]]) -> None:
     if tensor.numel() == 0 or not contributions:
         return
     length = tensor.size(0)
-    for idx, ppl in contributions:
+    for idx, loss_value in contributions:
         if idx < 0 or idx >= length:
             continue
-        tensor[idx] = torch.tensor(float(ppl), dtype=tensor.dtype)
+        tensor[idx] = torch.tensor(float(loss_value), dtype=tensor.dtype)
 
 
-def _default_ppldb_overlap(layout: BatchLayout) -> int:
+def _default_lossdb_overlap(layout: BatchLayout) -> int:
     if layout.rows:
         first_row = layout.rows[0]
         if first_row.segments:
@@ -6657,6 +6674,18 @@ def _default_ppldb_overlap(layout: BatchLayout) -> int:
                 return columns
     total = layout.total_token_span()
     return max(1, total)
+
+
+def _expand_block_rows(rows: Sequence[BlockLayout]) -> list[BlockLayout]:
+    expanded: list[BlockLayout] = []
+    for block in rows:
+        count = max(1, int(getattr(block, "rows", 1) or 1))
+        if count <= 1:
+            expanded.append(block)
+            continue
+        for _ in range(count):
+            expanded.append(BlockLayout(1, block.segments, block.modifiers))
+    return expanded
 
 
 def train_layout_batch(
@@ -8755,6 +8784,8 @@ def _evaluate_row_block(
             if cols > 0:
                 ignore_mask[-1] = False
             eval_targets[:, ignore_mask] = LOSS_IGNORE_INDEX
+        elif segment.mode == "encode":
+            eval_targets = chunk_target.new_full(chunk_target.shape, LOSS_IGNORE_INDEX)
         target_ids[:, start:end] = eval_targets
         use_standard_loss = not (
             getattr(segment, "loss_input_stream", False)
@@ -8839,10 +8870,10 @@ def _evaluate_row_block(
         kv_chain.append(kv_out)
         for local_idx in range(cols):
             idx = cursor + local_idx
-            if segment.mode == "encode" and local_idx < cols - 1:
-                if drop_mask_tensor is None or not bool(drop_mask_tensor[local_idx]):
-                    supervision_mask[idx] = False
-            elif think_mask is not None and bool(think_mask[local_idx]):
+            if segment.mode == "encode":
+                supervision_mask[idx] = False
+                continue
+            if think_mask is not None and bool(think_mask[local_idx]):
                 supervision_mask[idx] = False
         if chunk_capture is not None and segment.mode in {"decode", "reverse", "encode"}:
             abs_col = chunk_capture.absolute_offset + (cols - 1)
@@ -9556,10 +9587,15 @@ def _build_pass_records(
     top_k = min(3, next_log_probs.size(-1))
     next_top_logp, next_top_indices = torch.topk(next_log_probs, k=top_k, dim=-1)
     next_top_probs = next_top_logp.exp()
+    safe_next_targets = torch.where(
+        row_result.target_ids >= 0,
+        row_result.target_ids,
+        torch.zeros_like(row_result.target_ids),
+    )
     gathered_next = torch.gather(
         next_log_probs,
         dim=-1,
-        index=row_result.target_ids.unsqueeze(-1),
+        index=safe_next_targets.unsqueeze(-1),
     ).squeeze(-1)
     next_losses = (-gathered_next).squeeze(0).cpu().tolist()
     next_top_indices_cpu = next_top_indices.squeeze(0).cpu().tolist()
@@ -9580,10 +9616,15 @@ def _build_pass_records(
             ).view(1, -1)
         else:
             self_target_tensor = row_result.target_ids.long()
+        safe_self_targets = torch.where(
+            self_target_tensor >= 0,
+            self_target_tensor,
+            torch.zeros_like(self_target_tensor),
+        )
         gathered_self = torch.gather(
             self_log_probs,
             dim=-1,
-            index=self_target_tensor.unsqueeze(-1),
+            index=safe_self_targets.unsqueeze(-1),
         ).squeeze(-1)
         self_losses_cpu = (-gathered_self).squeeze(0).cpu().tolist()
         self_top_indices_cpu = self_top_indices.squeeze(0).cpu().tolist()
@@ -11038,6 +11079,52 @@ class Runtime:
         self.dataset_cache: dict[str, TextDataset] = {}
         self.active_corpus_entry: dict[str, int] | None = None
 
+    def _cuda_error_requires_cpu(self, error_message: str) -> bool:
+        if self.args.device == "cpu":
+            return False
+        lowered = error_message.lower()
+        return any(token in lowered for token in CUDA_FALLBACK_ERROR_SUBSTRINGS)
+
+    def _switch_to_cpu_due_to_cuda(self, error_message: str) -> torch.device:
+        trimmed = error_message.splitlines()[0].strip()
+        print(
+            color_text(
+                f"CUDA unavailable or unsupported ({trimmed}); switching to CPU",
+                Colors.RED,
+                bold=True,
+            )
+        )
+        print(
+            color_text(
+                "Install a PyTorch build that supports this GPU's compute capability to use CUDA.",
+                Colors.YELLOW,
+            )
+        )
+        self.args.device = "cpu"
+        return torch.device("cpu")
+
+    def _ensure_cuda_arch_supported(self, device: torch.device) -> torch.device:
+        if device.type != "cuda" or not torch.cuda.is_available():
+            return device
+        try:
+            device_index = device.index if device.index is not None else torch.cuda.current_device()
+            major, minor = torch.cuda.get_device_capability(device_index)
+        except RuntimeError:
+            return device
+        arch = f"sm_{major}{minor}"
+        arch_list = torch.cuda.get_arch_list() if hasattr(torch.cuda, "get_arch_list") else []
+        if arch in arch_list:
+            return device
+        supported = ", ".join(sorted(arch_list)) if arch_list else "unknown"
+        message = (
+            "CUDA device compute capability {major}.{minor} ({arch}) is not supported by "
+            "this PyTorch build (supported architectures: {supported}). "
+            "Install a build compiled with {arch} or rerun with --device cpu."
+        ).format(major=major, minor=minor, arch=arch, supported=supported)
+        if not self.args.tiny:
+            raise RuntimeError(message)
+        return self._switch_to_cpu_due_to_cuda(message)
+
     class TimeoutAlarm(Exception):
         pass
 
@@ -11364,15 +11451,15 @@ class Runtime:
                 updated = True
         return entry, updated
 
-    def cli_ppldb(
+    def cli_lossdb(
         self,
         tokenizer: GPT2TokenizerWrapper,
         model: GRCEGPT,
     ) -> int:
-        corpus = getattr(self.args, "ppldb_corpus", None)
-        ppl_id = getattr(self.args, "ppldb_id", None)
-        if not corpus or not ppl_id:
-            raise ValueError("ppldb requires both a corpus name and an id")
+        corpus = getattr(self.args, "lossdb_corpus", None)
+        loss_id = getattr(self.args, "lossdb_id", None)
+        if not corpus or not loss_id:
+            raise ValueError("lossdb requires both a corpus name and an id")
         if not self.corpua:
             payload = getattr(self.args, "checkpoint_payload_override", None)
             if payload is None and self.model_path and self.model_path.exists():
@@ -11382,28 +11469,34 @@ class Runtime:
         if not self.corpua:
             raise RuntimeError("No corpora registered in this checkpoint; run 'corpus --add <name>' first")
         dataset = self._dataset_for_name(corpus)
-        ppl_path = self._ppldb_path(corpus, ppl_id)
+        loss_path = self._lossdb_path(corpus, loss_id)
         train_len = int(dataset.train_tokens.numel())
         test_len = int(dataset.test_tokens.numel())
-        stats = _load_or_init_ppl_stats(ppl_path, train_len, test_len)
-        if getattr(self.args, "ppldb_scan", False):
-            _scan_ppl_stats(ppl_path, stats)
+        stats = _load_or_init_loss_stats(loss_path, train_len, test_len)
+        if getattr(self.args, "lossdb_scan", False):
+            _scan_loss_stats(loss_path, stats)
             return 0
         layout = BatchLayout(self.args.layout, batch_size=self.args.batch_size, block_size=self.args.block_size)
         _log_layout_warnings(self.args, layout)
-        max_positions = max((row.total_positions() for row in layout.rows), default=0)
+        row_blocks = _expand_block_rows(layout.rows)
+        if not row_blocks:
+            raise ValueError("Layout does not contain any rows to evaluate")
+        max_positions = max((row.total_positions() for row in row_blocks), default=0)
         if max_positions <= 0:
             raise ValueError("Layout does not contain any token positions to evaluate")
-        layout_future_margin = max((_row_future_margin(row) for row in layout.rows), default=0)
+        layout_future_margin = max((_row_future_margin(row) for row in row_blocks), default=0)
         span = max_positions + 1 + layout_future_margin
         device = next(model.parameters()).device
         model.eval()
         overlap = getattr(self.args, "overlap", None)
         if overlap is None:
-            overlap = _default_ppldb_overlap(layout)
+            overlap = _default_lossdb_overlap(layout)
         overlap = max(0, int(overlap))
         if overlap > max_positions:
             overlap = max_positions
+        max_iterations = getattr(self.args, "lossdb_max_iter", None)
+        if max_iterations is not None:
+            max_iterations = max(0, int(max_iterations))
         split_lengths = {"train": train_len, "test": test_len}
         for split_name, split_len in split_lengths.items():
             if split_len > 0 and span > split_len:
@@ -11411,12 +11504,21 @@ class Runtime:
                     f"Layout span {span} exceeds available tokens ({split_len}) in {split_name} split"
                 )
         align_enabled = getattr(self.args, "align_articles", False)
-        print(color_text(f"[ppldb] writing stats to {ppl_path}", Colors.CYAN))
+        print(color_text(f"[lossdb] writing stats to {loss_path}", Colors.CYAN))
         meta = stats.setdefault("meta", {})
         cursor_keys = {split: f"cursor_{split}" for split in ("test", "train")}
+        iteration = 0
         try:
             with torch.no_grad():
                 while True:
+                    if max_iterations is not None and iteration >= max_iterations:
+                        print(
+                            color_text(
+                                f"[lossdb] reached max iterations ({max_iterations}); progress saved.",
+                                Colors.YELLOW,
+                            )
+                        )
+                        break
                     split = None
                     split_len = 0
                     cursor_value = 0
@@ -11430,103 +11532,133 @@ class Runtime:
                             cursor_value = cursor
                             break
                     if split is None:
-                        print(color_text("[ppldb] completed all splits", Colors.GREEN))
+                        print(color_text("[lossdb] completed all splits", Colors.GREEN))
                         break
+                    iteration += 1
                     if split_len <= 0:
                         meta[cursor_keys[split]] = 0
                         continue
-                    overlap_tokens = min(overlap, cursor_value)
+                    overlap_tokens = overlap
                     start_pos = cursor_value - overlap_tokens
-                    max_start = max(0, split_len - span)
-                    if start_pos > max_start:
-                        start_pos = max_start
-                    if start_pos < 0:
-                        start_pos = 0
                     align_rng = None
                     if align_enabled:
                         align_rng = random.Random(cursor_value)
-                    (
-                        _,
-                        inputs,
-                        targets,
-                        _,
-                        source_label,
-                        _,
-                        base_source_ids,
-                        actual_start,
-                    ) = _prepare_eval_tokens(
-                        self.args,
-                        dataset,
-                        tokenizer,
-                        token_length=max_positions,
-                        start_pos=start_pos,
-                        custom_text=None,
-                        align_rng=align_rng,
-                        future_margin=layout_future_margin,
-                        split=split,
-                    )
-                    xb_base = inputs.unsqueeze(0).to(device)
-                    yb_base = targets.unsqueeze(0).to(device)
-                    base_source_tensor = base_source_ids.unsqueeze(0).to(device)
-                    row_rng = random.Random(cursor_value)
-                    row_results = _collect_layout_row_results(
-                        self.args,
-                        model,
-                        layout,
-                        xb_base,
-                        yb_base,
-                        base_source_tensor,
-                        row_rng,
-                    )
+                    row_plans: list[tuple[BlockLayout, int]] = []
+                    local_start = start_pos
+                    for row_block in row_blocks:
+                        row_len = row_block.total_positions()
+                        if row_len <= 0:
+                            continue
+                        row_span = row_len + 1 + layout_future_margin
+                        start_for_row = local_start
+                        row_plans.append((row_block, start_for_row))
+                        local_start = start_for_row + max(1, row_len - overlap)
                     contributions: list[tuple[int, float]] = []
-                    for annotations_full, final_result in row_results:
-                        row_values = _row_perplexity_contributions(
-                            final_result,
-                            annotations_full,
+                    source_label = None
+                    for row_index, (row_block, row_start) in enumerate(row_plans):
+                        row_len = row_block.total_positions()
+                        if row_len <= 0:
+                            continue
+                        row_span = row_len + 1 + layout_future_margin
+                        if row_span > split_len and split_len > 0:
+                            raise ValueError(
+                                f"Layout row span {row_span} exceeds available tokens ({split_len}) in {split} split"
+                            )
+                        align_rng = None
+                        if align_enabled:
+                            align_rng = random.Random(row_start)
+                        (
+                            _,
+                            inputs,
+                            targets,
+                            _,
+                            row_source_label,
+                            _,
+                            base_source_ids,
                             actual_start,
-                            split_len,
-                            tokenizer=tokenizer,
-                            base_source_ids=base_source_ids,
+                        ) = _prepare_eval_tokens(
+                            self.args,
+                            dataset,
+                            tokenizer,
+                            token_length=row_len,
+                            start_pos=row_start,
+                            custom_text=None,
+                            align_rng=align_rng,
+                            future_margin=layout_future_margin,
                             split=split,
                         )
-                        contributions.extend(row_values)
+                        if source_label is None:
+                            source_label = row_source_label
+                        xb_base = inputs.unsqueeze(0).to(device)
+                        yb_base = targets.unsqueeze(0).to(device)
+                        base_source_tensor = base_source_ids.unsqueeze(0).to(device)
+                        row_rng = random.Random(cursor_value + row_index)
+                        single_layout = types.SimpleNamespace(rows=[row_block])
+                        row_results = _collect_layout_row_results(
+                            self.args,
+                            model,
+                            single_layout,
+                            xb_base,
+                            yb_base,
+                            base_source_tensor,
+                            row_rng,
+                        )
+                        for annotations_full, final_result in row_results:
+                            skip_prefix = min(overlap, row_len)
+                            row_values = _row_loss_contributions(
+                                final_result,
+                                annotations_full,
+                                actual_start,
+                                split_len,
+                                tokenizer=tokenizer,
+                                base_source_ids=base_source_ids,
+                                split=split,
+                                skip_prefix=skip_prefix,
+                            )
+                            contributions.extend(row_values)
                     if not contributions:
                         advance = max(1, max_positions)
                         next_cursor = min(split_len, cursor_value + advance)
                         meta[cursor_keys[split]] = next_cursor
-                        torch.save(stats, ppl_path)
+                        torch.save(stats, loss_path)
                         continue
                     filtered: dict[int, float] = {}
-                    for idx, ppl in contributions:
+                    for idx, loss_value in contributions:
                         if idx < cursor_value or idx >= split_len:
                             continue
-                        filtered[idx] = ppl
+                        filtered[idx] = loss_value
                     if not filtered:
                         advance = max(1, max_positions)
                         next_cursor = min(split_len, cursor_value + advance)
                         meta[cursor_keys[split]] = next_cursor
-                        torch.save(stats, ppl_path)
+                        torch.save(stats, loss_path)
                         continue
                     ordered = sorted(filtered.items())
                     tensor = stats[split]
-                    _update_ppl_tensor(tensor, ordered)
+                    _update_loss_tensor(tensor, ordered)
                     meta["total_updates"] = int(meta.get("total_updates", 0)) + 1
                     key = f"{split}_tokens_processed"
                     meta[key] = int(meta.get(key, 0)) + len(ordered)
                     next_cursor = min(split_len, ordered[-1][0] + 1)
                     meta[cursor_keys[split]] = next_cursor
-                    torch.save(stats, ppl_path)
-                    avg_ppl = sum(val for _, val in ordered) / len(ordered)
+                    torch.save(stats, loss_path)
+                    avg_loss = sum(val for _, val in ordered) / len(ordered)
+                    cursor_label = f"{split} split offset {cursor_value}"
+                    window_label = source_label
+                    if window_label and window_label != cursor_label:
+                        display_label = f"{cursor_label} (window {window_label})"
+                    else:
+                        display_label = cursor_label
                     progress = next_cursor / split_len if split_len else 1.0
                     print(
                         color_text(
-                            f"[ppldb] {split} {source_label}: updated {len(ordered)} tokens (avg ppl {avg_ppl:.3f}); cursor {next_cursor}/{split_len} ({progress:.2%})",
+                            f"[lossdb] {split} {display_label}: updated {len(ordered)} tokens (avg loss {avg_loss:.3f}); cursor {next_cursor}/{split_len} ({progress:.2%})",
                             Colors.GREEN,
                         )
                     )
         except KeyboardInterrupt:
-            torch.save(stats, ppl_path)
-            print(color_text("[ppldb] interrupted; progress saved.", Colors.YELLOW))
+            torch.save(stats, loss_path)
+            print(color_text("[lossdb] interrupted; progress saved.", Colors.YELLOW))
         return 0
 
     def _token_cache_paths(
@@ -11541,13 +11673,13 @@ class Runtime:
         test_cache = data_dir / f"{corpus}_tokens_test_{vocab}.pt"
         return train_cache, test_cache
 
-    def _ppldb_path(self, corpus: str, db_id: str) -> pathlib.Path:
+    def _lossdb_path(self, corpus: str, db_id: str) -> pathlib.Path:
         data_dir = pathlib.Path(self.args.data)
         vocab = self.args.vocab_size
         safe_id = re.sub(r"[^0-9A-Za-z_-]+", "", db_id)
         if not safe_id:
             safe_id = "default"
-        return data_dir / f"{corpus}_ppl_{safe_id}_{vocab}.pt"
+        return data_dir / f"{corpus}_losses_{safe_id}_{vocab}.pt"
 
     def cli_prompts(
         self,
@@ -11999,6 +12131,7 @@ class Runtime:
             sys.stderr = Tee(*stderr_streams)
 
             device = torch.device(self.args.device)
+            device = self._ensure_cuda_arch_supported(device)
             try:
                 prompt_text_for_tokens = apply_prompt_prefix(
                     self.args.prompt,
@@ -12014,14 +12147,12 @@ class Runtime:
                 prompt_tokens = prompt_tokens.unsqueeze(0).to(device)
             except (AssertionError, RuntimeError) as exc:
                 message = str(exc)
-                if "Torch not compiled with CUDA" in message and self.args.device != "cpu":
+                if self._cuda_error_requires_cpu(message):
                     if not self.args.tiny:
                         raise RuntimeError(
                             "CUDA requested but not available; rerun with --device cpu or --tiny."
                         ) from exc
-                    print(color_text("Torch not compiled with CUDA enabled; switching to CPU", Colors.RED, bold=True))
-                    device = torch.device("cpu")
-                    self.args.device = "cpu"
+                    device = self._switch_to_cpu_due_to_cuda(message)
                     prompt_tokens = prompt_tokens.unsqueeze(0).to(device)
                 else:
                     raise
@@ -12031,13 +12162,12 @@ class Runtime:
                 model = GRCEGPT(config).to(device)
             except (AssertionError, RuntimeError) as exc:
                 message = str(exc)
-                if "Torch not compiled with CUDA" in message and self.args.device != "cpu":
+                if self._cuda_error_requires_cpu(message):
                     if not self.args.tiny:
                         raise RuntimeError(
                             "CUDA requested but not available; rerun with --device cpu or --tiny."
                         ) from exc
-                    print(color_text("Torch not compiled with CUDA enabled; switching to CPU", Colors.RED, bold=True))
-                    device = torch.device("cpu")
+                    device = self._switch_to_cpu_due_to_cuda(message)
                     model = GRCEGPT(config).to(device)
                 else:
                     raise
@@ -12191,8 +12321,8 @@ class Runtime:
                 )
                 return
 
-            if self.args.command == "ppldb":
-                return self.cli_ppldb(tokenizer=tokenizer, model=model)
+            if self.args.command == "lossdb":
+                return self.cli_lossdb(tokenizer=tokenizer, model=model)
 
             if self.args.command == "eval":
                 custom_text = None
