@@ -6612,10 +6612,14 @@ def _decode_article_text(
     span = tokens[safe_start:safe_end].to(torch.long)
     text = tokenizer.decode(span)
     marker = "<|----|>"
-    trimmed = text.lstrip()
-    while trimmed.startswith(marker):
-        trimmed = trimmed[len(marker) :].lstrip()
-    return trimmed
+    if marker in text:
+        print(
+            color_text(
+                f"[losses] warning: detected unexpected article separator within span {safe_start}-{safe_end}",
+                Colors.RED,
+            )
+        )
+    return text.strip("\n")
 
 
 def _write_filtered_article(
@@ -6647,6 +6651,7 @@ def _scan_loss_stats(
     loss_id: str,
     data_dir: pathlib.Path,
     filter_config: LossFilterConfig,
+    max_articles: int | None = None,
 ) -> None:
     print(color_text(f"[losses] scanning {path}", Colors.CYAN))
     meta = stats.get("meta", {})
@@ -6715,10 +6720,12 @@ def _scan_loss_stats(
             print(color_text("    article scan: no <|----|> separators found", Colors.YELLOW))
             continue
         print(color_text("    article spans:", Colors.CYAN))
-        max_articles = None if filter_enabled else 1000
+        per_split_limit = max_articles
+        if per_split_limit is None:
+            per_split_limit = None if filter_enabled else 1000
         limited = False
         for article_idx, (start, span_len) in enumerate(spans, start=1):
-            if max_articles is not None and article_idx > max_articles:
+            if per_split_limit is not None and article_idx > per_split_limit:
                 limited = True
                 break
             if start >= total or span_len <= 0:
@@ -6784,11 +6791,11 @@ def _scan_loss_stats(
                             Colors.CYAN,
                         )
                     )
-        if limited and max_articles is not None:
-            remaining = len(spans) - max_articles
+        if limited and per_split_limit is not None:
+            remaining = len(spans) - per_split_limit
             print(
                 color_text(
-                    f"    (skipping {remaining} additional articles; showing first {max_articles})",
+                    f"    (skipping {remaining} additional articles; showing first {per_split_limit})",
                     Colors.YELLOW,
                 )
             )
@@ -11725,6 +11732,9 @@ class Runtime:
             max_loss=getattr(self.args, "filter_max_loss", None),
             min_loss=getattr(self.args, "filter_min_loss", None),
         )
+        max_iterations = getattr(self.args, "losses_max_iter", None)
+        if max_iterations is not None:
+            max_iterations = max(0, int(max_iterations))
         if getattr(self.args, "losses_scan", False):
             data_dir = pathlib.Path(self.args.data)
             _scan_loss_stats(
@@ -11738,6 +11748,7 @@ class Runtime:
                 loss_id,
                 data_dir,
                 filter_config,
+                max_articles=max_iterations,
             )
             return 0
         layout = BatchLayout(self.args.layout, batch_size=self.args.batch_size, block_size=self.args.block_size)
@@ -11758,9 +11769,6 @@ class Runtime:
         overlap = max(0, int(overlap))
         if overlap > max_positions:
             overlap = max_positions
-        max_iterations = getattr(self.args, "losses_max_iter", None)
-        if max_iterations is not None:
-            max_iterations = max(0, int(max_iterations))
         if split_len > 0 and span > split_len:
             raise ValueError(
                 f"Layout span {span} exceeds available tokens ({split_len}) in {split} split"
