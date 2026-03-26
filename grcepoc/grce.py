@@ -1873,6 +1873,27 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         help="Print the evaluated slice and per-row metrics",
     )
 
+    ppl_parser = subparsers.add_parser(
+        "ppldb",
+        help="Build or inspect a perplexity database",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    ppl_parser.set_defaults(command="ppldb")
+    ppl_parser.add_argument("ppldb_corpus", help="Corpus name registered in the checkpoint")
+    ppl_parser.add_argument("ppldb_id", help="Identifier to include in the ppl database filename")
+    ppl_parser.add_argument(
+        "--scan",
+        dest="ppldb_scan",
+        action="store_true",
+        help="Scan the ppl database and report statistics instead of sampling",
+    )
+    ppl_parser.add_argument(
+        "--overlap",
+        type=int,
+        default=None,
+        help="Tokens of overlap before the current cursor when running ppldb",
+    )
+
 
     # --------------------------------------------------------
     # Subcommand args parser for "profile"
@@ -6404,6 +6425,240 @@ def _format_row_detail_entry(detail: dict[str, object], *, preview: str | None =
     return row_line
 
 
+def _load_or_init_ppl_stats(path: pathlib.Path, train_len: int, test_len: int) -> dict[str, object]:
+    changed = False
+    if path.exists():
+        stats = torch.load(path)
+    else:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        stats = {
+            "train": torch.zeros(train_len, dtype=torch.float16),
+            "test": torch.zeros(test_len, dtype=torch.float16),
+            "meta": {
+                "train_length": train_len,
+                "test_length": test_len,
+                "total_updates": 0,
+                "train_tokens_processed": 0,
+                "test_tokens_processed": 0,
+                "cursor_train": 0,
+                "cursor_test": 0,
+            },
+        }
+        torch.save(stats, path)
+        return stats
+
+    def _normalize_split(split: str, length: int) -> None:
+        nonlocal changed
+        tensor = stats.get(split)
+        if tensor is None:
+            stats[split] = torch.zeros(length, dtype=torch.float16)
+            changed = True
+            return
+        data = tensor
+        if isinstance(data, torch.Tensor):
+            if data.dim() == 2 and data.size(-1) == 4:
+                counts = data[:, 3].to(torch.float32)
+                sums = data[:, 2].to(torch.float32)
+                averaged = torch.zeros(length, dtype=torch.float16)
+                mask = (counts > 0) & torch.isfinite(counts)
+                if mask.any():
+                    averaged_values = torch.zeros_like(counts)
+                    averaged_values[mask] = sums[mask] / counts[mask]
+                    averaged[: min(length, averaged_values.numel())] = averaged_values[:length].to(
+                        torch.float16
+                    )
+                stats[split] = averaged
+                changed = True
+                return
+            data = data.reshape(-1).to(torch.float16)
+            if data.numel() != length:
+                resized = torch.zeros(length, dtype=torch.float16)
+                upto = min(length, data.numel())
+                resized[:upto] = data[:upto]
+                stats[split] = resized
+                changed = True
+                return
+            if data.dtype != torch.float16:
+                stats[split] = data.to(torch.float16)
+                changed = True
+                return
+        else:
+            stats[split] = torch.zeros(length, dtype=torch.float16)
+            changed = True
+
+    _normalize_split("train", train_len)
+    _normalize_split("test", test_len)
+    meta = stats.setdefault("meta", {})
+    if "total_updates" not in meta:
+        meta["total_updates"] = 0
+        changed = True
+    for key in ("train_tokens_processed", "test_tokens_processed"):
+        if key not in meta:
+            meta[key] = 0
+            changed = True
+    for split_key in ("train", "test"):
+        meta_key = f"cursor_{split_key}"
+        if meta_key not in meta:
+            meta[meta_key] = 0
+            changed = True
+    meta.setdefault("train_length", train_len)
+    meta.setdefault("test_length", test_len)
+    if changed:
+        torch.save(stats, path)
+    return stats
+
+
+def _scan_ppl_stats(path: pathlib.Path, stats: dict[str, object]) -> None:
+    print(color_text(f"[ppldb] scanning {path}", Colors.CYAN))
+    meta = stats.get("meta", {})
+    if meta:
+        print(color_text(f"  meta: {meta}", Colors.YELLOW))
+    for split in ("train", "test"):
+        tensor = stats.get(split)
+        if tensor is None:
+            continue
+        values = tensor.to(torch.float32)
+        total = int(values.numel())
+        if total == 0:
+            print(color_text(f"  [{split}] empty", Colors.MAGENTA))
+            continue
+        processed_mask = values > 0
+        processed = int(processed_mask.sum().item())
+        remaining = total - processed
+        print(
+            color_text(
+                f"  [{split}] total={total:,} processed={processed/total:.1%} remaining={remaining/total:.1%}",
+                Colors.GREEN,
+            )
+        )
+        if processed == 0:
+            continue
+        mins = values[processed_mask]
+        maxs = mins
+        idxs = torch.nonzero(processed_mask, as_tuple=False).view(-1)
+        topk = min(10, mins.numel())
+        if topk > 0:
+            vals, rel_idx = torch.topk(mins, k=topk, largest=False)
+            print(color_text(f"    smallest min perplexities:", Colors.CYAN))
+            for val, rel in zip(vals.tolist(), rel_idx.tolist()):
+                pos = int(idxs[rel].item())
+                print(f"      pos {pos}: {val:.4f}")
+        topk = min(10, maxs.numel())
+        if topk > 0:
+            vals, rel_idx = torch.topk(maxs, k=topk, largest=True)
+            print(color_text(f"    largest max perplexities:", Colors.CYAN))
+            for val, rel in zip(vals.tolist(), rel_idx.tolist()):
+                pos = int(idxs[rel].item())
+                print(f"      pos {pos}: {val:.4f}")
+
+
+def _collect_layout_row_results(
+    args: Args,
+    model: GRCEGPT,
+    layout: BatchLayout,
+    xb_base: torch.Tensor,
+    yb_base: torch.Tensor,
+    base_source_tensor: torch.Tensor,
+    seed_rng: random.Random,
+) -> list[tuple[list[dict[str, object]], RowEvalResult]]:
+    results: list[tuple[list[dict[str, object]], RowEvalResult]] = []
+    for row in layout.rows:
+        annotations_full = _column_debug_annotations(row)
+        max_passes = _max_decode_passes(row)
+        row_variants: list[BlockLayout] = [
+            _row_with_sane_pass_limit(row, limit) for limit in range(1, max_passes)
+        ]
+        row_variants.append(row)
+        pass_results: list[tuple[BlockLayout, RowEvalResult]] = []
+        row_seed = seed_rng.randint(0, 2**63 - 1)
+        for variant_idx, variant in enumerate(row_variants):
+            capture = None
+            try:
+                result = _evaluate_row_block(
+                    args,
+                    model,
+                    variant,
+                    xb_base,
+                    yb_base,
+                    base_source_ids=base_source_tensor,
+                    capture_columns=capture,
+                    drop_rng=random.Random(row_seed),
+                )
+            except ValueError:
+                pass_results = []
+                break
+            pass_results.append((variant, result))
+        if not pass_results:
+            continue
+        final_result = pass_results[-1][1]
+        _attach_pass_records(row, annotations_full, pass_results)
+        results.append((annotations_full, final_result))
+    return results
+
+
+def _row_perplexity_contributions(
+    row_result: RowEvalResult,
+    annotations: Sequence[dict[str, object]],
+    actual_start: int,
+    split_length: int,
+    *,
+    tokenizer: GPT2TokenizerWrapper,
+    base_source_ids: torch.Tensor,
+    split: str,
+) -> list[tuple[int, float]]:
+    if actual_start < 0 or split_length <= 0:
+        return []
+    logits = row_result.logits
+    targets = row_result.target_ids
+    if logits.dim() == 2:
+        logits = logits.unsqueeze(0)
+        targets = targets.unsqueeze(0)
+    log_probs = torch.log_softmax(logits, dim=-1)
+    gathered = torch.gather(log_probs, dim=-1, index=targets.unsqueeze(-1)).squeeze(-1)
+    loss_matrix = (-gathered).detach().cpu()
+    mask = (targets != LOSS_IGNORE_INDEX).detach().cpu()
+    rows, cols = loss_matrix.shape
+    contributions: list[tuple[int, float]] = []
+    base_source_flat = base_source_ids.view(-1).detach().cpu().tolist()
+    for col_idx in range(min(cols, len(annotations))):
+        base_index = annotations[col_idx].get("base_index")
+        if base_index is None:
+            continue
+        abs_index = actual_start + int(base_index)
+        if abs_index < 0 or abs_index >= split_length:
+            continue
+        for row_idx in range(rows):
+            if not mask[row_idx, col_idx]:
+                continue
+            loss_val = float(loss_matrix[row_idx, col_idx])
+            if math.isnan(loss_val) or math.isinf(loss_val):
+                continue
+            contributions.append((abs_index, math.exp(loss_val)))
+    return contributions
+
+
+def _update_ppl_tensor(tensor: torch.Tensor, contributions: Sequence[tuple[int, float]]) -> None:
+    if tensor.numel() == 0 or not contributions:
+        return
+    length = tensor.size(0)
+    for idx, ppl in contributions:
+        if idx < 0 or idx >= length:
+            continue
+        tensor[idx] = torch.tensor(float(ppl), dtype=tensor.dtype)
+
+
+def _default_ppldb_overlap(layout: BatchLayout) -> int:
+    if layout.rows:
+        first_row = layout.rows[0]
+        if first_row.segments:
+            first_segment = first_row.segments[0]
+            columns = first_segment.token_columns()
+            if columns > 0:
+                return columns
+    total = layout.total_token_span()
+    return max(1, total)
+
+
 def train_layout_batch(
     args: Args,
     model: GRCEGPT,
@@ -8650,8 +8905,9 @@ def _prepare_eval_tokens(
     align_rng: random.Random | None = None,
     future_margin: int = 0,
     split: str = "test",
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, int, str, str, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, int, str, str, torch.Tensor, int]:
     future_margin = max(0, int(future_margin))
+    actual_start = start_pos
     if custom_text:
         provided = tokenizer.encode(custom_text)
         min_tokens = token_length + 1 + future_margin
@@ -8665,6 +8921,7 @@ def _prepare_eval_tokens(
             )
         context_tokens = provided[:min_tokens]
         source_label = "custom text"
+        actual_start = -1
     else:
         span = token_length + 1 + future_margin
         if span <= 1:
@@ -8679,6 +8936,7 @@ def _prepare_eval_tokens(
         )
         context_tokens = chunk
         source_label = f"{split} split offset {adjusted}"
+        actual_start = int(adjusted)
     if context_tokens.numel() < token_length + 1:
         raise ValueError("Not enough tokens collected for evaluation")
     usable = context_tokens[: token_length + 1]
@@ -8693,7 +8951,16 @@ def _prepare_eval_tokens(
     base_source_ids = context_tokens.clone()
     eval_block_size = inputs.numel()
     pretty_text = tokenizer.decode_pretty(args, context_tokens)
-    return context_tokens, inputs, targets, eval_block_size, source_label, pretty_text, base_source_ids
+    return (
+        context_tokens,
+        inputs,
+        targets,
+        eval_block_size,
+        source_label,
+        pretty_text,
+        base_source_ids,
+        actual_start,
+    )
 
 
 def _prepare_eval_batch_tokens(
@@ -8723,6 +8990,7 @@ def _prepare_eval_batch_tokens(
             source_label,
             pretty_text,
             base_source_ids,
+            _,
         ) = _prepare_eval_tokens(
             args,
             dataset,
@@ -8783,6 +9051,7 @@ def run_test_slice(
             source_label,
             pretty_text,
             base_source_ids,
+            _,
         ) = _prepare_eval_tokens(
             args,
             dataset,
@@ -10526,6 +10795,7 @@ def run_eval_layout(
                 source_label,
                 pretty_text,
                 base_source_ids,
+                _,
             ) = _prepare_eval_tokens(
                 args,
                 dataset,
@@ -11055,6 +11325,12 @@ class Runtime:
             print(color_text(warning, Colors.YELLOW))
         return dataset
 
+    def _dataset_for_name(self, name: str) -> TextDataset:
+        entry = next((item for item in self.corpua if item["corpus"] == name), None)
+        if entry is None:
+            raise ValueError(f"Corpus '{name}' is not registered in this checkpoint")
+        return self._load_dataset_for_entry(entry)
+
     def _ensure_corpus_entry(
         self,
         corpua: list[dict[str, int]],
@@ -11088,43 +11364,170 @@ class Runtime:
                 updated = True
         return entry, updated
 
-    def _prepare_corpus(
+    def cli_ppldb(
         self,
-        payload: dict | None,
-        model_path: pathlib.Path,
-    ) -> tuple[
-        GPT2TokenizerWrapper,
-        TextDataset,
-        int | None,
-        Sequence[int] | None,
-        bool,
-        str,
-    ]:
-        (
-            tokenizer,
-            newline_token_id,
-            boundary_blocklist,
-            default_prompt_boundary,
-            tokenizer_json,
-        ) = self._prepare_tokenizer_bundle(allow_files=False)
-        corpua = self._load_corpua_from_payload(payload)
-        if not corpua:
-            raise RuntimeError(
-                (
-                    f"Checkpoint {model_path} has no corpora registered. "
-                    "Run 'grce.py corpus --add <name>' to register datasets before training."
+        tokenizer: GPT2TokenizerWrapper,
+        model: GRCEGPT,
+    ) -> int:
+        corpus = getattr(self.args, "ppldb_corpus", None)
+        ppl_id = getattr(self.args, "ppldb_id", None)
+        if not corpus or not ppl_id:
+            raise ValueError("ppldb requires both a corpus name and an id")
+        if not self.corpua:
+            payload = getattr(self.args, "checkpoint_payload_override", None)
+            if payload is None and self.model_path and self.model_path.exists():
+                payload = torch.load(self.model_path, map_location="cpu", weights_only=False)
+            if isinstance(payload, dict):
+                self.corpua = self._load_corpua_from_payload(payload)
+        if not self.corpua:
+            raise RuntimeError("No corpora registered in this checkpoint; run 'corpus --add <name>' first")
+        dataset = self._dataset_for_name(corpus)
+        ppl_path = self._ppldb_path(corpus, ppl_id)
+        train_len = int(dataset.train_tokens.numel())
+        test_len = int(dataset.test_tokens.numel())
+        stats = _load_or_init_ppl_stats(ppl_path, train_len, test_len)
+        if getattr(self.args, "ppldb_scan", False):
+            _scan_ppl_stats(ppl_path, stats)
+            return 0
+        layout = BatchLayout(self.args.layout, batch_size=self.args.batch_size, block_size=self.args.block_size)
+        _log_layout_warnings(self.args, layout)
+        max_positions = max((row.total_positions() for row in layout.rows), default=0)
+        if max_positions <= 0:
+            raise ValueError("Layout does not contain any token positions to evaluate")
+        layout_future_margin = max((_row_future_margin(row) for row in layout.rows), default=0)
+        span = max_positions + 1 + layout_future_margin
+        device = next(model.parameters()).device
+        model.eval()
+        overlap = getattr(self.args, "overlap", None)
+        if overlap is None:
+            overlap = _default_ppldb_overlap(layout)
+        overlap = max(0, int(overlap))
+        if overlap > max_positions:
+            overlap = max_positions
+        split_lengths = {"train": train_len, "test": test_len}
+        for split_name, split_len in split_lengths.items():
+            if split_len > 0 and span > split_len:
+                raise ValueError(
+                    f"Layout span {span} exceeds available tokens ({split_len}) in {split_name} split"
                 )
-            )
-        self.corpua = corpua
-        dataset = self._activate_corpus()
-        return (
-            tokenizer,
-            dataset,
-            newline_token_id,
-            boundary_blocklist,
-            default_prompt_boundary,
-            tokenizer_json,
-        )
+        align_enabled = getattr(self.args, "align_articles", False)
+        print(color_text(f"[ppldb] writing stats to {ppl_path}", Colors.CYAN))
+        meta = stats.setdefault("meta", {})
+        cursor_keys = {split: f"cursor_{split}" for split in ("test", "train")}
+        try:
+            with torch.no_grad():
+                while True:
+                    split = None
+                    split_len = 0
+                    cursor_value = 0
+                    for candidate in ("test", "train"):
+                        key = cursor_keys[candidate]
+                        cursor = int(meta.get(key, 0))
+                        length = split_lengths[candidate]
+                        if cursor < length:
+                            split = candidate
+                            split_len = length
+                            cursor_value = cursor
+                            break
+                    if split is None:
+                        print(color_text("[ppldb] completed all splits", Colors.GREEN))
+                        break
+                    if split_len <= 0:
+                        meta[cursor_keys[split]] = 0
+                        continue
+                    overlap_tokens = min(overlap, cursor_value)
+                    start_pos = cursor_value - overlap_tokens
+                    max_start = max(0, split_len - span)
+                    if start_pos > max_start:
+                        start_pos = max_start
+                    if start_pos < 0:
+                        start_pos = 0
+                    align_rng = None
+                    if align_enabled:
+                        align_rng = random.Random(cursor_value)
+                    (
+                        _,
+                        inputs,
+                        targets,
+                        _,
+                        source_label,
+                        _,
+                        base_source_ids,
+                        actual_start,
+                    ) = _prepare_eval_tokens(
+                        self.args,
+                        dataset,
+                        tokenizer,
+                        token_length=max_positions,
+                        start_pos=start_pos,
+                        custom_text=None,
+                        align_rng=align_rng,
+                        future_margin=layout_future_margin,
+                        split=split,
+                    )
+                    xb_base = inputs.unsqueeze(0).to(device)
+                    yb_base = targets.unsqueeze(0).to(device)
+                    base_source_tensor = base_source_ids.unsqueeze(0).to(device)
+                    row_rng = random.Random(cursor_value)
+                    row_results = _collect_layout_row_results(
+                        self.args,
+                        model,
+                        layout,
+                        xb_base,
+                        yb_base,
+                        base_source_tensor,
+                        row_rng,
+                    )
+                    contributions: list[tuple[int, float]] = []
+                    for annotations_full, final_result in row_results:
+                        row_values = _row_perplexity_contributions(
+                            final_result,
+                            annotations_full,
+                            actual_start,
+                            split_len,
+                            tokenizer=tokenizer,
+                            base_source_ids=base_source_ids,
+                            split=split,
+                        )
+                        contributions.extend(row_values)
+                    if not contributions:
+                        advance = max(1, max_positions)
+                        next_cursor = min(split_len, cursor_value + advance)
+                        meta[cursor_keys[split]] = next_cursor
+                        torch.save(stats, ppl_path)
+                        continue
+                    filtered: dict[int, float] = {}
+                    for idx, ppl in contributions:
+                        if idx < cursor_value or idx >= split_len:
+                            continue
+                        filtered[idx] = ppl
+                    if not filtered:
+                        advance = max(1, max_positions)
+                        next_cursor = min(split_len, cursor_value + advance)
+                        meta[cursor_keys[split]] = next_cursor
+                        torch.save(stats, ppl_path)
+                        continue
+                    ordered = sorted(filtered.items())
+                    tensor = stats[split]
+                    _update_ppl_tensor(tensor, ordered)
+                    meta["total_updates"] = int(meta.get("total_updates", 0)) + 1
+                    key = f"{split}_tokens_processed"
+                    meta[key] = int(meta.get(key, 0)) + len(ordered)
+                    next_cursor = min(split_len, ordered[-1][0] + 1)
+                    meta[cursor_keys[split]] = next_cursor
+                    torch.save(stats, ppl_path)
+                    avg_ppl = sum(val for _, val in ordered) / len(ordered)
+                    progress = next_cursor / split_len if split_len else 1.0
+                    print(
+                        color_text(
+                            f"[ppldb] {split} {source_label}: updated {len(ordered)} tokens (avg ppl {avg_ppl:.3f}); cursor {next_cursor}/{split_len} ({progress:.2%})",
+                            Colors.GREEN,
+                        )
+                    )
+        except KeyboardInterrupt:
+            torch.save(stats, ppl_path)
+            print(color_text("[ppldb] interrupted; progress saved.", Colors.YELLOW))
+        return 0
 
     def _token_cache_paths(
         self,
@@ -11137,6 +11540,14 @@ class Runtime:
         train_cache = data_dir / f"{corpus}_tokens_train_{vocab}.pt"
         test_cache = data_dir / f"{corpus}_tokens_test_{vocab}.pt"
         return train_cache, test_cache
+
+    def _ppldb_path(self, corpus: str, db_id: str) -> pathlib.Path:
+        data_dir = pathlib.Path(self.args.data)
+        vocab = self.args.vocab_size
+        safe_id = re.sub(r"[^0-9A-Za-z_-]+", "", db_id)
+        if not safe_id:
+            safe_id = "default"
+        return data_dir / f"{corpus}_ppl_{safe_id}_{vocab}.pt"
 
     def cli_prompts(
         self,
@@ -11779,6 +12190,9 @@ class Runtime:
                     split="train" if getattr(self.args, "test_use_train_split", False) else "test",
                 )
                 return
+
+            if self.args.command == "ppldb":
+                return self.cli_ppldb(tokenizer=tokenizer, model=model)
 
             if self.args.command == "eval":
                 custom_text = None
