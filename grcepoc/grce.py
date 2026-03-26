@@ -101,11 +101,11 @@ from dataclasses import dataclass, replace
 class ModelGeometry:
     """Holds the GPT+GRCE+XCTX model geometry."""
 
-    vocab_size: int = 30000 # GPT-2 base supports ~50k merges.
+    vocab_size: int = 60000 # GPT-2 base supports ~50k merges.
     n_pos: int = 1024       # GPT-2 base uses 1024 tokens.
     n_layer: int = 12       # GPT-2 base uses 12 layers.
     n_head: int = 12        # GPT-2 base uses 12 attention heads.
-    n_width: int = 768       # GPT-2 base uses 768 embedding dims.
+    n_width: int = 768      # GPT-2 base uses 768 embedding dims.
     n_rope: int = 0         # Number of Q/K dims using RoPE (0 => full head width).
     n_grce: int = 64        # Narrow GRCE context dims.
     n_xctx: int = 1536      # Wide XCTX context dims.
