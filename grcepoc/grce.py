@@ -109,8 +109,9 @@ class ModelGeometry:
     n_rope: int = 0         # Number of Q/K dims using RoPE (0 => full head width).
     n_grce: int = 64        # Narrow GRCE context dims.
     n_xctx: int = 1536      # Wide XCTX context dims.
-    n_query: int = 1        # Number of query vectors per head.
-    use_gmlp: bool = False
+    n_query: int = 4        # Number of query vectors per head.
+    use_gmlp: bool = True
+    use_sane: bool = True
     use_rope_xl: bool = False
     use_rope_vr: bool = False
     use_rope_vr_all: bool = False
@@ -138,6 +139,7 @@ class Defaults:
     n_xctx: int = MODEL_GEOMETRY_DEFAULTS.n_xctx
     n_query: int = MODEL_GEOMETRY_DEFAULTS.n_query
     use_gmlp: bool = MODEL_GEOMETRY_DEFAULTS.use_gmlp
+    use_sane: bool = MODEL_GEOMETRY_DEFAULTS.use_sane
     use_rope_xl: bool = MODEL_GEOMETRY_DEFAULTS.use_rope_xl
     use_rope_vr: bool = MODEL_GEOMETRY_DEFAULTS.use_rope_vr
     use_rope_vr_all: bool = MODEL_GEOMETRY_DEFAULTS.use_rope_vr_all
@@ -1316,10 +1318,18 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         help="Number of Q/K features using Rotary Position Embedding (0 => full head width; must be even).",
     )
     model_group.add_argument(
-        "--use-gmlp",
+        "--no-gmlp",
         action="store_true",
-        default=DEFAULTS.use_gmlp,
-        help="Use gated MLP feed-forward blocks (adds a second 4x projection as a multiplicative gate)",
+        dest="no_use_gmlp",
+        default=not DEFAULTS.use_gmlp,
+        help="Disable gated MLP feed-forward blocks (enabled by default)",
+    )
+    model_group.add_argument(
+        "--no-sane",
+        action="store_true",
+        dest="no_use_sane",
+        default=not DEFAULTS.use_sane,
+        help="Disable the SANE alpha/beta propagation channels while keeping other SANE helpers",
     )
     model_group.add_argument(
         "--use-rope-xl",
@@ -2253,6 +2263,7 @@ def args_to_model_geometry(args: Args):
         n_xctx=args.n_xctx,
         n_query=getattr(args, "n_query", MODEL_GEOMETRY_DEFAULTS.n_query),
         use_gmlp=getattr(args, "use_gmlp", MODEL_GEOMETRY_DEFAULTS.use_gmlp),
+        use_sane=getattr(args, "use_sane", MODEL_GEOMETRY_DEFAULTS.use_sane),
         use_rope_xl=getattr(args, "use_rope_xl", MODEL_GEOMETRY_DEFAULTS.use_rope_xl),
         use_rope_vr=getattr(args, "use_rope_vr", MODEL_GEOMETRY_DEFAULTS.use_rope_vr),
         use_rope_vr_all=getattr(args, "use_rope_vr_all", MODEL_GEOMETRY_DEFAULTS.use_rope_vr_all),
@@ -4384,12 +4395,19 @@ class TransformerStackCore(nn.Module):
         self.head = nn.Linear(self.embedding_dim, config.vocab_size, bias=False)
         self.use_rope_xl = bool(getattr(config, "use_rope_xl", False))
         self.rope_xl_half_window = float(config.n_pos) / 2.0 if self.use_rope_xl else 0.0
+        self.use_sane = bool(getattr(config, "use_sane", True))
         self.sane_stream_width = config.n_width // 2
         half = self.sane_stream_width
-        self.sane_alpha_attn = nn.Parameter(torch.ones(config.n_layer, half))
-        self.sane_beta_attn = nn.Parameter(torch.ones(config.n_layer, half))
-        self.sane_alpha_mlp = nn.Parameter(torch.ones(config.n_layer, half))
-        self.sane_beta_mlp = nn.Parameter(torch.ones(config.n_layer, half))
+        if self.use_sane and half > 0:
+            self.sane_alpha_attn = nn.Parameter(torch.ones(config.n_layer, half))
+            self.sane_beta_attn = nn.Parameter(torch.ones(config.n_layer, half))
+            self.sane_alpha_mlp = nn.Parameter(torch.ones(config.n_layer, half))
+            self.sane_beta_mlp = nn.Parameter(torch.ones(config.n_layer, half))
+        else:
+            self.sane_alpha_attn = None
+            self.sane_beta_attn = None
+            self.sane_alpha_mlp = None
+            self.sane_beta_mlp = None
 
     def expand_to_even(self, tensor: torch.Tensor) -> torch.Tensor:
         """Place half-width embedding features into the even data-path slots."""
@@ -4431,11 +4449,13 @@ class TransformerStackCore(nn.Module):
         sane_z_indices: torch.Tensor | None,
         sane_active_mask: torch.Tensor | None,
     ) -> None:
-        if delta is None:
+        if not self.use_sane or delta is None:
             return
         if tensor.size(1) <= 1:
             return
         alpha_table, beta_table = self._sane_stage_params(stage)
+        if alpha_table is None or beta_table is None:
+            return
         half = self.sane_stream_width
         if half <= 0:
             return
@@ -4570,9 +4590,9 @@ class TransformerStackCore(nn.Module):
         repeats = max(1, int(layer_repeat))
         samples: list[torch.Tensor | None] = [None] * len(self.blocks)
         kv_outputs: list[tuple[torch.Tensor, torch.Tensor] | None] = [None] * len(self.blocks)
-        sane_enabled = mode in {"decode", "reverse", "encode"}
+        sane_enabled = self.use_sane and mode in {"decode", "reverse", "encode"}
         if enable_sane is not None:
-            sane_enabled = bool(enable_sane)
+            sane_enabled = self.use_sane and bool(enable_sane)
         sane_hook = None
         if sane_enabled:
             def sane_hook(layer_idx: int, stage: str, delta: torch.Tensor, tensor: torch.Tensor) -> None:
@@ -5646,6 +5666,8 @@ def build_model_tag(config: GeometryLike) -> str:
         tag += f"_q{config.n_query}"
     if getattr(config, "use_gmlp", False):
         tag += "_gmlp"
+    if not getattr(config, "use_sane", True):
+        tag += "_nosane"
     if getattr(config, "use_rope_xl", False):
         tag += "_ropex"
     if getattr(config, "use_rope_vr", False):
@@ -11233,7 +11255,7 @@ def preprocess_runtime_args(args: Args) -> None:
                 "Checkpoint lacks config metadata; re-save it with the latest format."
             )
         saved = dict(saved_config)
-        for legacy_key in ("use_carpet", "use_carpet2", "use_carpet3", "use_sane"):
+        for legacy_key in ("use_carpet", "use_carpet2", "use_carpet3"):
             saved.pop(legacy_key, None)
         if "n_pos" not in saved:
             if "block_size" in saved:
@@ -11253,6 +11275,8 @@ def preprocess_runtime_args(args: Args) -> None:
             saved["n_query"] = MODEL_GEOMETRY_DEFAULTS.n_query
         if "use_gmlp" not in saved:
             saved["use_gmlp"] = MODEL_GEOMETRY_DEFAULTS.use_gmlp
+        if "use_sane" not in saved:
+            saved["use_sane"] = MODEL_GEOMETRY_DEFAULTS.use_sane
         config = ModelGeometry(**saved)
         args.checkpoint_payload_override = payload
         args.tokenizer_json_override = payload.get("tokenizer_json")
@@ -11280,6 +11304,7 @@ def preprocess_runtime_args(args: Args) -> None:
         args.n_xctx = config.n_xctx
         args.n_query = config.n_query
         args.use_gmlp = getattr(config, "use_gmlp", MODEL_GEOMETRY_DEFAULTS.use_gmlp)
+        args.use_sane = getattr(config, "use_sane", MODEL_GEOMETRY_DEFAULTS.use_sane)
         args.vocab_size = config.vocab_size
         args.model_path_override = checkpoint_path
         args.log_path_override = checkpoint_path.with_suffix(".log")
@@ -11295,6 +11320,7 @@ def preprocess_runtime_args(args: Args) -> None:
         n_grce=args.n_grce,
         n_xctx=args.n_xctx,
         use_gmlp=getattr(args, "use_gmlp", MODEL_GEOMETRY_DEFAULTS.use_gmlp),
+        use_sane=getattr(args, "use_sane", MODEL_GEOMETRY_DEFAULTS.use_sane),
     )
     tag = build_model_tag(inferred)
     for extra_tag in args.tag:
