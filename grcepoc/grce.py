@@ -1193,6 +1193,7 @@ class BatchLayout:
 # -----------------------------------------------------------------------------
 
 import argparse
+import gzip
 import math
 import os
 import pathlib
@@ -1913,6 +1914,34 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         type=int,
         default=None,
         help="Maximum number of losses iterations to run (default: run until corpus completion)",
+    )
+    loss_parser.add_argument(
+        "--filter-max-score",
+        dest="filter_max_score",
+        type=float,
+        default=None,
+        help="When set, only include articles whose failure_score is below this value",
+    )
+    loss_parser.add_argument(
+        "--filter-min-score",
+        dest="filter_min_score",
+        type=float,
+        default=None,
+        help="When set, only include articles whose failure_score exceeds this value",
+    )
+    loss_parser.add_argument(
+        "--filter-max-loss",
+        dest="filter_max_loss",
+        type=float,
+        default=None,
+        help="When set, only include articles whose average loss is below this value",
+    )
+    loss_parser.add_argument(
+        "--filter-min-loss",
+        dest="filter_min_loss",
+        type=float,
+        default=None,
+        help="When set, only include articles whose average loss exceeds this value",
     )
 
 
@@ -6525,6 +6554,31 @@ def _load_or_init_loss_stats(path: pathlib.Path, split: str, split_len: int) -> 
     return stats
 
 
+@dataclass
+class LossFilterConfig:
+    max_score: float | None = None
+    min_score: float | None = None
+    max_loss: float | None = None
+    min_loss: float | None = None
+
+    def enabled(self) -> bool:
+        return any(
+            value is not None
+            for value in (self.max_score, self.min_score, self.max_loss, self.min_loss)
+        )
+
+    def matches(self, avg_loss: float, failure_score: float) -> bool:
+        if self.max_score is not None and not (failure_score < self.max_score):
+            return False
+        if self.min_score is not None and not (failure_score > self.min_score):
+            return False
+        if self.max_loss is not None and not (avg_loss < self.max_loss):
+            return False
+        if self.min_loss is not None and not (avg_loss > self.min_loss):
+            return False
+        return True
+
+
 def _article_spans(tokens: torch.Tensor, separator_token_id: int) -> list[tuple[int, int]]:
     if separator_token_id is None or tokens.numel() == 0:
         return []
@@ -6543,17 +6597,68 @@ def _article_spans(tokens: torch.Tensor, separator_token_id: int) -> list[tuple[
     return spans
 
 
+def _decode_article_text(
+    tokens: torch.Tensor,
+    start: int,
+    end: int,
+    tokenizer: GPT2TokenizerWrapper,
+) -> str:
+    if end <= start or tokens.numel() == 0:
+        return ""
+    safe_start = max(0, min(start, tokens.numel()))
+    safe_end = max(0, min(end, tokens.numel()))
+    if safe_end <= safe_start:
+        return ""
+    span = tokens[safe_start:safe_end].to(torch.long)
+    text = tokenizer.decode(span)
+    marker = "<|----|>"
+    trimmed = text.lstrip()
+    while trimmed.startswith(marker):
+        trimmed = trimmed[len(marker) :].lstrip()
+    return trimmed
+
+
+def _write_filtered_article(
+    handle,
+    entry: dict[str, object],
+) -> None:
+    header = (
+        f"<|----|> # article {entry['article_index']} start={entry['start']:,} len={entry['length']:,}"
+        f" avg_loss={entry['avg_loss']:.4f} avg_ppl={entry['avg_ppl']:.2f}"
+        f" failure_score={entry['failure_score']:.3f}\n"
+    )
+    handle.write(header)
+    text = entry.get("text") or ""
+    if text:
+        handle.write(text)
+        if not text.endswith("\n"):
+            handle.write("\n")
+    handle.write("\n")
+
+
 def _scan_loss_stats(
     path: pathlib.Path,
     stats: dict[str, object],
     dataset: TextDataset,
     vocab_size: int,
+    tokenizer: GPT2TokenizerWrapper,
+    corpus: str,
+    target_split: str,
+    loss_id: str,
+    data_dir: pathlib.Path,
+    filter_config: LossFilterConfig,
 ) -> None:
     print(color_text(f"[losses] scanning {path}", Colors.CYAN))
     meta = stats.get("meta", {})
     if meta:
         print(color_text(f"  meta: {meta}", Colors.YELLOW))
     separator_token_id = getattr(dataset, "article_separator_token_id", None)
+    filter_enabled = filter_config.enabled()
+    filtered_articles: list[dict[str, object]] = []
+    target_path = data_dir / f"{corpus}_filtered_{target_split}_{loss_id}.txt.gz"
+    partial_writer: gzip.GzipFile | None = None
+    if filter_enabled:
+        target_path.parent.mkdir(parents=True, exist_ok=True)
     for split in ("train", "test"):
         tensor = stats.get(split)
         if tensor is None:
@@ -6610,10 +6715,10 @@ def _scan_loss_stats(
             print(color_text("    article scan: no <|----|> separators found", Colors.YELLOW))
             continue
         print(color_text("    article spans:", Colors.CYAN))
-        max_articles = 1000
+        max_articles = None if filter_enabled else 1000
         limited = False
         for article_idx, (start, span_len) in enumerate(spans, start=1):
-            if article_idx > max_articles:
+            if max_articles is not None and article_idx > max_articles:
                 limited = True
                 break
             if start >= total or span_len <= 0:
@@ -6622,13 +6727,23 @@ def _scan_loss_stats(
             segment_values = values[start:end]
             segment_mask = processed_mask[start:end]
             processed_count = int(segment_mask.sum().item())
+            filter_applies = filter_enabled and split == target_split
+            log_article = (not filter_applies) or ((article_idx - 1) % 100 == 0)
             if processed_count == 0:
-                print(
-                    color_text(
-                        f"      article {article_idx}: start={start:,} len={end - start:,} (no recorded losses)",
-                        Colors.MAGENTA,
+                if filter_applies and log_article:
+                    print(
+                        color_text(
+                            f"      article {article_idx}: start={start:,} len={end - start:,} (no recorded losses) [filtered]",
+                            Colors.MAGENTA,
+                        )
                     )
-                )
+                elif not filter_applies:
+                    print(
+                        color_text(
+                            f"      article {article_idx}: start={start:,} len={end - start:,} (no recorded losses)",
+                            Colors.MAGENTA,
+                        )
+                    )
                 continue
             recorded = segment_values[segment_mask]
             avg_loss = float(recorded.mean().item())
@@ -6636,16 +6751,61 @@ def _scan_loss_stats(
             avg_perplexity = float(perplexities.mean().item())
             vocab_value = float(vocab_size)
             failure_score = float((perplexities / (perplexities + vocab_value)).mean().item())
-            print(
-                f"      article {article_idx}: start={start:,} len={end - start:,}"
-                f" avg_loss={avg_loss:.4f} avg_ppl={avg_perplexity:.2f}"
-                f" failure_score={failure_score:.3f}"
-            )
-        if limited:
+            status_tag = ""
+            matches_filter = False
+            if filter_applies:
+                matches_filter = filter_config.matches(avg_loss, failure_score)
+                status_tag = " [selected]" if matches_filter else " [filtered]"
+            if not filter_applies or log_article:
+                print(
+                    f"      article {article_idx}: start={start:,} len={end - start:,}"
+                    f" avg_loss={avg_loss:.4f} avg_ppl={avg_perplexity:.2f}"
+                    f" failure_score={failure_score:.3f}{status_tag}"
+                )
+            if filter_applies and matches_filter:
+                entry = {
+                    "article_index": article_idx,
+                    "start": start,
+                    "length": end - start,
+                    "avg_loss": avg_loss,
+                    "avg_ppl": avg_perplexity,
+                    "failure_score": failure_score,
+                    "text": _decode_article_text(tokens, start, end, tokenizer),
+                }
+                filtered_articles.append(entry)
+                if partial_writer is None:
+                    partial_writer = gzip.open(target_path, "wt", encoding="utf-8")
+                _write_filtered_article(partial_writer, entry)
+                partial_writer.flush()
+                if len(filtered_articles) % 100 == 0:
+                    print(
+                        color_text(
+                            f"  wrote {len(filtered_articles)} filtered articles...",
+                            Colors.CYAN,
+                        )
+                    )
+        if limited and max_articles is not None:
             remaining = len(spans) - max_articles
             print(
                 color_text(
                     f"    (skipping {remaining} additional articles; showing first {max_articles})",
+                    Colors.YELLOW,
+                )
+            )
+    if partial_writer is not None:
+        partial_writer.close()
+    if filter_enabled:
+        if filtered_articles:
+            print(
+                color_text(
+                    f"  wrote {len(filtered_articles)} filtered articles to {target_path}",
+                    Colors.GREEN,
+                )
+            )
+        else:
+            print(
+                color_text(
+                    f"  no articles in {target_split} split matched the filter criteria",
                     Colors.YELLOW,
                 )
             )
@@ -11559,8 +11719,26 @@ class Runtime:
         split_len = int(dataset.train_tokens.numel()) if split == "train" else int(dataset.test_tokens.numel())
         loss_path = self._losses_path(corpus, loss_id, split)
         stats = _load_or_init_loss_stats(loss_path, split, split_len)
+        filter_config = LossFilterConfig(
+            max_score=getattr(self.args, "filter_max_score", None),
+            min_score=getattr(self.args, "filter_min_score", None),
+            max_loss=getattr(self.args, "filter_max_loss", None),
+            min_loss=getattr(self.args, "filter_min_loss", None),
+        )
         if getattr(self.args, "losses_scan", False):
-            _scan_loss_stats(loss_path, stats, dataset, self.args.vocab_size)
+            data_dir = pathlib.Path(self.args.data)
+            _scan_loss_stats(
+                loss_path,
+                stats,
+                dataset,
+                self.args.vocab_size,
+                tokenizer,
+                corpus,
+                split,
+                loss_id,
+                data_dir,
+                filter_config,
+            )
             return 0
         layout = BatchLayout(self.args.layout, batch_size=self.args.batch_size, block_size=self.args.block_size)
         _log_layout_warnings(self.args, layout)
