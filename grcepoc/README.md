@@ -13,6 +13,8 @@ The additions provide a few concrete benefits:
 
 We also implement “looping” (https://arxiv.org/abs/2502.17416) along both axes: stacking along the vertical layer/height axis ("y-looping") *and* stacking along the horizontal time axis ("x-looping"). With standard transformers the horizontal option is awkward, but the recurrent infrastructure makes it easy. Horizontal looping provides two major advantages: (1) each loop step can easily attend to the previous step’s KV cache, and (2) the GRCE/XCTX paths supply a short, cheap, high-bandwidth connection between loop steps so information doesn’t have to slog through the entire stack just to reach the next loop.
 
+SANE (Self-And-Next Encoder) spans extend this idea by creating multi-column decoder grids that reuse most of their activations from one pass to the next. Each pass performs its Y loop iterations and then, immediately before we inject the newly promoted column’s true token plus [|predict-next|], the shared state is run through a single RMSNorm. That keeps the intra-pass trajectories intact while still normalizing the data that enters the next pass.
+
 ### Getting Started
 
 Create and activate venv:

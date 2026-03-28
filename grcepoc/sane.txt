@@ -78,8 +78,10 @@ The hope is that this architecture will enable smaller transformers to think
 ahead, without having to create, store, and manipulate a deep and complex model
 of the immediate future within a single transformer instance.
 
-Note on looping: We pass the transformer state vector through
-RMSNorm(elementwise_affine=False) at the end of each loop iteration. (The
+Note on looping: Before each new X-step injection we pass the transformer
+state vector through RMSNorm(elementwise_affine=False). In other words, the
+state flows raw between Y-iterations and only gets RMS-normalized once per
+pass, right before we add fresh embeddings for the promoted column. (The
 `loop_ln` block inside grce.py is reserved for the traditional X-axis
 "thinking" passes in forward (`F`) rows and should not activate during SANE
 spans; in the SANE path we apply the RMSNorm-style normalization described here
@@ -319,9 +321,9 @@ access the injected tokens they are trying to predict. Using `4Z` insted of
 - Lowercase `z` spans are a debugging aid; when evaluating causal quality or
   comparing against plain decoders prefer uppercase `Z` spans so leakage paths
   are disabled.
-- RMSNorm after each loop iteration is part of the SANE path; the `loop_ln`
-  module in `grce.py` is reserved for future forward (`F`) rows and should stay
-  inactive in SANE grids.
+- RMSNorm is applied once per X-step, right before we inject new embeddings.
+  The `loop_ln` module in `grce.py` is reserved for future forward (`F`) rows
+  and should stay inactive in SANE grids.
 
 
 ---------------------------------------------------------------------

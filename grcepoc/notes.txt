@@ -746,6 +746,12 @@ The per-layer SANE gain tables are initialized to 1.0 so these couplings are
 active immediately; use the `S` modifier on rows or segments to disable them
 when you want a purely local decoder.
 
+Within a span the activations run through the transformer stack raw for all Y
+loops of a pass; once the pass finishes (right before we inject the new
+token+[|predict-next|] into the freshly promoted column) we apply a single
+RMSNorm to the entire state. This keeps intermediate compute untouched while
+still bounding the magnitude of the data that enters the next X-step.
+
 Lowercase modifiers (`Nz`) keep the relaxed proof-of-concept wiring: every
 column inside a span can attend to any other column in that span and all beta
 propagation remains active. Uppercase modifiers (`NZ`) enforce stricter
