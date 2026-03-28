@@ -3612,12 +3612,54 @@ def _load_checkpoint_state(
     """Attempt to load ``state`` strictly; fall back to partial loading on mismatch."""
 
     total = len(model.state_dict())
+
+    def _align_yscale_parameters(
+        state_dict: Mapping[str, torch.Tensor]
+    ) -> dict[str, torch.Tensor]:
+        """Resize stored y-scale tensors so they match the active geometry."""
+
+        target_state = model.state_dict()
+        adjusted = dict(state_dict)
+        for name, tensor in list(state_dict.items()):
+            if not name.endswith("yscale_factors"):
+                continue
+            target_tensor = target_state.get(name)
+            if target_tensor is None:
+                continue
+            if tensor.shape == target_tensor.shape:
+                continue
+            if tensor.dim() != target_tensor.dim():
+                continue
+            if tensor.dim() != 2 or target_tensor.dim() != 2:
+                continue
+            if tensor.size(1) != target_tensor.size(1):
+                continue
+            resized = target_tensor.new_ones(target_tensor.shape)
+            overlap_rows = min(tensor.size(0), target_tensor.size(0))
+            if overlap_rows > 0:
+                resized[:overlap_rows, :] = tensor[:overlap_rows, :].to(resized.dtype)
+            if target_tensor.size(0) > overlap_rows:
+                if tensor.size(0) > 0:
+                    fill = tensor[-1:, :].to(resized.dtype)
+                else:
+                    fill = torch.ones(
+                        1,
+                        target_tensor.size(1),
+                        dtype=resized.dtype,
+                        device=resized.device,
+                    )
+                repeat = target_tensor.size(0) - overlap_rows
+                resized[overlap_rows:, :] = fill.expand(repeat, -1)
+            adjusted[name] = resized
+        return adjusted
+
     try:
         filtered_state = {
             key: value
             for key, value in state.items()
             if not key.endswith("attn.tril")
         }
+        filtered_state = _align_yscale_parameters(filtered_state)
         missing_keys, unexpected_keys = model.load_state_dict(filtered_state, strict=False)
         if unexpected_keys:
             print(color_text(f"Warning: unexpected keys during load: {unexpected_keys}", Colors.YELLOW))
@@ -3638,7 +3680,7 @@ def _load_checkpoint_state(
                 "Checkpoint load failed due to parameter shape mismatch. "
                 "Delete the checkpoint or rerun with --allow-shape-mismatch-load to continue with partial weights."
             ) from err
-        summary = _partial_state_dict_load(model, state)
+        summary = _partial_state_dict_load(model, _align_yscale_parameters(state))
         summary.update({
             "success": False,
             "partial": True,
