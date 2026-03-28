@@ -6021,7 +6021,8 @@ def _run_microbatch_pass(
                     row_loss_sums_seg: torch.Tensor | None = None
                     row_token_counts_seg: torch.Tensor | None = None
                     for pass_idx in range(sane_passes):
-                        chunk_base = state_tensor.clone()
+                        chunk_base = model.core.sane_loop_norm(state_tensor)
+                        chunk_base = chunk_base.clone()
                         if xrefresh_enabled and torch.any(injected_mask):
                             chunk_base[:, injected_mask, :] = (
                                 chunk_base[:, injected_mask, :]
@@ -6088,7 +6089,7 @@ def _run_microbatch_pass(
                             self_attention_only=bool(getattr(segment, "self_attention_only", False)),
                         )
                         kv_final = kv_out
-                        state_tensor = model.core.sane_loop_norm(chunk_output)
+                        state_tensor = chunk_output
                         head_features = model.core.ln_f(chunk_output)
                         next_logits = model.core.head(
                             model.core.output_features(head_features, use_next_stream=True)
@@ -8930,7 +8931,8 @@ def _evaluate_row_block(
             segment_loss: torch.Tensor | None = None
             segment_tokens = 0
             for pass_idx in range(sane_passes):
-                chunk_base = state_tensor.clone()
+                chunk_base = model.core.sane_loop_norm(state_tensor)
+                chunk_base = chunk_base.clone()
                 if xrefresh_enabled and torch.any(injected_mask):
                     chunk_base[:, injected_mask, :] = (
                         chunk_base[:, injected_mask, :] + token_embedding_grid[:, injected_mask, :]
@@ -8994,7 +8996,7 @@ def _evaluate_row_block(
                     self_attention_only=bool(getattr(segment, "self_attention_only", False)),
                 )
                 kv_final = kv_out
-                state_tensor = model.core.sane_loop_norm(chunk_output)
+                state_tensor = chunk_output
                 head_features = model.core.ln_f(chunk_output)
                 next_logits = model.core.head(
                     model.core.output_features(head_features, use_next_stream=True)
