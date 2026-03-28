@@ -178,6 +178,7 @@ class Defaults:
     generate_with_decode: bool = False
     align_articles: bool = False
     allow_oversize: bool = False
+    xrefresh: bool = False
 
 DEFAULTS = Defaults()
 
@@ -1599,6 +1600,15 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         help=(
             "When sampling random corpus windows, align them to the <|----|> article separator token"
             " and resample if multiple separators remain"
+        ),
+    )
+    training_group.add_argument(
+        "--xrefresh",
+        action="store_true",
+        default=DEFAULTS.xrefresh,
+        help=(
+            "During SANE decode segments, re-inject previously added token embeddings before each"
+            " X-loop pass so every pass starts with the initial inputs"
         ),
     )
     training_group.add_argument(
@@ -5811,6 +5821,7 @@ def _run_microbatch_pass(
     total_tokens = 0
     row_details: list[dict[str, object]] = []
     base_token_total = 0
+    xrefresh_enabled = bool(getattr(args, "xrefresh", False))
     for group in rows:
         row_count = int(group.rows)
         if row_count <= 0:
@@ -5988,6 +5999,7 @@ def _run_microbatch_pass(
                     state_tensor = token_components.new_zeros(
                         row_count, cols, token_components.size(-1)
                     )
+                    injected_mask = torch.zeros(cols, dtype=torch.bool, device=device)
                     control_state = torch.full(
                         (cols,),
                         CONTROL_FIND_SELF,
@@ -6010,6 +6022,11 @@ def _run_microbatch_pass(
                     row_token_counts_seg: torch.Tensor | None = None
                     for pass_idx in range(sane_passes):
                         chunk_base = state_tensor.clone()
+                        if xrefresh_enabled and torch.any(injected_mask):
+                            chunk_base[:, injected_mask, :] = (
+                                chunk_base[:, injected_mask, :]
+                                + token_embedding_grid[:, injected_mask, :]
+                            )
                         new_leading_mask = z_offsets == pass_idx
                         if torch.any(new_leading_mask):
                             chunk_base[:, new_leading_mask, :] = (
@@ -6018,6 +6035,7 @@ def _run_microbatch_pass(
                             control_state[new_leading_mask] = CONTROL_PREDICT_NEXT
                             next_target_grid[:, new_leading_mask] = next_token_ids[:, new_leading_mask]
                             self_target_grid[:, new_leading_mask] = LOSS_IGNORE_INDEX
+                            injected_mask = injected_mask | new_leading_mask
                         control_slice = (
                             control_state.view(1, -1).expand(row_count, -1).clone()
                         )
@@ -8742,6 +8760,7 @@ def _evaluate_row_block(
         expanded_targets,
         None,
     )
+    xrefresh_enabled = bool(getattr(args, "xrefresh", False))
     vocab_size = model.config.vocab_size
     zero_next_logits: torch.Tensor | None = None
     zero_self_logits: torch.Tensor | None = None
@@ -8884,6 +8903,7 @@ def _evaluate_row_block(
             self_token_ids = _gather_token_ids(column_offsets)
             next_token_ids = _gather_token_ids(next_offsets)
             state_tensor = token_components.new_zeros(row_count, cols, token_components.size(-1))
+            injected_mask = torch.zeros(cols, dtype=torch.bool, device=device)
             control_state = torch.full(
                 (cols,), CONTROL_FIND_SELF, dtype=torch.long, device=device
             )
@@ -8911,6 +8931,10 @@ def _evaluate_row_block(
             segment_tokens = 0
             for pass_idx in range(sane_passes):
                 chunk_base = state_tensor.clone()
+                if xrefresh_enabled and torch.any(injected_mask):
+                    chunk_base[:, injected_mask, :] = (
+                        chunk_base[:, injected_mask, :] + token_embedding_grid[:, injected_mask, :]
+                    )
                 new_leading_mask = z_offsets == pass_idx
                 if torch.any(new_leading_mask):
                     chunk_base[:, new_leading_mask, :] = (
@@ -8920,6 +8944,7 @@ def _evaluate_row_block(
                     control_state[new_leading_mask] = CONTROL_PREDICT_NEXT
                     next_target_grid[:, new_leading_mask] = next_token_ids[:, new_leading_mask]
                     self_target_grid[:, new_leading_mask] = LOSS_IGNORE_INDEX
+                    injected_mask = injected_mask | new_leading_mask
                 control_slice = control_state.view(1, -1).expand(row_count, -1).clone()
                 control_embed = model.core.expand_to_even(
                     model.core.control_emb(control_slice)

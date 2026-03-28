@@ -1240,4 +1240,10 @@ python grce.py --pt model/ref_small.pt --small create
 python grce.py --pt model/ref_small.pt corpus --add wikipedia-en-0000
 python grce.py --pt model/ref_small.pt --align-articles --layout ' 16[ 64E 8P 4Y = (64D4Y|96D3Y|128D2Y|192D) =
 		( 64D 2X 2Y >> S$$ = 64D 2Y 4Z >> Z$$ | 64D 2Y 4Z >> Z$$ = 64D 2X 2Y >> S$$ ) ]
-  ' --cycles 700 --lr-warmup-steps 100 --lr-cosine-steps 200 --generate-with-decode --align-articles train --json
+  ' --cycles 500 --lr-warmup-steps 100 --lr-cosine-steps 200 --generate-with-decode --align-articles train --json
+
+python grce.py --pt model/xrefresh_small.pt --small create
+python grce.py --pt model/xrefresh_small.pt corpus --add wikipedia-en-0000
+python grce.py --pt model/xrefresh_small.pt --xrefresh --align-articles --layout ' 16[ 64E 8P 4Y = (64D4Y|96D3Y|128D2Y|192D) =
+		( 64D 2X 2Y >> S$$ = 64D 2Y 4Z >> Z$$ | 64D 2Y 4Z >> Z$$ = 64D 2X 2Y >> S$$ ) ]
+  ' --cycles 500 --lr-warmup-steps 100 --lr-cosine-steps 200 --generate-with-decode --align-articles train --json
