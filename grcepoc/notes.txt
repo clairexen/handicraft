@@ -1233,3 +1233,11 @@ python grce.py --pt model/wp_en_small_NOSANE.pt --align-articles --layout '
 python grce.py --pt model/wp_en_small_2Z.pt --align-articles --layout '
 	16[ 64E = (64D4Y|128D2Y|192D) = 64D 2X 2Y 2Z >> S$$ ]
   ' --cycles 100 --lr-warmup-steps 100 --lr-cosine-steps 200 --generate-with-decode --align-articles train --json
+
+----
+
+python grce.py --pt model/ref_small.pt --small create
+python grce.py --pt model/ref_small.pt corpus --add wikipedia-en-0000
+python grce.py --pt model/ref_small.pt --align-articles --layout ' 16[ 64E 8P 4Y = (64D4Y|96D3Y|128D2Y|192D) =
+		( 64D 2X 2Y >> S$$ = 64D 2Y 4Z >> Z$$ | 64D 2Y 4Z >> Z$$ = 64D 2X 2Y >> S$$ ) ]
+  ' --cycles 700 --lr-warmup-steps 100 --lr-cosine-steps 200 --generate-with-decode --align-articles train --json

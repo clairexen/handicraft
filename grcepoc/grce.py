@@ -11574,6 +11574,8 @@ class Runtime:
         arch_list = torch.cuda.get_arch_list() if hasattr(torch.cuda, "get_arch_list") else []
         if arch in arch_list:
             return device
+        elif arch == "sm_89" and "sm_86" in arch_list:
+            return device
         supported = ", ".join(sorted(arch_list)) if arch_list else "unknown"
         message = (
             "CUDA device compute capability {major}.{minor} ({arch}) is not supported by "

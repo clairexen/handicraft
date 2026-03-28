@@ -70,8 +70,14 @@ pod_init() {
         run_ssh "python3 /root/rpwd.py"
 }
 
+pod_downgrade() {
+        run_ssh "pip uninstall -y torch torchvision torchaudio; pip cache purge"
+	run_ssh "pip install --pre --upgrade --force-reinstall torch --index-url https://download.pytorch.org/whl/nightly/cu126"
+}
+
 pod_upgrade() {
-        run_ssh "pip uninstall -y torch torchvision torchaudio; pip cache purge; pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128"
+        run_ssh "pip uninstall -y torch torchvision torchaudio; pip cache purge"
+	run_ssh "pip install --pre --upgrade --force-reinstall torch --index-url https://download.pytorch.org/whl/nightly/cu128"
 }
 
 rsync_update() {
@@ -139,6 +145,9 @@ case "${1:-}" in
         pod_init
         rsync_update
 	open_shell
+        ;;
+    downgrade)
+        pod_downgrade
         ;;
     upgrade)
         pod_upgrade
