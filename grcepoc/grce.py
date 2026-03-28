@@ -112,9 +112,11 @@ class ModelGeometry:
     n_query: int = 4        # Number of query vectors per head.
     use_gmlp: bool = True
     use_sane: bool = True
+    use_yscale: bool = False
     use_rope_xl: bool = False
     use_rope_vr: bool = False
     use_rope_vr_all: bool = False
+    yscale_max_repeat: int = 1
 
     @property
     def block_size(self) -> int:
@@ -140,9 +142,11 @@ class Defaults:
     n_query: int = MODEL_GEOMETRY_DEFAULTS.n_query
     use_gmlp: bool = MODEL_GEOMETRY_DEFAULTS.use_gmlp
     use_sane: bool = MODEL_GEOMETRY_DEFAULTS.use_sane
+    use_yscale: bool = MODEL_GEOMETRY_DEFAULTS.use_yscale
     use_rope_xl: bool = MODEL_GEOMETRY_DEFAULTS.use_rope_xl
     use_rope_vr: bool = MODEL_GEOMETRY_DEFAULTS.use_rope_vr
     use_rope_vr_all: bool = MODEL_GEOMETRY_DEFAULTS.use_rope_vr_all
+    yscale_max_repeat: int = MODEL_GEOMETRY_DEFAULTS.yscale_max_repeat
     corpus: str | None = None
     steps: int = 100
     cycles: int = 100
@@ -196,6 +200,20 @@ def normalize_prompt(text: str) -> str:
 
     return text.replace(FANCY_SPACE, " ").replace(FANCY_ENTER, "\n"). \
             replace(FANCY_ENTER.replace(" ", "\n"), "\n")
+
+
+def _infer_layout_max_layer_repeat(layout: str | None) -> int:
+    """Return the largest ``Ny``/``NY`` multiplier referenced in ``layout``."""
+
+    if not layout:
+        return 1
+    matches = re.findall(r"(\d+)[yY]", layout)
+    if not matches:
+        return 1
+    try:
+        return max(1, max(int(value) for value in matches))
+    except ValueError:
+        return 1
 
 
 def apply_prompt_prefix(text: str, *, enabled: bool) -> str:
@@ -1341,6 +1359,12 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         help="Disable the SANE alpha/beta propagation channels while keeping other SANE helpers",
     )
     model_group.add_argument(
+        "--use-yscale",
+        action="store_true",
+        default=DEFAULTS.use_yscale,
+        help="Learn per-layer/per-Y residual scaling factors (experimental)",
+    )
+    model_group.add_argument(
         "--use-rope-xl",
         action="store_true",
         default=DEFAULTS.use_rope_xl,
@@ -2139,6 +2163,10 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
     # Run the args parser
 
     args = parser.parse_args()
+    layout_repeat_hint = _infer_layout_max_layer_repeat(getattr(args, "layout", None))
+    args._layout_yscale_max_repeat = layout_repeat_hint
+    current_repeat = int(getattr(args, "yscale_max_repeat", 0) or 0)
+    args.yscale_max_repeat = max(1, layout_repeat_hint, current_repeat)
     if getattr(args, "freeze_transformer", False) and getattr(args, "freeze_recurrent", False):
         parser.error("--freeze-transformer and --freeze-recurrent cannot be used together")
     setattr(args, "_lr_steady_defined", flag_present("--lr-steady-steps"))
@@ -2300,9 +2328,17 @@ def args_to_model_geometry(args: Args):
         n_query=getattr(args, "n_query", MODEL_GEOMETRY_DEFAULTS.n_query),
         use_gmlp=getattr(args, "use_gmlp", MODEL_GEOMETRY_DEFAULTS.use_gmlp),
         use_sane=getattr(args, "use_sane", MODEL_GEOMETRY_DEFAULTS.use_sane),
+        use_yscale=getattr(args, "use_yscale", MODEL_GEOMETRY_DEFAULTS.use_yscale),
         use_rope_xl=getattr(args, "use_rope_xl", MODEL_GEOMETRY_DEFAULTS.use_rope_xl),
         use_rope_vr=getattr(args, "use_rope_vr", MODEL_GEOMETRY_DEFAULTS.use_rope_vr),
         use_rope_vr_all=getattr(args, "use_rope_vr_all", MODEL_GEOMETRY_DEFAULTS.use_rope_vr_all),
+        yscale_max_repeat=max(
+            1,
+            int(
+                getattr(args, "yscale_max_repeat", MODEL_GEOMETRY_DEFAULTS.yscale_max_repeat)
+                or MODEL_GEOMETRY_DEFAULTS.yscale_max_repeat
+            ),
+        ),
     )
 
 
@@ -2557,6 +2593,8 @@ def _expected_sections(config: GeometryLike, n_pos: int) -> list[tuple[str, str,
     G = config.n_grce
     X = config.n_xctx
     Q = getattr(config, "n_query", 1)
+    Y = max(1, int(getattr(config, "yscale_max_repeat", 1) or 1))
+    use_yscale = bool(getattr(config, "use_yscale", False))
     sections: list[tuple[str, str, list[dict]]] = []
 
     def eval_items(items):
@@ -2572,6 +2610,7 @@ def _expected_sections(config: GeometryLike, n_pos: int) -> list[tuple[str, str,
                     "G": config.n_grce,
                     "X": config.n_xctx,
                     "Q": Q,
+                    "Y": Y,
                 },
             )
         return items
@@ -2606,6 +2645,13 @@ def _expected_sections(config: GeometryLike, n_pos: int) -> list[tuple[str, str,
             {
                 "label": "ffn gate",
                 "formula": "L * (4*E*E + 4*E)",
+            }
+        )
+    if use_yscale:
+        transformer_defs.append(
+            {
+                "label": "yscale factors",
+                "formula": "L * Y",
             }
         )
     transformer_items = eval_items(transformer_defs)
@@ -4196,6 +4242,7 @@ class Block(nn.Module):
         sane_z_indices: torch.Tensor | None = None,
         sane_active_mask: torch.Tensor | None = None,
         self_attention_only: bool = False,
+        yscale_factor: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor | None, tuple[torch.Tensor, torch.Tensor] | None]:
         attn_input = self._apply_xctx_bias(x, xctx_bias, self.xctx_attn_gain)
         attn_norm = self.ln1(attn_input)
@@ -4220,6 +4267,9 @@ class Block(nn.Module):
         if attention_disabled_rows is not None and attention_disabled_rows.any():
             mask = (~attention_disabled_rows).view(-1, 1, 1).to(attn_output.dtype)
             attn_output = attn_output * mask
+        if yscale_factor is not None:
+            scale = yscale_factor.to(attn_output.dtype)
+            attn_output = attn_output * scale
         x = x + attn_output
         if sane_hook is not None:
             sane_hook(layer_idx, "attn", attn_output, x)
@@ -4227,6 +4277,9 @@ class Block(nn.Module):
         pre_ff = self.ln2(ff_input)
         pre_ff = self._apply_grce_bias(pre_ff, grce_bias, self.grce_mlp_ld)
         ff_out, mask = self.ff(pre_ff, record_mask=record_mask)
+        if yscale_factor is not None:
+            scale = yscale_factor.to(ff_out.dtype)
+            ff_out = ff_out * scale
         x = x + ff_out
         if sane_hook is not None:
             sane_hook(layer_idx, "mlp", ff_out, x)
@@ -4244,6 +4297,7 @@ class Block(nn.Module):
         puncture_mask: torch.Tensor | None = None,
         write_cache: bool = True,
         column_position: int | None = None,
+        yscale_factor: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, LayerCache, torch.Tensor | None]:
         attn_input = self._apply_xctx_bias(x, xctx_bias, self.xctx_attn_gain)
         attn_norm = self.ln1(attn_input)
@@ -4259,11 +4313,17 @@ class Block(nn.Module):
         if attention_disabled_rows is not None and attention_disabled_rows.any():
             mask = (~attention_disabled_rows).view(-1, 1, 1).to(attn_out.dtype)
             attn_out = attn_out * mask
+        if yscale_factor is not None:
+            scale = yscale_factor.to(attn_out.dtype)
+            attn_out = attn_out * scale
         x = x + attn_out
         ff_input = self._apply_xctx_bias(x, xctx_bias, self.xctx_mlp_gain)
         pre_ff = self.ln2(ff_input)
         pre_ff = self._apply_grce_bias(pre_ff, grce_bias, self.grce_mlp_ld)
         ff_out, mask = self.ff(pre_ff, record_mask=record_mask)
+        if yscale_factor is not None:
+            scale = yscale_factor.to(ff_out.dtype)
+            ff_out = ff_out * scale
         x = x + ff_out
         return x, cache, mask
 
@@ -4432,6 +4492,9 @@ class TransformerStackCore(nn.Module):
         self.use_rope_xl = bool(getattr(config, "use_rope_xl", False))
         self.rope_xl_half_window = float(config.n_pos) / 2.0 if self.use_rope_xl else 0.0
         self.use_sane = bool(getattr(config, "use_sane", True))
+        self.use_yscale = bool(getattr(config, "use_yscale", False))
+        repeat_hint = max(1, int(getattr(config, "yscale_max_repeat", 1) or 1))
+        self.yscale_max_repeat = repeat_hint
         self.sane_stream_width = config.n_width // 2
         half = self.sane_stream_width
         if self.use_sane and half > 0:
@@ -4444,6 +4507,10 @@ class TransformerStackCore(nn.Module):
             self.sane_beta_attn = None
             self.sane_alpha_mlp = None
             self.sane_beta_mlp = None
+        if self.use_yscale:
+            self.yscale_factors = nn.Parameter(torch.ones(repeat_hint, config.n_layer))
+        else:
+            self.register_parameter("yscale_factors", None)
 
     def expand_to_even(self, tensor: torch.Tensor) -> torch.Tensor:
         """Place half-width embedding features into the even data-path slots."""
@@ -4646,6 +4713,8 @@ class TransformerStackCore(nn.Module):
                     sane_z_indices=sane_z_indices,
                     sane_active_mask=sane_active_mask,
                 )
+        yscale_table = self.yscale_factors if self.use_yscale else None
+        yscale_rows = int(yscale_table.size(0)) if yscale_table is not None else 0
         for rep_idx in range(repeats):
             if loop_refresh_tensor is not None and rep_idx > 0:
                 current = current + loop_refresh_tensor
@@ -4657,6 +4726,14 @@ class TransformerStackCore(nn.Module):
                 if grce_tensor is not None:
                     layer_grce_bias = grce_tensor[:, :, layer_idx, :]
                 kv_sources = layer_kv_sources[layer_idx] or None
+                yscale_value = None
+                if yscale_table is not None:
+                    if rep_idx >= yscale_rows:
+                        raise ValueError(
+                            "Y-scale table only has %d entries; increase layout Ny multiplier or yscale_max_repeat"
+                            % yscale_rows
+                        )
+                    yscale_value = yscale_table[rep_idx, layer_idx]
                 current, _, kv_pair = block(
                     current,
                     xctx_bias=layer_xctx_bias,
@@ -4674,6 +4751,7 @@ class TransformerStackCore(nn.Module):
                     sane_z_indices=sane_z_indices,
                     sane_active_mask=sane_active_mask,
                     self_attention_only=self_attention_only,
+                    yscale_factor=yscale_value,
                 )
                 samples[layer_idx] = current
                 if kv_pair is None:
@@ -5719,6 +5797,9 @@ def build_model_tag(config: GeometryLike) -> str:
         tag += "_ropevr"
     if getattr(config, "use_rope_vr_all", False):
         tag += "_ropevrall"
+    if getattr(config, "use_yscale", False):
+        repeat = max(1, int(getattr(config, "yscale_max_repeat", 1) or 1))
+        tag += f"_yscale{repeat}"
     return tag
 
 
@@ -11471,6 +11552,12 @@ def preprocess_runtime_args(args: Args) -> None:
     if getattr(args, "yrefresh", False):
         args.xrefresh = True
 
+    layout_hint = max(1, int(getattr(args, "_layout_yscale_max_repeat", 1) or 1))
+    args.yscale_max_repeat = max(
+        layout_hint,
+        int(getattr(args, "yscale_max_repeat", layout_hint) or layout_hint),
+    )
+
     args.model_path_override = None
     args.log_path_override = None
     args.checkpoint_payload_override = None
@@ -11513,6 +11600,10 @@ def preprocess_runtime_args(args: Args) -> None:
             saved["use_gmlp"] = MODEL_GEOMETRY_DEFAULTS.use_gmlp
         if "use_sane" not in saved:
             saved["use_sane"] = MODEL_GEOMETRY_DEFAULTS.use_sane
+        if "use_yscale" not in saved:
+            saved["use_yscale"] = MODEL_GEOMETRY_DEFAULTS.use_yscale
+        if "yscale_max_repeat" not in saved:
+            saved["yscale_max_repeat"] = MODEL_GEOMETRY_DEFAULTS.yscale_max_repeat
         config = ModelGeometry(**saved)
         args.checkpoint_payload_override = payload
         args.tokenizer_json_override = payload.get("tokenizer_json")
@@ -11541,6 +11632,15 @@ def preprocess_runtime_args(args: Args) -> None:
         args.n_query = config.n_query
         args.use_gmlp = getattr(config, "use_gmlp", MODEL_GEOMETRY_DEFAULTS.use_gmlp)
         args.use_sane = getattr(config, "use_sane", MODEL_GEOMETRY_DEFAULTS.use_sane)
+        args.use_yscale = getattr(config, "use_yscale", MODEL_GEOMETRY_DEFAULTS.use_yscale)
+        checkpoint_repeat = max(
+            1,
+            int(
+                getattr(config, "yscale_max_repeat", MODEL_GEOMETRY_DEFAULTS.yscale_max_repeat)
+                or MODEL_GEOMETRY_DEFAULTS.yscale_max_repeat
+            ),
+        )
+        args.yscale_max_repeat = max(args.yscale_max_repeat, checkpoint_repeat)
         args.vocab_size = config.vocab_size
         args.model_path_override = checkpoint_path
         args.log_path_override = checkpoint_path.with_suffix(".log")
@@ -11557,6 +11657,14 @@ def preprocess_runtime_args(args: Args) -> None:
         n_xctx=args.n_xctx,
         use_gmlp=getattr(args, "use_gmlp", MODEL_GEOMETRY_DEFAULTS.use_gmlp),
         use_sane=getattr(args, "use_sane", MODEL_GEOMETRY_DEFAULTS.use_sane),
+        use_yscale=getattr(args, "use_yscale", MODEL_GEOMETRY_DEFAULTS.use_yscale),
+        yscale_max_repeat=max(
+            1,
+            int(
+                getattr(args, "yscale_max_repeat", MODEL_GEOMETRY_DEFAULTS.yscale_max_repeat)
+                or MODEL_GEOMETRY_DEFAULTS.yscale_max_repeat
+            ),
+        ),
     )
     tag = build_model_tag(inferred)
     for extra_tag in args.tag:
