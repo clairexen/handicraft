@@ -1195,6 +1195,7 @@ class BatchLayout:
 # -----------------------------------------------------------------------------
 
 import argparse
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 import gzip
 import math
 import os
@@ -1924,6 +1925,13 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         type=int,
         default=None,
         help="Maximum number of losses iterations to run (default: run until corpus completion)",
+    )
+    loss_parser.add_argument(
+        "--threads",
+        dest="losses_threads",
+        type=int,
+        default=1,
+        help="Number of loss iterations to evaluate in parallel",
     )
     loss_parser.add_argument(
         "--filter-max-score",
@@ -6936,6 +6944,164 @@ def _update_loss_tensor(tensor: torch.Tensor, contributions: Sequence[tuple[int,
         tensor[idx] = torch.tensor(float(loss_value), dtype=tensor.dtype)
 
 
+@dataclass(frozen=True)
+class LossIterationContext:
+    args: Args
+    dataset: TextDataset
+    tokenizer: GPT2TokenizerWrapper
+    model: GRCEGPT
+    row_blocks: Sequence[BlockLayout]
+    layout_future_margin: int
+    overlap: int
+    split: str
+    split_len: int
+    align_enabled: bool
+    device: torch.device
+    max_positions: int
+
+
+@dataclass
+class LossIterationJobResult:
+    cursor_value: int
+    next_cursor: int
+    ordered: list[tuple[int, float]]
+    elapsed: float
+    avg_loss: float | None
+    max_loss: float | None
+
+
+def _losses_iteration_stride(
+    row_blocks: Sequence[BlockLayout],
+    overlap: int,
+    default_step: int,
+) -> int:
+    stride = 0
+    for row_block in row_blocks:
+        row_len = row_block.total_positions()
+        if row_len <= 0:
+            continue
+        stride += max(1, row_len - overlap)
+    if stride <= 0:
+        stride = max(1, default_step)
+    return stride
+
+
+def _compute_loss_iteration(
+    cursor_value: int,
+    context: LossIterationContext,
+) -> LossIterationJobResult:
+    step_start = time.perf_counter()
+    contributions: list[tuple[int, float]] = []
+    row_blocks = context.row_blocks
+    overlap = context.overlap
+    layout_future_margin = context.layout_future_margin
+    split_len = context.split_len
+    start_pos = cursor_value - overlap
+    row_plans: list[tuple[BlockLayout, int]] = []
+    local_start = start_pos
+    for row_block in row_blocks:
+        row_len = row_block.total_positions()
+        if row_len <= 0:
+            continue
+        row_span = row_len + 1 + layout_future_margin
+        if row_span > split_len and split_len > 0:
+            raise ValueError(
+                f"Layout row span {row_span} exceeds available tokens ({split_len}) in {context.split} split"
+            )
+        row_plans.append((row_block, local_start))
+        local_start = local_start + max(1, row_len - overlap)
+    device = context.device
+    args = context.args
+    dataset = context.dataset
+    tokenizer = context.tokenizer
+    split = context.split
+    with torch.no_grad():
+        for row_index, (row_block, row_start) in enumerate(row_plans):
+            row_len = row_block.total_positions()
+            if row_len <= 0:
+                continue
+            align_rng_local = None
+            if context.align_enabled:
+                align_rng_local = random.Random(row_start)
+            (
+                _,
+                inputs,
+                targets,
+                _,
+                _row_source_label,
+                _,
+                base_source_ids,
+                actual_start,
+            ) = _prepare_eval_tokens(
+                args,
+                dataset,
+                tokenizer,
+                token_length=row_len,
+                start_pos=row_start,
+                custom_text=None,
+                align_rng=align_rng_local,
+                future_margin=layout_future_margin,
+                split=split,
+            )
+            xb_base = inputs.unsqueeze(0).to(device)
+            yb_base = targets.unsqueeze(0).to(device)
+            base_source_tensor = base_source_ids.unsqueeze(0).to(device)
+            row_rng = random.Random(cursor_value + row_index)
+            single_layout = types.SimpleNamespace(rows=[row_block])
+            row_results = _collect_layout_row_results(
+                args,
+                context.model,
+                single_layout,
+                xb_base,
+                yb_base,
+                base_source_tensor,
+                row_rng,
+            )
+            for annotations_full, final_result in row_results:
+                skip_prefix = min(overlap, row_len)
+                row_values = _row_loss_contributions(
+                    final_result,
+                    annotations_full,
+                    actual_start,
+                    split_len,
+                    tokenizer=tokenizer,
+                    base_source_ids=base_source_ids,
+                    split=split,
+                    skip_prefix=skip_prefix,
+                )
+                contributions.extend(row_values)
+    filtered: dict[int, float] = {}
+    for idx, loss_value in contributions:
+        if idx < cursor_value or idx >= split_len:
+            continue
+        filtered[idx] = loss_value
+    elapsed = max(time.perf_counter() - step_start, 1e-9)
+    if not filtered:
+        advance = max(1, context.max_positions)
+        next_cursor = min(split_len, cursor_value + advance)
+        return LossIterationJobResult(
+            cursor_value=cursor_value,
+            next_cursor=next_cursor,
+            ordered=[],
+            elapsed=elapsed,
+            avg_loss=None,
+            max_loss=None,
+        )
+    ordered = sorted(filtered.items())
+    token_count = len(ordered)
+    avg_loss = sum(value for _, value in ordered) / token_count if token_count else None
+    max_loss = max(value for _, value in ordered) if token_count else None
+    next_cursor = min(split_len, ordered[-1][0] + 1)
+    return LossIterationJobResult(
+        cursor_value=cursor_value,
+        next_cursor=next_cursor,
+        ordered=ordered,
+        elapsed=elapsed,
+        avg_loss=avg_loss,
+        max_loss=max_loss,
+    )
+
+
 def _default_losses_overlap(layout: BatchLayout) -> int:
     if layout.rows:
         first_row = layout.rows[0]
@@ -11862,148 +12028,214 @@ class Runtime:
         meta = stats.setdefault("meta", {})
         cursor_key = f"cursor_{split}"
         meta.setdefault(cursor_key, 0)
+        threads = max(1, int(getattr(self.args, "losses_threads", 1) or 1))
+        context = LossIterationContext(
+            args=self.args,
+            dataset=dataset,
+            tokenizer=tokenizer,
+            model=model,
+            row_blocks=row_blocks,
+            layout_future_margin=layout_future_margin,
+            overlap=overlap,
+            split=split,
+            split_len=split_len,
+            align_enabled=align_enabled,
+            device=device,
+            max_positions=max_positions,
+        )
+        iteration_stride = _losses_iteration_stride(row_blocks, overlap, max_positions)
+        if threads <= 1:
+            self._run_serial_losses_loop(
+                stats=stats,
+                meta=meta,
+                cursor_key=cursor_key,
+                split=split,
+                split_len=split_len,
+                loss_path=loss_path,
+                max_iterations=max_iterations,
+                context=context,
+            )
+        else:
+            self._run_parallel_losses_loop(
+                stats=stats,
+                meta=meta,
+                cursor_key=cursor_key,
+                split=split,
+                split_len=split_len,
+                loss_path=loss_path,
+                max_iterations=max_iterations,
+                context=context,
+                threads=threads,
+                iteration_stride=iteration_stride,
+            )
+        return 0
+
+    def _run_serial_losses_loop(
+        self,
+        *,
+        stats: dict,
+        meta: dict,
+        cursor_key: str,
+        split: str,
+        split_len: int,
+        loss_path: pathlib.Path,
+        max_iterations: int | None,
+        context: LossIterationContext,
+    ) -> None:
         iteration = 0
         try:
-            with torch.no_grad():
-                while True:
-                    if max_iterations is not None and iteration >= max_iterations:
-                        print(
-                            color_text(
-                                f"[losses] reached max iterations ({max_iterations}); progress saved.",
-                                Colors.YELLOW,
-                            )
-                        )
-                        break
-                    cursor_value = int(meta.get(cursor_key, 0))
-                    if cursor_value >= split_len:
-                        print(color_text(f"[losses] completed {split} split", Colors.GREEN))
-                        break
-                    iteration += 1
-                    step_start = time.perf_counter()
-                    if split_len <= 0:
-                        meta[cursor_key] = split_len
-                        torch.save(stats, loss_path)
-                        continue
-                    overlap_tokens = overlap
-                    start_pos = cursor_value - overlap_tokens
-                    align_rng = None
-                    if align_enabled:
-                        align_rng = random.Random(cursor_value)
-                    row_plans: list[tuple[BlockLayout, int]] = []
-                    local_start = start_pos
-                    for row_block in row_blocks:
-                        row_len = row_block.total_positions()
-                        if row_len <= 0:
-                            continue
-                        row_span = row_len + 1 + layout_future_margin
-                        start_for_row = local_start
-                        row_plans.append((row_block, start_for_row))
-                        local_start = start_for_row + max(1, row_len - overlap)
-                    contributions: list[tuple[int, float]] = []
-                    source_label = None
-                    for row_index, (row_block, row_start) in enumerate(row_plans):
-                        row_len = row_block.total_positions()
-                        if row_len <= 0:
-                            continue
-                        row_span = row_len + 1 + layout_future_margin
-                        if row_span > split_len and split_len > 0:
-                            raise ValueError(
-                                f"Layout row span {row_span} exceeds available tokens ({split_len}) in {split} split"
-                            )
-                        align_rng = None
-                        if align_enabled:
-                            align_rng = random.Random(row_start)
-                        (
-                            _,
-                            inputs,
-                            targets,
-                            _,
-                            row_source_label,
-                            _,
-                            base_source_ids,
-                            actual_start,
-                        ) = _prepare_eval_tokens(
-                            self.args,
-                            dataset,
-                            tokenizer,
-                            token_length=row_len,
-                            start_pos=row_start,
-                            custom_text=None,
-                            align_rng=align_rng,
-                            future_margin=layout_future_margin,
-                            split=split,
-                        )
-                        if source_label is None:
-                            source_label = row_source_label
-                        xb_base = inputs.unsqueeze(0).to(device)
-                        yb_base = targets.unsqueeze(0).to(device)
-                        base_source_tensor = base_source_ids.unsqueeze(0).to(device)
-                        row_rng = random.Random(cursor_value + row_index)
-                        single_layout = types.SimpleNamespace(rows=[row_block])
-                        row_results = _collect_layout_row_results(
-                            self.args,
-                            model,
-                            single_layout,
-                            xb_base,
-                            yb_base,
-                            base_source_tensor,
-                            row_rng,
-                        )
-                        for annotations_full, final_result in row_results:
-                            skip_prefix = min(overlap, row_len)
-                            row_values = _row_loss_contributions(
-                                final_result,
-                                annotations_full,
-                                actual_start,
-                                split_len,
-                                tokenizer=tokenizer,
-                                base_source_ids=base_source_ids,
-                                split=split,
-                                skip_prefix=skip_prefix,
-                            )
-                            contributions.extend(row_values)
-                    if not contributions:
-                        advance = max(1, max_positions)
-                        next_cursor = min(split_len, cursor_value + advance)
-                        meta[cursor_key] = next_cursor
-                        torch.save(stats, loss_path)
-                        continue
-                    filtered: dict[int, float] = {}
-                    for idx, loss_value in contributions:
-                        if idx < cursor_value or idx >= split_len:
-                            continue
-                        filtered[idx] = loss_value
-                    if not filtered:
-                        advance = max(1, max_positions)
-                        next_cursor = min(split_len, cursor_value + advance)
-                        meta[cursor_key] = next_cursor
-                        torch.save(stats, loss_path)
-                        continue
-                    ordered = sorted(filtered.items())
-                    tensor = stats[split]
-                    _update_loss_tensor(tensor, ordered)
-                    meta["total_updates"] = int(meta.get("total_updates", 0)) + 1
-                    key = f"{split}_tokens_processed"
-                    meta[key] = int(meta.get(key, 0)) + len(ordered)
-                    next_cursor = min(split_len, ordered[-1][0] + 1)
-                    meta[cursor_key] = next_cursor
-                    torch.save(stats, loss_path)
-                    avg_loss = sum(val for _, val in ordered) / len(ordered)
-                    max_loss = max(val for _, val in ordered)
-                    cursor_label = f"{split} split offset {cursor_value}"
-                    elapsed = max(time.perf_counter() - step_start, 1e-9)
-                    tokens_per_min = len(ordered) * 60.0 / elapsed
-                    progress = next_cursor / split_len if split_len else 1.0
+            while True:
+                if max_iterations is not None and iteration >= max_iterations:
                     print(
                         color_text(
-                            f"[losses] {cursor_label}: updated {len(ordered)} tokens (avg loss {avg_loss:.3f}; max loss {max_loss:.3f}; avg {tokens_per_min:,.0f} tok/min); cursor {next_cursor}/{split_len} ({progress:.2%})",
-                            Colors.GREEN,
+                            f"[losses] reached max iterations ({max_iterations}); progress saved.",
+                            Colors.YELLOW,
                         )
                     )
+                    break
+                cursor_value = int(meta.get(cursor_key, 0))
+                if cursor_value >= split_len:
+                    print(color_text(f"[losses] completed {split} split", Colors.GREEN))
+                    break
+                result = _compute_loss_iteration(cursor_value, context)
+                self._apply_loss_iteration_result(
+                    stats=stats,
+                    meta=meta,
+                    cursor_key=cursor_key,
+                    split=split,
+                    split_len=split_len,
+                    loss_path=loss_path,
+                    result=result,
+                )
+                iteration += 1
         except KeyboardInterrupt:
             torch.save(stats, loss_path)
             print(color_text("[losses] interrupted; progress saved.", Colors.YELLOW))
-        return 0
+
+    def _run_parallel_losses_loop(
+        self,
+        *,
+        stats: dict,
+        meta: dict,
+        cursor_key: str,
+        split: str,
+        split_len: int,
+        loss_path: pathlib.Path,
+        max_iterations: int | None,
+        context: LossIterationContext,
+        threads: int,
+        iteration_stride: int,
+    ) -> None:
+        cursor_value = int(meta.get(cursor_key, 0))
+        pending: dict[int, LossIterationJobResult] = {}
+        in_flight: dict[object, int] = {}
+        scheduled: set[int] = set()
+        next_start = cursor_value
+        completed = 0
+        interrupted = False
+        executor = ThreadPoolExecutor(max_workers=max(1, threads))
+        try:
+            while True:
+                if max_iterations is not None and completed >= max_iterations:
+                    print(
+                        color_text(
+                            f"[losses] reached max iterations ({max_iterations}); progress saved.",
+                            Colors.YELLOW,
+                        )
+                    )
+                    break
+                if cursor_value >= split_len:
+                    print(color_text(f"[losses] completed {split} split", Colors.GREEN))
+                    break
+                ready = pending.pop(cursor_value, None)
+                if ready is not None:
+                    self._apply_loss_iteration_result(
+                        stats=stats,
+                        meta=meta,
+                        cursor_key=cursor_key,
+                        split=split,
+                        split_len=split_len,
+                        loss_path=loss_path,
+                        result=ready,
+                    )
+                    cursor_value = ready.next_cursor
+                    next_start = cursor_value
+                    completed += 1
+                    continue
+                slots = max(0, max(1, threads) - len(in_flight))
+                if max_iterations is not None:
+                    remaining = max(0, max_iterations - (completed + len(in_flight) + len(pending)))
+                    slots = min(slots, remaining)
+                while slots > 0:
+                    start_value = max(next_start, cursor_value)
+                    if start_value >= split_len:
+                        break
+                    if start_value in scheduled or start_value in pending:
+                        next_start = start_value + iteration_stride
+                        continue
+                    future = executor.submit(_compute_loss_iteration, start_value, context)
+                    in_flight[future] = start_value
+                    scheduled.add(start_value)
+                    next_start = start_value + iteration_stride
+                    slots -= 1
+                if not in_flight:
+                    if pending:
+                        print(
+                            color_text(
+                                "[losses] warning: pending results without active work; exiting early.",
+                                Colors.YELLOW,
+                            )
+                        )
+                    break
+                done, _ = wait(list(in_flight.keys()), return_when=FIRST_COMPLETED)
+                for future in done:
+                    start_value = in_flight.pop(future)
+                    scheduled.discard(start_value)
+                    result = future.result()
+                    if result.cursor_value < cursor_value:
+                        continue
+                    pending[result.cursor_value] = result
+        except KeyboardInterrupt:
+            interrupted = True
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
+        if interrupted:
+            torch.save(stats, loss_path)
+            print(color_text("[losses] interrupted; progress saved.", Colors.YELLOW))
+
+    def _apply_loss_iteration_result(
+        self,
+        *,
+        stats: dict,
+        meta: dict,
+        cursor_key: str,
+        split: str,
+        split_len: int,
+        loss_path: pathlib.Path,
+        result: LossIterationJobResult,
+    ) -> None:
+        meta[cursor_key] = result.next_cursor
+        if not result.ordered:
+            torch.save(stats, loss_path)
+            return
+        tensor = stats[split]
+        _update_loss_tensor(tensor, result.ordered)
+        meta["total_updates"] = int(meta.get("total_updates", 0)) + 1
+        key = f"{split}_tokens_processed"
+        meta[key] = int(meta.get(key, 0)) + len(result.ordered)
+        torch.save(stats, loss_path)
+        avg_loss = result.avg_loss if result.avg_loss is not None else 0.0
+        max_loss = result.max_loss if result.max_loss is not None else 0.0
+        elapsed = max(result.elapsed, 1e-9)
+        tokens_per_min = len(result.ordered) * 60.0 / elapsed
+        progress = result.next_cursor / split_len if split_len else 1.0
+        cursor_label = f"{split} split offset {result.cursor_value}"
+        print(
+            color_text(
+                f"[losses] {cursor_label}: updated {len(result.ordered)} tokens (avg loss {avg_loss:.3f}; max loss {max_loss:.3f}; avg {tokens_per_min:,.0f} tok/min); cursor {result.next_cursor}/{split_len} ({progress:.2%})",
+                Colors.GREEN,
+            )
+        )
 
     def _token_cache_paths(
         self,
