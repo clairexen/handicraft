@@ -12106,6 +12106,7 @@ class Runtime:
                     split_len=split_len,
                     loss_path=loss_path,
                     result=result,
+                    throughput_scale=1.0,
                 )
                 iteration += 1
         except KeyboardInterrupt:
@@ -12157,6 +12158,7 @@ class Runtime:
                         split_len=split_len,
                         loss_path=loss_path,
                         result=ready,
+                        throughput_scale=max(1, threads),
                     )
                     cursor_value = ready.next_cursor
                     next_start = cursor_value
@@ -12213,6 +12215,7 @@ class Runtime:
         split_len: int,
         loss_path: pathlib.Path,
         result: LossIterationJobResult,
+        throughput_scale: float = 1.0,
     ) -> None:
         meta[cursor_key] = result.next_cursor
         if not result.ordered:
@@ -12227,7 +12230,7 @@ class Runtime:
         avg_loss = result.avg_loss if result.avg_loss is not None else 0.0
         max_loss = result.max_loss if result.max_loss is not None else 0.0
         elapsed = max(result.elapsed, 1e-9)
-        tokens_per_min = len(result.ordered) * 60.0 / elapsed
+        tokens_per_min = len(result.ordered) * 60.0 / elapsed * max(throughput_scale, 1.0)
         progress = result.next_cursor / split_len if split_len else 1.0
         cursor_label = f"{split} split offset {result.cursor_value}"
         print(

@@ -27,6 +27,26 @@ SPECIAL_TOKENS = """
 <|reserved4|> <|reserved5|> <|reserved6|> <|reserved7|>
 """.split()
 
+MAX_SPECIAL_TOKEN_LEN = max(len(token) for token in SPECIAL_TOKENS)
+SPECIAL_TOKEN_PREFIXES = {
+    token[:length]
+    for token in SPECIAL_TOKENS
+    for length in range(1, len(token))
+}
+
+
+def _split_special_safe_tail(text: str) -> tuple[str, str]:
+    """Return (safe_prefix, carry_suffix) so special tokens aren't split."""
+
+    if not text:
+        return "", ""
+    max_check = min(len(text), MAX_SPECIAL_TOKEN_LEN - 1)
+    for length in range(max_check, 0, -1):
+        suffix = text[-length:]
+        if suffix in SPECIAL_TOKEN_PREFIXES:
+            return text[:-length], suffix
+    return text, ""
+
 DEFAULT_LIMIT: int | None = None  # Unlimited by default
 ENCODE_BATCH_SIZE = 64  # number of text chunks per encode_batch call
 
@@ -198,16 +218,22 @@ def encode_corpus(args: argparse.Namespace) -> int:
             maybe_log_progress()
         batch.clear()
 
+    carry = ""
     with _open_text(args.input) as handle:
         while True:
             piece = handle.read(chunk_chars)
             if not piece:
                 break
             saw_text = True
-            batch.append(piece)
             total_bytes += len(piece.encode("utf-8"))
+            combined = carry + piece
+            safe_text, carry = _split_special_safe_tail(combined)
+            if safe_text:
+                batch.append(safe_text)
             if len(batch) >= ENCODE_BATCH_SIZE:
                 flush_batch()
+        if carry:
+            batch.append(carry)
         flush_batch()
 
     if not saw_text:
