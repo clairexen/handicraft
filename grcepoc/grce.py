@@ -1273,6 +1273,12 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         default="model",
         help="Directory where checkpoints/logs/tokenizers are stored",
     )
+    generic.add_argument(
+        "--corpus",
+        type=str,
+        default=None,
+        help="Override the active corpus for this run without editing the checkpoint",
+    )
 
     model_group = parser.add_argument_group("Model configuration")
     model_group.add_argument(
@@ -2119,7 +2125,9 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
     if hasattr(args, "lr_linear_min") and args.lr_linear_min is None:
         args.lr_linear_min = args.lr_base * 0.1
     args.completed_cycles = 0
-    args.corpus = None
+    requested_corpus = getattr(args, "corpus", None)
+    args._requested_corpus = requested_corpus
+    args.corpus = requested_corpus
     args._cycles_is_delta = False
     args._cycles_delta = 0
 
@@ -11841,6 +11849,19 @@ class Runtime:
             raise RuntimeError(
                 "No corpora configured; run 'grce.py corpus --add <name>' before training."
             )
+        requested = getattr(self.args, "_requested_corpus", None)
+        if requested:
+            entry = next((item for item in self.corpua if item["corpus"] == requested), None)
+            if entry is None:
+                raise RuntimeError(
+                    f"Corpus '{requested}' is not registered in this checkpoint; run 'corpus --add {requested}' first."
+                )
+            max_tokens = max(
+                1, int(entry.get("max_train_tokens", entry.get("num_train_tokens", 1)) or 1)
+            )
+            used_tokens = int(entry.get("used_train_tokens", 0) or 0)
+            recycled = used_tokens >= max_tokens
+            return entry, recycled
         ready_entry = next(
             (
                 entry
