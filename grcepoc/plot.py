@@ -321,6 +321,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Offset each source's x-axis by the last x value of the previous source",
     )
     parser.add_argument(
+        "--subtract-source-mean",
+        action="store_true",
+        help="Subtract the cross-source average for each sample index before plotting",
+    )
+    parser.add_argument(
         "--first-step",
         type=int,
         default=0,
@@ -528,6 +533,33 @@ def _apply_transforms(
     return x_proc, y_proc
 
 
+def _subtract_mean_per_position(series: List[List[float]]) -> None:
+    """Center each series by subtracting the per-index mean across sources."""
+
+    if not series:
+        return
+    max_len = max((len(seq) for seq in series), default=0)
+    if max_len <= 0:
+        return
+    means: List[float | None] = []
+    for idx in range(max_len):
+        values = [
+            seq[idx]
+            for seq in series
+            if idx < len(seq) and not math.isnan(seq[idx])
+        ]
+        if values:
+            means.append(sum(values) / len(values))
+        else:
+            means.append(None)
+    for seq in series:
+        for idx, value in enumerate(seq):
+            mean_val = means[idx]
+            if mean_val is None or math.isnan(value):
+                continue
+            seq[idx] = value - mean_val
+
+
 def _apply_filter_groups(
     x_values: List[float],
     y_values: List[float],
@@ -697,6 +729,7 @@ def plot_metric_traces(
     fill_sign: bool = False,
     sparse: bool = False,
     interpolate: bool = False,
+    subtract_source_mean: bool = False,
 ) -> None:
     expression_cache: Dict[str, MetricExpression] = {}
     parsed_metric_groups: List[List[MetricExpression]] = []
@@ -718,10 +751,25 @@ def plot_metric_traces(
     )
     if num_groups == 1:
         axes = [axes]
+    metric_series_cache: Dict[MetricExpression, List[List[float]]] | None = None
+    if subtract_source_mean:
+        metric_series_cache = {}
+        for metrics in parsed_metric_groups:
+            for metric in metrics:
+                if metric in metric_series_cache:
+                    continue
+                per_source: List[List[float]] = []
+                for _, history in sources:
+                    if not history:
+                        per_source.append([])
+                    else:
+                        per_source.append(_series_from_expression(history, metric))
+                _subtract_mean_per_position(per_source)
+                metric_series_cache[metric] = per_source
     for idx_ax, (ax, metrics) in enumerate(zip(axes, parsed_metric_groups)):
         stack_offset = 0.0
         allow_fit = not fit_only_first_plot or idx_ax == 0
-        for label, history in sources:
+        for source_index, (label, history) in enumerate(sources):
             if not history:
                 continue
             x_values = _series_from_field(history, x_field, default_sequence=True)
@@ -734,7 +782,14 @@ def plot_metric_traces(
                 x_values = [val + stack_offset if not math.isnan(val) else val for val in x_values]
             plotted_label = False
             for metric in metrics:
-                y_values = _series_from_expression(history, metric)
+                if subtract_source_mean and metric_series_cache is not None:
+                    cached = metric_series_cache.get(metric)
+                    if cached is None or source_index >= len(cached):
+                        y_values = []
+                    else:
+                        y_values = list(cached[source_index])
+                else:
+                    y_values = _series_from_expression(history, metric)
                 if not any(not math.isnan(val) for val in y_values):
                     continue
                 x_series = x_values
@@ -991,6 +1046,7 @@ def main() -> None:
             fill_sign=args.plot_fill_sign,
             sparse=args.sparse,
             interpolate=args.interpolate,
+            subtract_source_mean=args.subtract_source_mean,
         )
         performed = True
     if args.plot_time is not None:
@@ -1015,6 +1071,7 @@ def main() -> None:
             fill_sign=args.plot_fill_sign,
             sparse=args.sparse,
             interpolate=args.interpolate,
+            subtract_source_mean=args.subtract_source_mean,
         )
         performed = True
     if args.plot_timestamp is not None:
@@ -1039,6 +1096,7 @@ def main() -> None:
             fill_sign=args.plot_fill_sign,
             sparse=args.sparse,
             interpolate=args.interpolate,
+            subtract_source_mean=args.subtract_source_mean,
         )
         performed = True
     if not performed:
