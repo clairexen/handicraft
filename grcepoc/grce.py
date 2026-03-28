@@ -179,6 +179,7 @@ class Defaults:
     align_articles: bool = False
     allow_oversize: bool = False
     xrefresh: bool = False
+    yrefresh: bool = False
 
 DEFAULTS = Defaults()
 
@@ -1609,6 +1610,15 @@ def grce_cli_args(argv: Sequence[str] | None = None) -> Args:
         help=(
             "During SANE decode segments, re-inject previously added token embeddings before each"
             " X-loop pass so every pass starts with the initial inputs"
+        ),
+    )
+    training_group.add_argument(
+        "--yrefresh",
+        action="store_true",
+        default=DEFAULTS.yrefresh,
+        help=(
+            "Also refresh token embeddings between Y-loop iterations (implies --xrefresh) so"
+            " every layer-repeat sees the freshly injected columns"
         ),
     )
     training_group.add_argument(
@@ -4568,6 +4578,7 @@ class TransformerStackCore(nn.Module):
         sane_z_indices: torch.Tensor | None = None,
         sane_active_mask: torch.Tensor | None = None,
         self_attention_only: bool = False,
+        loop_refresh_tensor: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, list[torch.Tensor], list[tuple[torch.Tensor, torch.Tensor]]]:
         rows, cols, _ = x.shape
         rope_positions_tensor = None
@@ -4613,6 +4624,8 @@ class TransformerStackCore(nn.Module):
                         continue
                     layer_kv_sources[layer_idx].append(kv_pair)
         current = x
+        if loop_refresh_tensor is not None and loop_refresh_tensor.shape != x.shape:
+            raise ValueError("loop_refresh_tensor must match the transformer input shape")
         repeats = max(1, int(layer_repeat))
         samples: list[torch.Tensor | None] = [None] * len(self.blocks)
         kv_outputs: list[tuple[torch.Tensor, torch.Tensor] | None] = [None] * len(self.blocks)
@@ -4634,6 +4647,8 @@ class TransformerStackCore(nn.Module):
                     sane_active_mask=sane_active_mask,
                 )
         for rep_idx in range(repeats):
+            if loop_refresh_tensor is not None and rep_idx > 0:
+                current = current + loop_refresh_tensor
             for layer_idx, block in enumerate(self.blocks):
                 layer_xctx_bias = None
                 if xctx_tensor is not None:
@@ -5149,6 +5164,7 @@ class TransformerStackSequence(nn.Module):
         use_context: bool = True,
         disable_sane: bool = False,
         self_attention_only: bool = False,
+        loop_refresh_tensor: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None, list, list[torch.Tensor] | None]:
         if mode not in {"forward", "encode", "decode", "reverse"}:
             raise ValueError(f"Unknown TransformerStackSequence mode: {mode}")
@@ -5191,6 +5207,7 @@ class TransformerStackSequence(nn.Module):
                 use_context=use_context,
                 disable_sane=disable_sane,
                 self_attention_only=self_attention_only,
+                loop_refresh_tensor=loop_refresh_tensor,
             )
         column_positions_tensor = None
         if column_positions is not None:
@@ -5417,6 +5434,7 @@ class TransformerStackSequence(nn.Module):
         use_context: bool = True,
         disable_sane: bool = False,
         self_attention_only: bool = False,
+        loop_refresh_tensor: torch.Tensor | None = None,
     ) -> tuple[
         torch.Tensor,
         torch.Tensor | None,
@@ -5454,6 +5472,7 @@ class TransformerStackSequence(nn.Module):
             sane_z_indices=sane_z_indices,
             sane_active_mask=sane_active_mask,
             self_attention_only=self_attention_only,
+            loop_refresh_tensor=loop_refresh_tensor,
         )
         kv_out = kv_pairs
         layer_outputs = samples if capture_layer_outputs else None
@@ -5821,7 +5840,8 @@ def _run_microbatch_pass(
     total_tokens = 0
     row_details: list[dict[str, object]] = []
     base_token_total = 0
-    xrefresh_enabled = bool(getattr(args, "xrefresh", False))
+    yrefresh_enabled = bool(getattr(args, "yrefresh", False))
+    xrefresh_enabled = bool(getattr(args, "xrefresh", False) or yrefresh_enabled)
     for group in rows:
         row_count = int(group.rows)
         if row_count <= 0:
@@ -6037,6 +6057,10 @@ def _run_microbatch_pass(
                             next_target_grid[:, new_leading_mask] = next_token_ids[:, new_leading_mask]
                             self_target_grid[:, new_leading_mask] = LOSS_IGNORE_INDEX
                             injected_mask = injected_mask | new_leading_mask
+                        refresh_tensor = None
+                        if yrefresh_enabled and torch.any(injected_mask):
+                            mask = injected_mask.view(1, -1, 1).to(token_embedding_grid.dtype)
+                            refresh_tensor = token_embedding_grid * mask
                         control_slice = (
                             control_state.view(1, -1).expand(row_count, -1).clone()
                         )
@@ -6087,6 +6111,7 @@ def _run_microbatch_pass(
                             use_context=bool(getattr(segment, "context_enabled", True)),
                             disable_sane=segment_disable_sane,
                             self_attention_only=bool(getattr(segment, "self_attention_only", False)),
+                            loop_refresh_tensor=(refresh_tensor if yrefresh_enabled and refresh_tensor is not None else None),
                         )
                         kv_final = kv_out
                         state_tensor = chunk_output
@@ -8763,6 +8788,8 @@ def _evaluate_row_block(
     )
     xrefresh_enabled = bool(getattr(args, "xrefresh", False))
     vocab_size = model.config.vocab_size
+    yrefresh_enabled = bool(getattr(args, "yrefresh", False))
+    xrefresh_enabled = bool(getattr(args, "xrefresh", False) or yrefresh_enabled)
     zero_next_logits: torch.Tensor | None = None
     zero_self_logits: torch.Tensor | None = None
     if getattr(args, "log_zero_step", False):
@@ -8947,6 +8974,10 @@ def _evaluate_row_block(
                     next_target_grid[:, new_leading_mask] = next_token_ids[:, new_leading_mask]
                     self_target_grid[:, new_leading_mask] = LOSS_IGNORE_INDEX
                     injected_mask = injected_mask | new_leading_mask
+                refresh_tensor = None
+                if yrefresh_enabled and torch.any(injected_mask):
+                    mask = injected_mask.view(1, -1, 1).to(token_embedding_grid.dtype)
+                    refresh_tensor = token_embedding_grid * mask
                 control_slice = control_state.view(1, -1).expand(row_count, -1).clone()
                 control_embed = model.core.expand_to_even(
                     model.core.control_emb(control_slice)
@@ -8994,6 +9025,7 @@ def _evaluate_row_block(
                     use_context=bool(segment.context_enabled),
                     disable_sane=False,
                     self_attention_only=bool(getattr(segment, "self_attention_only", False)),
+                    loop_refresh_tensor=(refresh_tensor if yrefresh_enabled and refresh_tensor is not None else None),
                 )
                 kv_final = kv_out
                 state_tensor = chunk_output
@@ -11435,6 +11467,9 @@ def preprocess_runtime_args(args: Args) -> None:
     if getattr(args, "_checkpoint_preprocessed", False):
         return
     args._checkpoint_preprocessed = True
+
+    if getattr(args, "yrefresh", False):
+        args.xrefresh = True
 
     args.model_path_override = None
     args.log_path_override = None
