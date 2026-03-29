@@ -12279,7 +12279,7 @@ class Runtime:
         if max_iterations is not None:
             max_iterations = max(0, int(max_iterations))
         if getattr(self.args, "losses_scan", False):
-            data_dir = pathlib.Path(self.args.data)
+            base_dir = pathlib.Path(self.args.model)
             _scan_loss_stats(
                 loss_path,
                 stats,
@@ -12289,7 +12289,7 @@ class Runtime:
                 corpus,
                 split,
                 loss_id,
-                data_dir,
+                base_dir,
                 filter_config,
                 max_articles=max_iterations,
             )
@@ -12546,13 +12546,13 @@ class Runtime:
         return train_cache, test_cache
 
     def _losses_path(self, corpus: str, db_id: str, split: str) -> pathlib.Path:
-        data_dir = pathlib.Path(self.args.data)
+        base_dir = pathlib.Path(self.args.model)
         vocab = self.args.vocab_size
         safe_id = re.sub(r"[^0-9A-Za-z_-]+", "", db_id)
         if not safe_id:
             safe_id = "default"
         safe_split = "train" if split == "train" else "test"
-        return data_dir / f"{corpus}_losses_{safe_split}_{safe_id}_{vocab}.pt"
+        return base_dir / f"{corpus}_losses_{safe_split}_{safe_id}_{vocab}.pt"
 
     def cli_prompts(
         self,
