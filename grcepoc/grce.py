@@ -6889,7 +6889,7 @@ def _write_filtered_article(
     header = (
         f"<|----|> # article {entry['article_index']} start={entry['start']:,} len={entry['length']:,}"
         f" avg_loss={entry['avg_loss']:.4f} avg_ppl={entry['avg_ppl']:.2f}"
-        f" failure_score={entry['failure_score']:.3f}\n"
+        f" failure_score={entry['failure_score']:.3f}\n\n"
     )
     handle.write(header)
     text = entry.get("text") or ""
