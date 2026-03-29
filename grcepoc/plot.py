@@ -331,6 +331,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Center every trace by subtracting the per-position mean across all metrics and sources",
     )
     parser.add_argument(
+        "--diff-sources",
+        action="store_true",
+        help="Plot the difference between exactly two sources (second minus first)",
+    )
+    parser.add_argument(
         "--first-step",
         type=int,
         default=0,
@@ -736,6 +741,7 @@ def plot_metric_traces(
     interpolate: bool = False,
     subtract_cross_source_mean: bool = False,
     subtract_mean: bool = False,
+    diff_sources: bool = False,
 ) -> None:
     expression_cache: Dict[str, MetricExpression] = {}
     parsed_metric_groups: List[List[MetricExpression]] = []
@@ -769,6 +775,28 @@ def plot_metric_traces(
                 else:
                     per_source.append(_series_from_expression(history, metric))
             metric_series_cache[metric] = per_source
+    if diff_sources:
+        if len(sources) != 2:
+            raise ValueError("--diff-sources requires exactly two --json inputs")
+        for metric, per_source in metric_series_cache.items():
+            if len(per_source) != 2:
+                continue
+            first = per_source[0]
+            second = per_source[1]
+            max_len = max(len(first), len(second))
+            diff_series: List[float] = []
+            for idx in range(max_len):
+                a = first[idx] if idx < len(first) else float("nan")
+                b = second[idx] if idx < len(second) else float("nan")
+                if math.isnan(a) or math.isnan(b):
+                    diff_series.append(float("nan"))
+                else:
+                    diff_series.append(b - a)
+            per_source[:] = [diff_series]
+        # Collapse sources to a single entry labelled as delta
+        if sources:
+            label = f"{sources[1][0]} - {sources[0][0]}"
+            sources[:] = [(label, sources[1][1])]
     if subtract_mean:
         all_series: List[List[float]] = []
         for per_source in metric_series_cache.values():
@@ -1056,6 +1084,7 @@ def main() -> None:
             interpolate=args.interpolate,
             subtract_cross_source_mean=args.subtract_cross_source_mean,
             subtract_mean=args.subtract_mean,
+            diff_sources=args.diff_sources,
         )
         performed = True
     if args.plot_time is not None:
@@ -1082,6 +1111,7 @@ def main() -> None:
             interpolate=args.interpolate,
             subtract_cross_source_mean=args.subtract_cross_source_mean,
             subtract_mean=args.subtract_mean,
+            diff_sources=args.diff_sources,
         )
         performed = True
     if args.plot_timestamp is not None:
@@ -1108,6 +1138,7 @@ def main() -> None:
             interpolate=args.interpolate,
             subtract_cross_source_mean=args.subtract_cross_source_mean,
             subtract_mean=args.subtract_mean,
+            diff_sources=args.diff_sources,
         )
         performed = True
     if not performed:
