@@ -151,7 +151,7 @@ class Defaults:
     steps: int = 100
     cycles: int = 100
     batch_size: int = 256
-    layout: str = "*[*1e=*1d=*1f=*2t2x=*1n=*1r]"
+    layout: str = "*[*D]"
     eval_interval: int = 10
     dropout: float = 0.05
     detach_span: int = 0
