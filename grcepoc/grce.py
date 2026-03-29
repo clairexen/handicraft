@@ -1228,6 +1228,7 @@ import time
 import types
 from collections import OrderedDict, defaultdict
 import json
+import numpy as np
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Tuple, Sequence, Callable, Mapping, NamedTuple
@@ -6924,6 +6925,8 @@ def _scan_loss_stats(
     if filter_enabled:
         target_path.parent.mkdir(parents=True, exist_ok=True)
     for split in ("train", "test"):
+        failure_samples: list[float] = []
+        loss_samples: list[float] = []
         tensor = stats.get(split)
         if tensor is None:
             continue
@@ -7017,6 +7020,9 @@ def _scan_loss_stats(
             avg_perplexity = float(perplexities.mean().item())
             vocab_value = float(vocab_size)
             failure_score = float((perplexities / (perplexities + vocab_value)).mean().item())
+            if article_idx <= 1000:
+                failure_samples.append(failure_score)
+                loss_samples.append(avg_loss)
             status_tag = ""
             matches_filter = False
             if filter_applies:
@@ -7058,6 +7064,23 @@ def _scan_loss_stats(
                     Colors.YELLOW,
                 )
             )
+        if split == target_split and failure_samples:
+            for pct in (5, 10, 15, 20):
+                cutoff = np.percentile(failure_samples, 100 - pct)
+                print(
+                    color_text(
+                        f"    filter-max-score threshold for top {pct}%: {cutoff:.4f}",
+                        Colors.CYAN,
+                    )
+                )
+            for pct in (5, 10, 15, 20):
+                cutoff = np.percentile(loss_samples, pct)
+                print(
+                    color_text(
+                        f"    filter-min-loss threshold for bottom {pct}%: {cutoff:.4f}",
+                        Colors.CYAN,
+                    )
+                )
     if partial_writer is not None:
         partial_writer.close()
     if filter_enabled:
@@ -12280,6 +12303,7 @@ class Runtime:
             max_iterations = max(0, int(max_iterations))
         if getattr(self.args, "losses_scan", False):
             base_dir = pathlib.Path(self.args.model)
+            max_articles = 1000
             _scan_loss_stats(
                 loss_path,
                 stats,
@@ -12291,7 +12315,7 @@ class Runtime:
                 loss_id,
                 base_dir,
                 filter_config,
-                max_articles=max_iterations,
+                max_articles=max_articles,
             )
             return 0
         layout = BatchLayout(self.args.layout, batch_size=self.args.batch_size, block_size=self.args.block_size)
