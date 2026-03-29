@@ -2654,6 +2654,13 @@ def _expected_sections(config: GeometryLike, n_pos: int) -> list[tuple[str, str,
                 "formula": "L * Y",
             }
         )
+        if getattr(config, "yrefresh", False):
+            transformer_defs.append(
+                {
+                    "label": "yrefresh scalars",
+                    "formula": "Y",
+                }
+            )
     transformer_items = eval_items(transformer_defs)
     sections.append(("transformer", "Transformer", transformer_items))
 
@@ -2969,6 +2976,22 @@ from tokenizers import Tokenizer
 
 ASCII_LETTERS = set(string.ascii_letters)
 ASCII_LOWERCASE = set(string.ascii_lowercase)
+
+
+def _is_cuda_allocation_error(exc: BaseException) -> bool:
+    """Return True when ``exc`` indicates a GPU allocation failure."""
+
+    if isinstance(exc, torch.OutOfMemoryError):
+        return True
+    message = str(exc).lower()
+    if not message:
+        return False
+    substrings = (
+        "cublas_status_alloc_failed",
+        "cuda error: out of memory",
+    )
+    return any(token in message for token in substrings)
+
 class RMSNorm(nn.Module):
     """Root-mean-square norm used by the XCTX recurrent path."""
 
@@ -3620,8 +3643,9 @@ def _load_checkpoint_state(
 
         target_state = model.state_dict()
         adjusted = dict(state_dict)
+        suffixes = ("yscale_factors", "yscale_refresh_factors")
         for name, tensor in list(state_dict.items()):
-            if not name.endswith("yscale_factors"):
+            if not any(name.endswith(suffix) for suffix in suffixes):
                 continue
             target_tensor = target_state.get(name)
             if target_tensor is None:
@@ -3630,27 +3654,40 @@ def _load_checkpoint_state(
                 continue
             if tensor.dim() != target_tensor.dim():
                 continue
-            if tensor.dim() != 2 or target_tensor.dim() != 2:
-                continue
-            if tensor.size(1) != target_tensor.size(1):
-                continue
-            resized = target_tensor.new_ones(target_tensor.shape)
-            overlap_rows = min(tensor.size(0), target_tensor.size(0))
-            if overlap_rows > 0:
-                resized[:overlap_rows, :] = tensor[:overlap_rows, :].to(resized.dtype)
-            if target_tensor.size(0) > overlap_rows:
-                if tensor.size(0) > 0:
-                    fill = tensor[-1:, :].to(resized.dtype)
-                else:
-                    fill = torch.ones(
-                        1,
-                        target_tensor.size(1),
-                        dtype=resized.dtype,
-                        device=resized.device,
-                    )
-                repeat = target_tensor.size(0) - overlap_rows
-                resized[overlap_rows:, :] = fill.expand(repeat, -1)
-            adjusted[name] = resized
+            resized: torch.Tensor | None = None
+            if tensor.dim() == 2 and target_tensor.dim() == 2:
+                if tensor.size(1) != target_tensor.size(1):
+                    continue
+                resized = target_tensor.new_ones(target_tensor.shape)
+                overlap_rows = min(tensor.size(0), target_tensor.size(0))
+                if overlap_rows > 0:
+                    resized[:overlap_rows, :] = tensor[:overlap_rows, :].to(resized.dtype)
+                if target_tensor.size(0) > overlap_rows:
+                    if tensor.size(0) > 0:
+                        fill = tensor[-1:, :].to(resized.dtype)
+                    else:
+                        fill = torch.ones(
+                            1,
+                            target_tensor.size(1),
+                            dtype=resized.dtype,
+                            device=resized.device,
+                        )
+                    repeat = target_tensor.size(0) - overlap_rows
+                    resized[overlap_rows:, :] = fill.expand(repeat, -1)
+            elif tensor.dim() == 1 and target_tensor.dim() == 1:
+                target_len = target_tensor.size(0)
+                resized = target_tensor.new_ones(target_len)
+                overlap = min(target_len, tensor.size(0))
+                if overlap > 0:
+                    resized[:overlap] = tensor[:overlap].to(resized.dtype)
+                if target_len > overlap:
+                    if tensor.numel() > 0:
+                        fill_value = tensor[-1].item()
+                    else:
+                        fill_value = 1.0
+                    resized[overlap:] = float(fill_value)
+            if resized is not None:
+                adjusted[name] = resized
         return adjusted
 
     try:
@@ -4535,6 +4572,7 @@ class TransformerStackCore(nn.Module):
         self.rope_xl_half_window = float(config.n_pos) / 2.0 if self.use_rope_xl else 0.0
         self.use_sane = bool(getattr(config, "use_sane", True))
         self.use_yscale = bool(getattr(config, "use_yscale", False))
+        self.yrefresh_enabled = bool(getattr(config, "yrefresh", False))
         repeat_hint = max(1, int(getattr(config, "yscale_max_repeat", 1) or 1))
         self.yscale_max_repeat = repeat_hint
         self.sane_stream_width = config.n_width // 2
@@ -4551,8 +4589,13 @@ class TransformerStackCore(nn.Module):
             self.sane_beta_mlp = None
         if self.use_yscale:
             self.yscale_factors = nn.Parameter(torch.ones(repeat_hint, config.n_layer))
+            if self.yrefresh_enabled:
+                self.yscale_refresh_factors = nn.Parameter(torch.ones(repeat_hint))
+            else:
+                self.register_parameter("yscale_refresh_factors", None)
         else:
             self.register_parameter("yscale_factors", None)
+            self.register_parameter("yscale_refresh_factors", None)
 
     def expand_to_even(self, tensor: torch.Tensor) -> torch.Tensor:
         """Place half-width embedding features into the even data-path slots."""
@@ -4757,9 +4800,20 @@ class TransformerStackCore(nn.Module):
                 )
         yscale_table = self.yscale_factors if self.use_yscale else None
         yscale_rows = int(yscale_table.size(0)) if yscale_table is not None else 0
+        refresh_table = self.yscale_refresh_factors if (self.yrefresh_enabled and self.yscale_refresh_factors is not None) else None
+        refresh_rows = int(refresh_table.size(0)) if refresh_table is not None else 0
         for rep_idx in range(repeats):
             if loop_refresh_tensor is not None and rep_idx > 0:
-                current = current + loop_refresh_tensor
+                addition = loop_refresh_tensor
+                if refresh_table is not None:
+                    if rep_idx >= refresh_rows:
+                        raise ValueError(
+                            "Y-scale refresh table only has %d entries; increase layout Ny multiplier or yscale_max_repeat"
+                            % refresh_rows
+                        )
+                    scale = refresh_table[rep_idx].to(addition.dtype)
+                    addition = addition * scale.view(1, 1, 1)
+                current = current + addition
             for layer_idx, block in enumerate(self.blocks):
                 layer_xctx_bias = None
                 if xctx_tensor is not None:
@@ -7352,7 +7406,9 @@ def train_layout_batch(
                 rng=window_rng,
                 row_serializer=layout.serialize_rows,
             )
-        except torch.OutOfMemoryError as exc:
+        except (torch.OutOfMemoryError, RuntimeError) as exc:
+            if not _is_cuda_allocation_error(exc):
+                raise
             if not hasattr(exc, "microbatch_detail"):
                 exc.microbatch_detail = micro_detail
             raise
@@ -8248,7 +8304,9 @@ def train_model(
             opt_duration = time.time() - opt_start
             total_loss = total_loss_sum / float(total_tokens)
             train_tokens_used += step_base_tokens
-        except torch.OutOfMemoryError as oom_err:
+        except (torch.OutOfMemoryError, RuntimeError) as oom_err:
+            if not _is_cuda_allocation_error(oom_err):
+                raise
             oom_retries += 1
             line_parts: List[str] = []
             if show_time:
