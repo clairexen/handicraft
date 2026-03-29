@@ -321,7 +321,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Offset each source's x-axis by the last x value of the previous source",
     )
     parser.add_argument(
-        "--subtract-source-mean",
+        "--subtract-cross-source-mean",
         action="store_true",
         help="Subtract the cross-source average for each sample index before plotting",
     )
@@ -734,7 +734,7 @@ def plot_metric_traces(
     fill_sign: bool = False,
     sparse: bool = False,
     interpolate: bool = False,
-    subtract_source_mean: bool = False,
+    subtract_cross_source_mean: bool = False,
     subtract_mean: bool = False,
 ) -> None:
     expression_cache: Dict[str, MetricExpression] = {}
@@ -774,7 +774,7 @@ def plot_metric_traces(
         for per_source in metric_series_cache.values():
             all_series.extend(per_source)
         _subtract_mean_per_position(all_series)
-    elif subtract_source_mean:
+    elif subtract_cross_source_mean:
         for per_source in metric_series_cache.values():
             _subtract_mean_per_position(per_source)
     for idx_ax, (ax, metrics) in enumerate(zip(axes, parsed_metric_groups)):
@@ -1054,7 +1054,7 @@ def main() -> None:
             fill_sign=args.plot_fill_sign,
             sparse=args.sparse,
             interpolate=args.interpolate,
-            subtract_source_mean=args.subtract_source_mean,
+            subtract_cross_source_mean=args.subtract_cross_source_mean,
             subtract_mean=args.subtract_mean,
         )
         performed = True
@@ -1080,7 +1080,7 @@ def main() -> None:
             fill_sign=args.plot_fill_sign,
             sparse=args.sparse,
             interpolate=args.interpolate,
-            subtract_source_mean=args.subtract_source_mean,
+            subtract_cross_source_mean=args.subtract_cross_source_mean,
             subtract_mean=args.subtract_mean,
         )
         performed = True
@@ -1106,7 +1106,7 @@ def main() -> None:
             fill_sign=args.plot_fill_sign,
             sparse=args.sparse,
             interpolate=args.interpolate,
-            subtract_source_mean=args.subtract_source_mean,
+            subtract_cross_source_mean=args.subtract_cross_source_mean,
             subtract_mean=args.subtract_mean,
         )
         performed = True
