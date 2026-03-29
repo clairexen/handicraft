@@ -975,7 +975,7 @@ class BatchLayout:
         block_size: int,
         *,
         rng: random.Random | None = None,
-    ) -> None:
+    ) -> bool:
         if batch_size <= 0:
             raise ValueError("batch_size must be positive")
         if block_size <= 0:
@@ -3230,7 +3230,7 @@ class GPT2TokenizerWrapper:
         *,
         tokenizer_path: pathlib.Path | None = None,
         tokenizer_json: str | None = None,
-    ) -> None:
+    ) -> bool:
         if tokenizer_json is not None:
             self._tokenizer = Tokenizer.from_str(tokenizer_json)
         elif tokenizer_path is not None:
@@ -4637,7 +4637,7 @@ class TransformerStackCore(nn.Module):
         sane_group_ids: torch.Tensor | None,
         sane_z_indices: torch.Tensor | None,
         sane_active_mask: torch.Tensor | None,
-    ) -> None:
+    ) -> bool:
         if not self.use_sane or delta is None:
             return
         if tensor.size(1) <= 1:
@@ -5168,7 +5168,7 @@ class TransformerStackColumn:
         core: "TransformerStackCore",
         grce_module: TransformerGRCE | None,
         xctx_module: TransformerXCTX | None,
-    ) -> None:
+    ) -> bool:
         self.core = core
         self.grce = grce_module
         self.xctx = xctx_module
@@ -6920,10 +6920,14 @@ def _scan_loss_stats(
     separator_token_id = getattr(dataset, "article_separator_token_id", None)
     filter_enabled = filter_config.enabled()
     filtered_articles: list[dict[str, object]] = []
-    target_path = data_dir / f"{corpus}_filtered_{target_split}_{loss_id}.txt.gz"
-    partial_writer: gzip.GzipFile | None = None
+    selected_path = data_dir / f"{corpus}_losses_{target_split}_{loss_id}_selected.txt.gz"
+    rejected_path = data_dir / f"{corpus}_losses_{target_split}_{loss_id}_rejected.txt.gz"
+    selected_writer: gzip.GzipFile | None = None
+    rejected_writer: gzip.GzipFile | None = None
+    selected_count = 0
+    rejected_count = 0
     if filter_enabled:
-        target_path.parent.mkdir(parents=True, exist_ok=True)
+        selected_path.parent.mkdir(parents=True, exist_ok=True)
     for split in ("train", "test"):
         failure_samples: list[float] = []
         loss_samples: list[float] = []
@@ -7002,7 +7006,7 @@ def _scan_loss_stats(
                 if filter_applies and log_article:
                     print(
                         color_text(
-                            f"      article {article_idx}: start={start:,} len={end - start:,} (no recorded losses) [filtered]",
+                            f"      article {article_idx}: start={start:,} len={end - start:,} (no recorded losses) [selected]",
                             Colors.MAGENTA,
                         )
                     )
@@ -7027,14 +7031,14 @@ def _scan_loss_stats(
             matches_filter = False
             if filter_applies:
                 matches_filter = filter_config.matches(avg_loss, failure_score)
-                status_tag = " [selected]" if matches_filter else " [filtered]"
+                status_tag = " [selected]" if matches_filter else " [rejected]"
             if not filter_applies or log_article:
                 print(
                     f"      article {article_idx}: start={start:,} len={end - start:,}"
                     f" avg_loss={avg_loss:.4f} avg_ppl={avg_perplexity:.2f}"
                     f" failure_score={failure_score:.3f}{status_tag}"
                 )
-            if filter_applies and matches_filter:
+            if filter_applies:
                 entry = {
                     "article_index": article_idx,
                     "start": start,
@@ -7044,15 +7048,23 @@ def _scan_loss_stats(
                     "failure_score": failure_score,
                     "text": _decode_article_text(tokens, start, end, tokenizer),
                 }
-                filtered_articles.append(entry)
-                if partial_writer is None:
-                    partial_writer = gzip.open(target_path, "wt", encoding="utf-8")
-                _write_filtered_article(partial_writer, entry)
-                partial_writer.flush()
-                if len(filtered_articles) % 100 == 0:
+                if matches_filter:
+                    filtered_articles.append(entry)
+                    if selected_writer is None:
+                        selected_writer = gzip.open(selected_path, "wt", encoding="utf-8")
+                    _write_filtered_article(selected_writer, entry)
+                    selected_writer.flush()
+                    selected_count += 1
+                else:
+                    if rejected_writer is None:
+                        rejected_writer = gzip.open(rejected_path, "wt", encoding="utf-8")
+                    _write_filtered_article(rejected_writer, entry)
+                    rejected_writer.flush()
+                    rejected_count += 1
+                if (selected_count + rejected_count) % 100 == 0:
                     print(
                         color_text(
-                            f"  wrote {len(filtered_articles)} filtered articles...",
+                            f"  filtered {selected_count} selected / {rejected_count} rejected articles...",
                             Colors.CYAN,
                         )
                     )
@@ -7081,23 +7093,26 @@ def _scan_loss_stats(
                         Colors.CYAN,
                     )
                 )
-    if partial_writer is not None:
-        partial_writer.close()
+    if selected_writer is not None:
+        selected_writer.close()
+    if rejected_writer is not None:
+        rejected_writer.close()
     if filter_enabled:
-        if filtered_articles:
-            print(
-                color_text(
-                    f"  wrote {len(filtered_articles)} filtered articles to {target_path}",
-                    Colors.GREEN,
-                )
+        total_tagged = max(1, selected_count + rejected_count)
+        selected_pct = 100 * selected_count / total_tagged
+        rejected_pct = 100 * rejected_count / total_tagged
+        print(
+            color_text(
+                f"  filtered {selected_count} selected ({selected_pct:.2f}%) -> {selected_path}",
+                Colors.GREEN,
             )
-        else:
-            print(
-                color_text(
-                    f"  no articles in {target_split} split matched the filter criteria",
-                    Colors.YELLOW,
-                )
+        )
+        print(
+            color_text(
+                f"  filtered {rejected_count} rejected ({rejected_pct:.2f}%) -> {rejected_path}",
+                Colors.CYAN,
             )
+        )
 
 
 def _collect_layout_row_results(
@@ -12301,9 +12316,27 @@ class Runtime:
         max_iterations = getattr(self.args, "losses_max_iter", None)
         if max_iterations is not None:
             max_iterations = max(0, int(max_iterations))
-        if getattr(self.args, "losses_scan", False):
+        scan_requested = bool(getattr(self.args, "losses_scan", False))
+        if scan_requested:
             base_dir = pathlib.Path(self.args.model)
             max_articles = 1000
+            _scan_loss_stats(
+                loss_path,
+                stats,
+                dataset,
+                self.args.vocab_size,
+                tokenizer,
+                corpus,
+                split,
+                loss_id,
+                base_dir,
+                filter_config,
+                max_articles=max_articles,
+            )
+            return 0
+        if filter_config.enabled():
+            base_dir = pathlib.Path(self.args.model)
+            max_articles = None
             _scan_loss_stats(
                 loss_path,
                 stats,
@@ -12361,8 +12394,9 @@ class Runtime:
             max_positions=max_positions,
         )
         iteration_stride = _losses_iteration_stride(row_blocks, overlap, max_positions)
+        completed_full_split = False
         if threads <= 1:
-            self._run_serial_losses_loop(
+            completed_full_split = self._run_serial_losses_loop(
                 stats=stats,
                 meta=meta,
                 cursor_key=cursor_key,
@@ -12373,7 +12407,7 @@ class Runtime:
                 context=context,
             )
         else:
-            self._run_parallel_losses_loop(
+            completed_full_split = self._run_parallel_losses_loop(
                 stats=stats,
                 meta=meta,
                 cursor_key=cursor_key,
@@ -12384,6 +12418,21 @@ class Runtime:
                 context=context,
                 threads=threads,
                 iteration_stride=iteration_stride,
+            )
+        if (not scan_requested) and completed_full_split and not filter_config.enabled():
+            base_dir = pathlib.Path(self.args.model)
+            _scan_loss_stats(
+                loss_path,
+                stats,
+                dataset,
+                self.args.vocab_size,
+                tokenizer,
+                corpus,
+                split,
+                loss_id,
+                base_dir,
+                filter_config,
+                max_articles=1000,
             )
         return 0
 
@@ -12429,6 +12478,9 @@ class Runtime:
         except KeyboardInterrupt:
             torch.save(stats, loss_path)
             print(color_text("[losses] interrupted; progress saved.", Colors.YELLOW))
+            return False
+        cursor_value = int(meta.get(cursor_key, 0))
+        return cursor_value >= split_len
 
     def _run_parallel_losses_loop(
         self,
