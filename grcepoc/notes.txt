@@ -1212,3 +1212,5 @@ python grce.py --pt model/yscale_small.pt corpus --add wikipedia-en-0000
 python grce.py --pt model/yscale_small.pt --yrefresh --align-articles --layout '16[ 32E 8P 4Y = (48D4Y|48D3Y|64D2Y|64D) =
 		( 64D 3X 2Y >> S$$ = 64D 2X 2Y 4Z >> Z$$ | 64D 2X 2Y 4Z >> Z$$ = 64D 3X 2Y >> S$$ ) = 1D4Yb>>A = 1D4YB>>B
   ]' --cycles 500 --lr-warmup-steps 100 --lr-cosine-steps 200 --generate-with-decode --align-articles train --json
+
+python grce.py --pt model/ref_small.pt --layout '256[64E=128D]' losses wikipedia-en-0000 small test
