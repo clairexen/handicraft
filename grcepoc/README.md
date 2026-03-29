@@ -79,3 +79,15 @@ Plot stacked test losses recorded during training:
 ```
 python plot.py --json model/wp_en_E_D4Y.json --json model/wp_en_E_D4Y_f_t4x.json --stack-sources --plot-time
 ```
+
+### Y-Refresh and Y-Scale
+
+Ny layouts run the same physical layer stack multiple times before advancing to the next
+segment. Enabling `--use-yscale` lets the model learn independent residual gains for
+each virtual Y iteration within a block so later passes can amplify or suppress their
+activations relative to the first pass. When `--yrefresh` is also active we re-inject the
+token/control embeddings after every iteration; in this configuration a learnable scalar
+per iteration (except the initial Y=0 injector, which stays fixed at 1.0) now modulates
+those refresh additions too. Together these controls make heavily looped layouts more
+stable by letting the optimizer decide how much each pass and refresh should contribute
+instead of accumulating everything at uniform strength.

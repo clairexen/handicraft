@@ -35,7 +35,15 @@ TBD
 
 ## Looping / Thinking
 
-TBD
+Ny modifiers (`2Y`, `3Y`, …) run the physical layer stack multiple times before a
+segment finishes. When `--use-yscale` is active the implementation learns a separate
+scalar for every `(layer, virtual-Y)` pair so later repetitions can increase,
+decrease, or even null-out their residual updates relative to the earlier passes.
+If `--yrefresh` is enabled we also re-inject the token/control embeddings after every
+iteration. Those refresh addends now receive their own learned scalars whenever
+`--use-yscale` is on (the initial Y=0 refresh remains pinned to 1.0 so the first pass
+matches the legacy behavior). This keeps aggressive Ny layouts numerically stable
+without forcing every pass to accumulate at uniform strength.
 
 
 ---------------------------------------------------------------------------
@@ -1197,7 +1205,8 @@ python grce.py --pt model/ref_small.pt --yrefresh --align-articles --layout ' 16
 		( 64D 3X 2Y >> S$$ = 64D 2X 2Y 4Z >> Z$$ | 64D 2X 2Y 4Z >> Z$$ = 64D 3X 2Y >> S$$ ) = 1D4Yb>>A = 1D4YB>>B
   ]' --cycles 500 --lr-warmup-steps 100 --lr-cosine-steps 200 --generate-with-decode --align-articles train --json
 
-# starting with cycle 126 (step 12600) also with learned injection scalars
+# starting with cycle 126 (step 12600) also with learned per-Y residual scalars and
+# refresh scalars (Y=0 injection stays fixed at 1.0)
 python grce.py --pt model/yscale_small.pt --use-yscale --small create
 python grce.py --pt model/yscale_small.pt corpus --add wikipedia-en-0000
 python grce.py --pt model/yscale_small.pt --yrefresh --align-articles --layout '16[ 32E 8P 4Y = (48D4Y|48D3Y|64D2Y|64D) =

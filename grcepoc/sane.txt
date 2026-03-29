@@ -87,6 +87,13 @@ pass, right before we add fresh embeddings for the promoted column. (The
 spans; in the SANE path we apply the RMSNorm-style normalization described here
 instead.)
 
+When `--use-yscale` is enabled every `(layer, virtual-Y)` pair also receives a
+learned residual gain. This lets later Ny iterations dampen or emphasize their
+updates instead of automatically accumulating at uniform strength. If `--yrefresh`
+is active we re-inject the token/control embeddings after each iteration; those
+refresh tensors now receive their own learnable scalars for Y>0 while the first
+injection (Y=0) stays fixed at 1.0 so legacy behavior remains available.
+
 
 #### Mode of operation / inference
 
