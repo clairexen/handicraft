@@ -7211,6 +7211,18 @@ def _update_loss_tensor(tensor: torch.Tensor, contributions: Sequence[tuple[int,
         tensor[idx] = torch.tensor(float(loss_value), dtype=tensor.dtype)
 
 
+def _save_loss_stats(stats: dict, loss_path: pathlib.Path, *, reason: str) -> None:
+    start = time.time()
+    torch.save(stats, loss_path)
+    elapsed = time.time() - start
+    print(
+        color_text(
+            f"[losses] saved stats ({reason}) in {elapsed:.2f}s",
+            Colors.CYAN,
+        )
+    )
+
+
 @dataclass(frozen=True)
 class LossIterationContext:
     args: Args
@@ -12447,8 +12459,11 @@ class Runtime:
         loss_path: pathlib.Path,
         max_iterations: int | None,
         context: LossIterationContext,
-    ) -> None:
+    ) -> bool:
         iteration = 0
+        dirty = False
+        last_save_time = time.time()
+        save_reason = "final"
         try:
             while True:
                 if max_iterations is not None and iteration >= max_iterations:
@@ -12458,10 +12473,12 @@ class Runtime:
                             Colors.YELLOW,
                         )
                     )
+                    save_reason = "max-iter"
                     break
                 cursor_value = int(meta.get(cursor_key, 0))
                 if cursor_value >= split_len:
                     print(color_text(f"[losses] completed {split} split", Colors.GREEN))
+                    save_reason = "complete"
                     break
                 result = _compute_loss_iteration(cursor_value, context)
                 self._apply_loss_iteration_result(
@@ -12475,10 +12492,25 @@ class Runtime:
                     throughput_scale=1.0,
                 )
                 iteration += 1
+                dirty = True
+                now = time.time()
+                if dirty and (now - last_save_time) >= 60.0:
+                    _save_loss_stats(stats, loss_path, reason="periodic")
+                    last_save_time = now
+                    dirty = False
         except KeyboardInterrupt:
-            torch.save(stats, loss_path)
+            if dirty:
+                _save_loss_stats(stats, loss_path, reason="interrupt")
+                dirty = False
+            else:
+                _save_loss_stats(stats, loss_path, reason="interrupt")
+            last_save_time = time.time()
             print(color_text("[losses] interrupted; progress saved.", Colors.YELLOW))
             return False
+        if dirty:
+            _save_loss_stats(stats, loss_path, reason=save_reason)
+            dirty = False
+            last_save_time = time.time()
         cursor_value = int(meta.get(cursor_key, 0))
         return cursor_value >= split_len
 
@@ -12495,7 +12527,7 @@ class Runtime:
         context: LossIterationContext,
         threads: int,
         iteration_stride: int,
-    ) -> None:
+    ) -> bool:
         cursor_value = int(meta.get(cursor_key, 0))
         pending: dict[int, LossIterationJobResult] = {}
         in_flight: dict[object, int] = {}
@@ -12504,6 +12536,9 @@ class Runtime:
         completed = 0
         interrupted = False
         executor = ThreadPoolExecutor(max_workers=max(1, threads))
+        dirty = False
+        last_save_time = time.time()
+        save_reason = "final"
         try:
             while True:
                 if max_iterations is not None and completed >= max_iterations:
@@ -12513,9 +12548,11 @@ class Runtime:
                             Colors.YELLOW,
                         )
                     )
+                    save_reason = "max-iter"
                     break
                 if cursor_value >= split_len:
                     print(color_text(f"[losses] completed {split} split", Colors.GREEN))
+                    save_reason = "complete"
                     break
                 ready = pending.pop(cursor_value, None)
                 if ready is not None:
@@ -12532,6 +12569,12 @@ class Runtime:
                     cursor_value = ready.next_cursor
                     next_start = cursor_value
                     completed += 1
+                    dirty = True
+                    now = time.time()
+                    if dirty and (now - last_save_time) >= 60.0:
+                        _save_loss_stats(stats, loss_path, reason="periodic")
+                        last_save_time = now
+                        dirty = False
                     continue
                 slots = max(0, max(1, threads) - len(in_flight))
                 if max_iterations is not None:
@@ -12568,11 +12611,22 @@ class Runtime:
                     pending[result.cursor_value] = result
         except KeyboardInterrupt:
             interrupted = True
+            if dirty:
+                _save_loss_stats(stats, loss_path, reason="interrupt")
+                dirty = False
+            else:
+                _save_loss_stats(stats, loss_path, reason="interrupt")
+            last_save_time = time.time()
+            print(color_text("[losses] interrupted; progress saved.", Colors.YELLOW))
         finally:
             executor.shutdown(wait=False, cancel_futures=True)
         if interrupted:
-            torch.save(stats, loss_path)
-            print(color_text("[losses] interrupted; progress saved.", Colors.YELLOW))
+            return False
+        if dirty:
+            _save_loss_stats(stats, loss_path, reason=save_reason)
+            dirty = False
+        last_cursor = int(meta.get(cursor_key, 0))
+        return last_cursor >= split_len
 
     def _apply_loss_iteration_result(
         self,
@@ -12588,14 +12642,12 @@ class Runtime:
     ) -> None:
         meta[cursor_key] = result.next_cursor
         if not result.ordered:
-            torch.save(stats, loss_path)
             return
         tensor = stats[split]
         _update_loss_tensor(tensor, result.ordered)
         meta["total_updates"] = int(meta.get("total_updates", 0)) + 1
         key = f"{split}_tokens_processed"
         meta[key] = int(meta.get(key, 0)) + len(result.ordered)
-        torch.save(stats, loss_path)
         avg_loss = result.avg_loss if result.avg_loss is not None else 0.0
         max_loss = result.max_loss if result.max_loss is not None else 0.0
         elapsed = max(result.elapsed, 1e-9)
